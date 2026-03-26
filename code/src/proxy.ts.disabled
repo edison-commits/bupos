@@ -1,0 +1,11 @@
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+
+export const config = {
+  runtime: "edge",
+};
+
+// Minimal edge proxy — auth is enforced at the page/action level.
+export function proxy(_request: NextRequest) {
+  return NextResponse.next();
+}

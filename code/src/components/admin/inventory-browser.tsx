@@ -1,0 +1,523 @@
+'use client';
+
+import { useState, useEffect, useCallback, useRef } from 'react';
+
+interface InventoryRow {
+  inventory_id: string;
+  on_hand: number;
+  reserved: number;
+  reorder_point: number;
+  location_id: string;
+  variant_id: string;
+  product_id: string;
+  sku: string;
+  barcode: string | null;
+  variant_name: string;
+  size_label: string | null;
+  color_label: string | null;
+  price: number;
+  cost: number | null;
+  variant_active: boolean;
+  product_name: string;
+  image_url: string | null;
+  product_active: boolean;
+  category_id: string | null;
+  category_name: string | null;
+  location_name: string;
+  received_at: string | null;
+  days_on_shelf: number | null;
+}
+
+interface Pagination {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+interface MatrixData {
+  product: Record<string, unknown>;
+  variants: Array<Record<string, unknown>>;
+  sizes: string[];
+  colors: string[];
+  matrix: Record<string, Record<string, unknown>>;
+}
+
+interface Category {
+  id: string;
+  name: string;
+}
+
+type StockStatus = 'all' | 'in_stock' | 'low_stock' | 'out_of_stock';
+type AgingFilter = 'all' | '30' | '60' | '90' | '120' | '180';
+type SortField = 'product_name' | 'variant_name' | 'sku' | 'price' | 'on_hand' | 'category' | 'days_on_shelf';
+
+export function InventoryBrowser({ categories }: { categories: Category[] }) {
+  const [items, setItems] = useState<InventoryRow[]>([]);
+  const [pagination, setPagination] = useState<Pagination>({ page: 1, pageSize: 50, total: 0, totalPages: 0 });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Filters
+  const [search, setSearch] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [stockStatus, setStockStatus] = useState<StockStatus>('all');
+  const [agingFilter, setAgingFilter] = useState<AgingFilter>('all');
+  const [sortField, setSortField] = useState<SortField>('product_name');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+  const [pageSize, setPageSize] = useState(50);
+
+  // Matrix view
+  const [matrixProductId, setMatrixProductId] = useState<string | null>(null);
+  const [matrixData, setMatrixData] = useState<MatrixData | null>(null);
+  const [matrixLoading, setMatrixLoading] = useState(false);
+
+  const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+
+  // Debounce search
+  useEffect(() => {
+    if (searchTimeout.current) clearTimeout(searchTimeout.current);
+    searchTimeout.current = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 300);
+    return () => { if (searchTimeout.current) clearTimeout(searchTimeout.current); };
+  }, [search]);
+
+  const fetchInventory = useCallback(async (page: number) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({
+        page: String(page),
+        pageSize: String(pageSize),
+        sort: sortField,
+        order: sortOrder,
+      });
+      if (debouncedSearch) params.set('search', debouncedSearch);
+      if (categoryFilter) params.set('category', categoryFilter);
+      if (stockStatus !== 'all') params.set('stockStatus', stockStatus);
+      if (agingFilter !== 'all') params.set('aging', agingFilter);
+
+      const res = await fetch(`/api/inventory?${params}`);
+      if (!res.ok) throw new Error('Failed to fetch');
+      const data = await res.json();
+      setItems(data.items);
+      setPagination(data.pagination);
+    } catch {
+      setError('Failed to load inventory');
+    } finally {
+      setLoading(false);
+    }
+  }, [debouncedSearch, categoryFilter, stockStatus, agingFilter, sortField, sortOrder, pageSize]);
+
+  useEffect(() => {
+    fetchInventory(1);
+  }, [fetchInventory]);
+
+  const handlePageChange = (newPage: number) => {
+    fetchInventory(newPage);
+  };
+
+  const handleSort = (field: SortField) => {
+    if (field === sortField) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortOrder('asc');
+    }
+  };
+
+  const openMatrix = async (productId: string) => {
+    setMatrixProductId(productId);
+    setMatrixLoading(true);
+    try {
+      const res = await fetch(`/api/inventory?productId=${productId}`);
+      if (!res.ok) throw new Error('Failed to fetch matrix');
+      const data = await res.json();
+      setMatrixData(data);
+    } catch {
+      setMatrixData(null);
+    } finally {
+      setMatrixLoading(false);
+    }
+  };
+
+  const closeMatrix = () => {
+    setMatrixProductId(null);
+    setMatrixData(null);
+  };
+
+  // Group items by product for the list view
+  const productGroups = items.reduce<Record<string, InventoryRow[]>>((acc, item) => {
+    if (!acc[item.product_id]) acc[item.product_id] = [];
+    acc[item.product_id].push(item);
+    return acc;
+  }, {});
+
+  const sortIcon = (field: SortField) => {
+    if (field !== sortField) return '↕';
+    return sortOrder === 'asc' ? '↑' : '↓';
+  };
+
+  const stockBadge = (onHand: number, reorderPoint: number) => {
+    if (onHand === 0) return <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-700">Out</span>;
+    if (onHand <= reorderPoint) return <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-700">Low</span>;
+    return <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-700">{onHand}</span>;
+  };
+
+  const agingBadge = (days: number | null) => {
+    if (days === null || days === undefined) return <span className="text-xs text-zinc-400">—</span>;
+    if (days >= 180) return <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-700">{days}d</span>;
+    if (days >= 90) return <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-orange-100 text-orange-700">{days}d</span>;
+    if (days >= 60) return <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-700">{days}d</span>;
+    if (days >= 30) return <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-yellow-100 text-yellow-700">{days}d</span>;
+    return <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-700">{days}d</span>;
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Search & Filters */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="relative flex-1">
+          <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <circle cx="11" cy="11" r="8" strokeWidth="2" />
+            <path d="m21 21-4.35-4.35" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search products, SKUs, barcodes..."
+            className="w-full rounded-lg border border-zinc-300 bg-white pl-10 pr-4 py-2.5 text-sm text-zinc-800 placeholder-zinc-400"
+          />
+          {search && (
+            <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600">✕</button>
+          )}
+        </div>
+        <select
+          value={categoryFilter}
+          onChange={(e) => setCategoryFilter(e.target.value)}
+          className="rounded-lg border border-zinc-300 bg-white px-3 py-2.5 text-sm text-zinc-700"
+        >
+          <option value="">All Categories</option>
+          {categories.map((c) => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
+        <select
+          value={stockStatus}
+          onChange={(e) => setStockStatus(e.target.value as StockStatus)}
+          className="rounded-lg border border-zinc-300 bg-white px-3 py-2.5 text-sm text-zinc-700"
+        >
+          <option value="all">All Stock</option>
+          <option value="in_stock">In Stock</option>
+          <option value="low_stock">Low Stock</option>
+          <option value="out_of_stock">Out of Stock</option>
+        </select>
+        <select
+          value={agingFilter}
+          onChange={(e) => setAgingFilter(e.target.value as AgingFilter)}
+          className="rounded-lg border border-zinc-300 bg-white px-3 py-2.5 text-sm text-zinc-700"
+        >
+          <option value="all">All Ages</option>
+          <option value="30">30+ days</option>
+          <option value="60">60+ days</option>
+          <option value="90">90+ days</option>
+          <option value="120">120+ days</option>
+          <option value="180">180+ days</option>
+        </select>
+        <select
+          value={pageSize}
+          onChange={(e) => setPageSize(Number(e.target.value))}
+          className="rounded-lg border border-zinc-300 bg-white px-3 py-2.5 text-sm text-zinc-700"
+        >
+          <option value={25}>25 / page</option>
+          <option value={50}>50 / page</option>
+          <option value={100}>100 / page</option>
+          <option value={200}>200 / page</option>
+        </select>
+      </div>
+
+      {/* Results summary */}
+      <div className="flex items-center justify-between text-sm text-zinc-600">
+        <span>
+          {loading ? 'Loading...' : `${pagination.total.toLocaleString()} items found`}
+          {debouncedSearch && ` for "${debouncedSearch}"`}
+        </span>
+        {pagination.totalPages > 1 && (
+          <span>Page {pagination.page} of {pagination.totalPages}</span>
+        )}
+      </div>
+
+      {error && (
+        <div className="rounded-xl bg-red-50 border border-red-200 p-3 text-sm text-red-700">{error}</div>
+      )}
+
+      {/* Matrix View Overlay */}
+      {matrixProductId && (
+        <div className="rounded-2xl bg-white border-2 border-teal-300 p-5 shadow-md">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-bold text-zinc-900">
+              {matrixData ? String(matrixData.product?.name || 'Product') : 'Loading...'}
+              <span className="ml-2 text-sm font-normal text-zinc-500">Size × Color Matrix</span>
+            </h3>
+            <button onClick={closeMatrix} className="touch-button text-zinc-500 hover:text-zinc-800 font-bold text-lg">✕</button>
+          </div>
+
+          {matrixLoading ? (
+            <div className="text-center py-8 text-zinc-400">Loading matrix...</div>
+          ) : matrixData && matrixData.sizes.length > 0 && matrixData.colors.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-zinc-50">
+                    <th className="text-left px-3 py-2 font-semibold text-zinc-700 border border-zinc-200">Size ↓ / Color →</th>
+                    {matrixData.colors.map((color) => (
+                      <th key={color} className="text-center px-3 py-2 font-semibold text-zinc-700 border border-zinc-200 min-w-[100px]">
+                        {color}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {matrixData.sizes.map((size) => (
+                    <tr key={size} className="hover:bg-zinc-50/50">
+                      <td className="px-3 py-2 font-semibold text-zinc-800 border border-zinc-200 bg-zinc-50">{size}</td>
+                      {matrixData.colors.map((color) => {
+                        const key = `${size}|${color}`;
+                        const variant = matrixData.matrix[key] as Record<string, unknown> | undefined;
+                        if (!variant) {
+                          return (
+                            <td key={color} className="px-3 py-2 text-center border border-zinc-200 text-zinc-300">
+                              —
+                            </td>
+                          );
+                        }
+                        const onHand = Number(variant.on_hand ?? 0);
+                        const reorder = Number(variant.reorder_point ?? 0);
+                        const price = Number(variant.price ?? 0);
+                        const daysOnShelf = variant.days_on_shelf != null ? Number(variant.days_on_shelf) : null;
+                        const isLow = onHand > 0 && onHand <= reorder;
+                        const isOut = onHand === 0;
+                        const isAging = daysOnShelf !== null && daysOnShelf >= 90;
+
+                        return (
+                          <td
+                            key={color}
+                            className={`px-3 py-2 text-center border border-zinc-200 ${isOut ? 'bg-red-50' : isLow ? 'bg-amber-50' : isAging ? 'bg-orange-50/50' : ''}`}
+                          >
+                            <div className={`text-lg font-bold ${isOut ? 'text-red-600' : isLow ? 'text-amber-600' : 'text-zinc-900'}`}>
+                              {onHand}
+                            </div>
+                            <div className="text-[10px] text-zinc-500">{String(variant.sku)}</div>
+                            <div className="text-xs text-zinc-600">${price.toFixed(2)}</div>
+                            {daysOnShelf !== null && (
+                              <div className={`text-[10px] mt-0.5 font-medium ${daysOnShelf >= 180 ? 'text-red-600' : daysOnShelf >= 90 ? 'text-orange-600' : daysOnShelf >= 60 ? 'text-amber-600' : 'text-zinc-400'}`}>
+                                {daysOnShelf}d
+                              </div>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {/* Matrix summary */}
+              <div className="mt-3 flex gap-4 text-xs text-zinc-500">
+                <span>{matrixData.sizes.length} sizes × {matrixData.colors.length} colors = {matrixData.variants.length} variants</span>
+                <span>Total on hand: {matrixData.variants.reduce((sum, v) => sum + Number((v as Record<string, unknown>).on_hand ?? 0), 0)}</span>
+              </div>
+            </div>
+          ) : matrixData && matrixData.variants.length > 0 ? (
+            /* Variants exist but no size/color labels — show flat list */
+            <div className="space-y-2">
+              <p className="text-xs text-zinc-500 mb-2">This product does not have size/color labels. Showing variant list instead.</p>
+              {matrixData.variants.map((v) => {
+                const variant = v as Record<string, unknown>;
+                const onHand = Number(variant.on_hand ?? 0);
+                const reorder = Number(variant.reorder_point ?? 0);
+                return (
+                  <div key={String(variant.id)} className="flex items-center justify-between p-2 rounded-lg border border-zinc-200">
+                    <div>
+                      <span className="font-medium text-zinc-900">{String(variant.name)}</span>
+                      <span className="ml-2 text-xs text-zinc-500">{String(variant.sku)}</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-sm text-zinc-600">${Number(variant.price).toFixed(2)}</span>
+                      {stockBadge(onHand, reorder)}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-center py-8 text-zinc-400">No variants found</div>
+          )}
+        </div>
+      )}
+
+      {/* Inventory Table */}
+      <div className="rounded-xl bg-white border border-zinc-200 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-zinc-50 border-b border-zinc-200">
+                <th
+                  className="text-left px-3 py-3 font-semibold text-zinc-700 cursor-pointer hover:bg-zinc-100"
+                  onClick={() => handleSort('product_name')}
+                >
+                  Product {sortIcon('product_name')}
+                </th>
+                <th
+                  className="text-left px-3 py-3 font-semibold text-zinc-700 cursor-pointer hover:bg-zinc-100"
+                  onClick={() => handleSort('variant_name')}
+                >
+                  Variant {sortIcon('variant_name')}
+                </th>
+                <th
+                  className="text-left px-3 py-3 font-semibold text-zinc-700 cursor-pointer hover:bg-zinc-100"
+                  onClick={() => handleSort('sku')}
+                >
+                  SKU {sortIcon('sku')}
+                </th>
+                <th
+                  className="text-left px-3 py-3 font-semibold text-zinc-700 cursor-pointer hover:bg-zinc-100"
+                  onClick={() => handleSort('category')}
+                >
+                  Category {sortIcon('category')}
+                </th>
+                <th
+                  className="text-right px-3 py-3 font-semibold text-zinc-700 cursor-pointer hover:bg-zinc-100"
+                  onClick={() => handleSort('price')}
+                >
+                  Price {sortIcon('price')}
+                </th>
+                <th className="text-right px-3 py-3 font-semibold text-zinc-700">Cost</th>
+                <th
+                  className="text-center px-3 py-3 font-semibold text-zinc-700 cursor-pointer hover:bg-zinc-100"
+                  onClick={() => handleSort('on_hand')}
+                >
+                  Stock {sortIcon('on_hand')}
+                </th>
+                <th className="text-center px-3 py-3 font-semibold text-zinc-700">Location</th>
+                <th
+                  className="text-center px-3 py-3 font-semibold text-zinc-700 cursor-pointer hover:bg-zinc-100"
+                  onClick={() => handleSort('days_on_shelf')}
+                >
+                  Age {sortIcon('days_on_shelf')}
+                </th>
+                <th className="px-3 py-3 font-semibold text-zinc-700 w-20"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading && items.length === 0 ? (
+                <tr>
+                  <td colSpan={10} className="text-center py-12 text-zinc-400">Loading inventory...</td>
+                </tr>
+              ) : items.length === 0 ? (
+                <tr>
+                  <td colSpan={10} className="text-center py-12 text-zinc-400">
+                    {debouncedSearch ? `No results for "${debouncedSearch}"` : 'No inventory items found'}
+                  </td>
+                </tr>
+              ) : (
+                items.map((item) => {
+                  const isLow = item.on_hand > 0 && item.on_hand <= item.reorder_point;
+                  const isOut = item.on_hand === 0;
+
+                  return (
+                    <tr
+                      key={item.inventory_id}
+                      className={`border-b border-zinc-100 hover:bg-zinc-50/50 ${isOut ? 'bg-red-50/30' : isLow ? 'bg-amber-50/30' : ''}`}
+                    >
+                      <td className="px-3 py-2.5">
+                        <span className="font-medium text-zinc-900">{item.product_name}</span>
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <div className="text-zinc-800">{item.variant_name}</div>
+                        {(item.size_label || item.color_label) && (
+                          <div className="flex gap-1 mt-0.5">
+                            {item.size_label && <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-600">{item.size_label}</span>}
+                            {item.color_label && <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-600">{item.color_label}</span>}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-3 py-2.5 text-zinc-600 font-mono text-xs">{item.sku}</td>
+                      <td className="px-3 py-2.5 text-zinc-600">{item.category_name || '—'}</td>
+                      <td className="px-3 py-2.5 text-right text-zinc-900 font-medium">${Number(item.price).toFixed(2)}</td>
+                      <td className="px-3 py-2.5 text-right text-zinc-500">
+                        {item.cost ? `$${Number(item.cost).toFixed(2)}` : '—'}
+                      </td>
+                      <td className="px-3 py-2.5 text-center">{stockBadge(item.on_hand, item.reorder_point)}</td>
+                      <td className="px-3 py-2.5 text-center text-xs text-zinc-500">{item.location_name}</td>
+                      <td className="px-3 py-2.5 text-center">{agingBadge(item.days_on_shelf)}</td>
+                      <td className="px-3 py-2.5 text-center">
+                        <button
+                          onClick={() => openMatrix(item.product_id)}
+                          className="touch-button px-2 py-1 rounded-lg text-xs font-medium bg-zinc-100 hover:bg-zinc-200 text-zinc-700"
+                          title="View size/color matrix"
+                        >
+                          Matrix
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Pagination */}
+      {pagination.totalPages > 1 && (
+        <div className="flex items-center justify-between">
+          <button
+            onClick={() => handlePageChange(pagination.page - 1)}
+            disabled={pagination.page <= 1}
+            className="touch-button px-4 py-2 rounded-lg border border-zinc-200 bg-white text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
+          >
+            ← Previous
+          </button>
+          <div className="flex items-center gap-1">
+            {Array.from({ length: Math.min(7, pagination.totalPages) }, (_, i) => {
+              let pageNum: number;
+              if (pagination.totalPages <= 7) {
+                pageNum = i + 1;
+              } else if (pagination.page <= 4) {
+                pageNum = i + 1;
+              } else if (pagination.page >= pagination.totalPages - 3) {
+                pageNum = pagination.totalPages - 6 + i;
+              } else {
+                pageNum = pagination.page - 3 + i;
+              }
+              return (
+                <button
+                  key={pageNum}
+                  onClick={() => handlePageChange(pageNum)}
+                  className={`touch-button h-8 w-8 rounded-lg text-sm font-medium ${
+                    pageNum === pagination.page
+                      ? 'bg-teal-700 text-white'
+                      : 'border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50'
+                  }`}
+                >
+                  {pageNum}
+                </button>
+              );
+            })}
+          </div>
+          <button
+            onClick={() => handlePageChange(pagination.page + 1)}
+            disabled={pagination.page >= pagination.totalPages}
+            className="touch-button px-4 py-2 rounded-lg border border-zinc-200 bg-white text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
+          >
+            Next →
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}

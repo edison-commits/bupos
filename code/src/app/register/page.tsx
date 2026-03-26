@@ -1,0 +1,53 @@
+import { AppNav } from "@/components/layout/app-nav";
+import { RegisterConsole } from "@/components/register/register-console";
+import { PageShell } from "@/components/ui/page-shell";
+import { registerLoginAction } from "@/app/register/actions";
+import { PinLoginForm } from "@/components/register/pin-login-form";
+import { getRegisterSession } from "@/lib/auth/session";
+import { readStore } from "@/lib/persistence/store";
+
+export default async function RegisterPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const params = await searchParams;
+
+  const session = await getRegisterSession();
+  const store = await readStore();
+  const notice = typeof params.notice === "string" ? params.notice.replaceAll("+", " ") : undefined;
+  const error = typeof params.error === "string" ? params.error.replaceAll("+", " ") : undefined;
+  const location = store.locations[0];
+
+  return (
+    <PageShell
+      eyebrow="Register"
+      title={session ? `${store.organization.name} · ${session.location.name}` : "Register login"}
+      description={session ? undefined : "Enter your PIN to open a register session."}
+    >
+      <AppNav />
+      {session ? (
+        <RegisterConsole store={store} context={session} notice={notice} error={error} />
+      ) : (
+        <div className="grid gap-6 xl:grid-cols-[1fr_0.9fr]">
+          <section className="card px-6 py-6">
+            <h2 className="text-xl font-semibold">PIN login</h2>
+            <p className="mt-2 text-sm text-zinc-600">Enter your PIN to open a register session at {location.name}. Demo PINs: 1111 owner · 2222 manager · 3333 cashier.</p>
+            <form action={registerLoginAction} className="mt-5">
+              <PinLoginForm locationId={location.id} />
+            </form>
+            {notice ? <p className="mt-4 rounded-2xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{notice}</p> : null}
+            {error ? <p className="mt-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p> : null}
+          </section>
+
+          <section className="card px-6 py-6">
+            <h2 className="text-xl font-semibold">BasicUniformPOS register</h2>
+            <p className="mt-3 text-sm text-zinc-600">
+              Log in with your PIN, open a shift, and start selling. The register supports cash, card, and store credit payments with split tender. Manager approval is required for discounts, voids, and store credits above configured thresholds.
+            </p>
+          </section>
+        </div>
+      )}
+    </PageShell>
+  );
+}

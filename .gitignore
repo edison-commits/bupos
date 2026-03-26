@@ -1,0 +1,8 @@
+.DS_Store
+*.zip
+code.zip
+code/.next-old-*
+code/.next/
+code/.turbo/
+code/.open-next*
+code/.wrangler*

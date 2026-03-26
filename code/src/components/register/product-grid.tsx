@@ -1,0 +1,426 @@
+"use client";
+
+import { useState, useMemo, useCallback, useRef, useEffect } from "react";
+import type { Category, InventoryLevel, Product, ProductVariant } from "@/lib/domain/types";
+import { VirtualKeyboard } from "@/components/ui/virtual-keyboard";
+
+export interface ProductGridItem {
+  product: Product;
+  variants: ProductVariant[];
+  inventory: InventoryLevel[];
+  category: Category | undefined;
+}
+
+interface ProductGridProps {
+  items: ProductGridItem[];
+  categories: Category[];
+  onAddItem: (variant: ProductVariant, product: Product) => void;
+}
+
+// Category color palette - assigns colors based on position
+const CATEGORY_COLORS = [
+  "bg-blue-100 text-blue-700 border-blue-200",
+  "bg-emerald-100 text-emerald-700 border-emerald-200",
+  "bg-amber-100 text-amber-700 border-amber-200",
+  "bg-pink-100 text-pink-700 border-pink-200",
+  "bg-purple-100 text-purple-700 border-purple-200",
+  "bg-cyan-100 text-cyan-700 border-cyan-200",
+  "bg-rose-100 text-rose-700 border-rose-200",
+  "bg-lime-100 text-lime-700 border-lime-200",
+];
+
+function getCategoryColor(index: number): string {
+  return CATEGORY_COLORS[index % CATEGORY_COLORS.length];
+}
+
+export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) {
+  const [activeCategoryId, setActiveCategoryId] = useState<string | "all" | "favorites">("all");
+  const [variantPickerProduct, setVariantPickerProduct] = useState<ProductGridItem | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [scanFeedback, setScanFeedback] = useState<string | null>(null);
+  const [showKeyboard, setShowKeyboard] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const scanTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Build a flat lookup of SKU/barcode → variant+product for instant scan matching
+  const scanLookup = useMemo(() => {
+    const map = new Map<string, { variant: ProductVariant; product: Product; stock: number }>();
+    for (const item of items) {
+      for (const v of item.variants) {
+        const stock = item.inventory.reduce((sum, inv) => inv.productVariantId === v.id ? sum + inv.onHand : sum, 0);
+        if (v.sku) map.set(v.sku.toLowerCase(), { variant: v, product: item.product, stock });
+        if (v.barcode) map.set(v.barcode.toLowerCase(), { variant: v, product: item.product, stock });
+      }
+    }
+    return map;
+  }, [items]);
+
+  // Scanner auto-detect: when a query exactly matches a SKU/barcode, auto-add and clear
+  const handleSearchChange = useCallback((value: string) => {
+    setSearchQuery(value);
+    setScanFeedback(null);
+
+    // Clear previous scan timeout
+    if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
+
+    if (!value.trim()) return;
+
+    const q = value.trim().toLowerCase();
+    const match = scanLookup.get(q);
+    if (match) {
+      if (match.stock <= 0) {
+        setScanFeedback(`${match.product.name} — out of stock`);
+        return;
+      }
+      // Delay slightly to let barcode scanners finish (they type fast then press Enter)
+      scanTimeoutRef.current = setTimeout(() => {
+        onAddItem(match.variant, match.product);
+        setSearchQuery("");
+        setScanFeedback(`Added: ${match.product.name} — ${match.variant.name}`);
+        setTimeout(() => setScanFeedback(null), 2000);
+        searchRef.current?.focus();
+      }, 100);
+    }
+  }, [scanLookup, onAddItem]);
+
+  // Handle Enter key for manual SKU/barcode entry
+  const handleSearchKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key !== "Enter" || !searchQuery.trim()) return;
+    const q = searchQuery.trim().toLowerCase();
+    const match = scanLookup.get(q);
+    if (match) {
+      if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
+      if (match.stock <= 0) {
+        setScanFeedback(`${match.product.name} — out of stock`);
+        return;
+      }
+      onAddItem(match.variant, match.product);
+      setSearchQuery("");
+      setScanFeedback(`Added: ${match.product.name} — ${match.variant.name}`);
+      setTimeout(() => setScanFeedback(null), 2000);
+    }
+  }, [searchQuery, scanLookup, onAddItem]);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => { if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current); };
+  }, []);
+
+  const filtered = useMemo(() => {
+    let result = items;
+
+    // Category filter
+    if (activeCategoryId === "favorites") {
+      result = result.filter((i) => i.product.isTouchFavorite);
+    } else if (activeCategoryId !== "all") {
+      result = result.filter((i) => i.product.categoryId === activeCategoryId);
+    }
+
+    // Search filter — match product name, variant name, or SKU
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      result = result.filter((i) =>
+        i.product.name.toLowerCase().includes(q)
+        || i.variants.some((v) => v.name.toLowerCase().includes(q) || v.sku.toLowerCase().includes(q) || v.barcode?.toLowerCase().includes(q)),
+      );
+    }
+
+    return result;
+  }, [items, activeCategoryId, searchQuery]);
+
+  function handleProductTap(item: ProductGridItem) {
+    if (item.variants.length === 1) {
+      onAddItem(item.variants[0], item.product);
+    } else {
+      setVariantPickerProduct(item);
+    }
+  }
+
+  function handleVariantSelect(variant: ProductVariant, product: Product) {
+    onAddItem(variant, product);
+    setVariantPickerProduct(null);
+  }
+
+  return (
+    <div className="flex h-full flex-col">
+      {/* Search bar with barcode scanner support and integrated icons */}
+      <div className="pb-3">
+        <div className="relative">
+          {/* Magnifying glass icon (SVG) on the left */}
+          <svg
+            className="absolute left-4 top-1/2 h-6 w-6 -translate-y-1/2 text-zinc-400"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+            strokeWidth="2"
+          >
+            <circle cx="11" cy="11" r="8" />
+            <path d="m21 21-4.35-4.35" />
+          </svg>
+
+          <input
+            ref={searchRef}
+            type="text"
+            value={searchQuery}
+            onChange={(e) => handleSearchChange(e.target.value)}
+            onKeyDown={handleSearchKeyDown}
+            placeholder="Search, scan or SKU..."
+            className="w-full rounded-2xl border border-zinc-200 bg-white px-12 py-4 text-lg placeholder:text-zinc-400 focus:border-teal-500 focus:ring-2 focus:ring-teal-200 focus:outline-none transition-all"
+          />
+
+          {/* Keyboard toggle + barcode icon on the right */}
+          <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setShowKeyboard((v) => !v)}
+              className={`rounded-lg p-1.5 transition-colors ${showKeyboard ? 'text-teal-600 bg-teal-50' : 'text-zinc-400 hover:text-teal-600 hover:bg-teal-50'}`}
+              title="On-screen keyboard"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="4" width="20" height="16" rx="2" />
+                <line x1="6" y1="8" x2="6" y2="8.01" /><line x1="10" y1="8" x2="10" y2="8.01" /><line x1="14" y1="8" x2="14" y2="8.01" /><line x1="18" y1="8" x2="18" y2="8.01" />
+                <line x1="6" y1="12" x2="6" y2="12.01" /><line x1="10" y1="12" x2="10" y2="12.01" /><line x1="14" y1="12" x2="14" y2="12.01" /><line x1="18" y1="12" x2="18" y2="12.01" />
+                <line x1="8" y1="16" x2="16" y2="16" />
+              </svg>
+            </button>
+            <svg
+              className="h-6 w-6 text-zinc-400"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              strokeWidth="2"
+            >
+              <path d="M3 6v12M7 3v18M11 6v12M15 3v18M19 6v12M21 6v12" />
+            </svg>
+          </div>
+        </div>
+        {scanFeedback && (
+          <p className="mt-2 rounded-xl bg-teal-50 px-4 py-2.5 text-base font-medium text-teal-700 border border-teal-200">{scanFeedback}</p>
+        )}
+      </div>
+
+      {/* Virtual keyboard for search */}
+      <VirtualKeyboard
+        visible={showKeyboard}
+        value={searchQuery}
+        onChange={(v) => handleSearchChange(v)}
+        onEnter={() => {
+          setShowKeyboard(false);
+          if (searchQuery.trim()) {
+            handleSearchKeyDown({ key: "Enter", preventDefault: () => {} } as React.KeyboardEvent<HTMLInputElement>);
+          }
+        }}
+        onClose={() => setShowKeyboard(false)}
+        label="Search products"
+      />
+
+      {/* Category tabs as colored blocks - Loyverse style */}
+      <div className="flex gap-2 overflow-x-auto pb-3">
+        <CategoryBlock
+          label="All"
+          active={activeCategoryId === "all"}
+          colorClass="bg-blue-100 text-blue-700 border-blue-200"
+          onTap={() => setActiveCategoryId("all")}
+        />
+        <CategoryBlock
+          label="Favorites"
+          active={activeCategoryId === "favorites"}
+          colorClass="bg-emerald-100 text-emerald-700 border-emerald-200"
+          onTap={() => setActiveCategoryId("favorites")}
+        />
+        {categories.map((cat, idx) => (
+          <CategoryBlock
+            key={cat.id}
+            label={cat.name}
+            active={activeCategoryId === cat.id}
+            colorClass={getCategoryColor(idx + 2)}
+            onTap={() => setActiveCategoryId(cat.id)}
+          />
+        ))}
+      </div>
+
+      {/* Product grid with larger tiles */}
+      <div className="grid flex-1 auto-rows-min gap-4 overflow-y-auto grid-cols-2 md:grid-cols-3 xl:grid-cols-3">
+        {filtered.map((item) => {
+          const defaultVariant = item.variants.find((v) => v.id === item.product.defaultVariantId) ?? item.variants[0];
+          const totalStock = item.inventory.reduce((sum, inv) => sum + inv.onHand, 0);
+          const outOfStock = totalStock <= 0;
+          const firstLetter = item.product.name.charAt(0).toUpperCase();
+
+          return (
+            <button
+              key={item.product.id}
+              type="button"
+              disabled={outOfStock}
+              onClick={() => handleProductTap(item)}
+              className={`touch-button product-tile relative flex min-h-40 flex-col justify-between rounded-2xl border-l-4 px-5 py-5 text-left transition-all ${
+                outOfStock
+                  ? "cursor-not-allowed border-l-zinc-200 border border-zinc-200 bg-zinc-50 opacity-50"
+                  : "border border-zinc-200 border-l-teal-500 bg-white hover:shadow-md hover:border-teal-300 active:bg-teal-50"
+              }`}
+            >
+              {/* Stock badge - top right */}
+              {!outOfStock && (
+                <div className="absolute top-3 right-3">
+                  <span className={`inline-block rounded-full px-3 py-1 text-sm font-bold ${
+                    totalStock <= 5 ? "bg-amber-100 text-amber-700" : "bg-teal-100 text-teal-700"
+                  }`}>
+                    {totalStock}
+                  </span>
+                </div>
+              )}
+              {outOfStock && (
+                <div className="absolute top-3 right-3">
+                  <span className="inline-block rounded-full px-3 py-1 text-sm font-bold bg-red-100 text-red-700">
+                    Out
+                  </span>
+                </div>
+              )}
+
+              {/* Product image or avatar */}
+              <div className="mb-3">
+                {item.product.imageUrl ? (
+                  <img
+                    src={item.product.imageUrl}
+                    alt={item.product.name}
+                    className="h-20 w-20 rounded-xl object-cover"
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                  />
+                ) : (
+                  <div className="flex h-20 w-20 items-center justify-center rounded-xl bg-gradient-to-br from-teal-100 to-teal-200">
+                    <span className="text-2xl font-bold text-teal-700">{firstLetter}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Product name and variants */}
+              <div>
+                <p className="text-lg font-semibold leading-snug text-zinc-900 line-clamp-2">{item.product.name}</p>
+                {item.variants.length > 1 && (
+                  <p className="mt-1 text-sm text-zinc-500">{item.variants.length} variants</p>
+                )}
+              </div>
+
+              {/* Price - large and bold */}
+              <div className="mt-3 pt-2 border-t border-zinc-100">
+                <span className="text-3xl font-bold text-teal-600">
+                  ${defaultVariant?.price.toFixed(2) ?? "0.00"}
+                </span>
+              </div>
+            </button>
+          );
+        })}
+        {filtered.length === 0 && (
+          <div className="col-span-full flex flex-col items-center justify-center py-16">
+            <svg className="h-16 w-16 text-zinc-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z" />
+            </svg>
+            <p className="text-lg font-medium text-zinc-500">
+              {searchQuery.trim() ? `No results for "${searchQuery}"` : "No products in this category"}
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Variant picker overlay with cleaner card design */}
+      {variantPickerProduct && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-7 shadow-2xl">
+            {/* Header with product info */}
+            <div className="flex items-start justify-between gap-4 mb-6">
+              <div className="flex items-center gap-4 flex-1">
+                {variantPickerProduct.product.imageUrl ? (
+                  <img
+                    src={variantPickerProduct.product.imageUrl}
+                    alt={variantPickerProduct.product.name}
+                    className="h-16 w-16 rounded-xl object-cover shrink-0"
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                  />
+                ) : (
+                  <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-gradient-to-br from-teal-100 to-teal-200 shrink-0">
+                    <span className="text-xl font-bold text-teal-700">{variantPickerProduct.product.name.charAt(0).toUpperCase()}</span>
+                  </div>
+                )}
+                <h3 className="text-xl font-bold text-zinc-900">{variantPickerProduct.product.name}</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setVariantPickerProduct(null)}
+                className="touch-button rounded-lg bg-zinc-100 p-3 text-zinc-600 hover:bg-zinc-200 transition-colors"
+              >
+                <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Subtitle */}
+            <p className="text-base font-medium text-zinc-600 mb-5">Choose a variant</p>
+
+            {/* Variant list with better spacing */}
+            <div className="grid gap-3">
+              {variantPickerProduct.variants.map((v) => {
+                const inv = variantPickerProduct.inventory.find((i) => i.productVariantId === v.id);
+                const stock = inv?.onHand ?? 0;
+                return (
+                  <button
+                    key={v.id}
+                    type="button"
+                    disabled={stock <= 0}
+                    onClick={() => handleVariantSelect(v, variantPickerProduct.product)}
+                    className={`touch-button flex items-center justify-between rounded-xl border-2 px-5 py-4 transition-all ${
+                      stock <= 0
+                        ? "cursor-not-allowed border-zinc-200 bg-zinc-50 opacity-50"
+                        : "border-zinc-200 bg-white hover:border-teal-300 hover:bg-teal-50 active:border-teal-400"
+                    }`}
+                  >
+                    <div className="text-left min-w-0 flex-1">
+                      <p className="text-lg font-semibold text-zinc-900">{v.name}</p>
+                      {(v.sizeLabel || v.colorLabel) && (
+                        <p className="text-sm text-zinc-500 mt-0.5">
+                          {[v.sizeLabel, v.colorLabel].filter(Boolean).join(" · ")}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-4 ml-3 shrink-0">
+                      <div className="text-right">
+                        <span className="text-sm text-zinc-500">{stock > 0 ? `${stock} in stock` : "Out"}</span>
+                      </div>
+                      <span className="text-2xl font-bold text-teal-600">${v.price.toFixed(2)}</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CategoryBlock({
+  label,
+  active,
+  colorClass,
+  onTap,
+}: {
+  label: string;
+  active: boolean;
+  colorClass: string;
+  onTap: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onTap}
+      className={`touch-button shrink-0 rounded-xl border-2 px-5 py-3 text-base font-semibold transition-all whitespace-nowrap ${
+        active
+          ? `${colorClass} border-current shadow-md scale-105 ring-2 ring-offset-1`
+          : `${colorClass} border-current opacity-75 hover:opacity-100`
+      }`}
+    >
+      {label}
+    </button>
+  );
+}

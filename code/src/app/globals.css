@@ -1,0 +1,267 @@
+@import "tailwindcss";
+
+:root {
+  --surface-app: #f4f4f5;
+  --surface-panel: #ffffff;
+  --surface-panel-muted: #fafafa;
+  --surface-inverse: #18181b;
+  --surface-accent: #0f766e;
+  --surface-danger: #991b1b;
+  --border-subtle: #e4e4e7;
+  --border-strong: #d4d4d8;
+  --text-primary: #18181b;
+  --text-secondary: #52525b;
+  --text-inverse: #fafafa;
+  --status-ok: #166534;
+  --status-warn: #b45309;
+  --status-alert: #b91c1c;
+  --touch-target: 3.5rem;
+  --radius-card: 1.25rem;
+  --shadow-card: 0 16px 40px rgba(24, 24, 27, 0.08);
+  /* Accessibility: larger base for older/vision-impaired workers */
+  --pos-base-font: 1.0625rem;   /* 17px base instead of 16px */
+  --pos-label-font: 0.9375rem;  /* 15px for labels */
+  --pos-small-font: 0.8125rem;  /* 13px for small text */
+}
+
+html.dark {
+  --surface-app: #09090b;
+  --surface-panel: #18181b;
+  --surface-panel-muted: #27272a;
+  --surface-inverse: #fafafa;
+  --surface-accent: #14b8a6;
+  --surface-danger: #ef4444;
+  --border-subtle: #3f3f46;
+  --border-strong: #52525b;
+  --text-primary: #fafafa;
+  --text-secondary: #a1a1aa;
+  --text-inverse: #18181b;
+  --status-ok: #4ade80;
+  --status-warn: #fbbf24;
+  --status-alert: #f87171;
+  --shadow-card: 0 16px 40px rgba(0, 0, 0, 0.3);
+}
+
+/* ─── Accessibility: larger everything for older workers ─── */
+
+/* POS register gets larger fonts globally */
+.pos-shell {
+  font-size: var(--pos-base-font);
+}
+
+/* Larger touch targets on touch devices (tablets, touchscreens) */
+@media (pointer: coarse) {
+  :root {
+    --touch-target: 4.5rem;
+  }
+
+  /* Increase all interactive element sizes */
+  input, select, textarea {
+    min-height: 3.75rem;
+    font-size: 1.125rem;
+  }
+
+  /* Larger category tabs and action buttons */
+  .touch-button {
+    min-height: 4.5rem;
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+    font-size: 1.0625rem;
+  }
+
+  /* Bigger product grid tiles */
+  .product-tile {
+    min-height: 10rem;
+  }
+
+  /* More spacing in lists */
+  .space-y-2 > * + * { margin-top: 0.75rem; }
+  .space-y-3 > * + * { margin-top: 1rem; }
+
+  /* Larger checkboxes and radio buttons */
+  input[type="checkbox"],
+  input[type="radio"] {
+    width: 1.75rem;
+    height: 1.75rem;
+  }
+}
+
+/* Even on mouse/trackpad devices, keep POS elements roomy */
+@media (pointer: fine) {
+  :root {
+    --touch-target: 3.75rem;
+  }
+
+  .product-tile {
+    min-height: 9rem;
+  }
+
+  .touch-button {
+    min-height: 3.75rem;
+  }
+}
+
+@theme inline {
+  --color-background: var(--surface-app);
+  --color-foreground: var(--text-primary);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--surface-app);
+}
+
+body {
+  min-height: 100vh;
+  background: var(--surface-app);
+  color: var(--text-primary);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button,
+[role="button"],
+a {
+  touch-action: manipulation;
+  font-weight: 700;
+}
+
+::selection {
+  background: var(--surface-accent);
+  color: var(--text-inverse);
+}
+
+.pos-shell {
+  min-height: 100vh;
+  padding: 1rem;
+}
+
+.card {
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-panel);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+}
+
+.panel-muted {
+  background: var(--surface-panel-muted);
+}
+
+.kpi {
+  min-height: 5rem;
+}
+
+.touch-button {
+  min-height: var(--touch-target);
+  border-radius: 1rem;
+}
+
+/* Loyverse-inspired smooth transitions */
+.card, .touch-button, button {
+  transition: all 0.15s ease;
+}
+
+/* Subtle hover lift for interactive cards */
+.product-tile:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
+/* Better scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+
+@media (max-width: 768px) {
+  .pos-shell {
+    padding: 0.75rem;
+  }
+}
+
+/* Print styles for Z-report and receipts */
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+    font-size: 11pt;
+  }
+
+  nav, header, [data-print-hide] {
+    display: none !important;
+  }
+
+  .rounded-2xl {
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    break-inside: avoid;
+  }
+
+  * {
+    color: black !important;
+    background: white !important;
+  }
+
+  /* Receipt modal: remove overlay, show receipt content only */
+  #receipt-modal {
+    position: static !important;
+    background: none !important;
+    padding: 0 !important;
+  }
+
+  #receipt-modal > div {
+    box-shadow: none !important;
+    border: none !important;
+    max-width: 80mm !important;
+    margin: 0 auto !important;
+    font-size: 10pt !important;
+  }
+
+  #receipt-content {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+}
+
+/* Dark mode overrides for Tailwind classes used in the register */
+html.dark .bg-white { background-color: var(--surface-panel) !important; }
+html.dark .bg-zinc-50 { background-color: var(--surface-panel-muted) !important; }
+html.dark .bg-zinc-100 { background-color: #27272a !important; }
+html.dark .border-zinc-200 { border-color: var(--border-subtle) !important; }
+html.dark .border-zinc-100 { border-color: #27272a !important; }
+html.dark .text-zinc-900 { color: var(--text-primary) !important; }
+html.dark .text-zinc-800 { color: #e4e4e7 !important; }
+html.dark .text-zinc-700 { color: #d4d4d8 !important; }
+html.dark .text-zinc-600 { color: #a1a1aa !important; }
+html.dark .text-zinc-500 { color: #71717a !important; }
+html.dark .text-zinc-400 { color: #52525b !important; }
+html.dark .shadow-lg { box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4) !important; }
+
+/* Virtual keyboard / numpad slide-up animation */
+@keyframes slide-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+.animate-slide-up {
+  animation: slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+

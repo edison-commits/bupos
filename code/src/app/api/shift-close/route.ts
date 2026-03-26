@@ -1,0 +1,206 @@
+import { NextRequest, NextResponse } from "next/server";
+import { orgQuery, orgTx } from "@/lib/db";
+
+const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
+const LOCATION_ID = "c57268b3-cb14-4c1a-bda6-55e49ddc6313";
+
+/**
+ * GET /api/shift-close?shift=<id>
+ * Fetch current open shift and Z-report data.
+ * If no shift param, fetches the most recent open shift.
+ */
+export async function GET(req: NextRequest) {
+  try {
+    let shiftId = req.nextUrl.searchParams.get("shift");
+
+    if (!shiftId) {
+      const openShifts = await orgQuery(
+        ORG_ID,
+        `SELECT s.id FROM shifts s
+         WHERE s.location_id = $1 AND s.status = 'open'
+         ORDER BY s.opened_at DESC LIMIT 1`,
+        [LOCATION_ID],
+      );
+
+      if (openShifts.rows.length === 0) {
+        return NextResponse.json({ error: "No open shift found" }, { status: 404 });
+      }
+      shiftId = openShifts.rows[0].id;
+    }
+
+    // Fetch shift + employee name, and build Z-report in parallel
+    const [shiftResult, report] = await Promise.all([
+      orgQuery(
+        ORG_ID,
+        `SELECT s.*, e.display_name AS employee_name
+         FROM shifts s
+         LEFT JOIN employees e ON e.id = s.employee_id
+         WHERE s.id = $1`,
+        [shiftId],
+      ),
+      buildZReport(shiftId!),
+    ]);
+
+    if (shiftResult.rows.length === 0) {
+      return NextResponse.json({ error: "Shift not found" }, { status: 404 });
+    }
+
+    const shift = shiftResult.rows[0];
+
+    return NextResponse.json({
+      shift: {
+        id: shift.id,
+        employeeName: shift.employee_name,
+        openedAt: shift.opened_at,
+        closedAt: shift.closed_at,
+        openingFloat: Number(shift.opening_float),
+        status: shift.status,
+      },
+      report,
+    });
+  } catch (error) {
+    console.error("[shift-close GET]", error);
+    return NextResponse.json({ error: "Failed to fetch shift data" }, { status: 500 });
+  }
+}
+
+/**
+ * POST /api/shift-close
+ * Close a shift with declared cash count.
+ * Body: { shiftId, declaredCash, notes? }
+ */
+export async function POST(req: NextRequest) {
+  try {
+    const { shiftId, declaredCash, notes } = await req.json();
+
+    if (!shiftId || declaredCash === undefined) {
+      return NextResponse.json(
+        { error: "Missing required fields: shiftId, declaredCash" },
+        { status: 400 },
+      );
+    }
+
+    const report = await buildZReport(shiftId);
+    const expectedCash = report.expectedCash;
+    const variance = Number(declaredCash) - expectedCash;
+    const ts = new Date().toISOString();
+
+    const client = await orgTx(ORG_ID);
+    try {
+      await client.query(
+        `UPDATE shifts SET
+           status = 'closed',
+           closed_at = $1,
+           closing_declared_cash = $2,
+           closing_expected_cash = $3,
+           closing_variance = $4,
+           closed_note = $5
+         WHERE id = $6`,
+        [ts, declaredCash, expectedCash, variance, notes || null, shiftId],
+      );
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    return NextResponse.json({
+      success: true,
+      shift: { id: shiftId, closedAt: ts, expectedCash, declaredCash: Number(declaredCash), variance },
+      report,
+    });
+  } catch (error) {
+    console.error("[shift-close POST]", error);
+    return NextResponse.json({ error: "Failed to close shift" }, { status: 500 });
+  }
+}
+
+// ── Z-Report builder ─────────────────────────────────────────
+// transactions links to shifts via register_session_id → shifts.register_session_id
+
+interface ZReportData {
+  salesCount: number;
+  salesAmount: number;
+  tenderBreakdown: Array<{ type: string; count: number; amount: number }>;
+  refundsCount: number;
+  refundsAmount: number;
+  netSales: number;
+  payIns: number;
+  payOuts: number;
+  expectedCash: number;
+  openingFloat: number;
+}
+
+async function buildZReport(shiftId: string): Promise<ZReportData> {
+  // 1) Get shift info + transactions + pay in/outs in parallel
+  const [shiftRes, txnsRes, payRes] = await Promise.all([
+    orgQuery(ORG_ID, `SELECT opening_float, register_session_id FROM shifts WHERE id = $1`, [shiftId]),
+    orgQuery(
+      ORG_ID,
+      `SELECT t.id, t.status, t.grand_total
+       FROM transactions t
+       JOIN shifts s ON t.register_session_id = s.register_session_id
+       WHERE s.id = $1`,
+      [shiftId],
+    ),
+    orgQuery(
+      ORG_ID,
+      `SELECT direction, SUM(amount)::numeric AS total
+       FROM pay_in_outs
+       WHERE shift_id = $1
+       GROUP BY direction`,
+      [shiftId],
+    ),
+  ]);
+
+  const openingFloat = shiftRes.rows[0] ? Number(shiftRes.rows[0].opening_float) : 0;
+  const txns = txnsRes.rows;
+  const completed = txns.filter((t: any) => t.status === "completed");
+  const refunded = txns.filter((t: any) => t.status === "refunded" || t.status === "returned");
+
+  // 2) Get tender breakdown for completed transactions
+  const txnIds = completed.map((t: any) => t.id);
+  let tenderBreakdown: Array<{ type: string; count: number; amount: number }> = [];
+
+  if (txnIds.length > 0) {
+    const tenderRes = await orgQuery(
+      ORG_ID,
+      `SELECT tender_type, SUM(amount)::numeric AS amount, COUNT(*)::int AS count
+       FROM transaction_tenders
+       WHERE transaction_id = ANY($1)
+       GROUP BY tender_type
+       ORDER BY amount DESC`,
+      [txnIds],
+    );
+    tenderBreakdown = tenderRes.rows.map((r: any) => ({
+      type: r.tender_type,
+      count: r.count,
+      amount: Number(r.amount),
+    }));
+  }
+
+  const salesAmount = completed.reduce((s: number, t: any) => s + Number(t.grand_total), 0);
+  const refundsAmount = refunded.reduce((s: number, t: any) => s + Math.abs(Number(t.grand_total)), 0);
+
+  const payIns = Number(payRes.rows.find((r: any) => r.direction === "pay_in")?.total ?? 0);
+  const payOuts = Number(payRes.rows.find((r: any) => r.direction === "pay_out")?.total ?? 0);
+
+  const cashTender = tenderBreakdown.find((t) => t.type === "cash");
+  const cashSales = cashTender?.amount ?? 0;
+  const expectedCash = openingFloat + cashSales + payIns - payOuts;
+
+  return {
+    salesCount: completed.length,
+    salesAmount,
+    tenderBreakdown,
+    refundsCount: refunded.length,
+    refundsAmount,
+    netSales: salesAmount - refundsAmount,
+    payIns,
+    payOuts,
+    expectedCash,
+    openingFloat,
+  };
+}

@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "basicuniformpos",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2024-12-30",
+  "compatibility_flags": ["nodejs_compat", "no_handle_cross_request_promise_resolution"],
+
+  // Placement hint: run close to Supabase (us-west-2)
+  "placement": {
+    "mode": "smart"
+  },
+
+  // Environment variables for the Worker
+  "vars": {
+    "USE_POSTGRES": "true",
+    "NEXT_PUBLIC_SUPABASE_URL": "https://jkdgdcfpgxjfdlccvqjf.supabase.co"
+  },
+
+  // Custom domains configured via Cloudflare dashboard (basicuniformpos.com)
+  // Routes removed to avoid needing Zone:Workers Routes:Edit token permission
+
+  // Assets config for OpenNext
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  }
+}

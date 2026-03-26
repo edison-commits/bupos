@@ -1,0 +1,190 @@
+"use client";
+
+import { useState, useTransition } from "react";
+import { cancelLayawayAction, collectLayawayAction, makeLayawayPaymentAction } from "@/app/admin/layaway-actions";
+import type { Layaway, LayawayPayment, Customer, Employee } from "@/lib/domain/types";
+
+const STATUS_COLORS: Record<string, string> = {
+  active: "bg-blue-100 text-blue-800",
+  partially_paid: "bg-amber-100 text-amber-800",
+  paid_in_full: "bg-emerald-100 text-emerald-800",
+  collected: "bg-zinc-100 text-zinc-600",
+  cancelled: "bg-red-100 text-red-800",
+  forfeited: "bg-red-100 text-red-800",
+};
+
+export function LayawayManager({
+  layaways,
+  payments,
+  customers,
+  employees,
+}: {
+  layaways: Layaway[];
+  payments: LayawayPayment[];
+  customers: Customer[];
+  employees: Employee[];
+}) {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+  const [cancelId, setCancelId] = useState<string | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
+
+  const custMap = new Map(customers.map((c) => [c.id, c]));
+  const empMap = new Map(employees.map((e) => [e.id, e]));
+
+  const activeCount = layaways.filter((l) => l.status === "active" || l.status === "partially_paid").length;
+  const totalBalanceDue = layaways
+    .filter((l) => l.status === "active" || l.status === "partially_paid")
+    .reduce((s, l) => s + l.balanceDue, 0);
+
+  return (
+    <div className="space-y-4">
+      {/* Summary */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3">
+          <p className="text-xs text-zinc-500">Total layaways</p>
+          <p className="mt-1 text-2xl font-semibold">{layaways.length}</p>
+        </div>
+        <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3">
+          <p className="text-xs text-zinc-500">Active</p>
+          <p className="mt-1 text-2xl font-semibold">{activeCount}</p>
+        </div>
+        <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3">
+          <p className="text-xs text-zinc-500">Balance outstanding</p>
+          <p className="mt-1 text-2xl font-semibold">${totalBalanceDue.toFixed(2)}</p>
+        </div>
+        <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3">
+          <p className="text-xs text-zinc-500">Payments recorded</p>
+          <p className="mt-1 text-2xl font-semibold">{payments.length}</p>
+        </div>
+      </div>
+
+      {/* Layaway list */}
+      {layaways.length === 0 ? (
+        <p className="py-6 text-center text-sm text-zinc-500">No layaways yet. Layaways are created from the register during checkout.</p>
+      ) : (
+        <div className="space-y-2">
+          {layaways.map((lay) => {
+            const customer = custMap.get(lay.customerId);
+            const employee = empMap.get(lay.employeeId);
+            const layPayments = payments.filter((p) => p.layawayId === lay.id);
+            const isExpanded = selectedId === lay.id;
+
+            return (
+              <div key={lay.id} className="rounded-xl border border-zinc-200 bg-white">
+                <button
+                  onClick={() => setSelectedId(isExpanded ? null : lay.id)}
+                  className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold">
+                        {customer ? `${customer.firstName} ${customer.lastName}` : "Unknown customer"}
+                      </span>
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_COLORS[lay.status]}`}>
+                        {lay.status.replace(/_/g, " ")}
+                      </span>
+                    </div>
+                    <p className="text-xs text-zinc-500">
+                      Total: ${lay.grandTotal.toFixed(2)} · Paid: ${lay.depositPaid.toFixed(2)} · Due: ${lay.balanceDue.toFixed(2)}
+                      {lay.dueDate ? ` · Due: ${lay.dueDate}` : ""}
+                    </p>
+                  </div>
+                  <span className="text-lg font-semibold">${lay.balanceDue.toFixed(2)}</span>
+                </button>
+
+                {isExpanded && (
+                  <div className="border-t border-zinc-100 px-4 py-3 space-y-3">
+                    <div className="text-xs text-zinc-500">
+                      Created by {employee?.displayName ?? "?"} on {new Date(lay.createdAt).toLocaleDateString()}
+                    </div>
+
+                    {/* Payment history */}
+                    {layPayments.length > 0 && (
+                      <div className="space-y-1">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Payments</p>
+                        {layPayments.map((p) => {
+                          const pEmp = empMap.get(p.employeeId);
+                          return (
+                            <div key={p.id} className="flex items-center justify-between text-sm">
+                              <span className="text-zinc-600">
+                                {p.tenderType} · {pEmp?.displayName ?? "?"} · {new Date(p.createdAt).toLocaleDateString()}
+                              </span>
+                              <span className="font-medium text-emerald-700">${p.amount.toFixed(2)}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Actions */}
+                    <div className="flex flex-wrap gap-2">
+                      {(lay.status === "active" || lay.status === "partially_paid") && (
+                        <form
+                          action={(fd) => { startTransition(() => makeLayawayPaymentAction(fd)); }}
+                          className="flex items-center gap-2"
+                        >
+                          <input type="hidden" name="layawayId" value={lay.id} />
+                          <input name="amount" type="number" step="0.01" min="0.01" max={lay.balanceDue} placeholder="Amount $" className="w-24 rounded-lg border border-zinc-300 px-2 py-1 text-xs" />
+                          <select name="tenderType" className="rounded-lg border border-zinc-300 px-2 py-1 text-xs">
+                            <option value="cash">Cash</option>
+                            <option value="card">Card</option>
+                            <option value="store_credit">Store credit</option>
+                          </select>
+                          <button type="submit" disabled={isPending} className="rounded-lg bg-emerald-600 px-3 py-1 text-xs font-semibold text-white disabled:opacity-50">
+                            Pay
+                          </button>
+                        </form>
+                      )}
+
+                      {lay.status === "paid_in_full" && (
+                        <button
+                          onClick={() => { startTransition(() => collectLayawayAction(lay.id)); }}
+                          disabled={isPending}
+                          className="rounded-lg bg-blue-600 px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
+                        >
+                          Mark collected
+                        </button>
+                      )}
+
+                      {(lay.status === "active" || lay.status === "partially_paid") && (
+                        cancelId === lay.id ? (
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={cancelReason}
+                              onChange={(e) => setCancelReason(e.target.value)}
+                              placeholder="Reason"
+                              className="w-32 rounded-lg border border-zinc-300 px-2 py-1 text-xs"
+                            />
+                            <button
+                              onClick={() => { startTransition(async () => { await cancelLayawayAction(lay.id, cancelReason); setCancelId(null); setCancelReason(""); }); }}
+                              disabled={isPending}
+                              className="rounded-lg bg-red-600 px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
+                            >
+                              Confirm cancel
+                            </button>
+                            <button onClick={() => { setCancelId(null); setCancelReason(""); }} className="text-xs text-zinc-500">
+                              Back
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setCancelId(lay.id)}
+                            className="rounded-lg border border-red-300 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
+                          >
+                            Cancel layaway
+                          </button>
+                        )
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
