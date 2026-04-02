@@ -22,6 +22,18 @@ jobs:
         run: npm ci
         working-directory: code
 
+      - name: Run DB migrations
+        run: |
+          psql "${{ secrets.DATABASE_URL }}" \
+            -c "ALTER TABLE products ADD COLUMN IF NOT EXISTS product_brand TEXT DEFAULT '';"
+          psql "${{ secrets.DATABASE_URL }}" \
+            -c "ALTER TABLE products ADD COLUMN IF NOT EXISTS product_type TEXT DEFAULT '';"
+          psql "${{ secrets.DATABASE_URL }}" \
+            -c "CREATE INDEX IF NOT EXISTS idx_products_product_brand ON products(product_brand) WHERE product_brand != '';"
+          psql "${{ secrets.DATABASE_URL }}" \
+            -c "CREATE INDEX IF NOT EXISTS idx_products_product_type ON products(product_type) WHERE product_type != '';"
+        if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+
       - name: Build & Deploy
         run: npm run deploy
         working-directory: code

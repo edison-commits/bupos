@@ -9,6 +9,8 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const search = searchParams.get('search')?.toLowerCase() || '';
     const category = searchParams.get('category') || '';
+    const productType = searchParams.get('type') || '';
+    const brand = searchParams.get('brand') || '';
     const stockFilter = searchParams.get('stock') || 'all';
 
     // Build WHERE clause conditions
@@ -27,11 +29,21 @@ export async function GET(request: NextRequest) {
       params.push(category);
     }
 
+    if (productType) {
+      conditions.push(`LOWER(p.product_type) = $${params.length + 1}`);
+      params.push(productType.toLowerCase());
+    }
+
+    if (brand) {
+      conditions.push(`LOWER(p.product_brand) = $${params.length + 1}`);
+      params.push(brand.toLowerCase());
+    }
+
     const whereClause =
       conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    // Query all products with variants and inventory data using Promise.all for parallelization
-    const [productsResult, categoriesResult, summaryResult] = await Promise.all([
+    // Query all in parallel: products, categories, types, brands, summary
+    const [productsResult, categoriesResult, typesResult, brandsResult, summaryResult] = await Promise.all([
       // Get products with variants and inventory
       orgQuery(
         ORG_ID,
@@ -41,6 +53,8 @@ export async function GET(request: NextRequest) {
           p.name,
           p.slug as product_slug,
           p.category_id,
+          p.product_brand,
+          p.product_type,
           pv.id as variant_id,
           pv.sku,
           pv.size_label,
@@ -61,10 +75,34 @@ export async function GET(request: NextRequest) {
       orgQuery(
         ORG_ID,
         `
-        SELECT DISTINCT p.category_id, p.category_id as id, p.category_id as name
+        SELECT DISTINCT p.category_id as id, p.category_id as name
         FROM products p
         WHERE p.category_id IS NOT NULL
         ORDER BY p.category_id
+        `,
+        []
+      ),
+
+      // Get all distinct product types
+      orgQuery(
+        ORG_ID,
+        `
+        SELECT DISTINCT LOWER(product_type) as value
+        FROM products
+        WHERE product_type IS NOT NULL AND product_type != ''
+        ORDER BY LOWER(product_type)
+        `,
+        []
+      ),
+
+      // Get all distinct brands
+      orgQuery(
+        ORG_ID,
+        `
+        SELECT DISTINCT LOWER(product_brand) as value
+        FROM products
+        WHERE product_brand IS NOT NULL AND product_brand != ''
+        ORDER BY LOWER(product_brand)
         `,
         []
       ),
@@ -103,6 +141,8 @@ export async function GET(request: NextRequest) {
       name: string;
       slug: string;
       categoryId: string | null;
+      productBrand: string;
+      productType: string;
       variants: ProductVariant[];
     }
 
@@ -115,6 +155,8 @@ export async function GET(request: NextRequest) {
           name: row.name,
           slug: row.product_slug,
           categoryId: row.category_id,
+          productBrand: row.product_brand ?? '',
+          productType: row.product_type ?? '',
           variants: [],
         });
       }
@@ -152,10 +194,14 @@ export async function GET(request: NextRequest) {
     }
 
     const summary = summaryResult.rows[0] as any;
+    const types = typesResult.rows.map((r: any) => r.value).filter(Boolean);
+    const brands = brandsResult.rows.map((r: any) => r.value).filter(Boolean);
 
     return NextResponse.json({
       products: filteredProducts,
       categories: categoriesResult.rows,
+      types,
+      brands,
       summary: {
         totalProducts: parseInt(summary.total_products) || 0,
         totalVariants: parseInt(summary.total_variants) || 0,

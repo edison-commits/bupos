@@ -26,6 +26,16 @@ interface Category {
   name: string;
 }
 
+interface Product {
+  id: string;
+  name: string;
+  slug: string;
+  categoryId: string | null;
+  productBrand: string;
+  productType: string;
+  variants: ProductVariant[];
+}
+
 interface InventorySummary {
   totalProducts: number;
   totalVariants: number;
@@ -36,6 +46,8 @@ interface InventorySummary {
 interface InventoryData {
   products: Product[];
   categories: Category[];
+  types: string[];
+  brands: string[];
   summary: InventorySummary;
 }
 
@@ -45,6 +57,8 @@ export default function InventoryPage() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
+  const [selectedType, setSelectedType] = useState('');
+  const [selectedBrand, setSelectedBrand] = useState('');
   const [stockFilter, setStockFilter] = useState<'all' | 'low' | 'out'>('all');
   const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());
 
@@ -56,6 +70,8 @@ export default function InventoryPage() {
       const params = new URLSearchParams();
       if (search) params.append('search', search);
       if (selectedCategory) params.append('category', selectedCategory);
+      if (selectedType) params.append('type', selectedType);
+      if (selectedBrand) params.append('brand', selectedBrand);
       if (stockFilter !== 'all') params.append('stock', stockFilter);
 
       const response = await fetch(`/api/inventory?${params.toString()}`);
@@ -70,7 +86,7 @@ export default function InventoryPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, selectedCategory, stockFilter]);
+  }, [search, selectedCategory, selectedType, selectedBrand, stockFilter]);
 
   useEffect(() => {
     fetchInventory();
@@ -126,6 +142,8 @@ export default function InventoryPage() {
   };
   const products = data?.products || [];
   const categories = data?.categories || [];
+  const types = data?.types || [];
+  const brands = data?.brands || [];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-8">
@@ -176,7 +194,7 @@ export default function InventoryPage() {
         <div className="bg-white rounded-lg shadow-sm p-6 mb-8 border border-slate-200">
           <div className="space-y-6">
             {/* Search and Filters Row */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">
                   Search
@@ -208,6 +226,45 @@ export default function InventoryPage() {
                 </select>
               </div>
 
+              {/* Type filter */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Type
+                </label>
+                <select
+                  value={selectedType}
+                  onChange={(e) => setSelectedType(e.target.value)}
+                  className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent transition"
+                >
+                  <option value="">All Types</option>
+                  {types.map((t) => (
+                    <option key={t} value={t}>
+                      {t.charAt(0).toUpperCase() + t.slice(1)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Brand filter */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Brand
+                </label>
+                <select
+                  value={selectedBrand}
+                  onChange={(e) => setSelectedBrand(e.target.value)}
+                  className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent transition"
+                >
+                  <option value="">All Brands</option>
+                  {brands.map((b) => (
+                    <option key={b} value={b}>
+                      {b.charAt(0).toUpperCase() + b.slice(1)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Stock filter */}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">
                   Stock Status
@@ -338,7 +395,12 @@ function ProductCard({
             <h3 className="font-semibold text-slate-900 text-lg">
               {product.name}
             </h3>
-            <p className="text-sm text-slate-600">{product.slug}</p>
+            <p className="text-sm text-slate-600">
+              {product.productBrand && <span className="font-medium">{product.productBrand}</span>}
+              {product.productBrand && product.productType && ' · '}
+              {product.productType && <span>{product.productType}</span>}
+              {!product.productBrand && !product.productType && product.slug}
+            </p>
           </div>
           <div className="text-right">
             <p className="text-sm text-slate-600">
