@@ -31,6 +31,13 @@ export default async function RegisterPage({
     ? store!.locations[0] ?? session.location
     : await getDefaultLocation();
 
+  const sidebarProps = session
+    ? {
+        employeeName: `${session.employee.firstName} ${session.employee.lastName}`,
+        isClockedIn: session.activeShift !== null,
+      }
+    : {};
+
   const notice = typeof params.notice === "string" ? params.notice.replaceAll("+", " ") : undefined;
   const error = typeof params.error === "string" ? params.error.replaceAll("+", " ") : undefined;
 
@@ -38,7 +45,7 @@ export default async function RegisterPage({
     <div className="pos-shell">
       <AppNav />
       <div className="mx-auto flex w-full max-w-7xl px-4 py-6 md:px-6">
-        <PosSidebar />
+        <PosSidebar {...sidebarProps} />
         <main className="flex-1 min-w-0">
           {session ? (
             <RegisterConsole store={store!} context={session} notice={notice} error={error} />
