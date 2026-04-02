@@ -218,7 +218,7 @@ export default function CustomerManagement() {
               resetForm();
               setModalMode('create');
             }}
-            className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-white hover:bg-emerald-700 transition-colors font-medium"
+            className="flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-4 text-white hover:bg-emerald-700 transition-colors font-medium"
           >
             <Plus className="h-5 w-5" />
             Add Customer
@@ -482,7 +482,7 @@ export default function CustomerManagement() {
               <div className="flex gap-3 pt-4">
                 <button
                   type="submit"
-                  className="flex-1 rounded-lg bg-emerald-600 px-4 py-2 text-white font-medium hover:bg-emerald-700 transition-colors"
+                  className="flex-1 rounded-lg bg-emerald-600 px-5 py-4 text-white font-medium hover:bg-emerald-700 transition-colors"
                 >
                   {modalMode === 'create' ? 'Create' : 'Update'}
                 </button>
@@ -492,7 +492,7 @@ export default function CustomerManagement() {
                     setModalMode(null);
                     resetForm();
                   }}
-                  className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-gray-700 font-medium hover:bg-gray-50 transition-colors"
+                  className="flex-1 rounded-2xl border-2 border-gray-300 px-5 py-4 text-lg font-bold text-gray-700 hover:bg-gray-50 transition-colors"
                 >
                   Cancel
                 </button>
@@ -574,13 +574,13 @@ export default function CustomerManagement() {
                 <div className="flex gap-3 pt-4 border-t border-gray-200">
                   <button
                     onClick={() => openEditModal(selectedCustomer)}
-                    className="flex-1 rounded-lg bg-emerald-600 px-4 py-2 text-white font-medium hover:bg-emerald-700 transition-colors"
+                    className="flex-1 rounded-lg bg-emerald-600 px-5 py-4 text-white font-medium hover:bg-emerald-700 transition-colors"
                   >
                     Edit Customer
                   </button>
                   <button
                     onClick={() => setModalMode(null)}
-                    className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-gray-700 font-medium hover:bg-gray-50 transition-colors"
+                    className="flex-1 rounded-2xl border-2 border-gray-300 px-5 py-4 text-lg font-bold text-gray-700 hover:bg-gray-50 transition-colors"
                   >
                     Close
                   </button>

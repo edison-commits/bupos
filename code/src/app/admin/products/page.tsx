@@ -320,13 +320,13 @@ export default function ProductsPage() {
           </select>
           <button
             onClick={() => setModal({ type: 'import-csv' })}
-            className="rounded-lg border border-emerald-300 bg-white px-4 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50"
+            className="rounded-lg border-2 border-emerald-300 bg-white px-5 py-4 text-lg font-bold text-emerald-700 hover:bg-emerald-50"
           >
             📥 Import CSV
           </button>
           <button
             onClick={() => setModal({ type: 'add-product' })}
-            className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+            className="rounded-lg bg-emerald-600 px-5 py-4 text-lg font-bold text-white hover:bg-emerald-700"
           >
             + Add Product
           </button>
@@ -361,7 +361,7 @@ export default function ProductsPage() {
           <h3 className="font-semibold text-emerald-900">Categories ({data?.categories.length || 0})</h3>
           <button
             onClick={() => setShowCategoryForm(!showCategoryForm)}
-            className="rounded-lg bg-emerald-100 px-3 py-1 text-sm font-medium text-emerald-700 hover:bg-emerald-200"
+            className="rounded-lg bg-emerald-100 px-4 py-2 text-base font-semibold text-emerald-700 hover:bg-emerald-200"
           >
             {showCategoryForm ? 'Cancel' : '+ Add Category'}
           </button>
@@ -378,7 +378,7 @@ export default function ProductsPage() {
             <button
               onClick={handleAddCategory}
               disabled={saving}
-              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+              className="rounded-lg bg-emerald-600 px-5 py-4 text-lg font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
             >
               Save
             </button>
@@ -396,7 +396,7 @@ export default function ProductsPage() {
       {/* Export Button */}
       <button
         onClick={handleExportCSV}
-        className="w-full rounded-lg bg-teal-600 px-4 py-2 font-medium text-white hover:bg-teal-700"
+        className="w-full rounded-lg bg-teal-600 px-5 py-4 text-lg font-bold text-white hover:bg-teal-700"
       >
         Export to CSV
       </button>
@@ -539,7 +539,7 @@ function ProductRow({ product, expanded, onToggleExpand, onEdit, onDelete, onAdd
           )}
           <button
             onClick={onAddVariant}
-            className="mt-2 rounded-lg bg-emerald-100 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-200"
+            className="mt-2 rounded-lg bg-emerald-100 px-5 py-3 text-base font-semibold text-emerald-700 hover:bg-emerald-200"
           >
             + Add Variant
           </button>
@@ -824,14 +824,14 @@ function AddProductModal({ categories = [], onSave, onClose, saving }: ModalProp
         <div className="mt-4 flex gap-2">
           <button
             onClick={onClose}
-            className="flex-1 rounded-lg border border-emerald-200 px-4 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50"
+            className="flex-1 rounded-lg border-2 border-emerald-300 px-5 py-4 text-lg font-bold text-emerald-700 hover:bg-emerald-50"
           >
             Cancel
           </button>
           <button
             onClick={handleSubmit}
             disabled={saving}
-            className="flex-1 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+            className="flex-1 rounded-lg bg-emerald-600 px-5 py-4 text-lg font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
           >
             {saving ? 'Saving...' : 'Save'}
           </button>
@@ -875,8 +875,8 @@ function EditProductModal({ product, categories = [], onSave, onClose, saving }:
           </div>
         </div>
         <div className="mt-4 flex gap-2">
-          <button onClick={onClose} className="flex-1 rounded-lg border border-emerald-200 px-4 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50">Cancel</button>
-          <button onClick={handleSubmit} disabled={saving} className="flex-1 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">{saving ? 'Saving...' : 'Save'}</button>
+          <button onClick={onClose} className="flex-1 rounded-lg border-2 border-emerald-300 px-5 py-4 text-lg font-bold text-emerald-700 hover:bg-emerald-50">Cancel</button>
+          <button onClick={handleSubmit} disabled={saving} className="flex-1 rounded-lg bg-emerald-600 px-5 py-4 text-lg font-bold text-white hover:bg-emerald-700 disabled:opacity-50">{saving ? 'Saving...' : 'Save'}</button>
         </div>
       </div>
     </div>
@@ -918,8 +918,8 @@ function AddVariantModal({ onSave, onClose, saving }: ModalProps) {
           <input type="number" placeholder="Cost" step="0.01" value={formData.cost} onChange={e => setFormData({ ...formData, cost: parseFloat(e.target.value) })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
         </div>
         <div className="mt-4 flex gap-2">
-          <button onClick={onClose} className="flex-1 rounded-lg border border-emerald-200 px-4 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50">Cancel</button>
-          <button onClick={handleSubmit} disabled={saving} className="flex-1 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">{saving ? 'Saving...' : 'Save'}</button>
+          <button onClick={onClose} className="flex-1 rounded-lg border-2 border-emerald-300 px-5 py-4 text-lg font-bold text-emerald-700 hover:bg-emerald-50">Cancel</button>
+          <button onClick={handleSubmit} disabled={saving} className="flex-1 rounded-lg bg-emerald-600 px-5 py-4 text-lg font-bold text-white hover:bg-emerald-700 disabled:opacity-50">{saving ? 'Saving...' : 'Save'}</button>
         </div>
       </div>
     </div>
@@ -943,8 +943,8 @@ function EditVariantModal({ variant, onSave, onClose, saving }: ModalProps) {
           <input type="number" placeholder="Stock" value={formData.stock || 0} onChange={e => setFormData({ ...formData, stock: parseInt(e.target.value) })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
         </div>
         <div className="mt-4 flex gap-2">
-          <button onClick={onClose} className="flex-1 rounded-lg border border-emerald-200 px-4 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50">Cancel</button>
-          <button onClick={handleSubmit} disabled={saving} className="flex-1 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">{saving ? 'Saving...' : 'Save'}</button>
+          <button onClick={onClose} className="flex-1 rounded-lg border-2 border-emerald-300 px-5 py-4 text-lg font-bold text-emerald-700 hover:bg-emerald-50">Cancel</button>
+          <button onClick={handleSubmit} disabled={saving} className="flex-1 rounded-lg bg-emerald-600 px-5 py-4 text-lg font-bold text-white hover:bg-emerald-700 disabled:opacity-50">{saving ? 'Saving...' : 'Save'}</button>
         </div>
       </div>
     </div>

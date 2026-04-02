@@ -251,7 +251,7 @@ export default function ReceivingPage() {
                 color: 'var(--text-primary)',
                 borderColor: 'var(--border-default)',
               }}
-              className="rounded border px-4 py-2 text-sm font-medium transition hover:opacity-80"
+              className="rounded-2xl border-2 px-5 py-4 text-lg font-bold transition hover:opacity-80"
             >
               Back to Inventory
             </Link>

@@ -279,7 +279,7 @@ export default function EmployeeManagement() {
           <h1 className="text-3xl font-bold text-slate-900">Employee Management</h1>
           <button
             onClick={openCreateModal}
-            className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-white hover:bg-emerald-700"
+            className="flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-4 text-white hover:bg-emerald-700"
           >
             <Plus className="h-5 w-5" />
             Add Employee
@@ -544,7 +544,7 @@ export default function EmployeeManagement() {
               </button>
               <button
                 onClick={modalMode === 'create' ? handleCreateEmployee : handleUpdateEmployee}
-                className="flex-1 rounded bg-emerald-600 px-4 py-2 text-white hover:bg-emerald-700"
+                className="flex-1 rounded bg-emerald-600 px-5 py-4 text-white hover:bg-emerald-700"
               >
                 {modalMode === 'create' ? 'Create' : 'Update'}
               </button>
@@ -596,7 +596,7 @@ export default function EmployeeManagement() {
               </button>
               <button
                 onClick={handleResetPin}
-                className="flex-1 rounded bg-emerald-600 px-4 py-2 text-white hover:bg-emerald-700"
+                className="flex-1 rounded bg-emerald-600 px-5 py-4 text-white hover:bg-emerald-700"
               >
                 Reset PIN
               </button>

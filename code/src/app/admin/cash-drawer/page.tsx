@@ -288,14 +288,14 @@ export default function CashDrawerPage() {
                 <div className="flex gap-3 mt-6 pt-6 border-t border-gray-200">
                   <button
                     onClick={() => setShowPayInForm(true)}
-                    className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-green-50 text-green-700 rounded-lg border border-green-200 hover:bg-green-100 transition-colors font-medium"
+                    className="flex-1 flex items-center justify-center gap-2 px-5 py-4 bg-green-50 text-green-700 rounded-2xl border-2 border-green-200 hover:bg-green-100 transition-colors font-medium"
                   >
                     <Plus className="w-5 h-5" />
                     Pay In
                   </button>
                   <button
                     onClick={() => setShowPayOutForm(true)}
-                    className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-red-50 text-red-700 rounded-lg border border-red-200 hover:bg-red-100 transition-colors font-medium"
+                    className="flex-1 flex items-center justify-center gap-2 px-5 py-4 bg-red-50 text-red-700 rounded-2xl border-2 border-red-200 hover:bg-red-100 transition-colors font-medium"
                   >
                     <Minus className="w-5 h-5" />
                     Pay Out

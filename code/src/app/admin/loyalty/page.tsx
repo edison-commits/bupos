@@ -516,14 +516,14 @@ export default function LoyaltyDashboard() {
               <div className="flex gap-3 pt-4">
                 <button
                   onClick={() => setModalMode(null)}
-                  className="flex-1 rounded border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  className="flex-1 rounded border-2 border-slate-300 px-5 py-4 text-lg font-bold text-slate-700 hover:bg-slate-50"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleAdjustment}
                   disabled={adjustmentLoading}
-                  className="flex-1 rounded bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                  className="flex-1 rounded bg-emerald-600 px-5 py-4 text-lg font-bold text-white hover:bg-emerald-700 disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   {adjustmentLoading && <Loader2 className="animate-spin" size={16} />}
                   Apply
