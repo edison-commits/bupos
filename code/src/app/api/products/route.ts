@@ -371,3 +371,134 @@ export async function DELETE(request: NextRequest) {
     client.release();
   }
 }
+
+export async function PATCH(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { action } = body;
+
+    if (action === 'import_csv') {
+      const { rows } = body; // array of product rows from CSV
+      if (!Array.isArray(rows)) {
+        return NextResponse.json({ error: 'Invalid CSV data' }, { status: 400 });
+      }
+
+      const results: { row: number; status: 'created' | 'updated' | 'skipped'; name: string; message?: string }[] = [];
+      let created = 0;
+      let skipped = 0;
+
+      // Build category lookup map
+      const catsResult = await orgQuery(ORG_ID, `SELECT id, name FROM categories WHERE organization_id = $1`, [ORG_ID]);
+      const catMap = new Map(catsResult.rows.map((r: any) => [r.name.toLowerCase(), r.id]));
+
+      // Get existing products by name (within this org)
+      const existingResult = await orgQuery(ORG_ID, `SELECT id, name, category_id FROM products WHERE organization_id = $1`, [ORG_ID]);
+      const productMap = new Map(existingResult.rows.map((r: any) => [r.name.toLowerCase(), r]));
+
+      // Get existing variants by SKU
+      const variantResult = await orgQuery(ORG_ID, `SELECT id, sku FROM product_variants WHERE organization_id = $1 AND sku IS NOT NULL AND sku != ''`, [ORG_ID]);
+      const skuMap = new Map(variantResult.rows.map((r: any) => [r.sku.toLowerCase(), r.id]));
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const rowNum = i + 2; // +2 for 1-indexed + header row
+
+        try {
+          const name = String(row.name || row.Name || row.PRODUCT_NAME || '').trim();
+          const sku = String(row.sku || row.SKU || row.Variant_SKU || '').trim().toLowerCase();
+          const price = parseFloat(row.price || row.Price || row.PRICE || '0');
+          const categoryName = String(row.category || row.Category || row.CATEGORY_NAME || '').trim().toLowerCase();
+          const sizeLabel = String(row.size || row.Size || row.SIZE_LABEL || '').trim();
+          const colorLabel = String(row.color || row.Color || row.COLOR_LABEL || '').trim();
+          const cost = parseFloat(row.cost || row.Cost || row.COST || '0') || 0;
+          const barcode = String(row.barcode || row.Barcode || row.BARCODE || '').trim();
+          const description = String(row.description || row.Description || row.DESCRIPTION || '').trim();
+          const imageUrl = String(row.image_url || row.imageUrl || row.IMAGE_URL || '').trim();
+          const isActive = String(row.is_active || row.isActive || row.IS_ACTIVE || 'true').toLowerCase() !== 'false';
+
+          if (!name) {
+            results.push({ row: rowNum, status: 'skipped', name: '(empty)', message: 'Missing product name' });
+            skipped++;
+            continue;
+          }
+          if (!sku) {
+            results.push({ row: rowNum, status: 'skipped', name, message: 'Missing SKU' });
+            skipped++;
+            continue;
+          }
+          if (isNaN(price) || price <= 0) {
+            results.push({ row: rowNum, status: 'skipped', name, message: 'Invalid price' });
+            skipped++;
+            continue;
+          }
+
+          // Look up or create category
+          let categoryId: string | null = null;
+          if (categoryName) {
+            if (catMap.has(categoryName)) {
+              categoryId = catMap.get(categoryName)!;
+            } else {
+              const slug = categoryName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+              const catInsert = await orgQuery(
+                ORG_ID,
+                `INSERT INTO categories (id, organization_id, name, slug, created_at, updated_at)
+                 VALUES (gen_random_uuid(), $1, $2, $3, NOW(), NOW())
+                 RETURNING id`,
+                [ORG_ID, categoryName.charAt(0).toUpperCase() + categoryName.slice(1), slug]
+              );
+              categoryId = catInsert.rows[0].id;
+              catMap.set(categoryName, categoryId);
+            }
+          }
+
+          // Check if variant with this SKU already exists
+          if (skuMap.has(sku)) {
+            results.push({ row: rowNum, status: 'skipped', name, message: `SKU "${sku}" already exists` });
+            skipped++;
+            continue;
+          }
+
+          // Get or create product by name
+          let productId: string;
+          if (productMap.has(name.toLowerCase())) {
+            productId = productMap.get(name.toLowerCase())!.id;
+          } else {
+            const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+            const prodInsert = await orgQuery(
+              ORG_ID,
+              `INSERT INTO products (id, organization_id, category_id, name, slug, description, image_url, is_active, is_touch_favorite, created_at, updated_at)
+               VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, false, NOW(), NOW())
+               RETURNING id`,
+              [ORG_ID, categoryId, name, slug, description || null, imageUrl || null, isActive]
+            );
+            productId = prodInsert.rows[0].id;
+            productMap.set(name.toLowerCase(), { id: productId });
+          }
+
+          // Insert variant
+          const variantName = [sizeLabel, colorLabel].filter(Boolean).join(' / ') || name;
+          const varInsert = await orgQuery(
+            ORG_ID,
+            `INSERT INTO product_variants (id, organization_id, product_id, sku, barcode, name, size_label, color_label, price, cost, is_active, created_at, updated_at)
+             VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+             RETURNING id`,
+            [ORG_ID, productId, sku, barcode || null, variantName, sizeLabel || null, colorLabel || null, price, cost, isActive]
+          );
+          skuMap.set(sku, varInsert.rows[0].id);
+          results.push({ row: rowNum, status: 'created', name });
+          created++;
+        } catch (rowErr) {
+          results.push({ row: rowNum, status: 'skipped', name: String(row.name || '?'), message: String((rowErr as Error).message) });
+          skipped++;
+        }
+      }
+
+      return NextResponse.json({ created, skipped, total: rows.length, results });
+    }
+
+    return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
+  } catch (error) {
+    console.error('Products PATCH error:', error);
+    return NextResponse.json({ error: 'Failed to process request' }, { status: 500 });
+  }
+}

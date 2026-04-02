@@ -54,7 +54,7 @@ interface ProductsData {
 }
 
 interface ModalState {
-  type: 'add-product' | 'edit-product' | 'add-variant' | 'edit-variant' | null;
+  type: 'add-product' | 'edit-product' | 'add-variant' | 'edit-variant' | 'import-csv' | null;
   productId?: string;
   variantId?: string;
   data?: Partial<Product> | Partial<ProductVariant>;
@@ -174,6 +174,26 @@ export default function ProductsPage() {
       fetchProducts();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to delete product');
+    }
+  };
+
+  const handleImportCSV = async (rows: Record<string, string>[]) => {
+    setSaving(true);
+    try {
+      const response = await fetch('/api/products', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'import_csv', rows }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Import failed');
+      setModal({ type: null });
+      fetchProducts();
+      alert(`Import complete: ${result.created} products/variants created, ${result.skipped} skipped`);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Import failed');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -299,6 +319,12 @@ export default function ProductsPage() {
             <option value="inactive">Inactive Only</option>
           </select>
           <button
+            onClick={() => setModal({ type: 'import-csv' })}
+            className="rounded-lg border border-emerald-300 bg-white px-4 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50"
+          >
+            📥 Import CSV
+          </button>
+          <button
             onClick={() => setModal({ type: 'add-product' })}
             className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
           >
@@ -376,6 +402,13 @@ export default function ProductsPage() {
       </button>
 
       {/* Modals */}
+      {modal.type === 'import-csv' && (
+        <CSVImportModal
+          onImport={handleImportCSV}
+          onClose={() => setModal({ type: null })}
+          saving={saving}
+        />
+      )}
       {modal.type === 'add-product' && (
         <AddProductModal
           categories={data?.categories || []}
@@ -523,6 +556,188 @@ interface ModalProps {
   saving: boolean;
   product?: Product;
   variant?: ProductVariant;
+}
+
+function CSVImportModal({
+  onImport,
+  onClose,
+  saving,
+}: {
+  onImport: (rows: Record<string, string>[]) => void;
+  onClose: () => void;
+  saving: boolean;
+}) {
+  const [dragOver, setDragOver] = useState(false);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [preview, setPreview] = useState<string[][]>([]);
+  const [headers, setHeaders] = useState<string[]>([]);
+  const [parsedRows, setParsedRows] = useState<Record<string, string>[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleFile = (file: File) => {
+    setError(null);
+    setFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result as string;
+      const lines = text.trim().split('\n');
+      if (lines.length < 2) {
+        setError('CSV must have a header row and at least one data row');
+        return;
+      }
+      const parseLine = (line: string) => {
+        const vals: string[] = [];
+        let current = '';
+        let inQuotes = false;
+        for (const ch of line) {
+          if (ch === '"') {
+            inQuotes = !inQuotes;
+          } else if (ch === ',' && !inQuotes) {
+            vals.push(current.trim());
+            current = '';
+          } else {
+            current += ch;
+          }
+        }
+        vals.push(current.trim());
+        return vals;
+      };
+      const hdrs = parseLine(lines[0]);
+      const rows = lines.slice(1).map((line) => {
+        const vals = parseLine(line);
+        const obj: Record<string, string> = {};
+        hdrs.forEach((h, i) => { obj[h] = vals[i] || ''; });
+        return obj;
+      }).filter((r) => Object.values(r).some((v) => v.trim() !== ''));
+      setHeaders(hdrs);
+      setParsedRows(rows);
+      setPreview(rows.slice(0, 5).map((r) => hdrs.map((h) => r[h] || '')));
+    };
+    reader.readAsText(file);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleFile(file);
+  };
+
+  const handleSubmit = () => {
+    if (!fileName) { setError('Please select a CSV file first'); return; }
+    if (parsedRows.length === 0) { setError('No valid data rows found in CSV'); return; }
+    onImport(parsedRows);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+      <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between rounded-t-2xl border-b border-gray-200 px-6 py-4">
+          <div>
+            <h2 className="text-xl font-bold text-gray-900">Import Products from CSV</h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Upload a CSV with columns: name, sku, price, category, size, color, cost, barcode, description
+            </p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 ml-4">
+            ✕
+          </button>
+        </div>
+
+        <div className="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
+          {/* Drop zone */}
+          <div
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={handleDrop}
+            onClick={() => document.getElementById('csv-file-input')?.click()}
+            className={`flex flex-col items-center justify-center rounded-2xl border-2 border-dashed cursor-pointer p-10 transition-colors ${
+              dragOver ? 'border-emerald-500 bg-emerald-50' : 'border-gray-300 hover:border-emerald-400 hover:bg-gray-50'
+            }`}
+          >
+            <div className="text-4xl mb-3">📄</div>
+            <p className="text-base font-semibold text-gray-700">
+              {fileName ? `Selected: ${fileName}` : 'Drop your CSV file here, or click to browse'}
+            </p>
+            <p className="mt-2 text-sm text-gray-500">Supports .csv files</p>
+            <input
+              id="csv-file-input"
+              type="file"
+              accept=".csv,text/csv"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleFile(file);
+              }}
+            />
+          </div>
+
+          {/* Format guide */}
+          <div className="rounded-xl bg-slate-50 border border-slate-200 p-4">
+            <p className="text-sm font-semibold text-slate-700 mb-2">Required CSV columns:</p>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-slate-600 font-mono">
+              {['name', 'sku', 'price', 'category', 'size_label', 'color_label', 'cost', 'barcode', 'description', 'image_url'].map((col) => (
+                <span key={col}>{col}</span>
+              ))}
+            </div>
+            <p className="mt-2 text-xs text-slate-500">
+              Case-insensitive. Rows with duplicate SKUs are skipped.
+            </p>
+          </div>
+
+          {/* Preview */}
+          {preview.length > 0 && (
+            <div>
+              <p className="text-sm font-semibold text-gray-700 mb-2">Preview (first 5 rows):</p>
+              <div className="overflow-x-auto rounded-xl border border-gray-200">
+                <table className="w-full text-xs font-mono">
+                  <thead>
+                    <tr className="bg-gray-50">
+                      {headers.map((h) => (
+                        <th key={h} className="px-3 py-2 text-left text-gray-600 font-semibold whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {preview.map((row, i) => (
+                      <tr key={i} className="border-t border-gray-100">
+                        {row.map((cell, j) => (
+                          <td key={j} className="px-3 py-2 text-gray-700 whitespace-nowrap">{cell}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {error && (
+            <div className="rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">{error}</div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-3 rounded-b-2xl border-t border-gray-200 px-6 py-4">
+          <button
+            onClick={onClose}
+            disabled={saving}
+            className="rounded-xl border border-gray-300 px-5 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={saving || !fileName}
+            className="rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-2"
+          >
+            {saving ? 'Importing...' : '📥 Import Products'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function AddProductModal({ categories = [], onSave, onClose, saving }: ModalProps) {
