@@ -13,7 +13,11 @@ export const pool = new Pool({
   ssl: isRemote ? { rejectUnauthorized: false } : undefined,
   ...(isRemote && {
     idleTimeoutMillis: 5_000,
-    max: 3,
+    max: 10,
+    allowIdleCursors: false,
+  }),
+  ...(!isRemote && {
+    max: 5,
   }),
 });
 

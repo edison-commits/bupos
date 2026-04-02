@@ -4,6 +4,25 @@ import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import type { Category, InventoryLevel, Product, ProductVariant } from "@/lib/domain/types";
 import { VirtualKeyboard } from "@/components/ui/virtual-keyboard";
 
+// Web Audio beep for scan feedback
+function playScanBeep(success: boolean) {
+  try {
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = "sine";
+    osc.frequency.value = success ? 880 : 330; // high pitch success, low pitch error
+    gain.gain.value = 0.15;
+    osc.start();
+    osc.stop(ctx.currentTime + 0.1);
+    osc.onended = () => ctx.close();
+  } catch {
+    // Web Audio not available — silently skip
+  }
+}
+
 export interface ProductGridItem {
   product: Product;
   variants: ProductVariant[];
@@ -29,8 +48,24 @@ const CATEGORY_COLORS = [
   "bg-lime-100 text-lime-700 border-lime-200",
 ];
 
+// Filled chip colors for active category pills
+const CATEGORY_CHIP_ACTIVE = [
+  "bg-blue-600 text-white",
+  "bg-emerald-600 text-white",
+  "bg-amber-600 text-white",
+  "bg-pink-600 text-white",
+  "bg-purple-600 text-white",
+  "bg-cyan-600 text-white",
+  "bg-rose-600 text-white",
+  "bg-lime-600 text-white",
+];
+
 function getCategoryColor(index: number): string {
   return CATEGORY_COLORS[index % CATEGORY_COLORS.length];
+}
+
+function getCategoryChipActive(index: number): string {
+  return CATEGORY_CHIP_ACTIVE[index % CATEGORY_CHIP_ACTIVE.length];
 }
 
 export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) {
@@ -69,11 +104,13 @@ export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) 
     const match = scanLookup.get(q);
     if (match) {
       if (match.stock <= 0) {
+        playScanBeep(false);
         setScanFeedback(`${match.product.name} — out of stock`);
         return;
       }
       // Delay slightly to let barcode scanners finish (they type fast then press Enter)
       scanTimeoutRef.current = setTimeout(() => {
+        playScanBeep(true);
         onAddItem(match.variant, match.product);
         setSearchQuery("");
         setScanFeedback(`Added: ${match.product.name} — ${match.variant.name}`);
@@ -91,9 +128,11 @@ export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) 
     if (match) {
       if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
       if (match.stock <= 0) {
+        playScanBeep(false);
         setScanFeedback(`${match.product.name} — out of stock`);
         return;
       }
+      playScanBeep(true);
       onAddItem(match.variant, match.product);
       setSearchQuery("");
       setScanFeedback(`Added: ${match.product.name} — ${match.variant.name}`);
@@ -165,7 +204,12 @@ export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) 
             onChange={(e) => handleSearchChange(e.target.value)}
             onKeyDown={handleSearchKeyDown}
             placeholder="Search, scan or SKU..."
-            className="w-full rounded-2xl border border-zinc-200 bg-white px-12 py-4 text-lg placeholder:text-zinc-400 focus:border-teal-500 focus:ring-2 focus:ring-teal-200 focus:outline-none transition-all"
+            className="w-full rounded-2xl border px-12 py-4 text-lg focus:ring-2 focus:outline-none transition-all"
+            style={{
+              borderColor: 'var(--border-subtle)',
+              background: 'var(--surface-panel)',
+              color: 'var(--text-primary)',
+            }}
           />
 
           {/* Keyboard toggle + barcode icon on the right */}
@@ -195,7 +239,11 @@ export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) 
           </div>
         </div>
         {scanFeedback && (
-          <p className="mt-2 rounded-xl bg-teal-50 px-4 py-2.5 text-base font-medium text-teal-700 border border-teal-200">{scanFeedback}</p>
+          <p className={`mt-2 rounded-full px-3 py-1 text-sm font-medium inline-block scan-feedback-fade ${
+            scanFeedback.includes("out of stock")
+              ? "bg-red-100 text-red-700"
+              : "bg-emerald-100 text-emerald-700"
+          }`}>{scanFeedback}</p>
         )}
       </div>
 
@@ -214,26 +262,29 @@ export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) 
         label="Search products"
       />
 
-      {/* Category tabs as colored blocks - Loyverse style */}
+      {/* Category chips — colored pills */}
       <div className="flex gap-2 overflow-x-auto pb-3">
-        <CategoryBlock
+        <CategoryChip
           label="All"
           active={activeCategoryId === "all"}
-          colorClass="bg-blue-100 text-blue-700 border-blue-200"
+          colorClass="bg-blue-100 text-blue-700"
+          activeClass="bg-blue-600 text-white"
           onTap={() => setActiveCategoryId("all")}
         />
-        <CategoryBlock
-          label="Favorites"
+        <CategoryChip
+          label="⭐ Favorites"
           active={activeCategoryId === "favorites"}
-          colorClass="bg-emerald-100 text-emerald-700 border-emerald-200"
+          colorClass="bg-emerald-100 text-emerald-700"
+          activeClass="bg-emerald-600 text-white"
           onTap={() => setActiveCategoryId("favorites")}
         />
         {categories.map((cat, idx) => (
-          <CategoryBlock
+          <CategoryChip
             key={cat.id}
             label={cat.name}
             active={activeCategoryId === cat.id}
             colorClass={getCategoryColor(idx + 2)}
+            activeClass={getCategoryChipActive(idx + 2)}
             onTap={() => setActiveCategoryId(cat.id)}
           />
         ))}
@@ -246,6 +297,8 @@ export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) 
           const totalStock = item.inventory.reduce((sum, inv) => sum + inv.onHand, 0);
           const outOfStock = totalStock <= 0;
           const firstLetter = item.product.name.charAt(0).toUpperCase();
+          const catIdx = categories.findIndex((c) => c.id === item.product.categoryId);
+          const catColor = catIdx >= 0 ? getCategoryColor(catIdx + 2) : "";
 
           return (
             <button
@@ -253,59 +306,67 @@ export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) 
               type="button"
               disabled={outOfStock}
               onClick={() => handleProductTap(item)}
-              className={`touch-button product-tile relative flex min-h-40 flex-col justify-between rounded-2xl border-l-4 px-5 py-5 text-left transition-all ${
+              className={`product-tile relative flex flex-col overflow-hidden rounded-2xl text-left transition-all ${
                 outOfStock
-                  ? "cursor-not-allowed border-l-zinc-200 border border-zinc-200 bg-zinc-50 opacity-50"
-                  : "border border-zinc-200 border-l-teal-500 bg-white hover:shadow-md hover:border-teal-300 active:bg-teal-50"
+                  ? "cursor-not-allowed opacity-50"
+                  : "hover:scale-[1.02] active:scale-[0.98] hover:shadow-xl"
               }`}
+              style={{
+                background: 'var(--surface-panel)',
+                boxShadow: 'var(--shadow-card)',
+                borderRadius: 'var(--radius-card)',
+                minHeight: '11rem',
+              }}
             >
-              {/* Stock badge - top right */}
-              {!outOfStock && (
-                <div className="absolute top-3 right-3">
-                  <span className={`inline-block rounded-full px-3 py-1 text-sm font-bold ${
-                    totalStock <= 5 ? "bg-amber-100 text-amber-700" : "bg-teal-100 text-teal-700"
-                  }`}>
-                    {totalStock}
-                  </span>
-                </div>
-              )}
-              {outOfStock && (
-                <div className="absolute top-3 right-3">
-                  <span className="inline-block rounded-full px-3 py-1 text-sm font-bold bg-red-100 text-red-700">
-                    Out
-                  </span>
-                </div>
-              )}
-
-              {/* Product image or avatar */}
-              <div className="mb-3">
+              {/* Hero image area — 60%+ of card */}
+              <div className="relative w-full" style={{ aspectRatio: '4/3' }}>
                 {item.product.imageUrl ? (
                   <img
                     src={item.product.imageUrl}
                     alt={item.product.name}
-                    className="h-20 w-20 rounded-xl object-cover"
+                    className="h-full w-full object-cover"
                     onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                   />
                 ) : (
-                  <div className="flex h-20 w-20 items-center justify-center rounded-xl bg-gradient-to-br from-teal-100 to-teal-200">
-                    <span className="text-2xl font-bold text-teal-700">{firstLetter}</span>
+                  <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-teal-600/20 to-teal-800/30">
+                    <span className="text-4xl font-bold" style={{ color: 'var(--surface-accent)' }}>{firstLetter}</span>
+                  </div>
+                )}
+
+                {/* Stock badge - top right over image */}
+                <div className="absolute top-2 right-2">
+                  {outOfStock ? (
+                    <span className="inline-block rounded-full bg-red-500 px-2.5 py-0.5 text-xs font-bold text-white shadow">Out</span>
+                  ) : totalStock <= 5 ? (
+                    <span className="inline-block rounded-full bg-amber-500 px-2.5 py-0.5 text-xs font-bold text-white shadow">{totalStock}</span>
+                  ) : (
+                    <span className="inline-block rounded-full bg-black/50 px-2.5 py-0.5 text-xs font-bold text-white backdrop-blur-sm">{totalStock}</span>
+                  )}
+                </div>
+
+                {/* Category badge - top left */}
+                {item.category && catColor && (
+                  <div className="absolute top-2 left-2">
+                    <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold shadow ${catColor}`}>
+                      {item.category.name}
+                    </span>
                   </div>
                 )}
               </div>
 
-              {/* Product name and variants */}
-              <div>
-                <p className="text-lg font-semibold leading-snug text-zinc-900 line-clamp-2">{item.product.name}</p>
-                {item.variants.length > 1 && (
-                  <p className="mt-1 text-sm text-zinc-500">{item.variants.length} variants</p>
-                )}
-              </div>
-
-              {/* Price - large and bold */}
-              <div className="mt-3 pt-2 border-t border-zinc-100">
-                <span className="text-3xl font-bold text-teal-600">
-                  ${defaultVariant?.price.toFixed(2) ?? "0.00"}
-                </span>
+              {/* Product info overlay below image */}
+              <div className="flex flex-1 flex-col justify-between px-3 py-2.5">
+                <div>
+                  <p className="text-sm font-semibold leading-snug line-clamp-2" style={{ color: 'var(--text-primary)' }}>{item.product.name}</p>
+                  {item.variants.length > 1 && (
+                    <p className="mt-0.5 text-xs" style={{ color: 'var(--text-secondary)' }}>{item.variants.length} variants</p>
+                  )}
+                </div>
+                <div className="mt-1.5 flex items-center justify-between">
+                  <span className="text-lg font-bold" style={{ color: 'var(--surface-accent)' }}>
+                    ${defaultVariant?.price.toFixed(2) ?? "0.00"}
+                  </span>
+                </div>
               </div>
             </button>
           );
@@ -325,7 +386,7 @@ export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) 
       {/* Variant picker overlay with cleaner card design */}
       {variantPickerProduct && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-lg rounded-2xl bg-white p-7 shadow-2xl">
+          <div className="w-full max-w-lg rounded-2xl p-7 shadow-2xl" style={{ background: 'var(--surface-panel)' }}>
             {/* Header with product info */}
             <div className="flex items-start justify-between gap-4 mb-6">
               <div className="flex items-center gap-4 flex-1">
@@ -399,25 +460,27 @@ export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) 
   );
 }
 
-function CategoryBlock({
+function CategoryChip({
   label,
   active,
   colorClass,
+  activeClass,
   onTap,
 }: {
   label: string;
   active: boolean;
   colorClass: string;
+  activeClass: string;
   onTap: () => void;
 }) {
   return (
     <button
       type="button"
       onClick={onTap}
-      className={`touch-button shrink-0 rounded-xl border-2 px-5 py-3 text-base font-semibold transition-all whitespace-nowrap ${
+      className={`shrink-0 rounded-full px-5 py-2.5 text-sm font-bold transition-all whitespace-nowrap ${
         active
-          ? `${colorClass} border-current shadow-md scale-105 ring-2 ring-offset-1`
-          : `${colorClass} border-current opacity-75 hover:opacity-100`
+          ? `${activeClass} shadow-md scale-105`
+          : `${colorClass} opacity-80 hover:opacity-100 hover:scale-105`
       }`}
     >
       {label}

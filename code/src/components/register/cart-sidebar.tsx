@@ -1,7 +1,7 @@
 "use client";
 
 import type { Cart, CartTotals, DiscountMode } from "@/lib/cart/types";
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { VirtualNumpad } from "@/components/ui/virtual-numpad";
 
 interface CartSidebarProps {
@@ -39,6 +39,21 @@ export function CartSidebar({
   const [showDiscount, setShowDiscount] = useState(false);
   const [showDiscountNumpad, setShowDiscountNumpad] = useState(false);
   const [discountInput, setDiscountInput] = useState("");
+  const [badgePulse, setBadgePulse] = useState(false);
+  const [flashItemId, setFlashItemId] = useState<string | null>(null);
+  const prevItemCount = useRef(totals.itemCount);
+
+  // Pulse badge + flash newest item when items are added
+  useEffect(() => {
+    if (totals.itemCount > prevItemCount.current) {
+      setBadgePulse(true);
+      const lastItem = cart.items[cart.items.length - 1];
+      if (lastItem) setFlashItemId(lastItem.id);
+      const t = setTimeout(() => { setBadgePulse(false); setFlashItemId(null); }, 400);
+      return () => clearTimeout(t);
+    }
+    prevItemCount.current = totals.itemCount;
+  }, [totals.itemCount, cart.items]);
 
   // Swipe-to-delete handlers
   const handleTouchStart = useCallback((e: React.TouchEvent, itemId: string) => {
@@ -62,29 +77,40 @@ export function CartSidebar({
 
   return (
     <div className="flex h-full flex-col rounded-2xl border shadow-lg overflow-hidden" style={{ borderColor: 'var(--border-subtle)', background: 'var(--surface-panel)' }}>
-      {/* Header */}
-      <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-        <div className="flex items-center gap-3">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--text-secondary)' }}>
-            <circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
-          </svg>
-          <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>Current Sale</h2>
+      {/* Header with running total */}
+      <div className="px-5 py-4" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--text-secondary)' }}>
+              <circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
+            </svg>
+            <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>Current Sale</h2>
+            {!isEmpty && (
+              <span
+                className="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-teal-600 px-2 text-sm font-bold text-white transition-transform"
+                style={{ transform: badgePulse ? 'scale(1.3)' : 'scale(1)' }}
+              >
+                {totals.itemCount}
+              </span>
+            )}
+          </div>
           {!isEmpty && (
-            <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-teal-600 px-2 text-sm font-bold text-white">
-              {totals.itemCount}
-            </span>
+            <button
+              type="button"
+              onClick={onVoidCart}
+              className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors hover:bg-red-50 hover:text-red-600"
+              style={{ color: 'var(--text-secondary)' }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              Void
+            </button>
           )}
         </div>
+        {/* Running total — always visible, prominent */}
         {!isEmpty && (
-          <button
-            type="button"
-            onClick={onVoidCart}
-            className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors hover:bg-red-50 hover:text-red-600"
-            style={{ color: 'var(--text-secondary)' }}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-            Void
-          </button>
+          <div className="mt-2 text-2xl font-bold tracking-tight" style={{ color: 'var(--surface-accent)' }}>
+            ${totals.grandTotal.toFixed(2)}
+          </div>
         )}
       </div>
 
@@ -127,6 +153,8 @@ export function CartSidebar({
                   {/* Main item card - slides on swipe */}
                   <div
                     className={`relative rounded-xl border transition-all ${
+                      flashItemId === item.id ? "cart-item-new" : ""
+                    } ${
                       isExpanded
                         ? "border-teal-200 bg-teal-50/50"
                         : hasOverride
@@ -365,16 +393,20 @@ export function CartSidebar({
           </div>
         )}
 
-        {/* Big green Charge button — Loyverse signature */}
+        {/* Full-width Charge CTA — Square POS style */}
         <button
           type="button"
           disabled={isEmpty || !shiftOpen}
           onClick={onCheckout}
-          className={`touch-button relative w-full overflow-hidden rounded-2xl px-6 py-5 text-xl font-bold tracking-wide transition-all ${
+          className={`relative w-full overflow-hidden rounded-2xl px-6 text-xl font-bold tracking-wide transition-all ${
             isEmpty || !shiftOpen
-              ? "cursor-not-allowed bg-zinc-200 text-zinc-400"
-              : "bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-lg shadow-teal-500/25 hover:from-emerald-600 hover:to-teal-600 hover:shadow-xl hover:shadow-teal-500/30 active:from-emerald-700 active:to-teal-700 active:shadow-md"
+              ? "cursor-not-allowed text-zinc-400"
+              : "text-white shadow-lg hover:shadow-xl active:shadow-md"
           }`}
+          style={{
+            minHeight: '4rem',
+            background: isEmpty || !shiftOpen ? 'var(--surface-panel-muted)' : 'var(--surface-accent)',
+          }}
         >
           {/* Subtle shine effect */}
           {!isEmpty && shiftOpen && (

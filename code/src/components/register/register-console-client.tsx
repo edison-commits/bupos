@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 import { openShiftAction, registerLogoutAction, quickSwitchAction } from "@/app/register/actions";
 import { closeShiftEnhancedAction, payInOutAction } from "@/app/register/shift-actions";
@@ -72,6 +72,22 @@ export function RegisterConsoleClient({
   const [showQuickSwitch, setShowQuickSwitch] = useState(false);
   const [switchPin, setSwitchPin] = useState("");
   const [switching, setSwitching] = useState(false);
+
+  // Dark mode by default for register — Toast POS feel
+  useEffect(() => {
+    const stored = localStorage.getItem("bupos-dark-mode");
+    // Default to dark if no preference stored
+    if (stored === null || stored === "true") {
+      document.documentElement.classList.add("dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+    }
+    if (stored === null) localStorage.setItem("bupos-dark-mode", "true");
+    return () => {
+      // Clean up dark class when leaving register
+      document.documentElement.classList.remove("dark");
+    };
+  }, []);
 
   const payInTotal = payInOuts.filter((p) => p.direction === "pay_in").reduce((s, p) => s + p.amount, 0);
   const payOutTotal = payInOuts.filter((p) => p.direction === "pay_out").reduce((s, p) => s + p.amount, 0);

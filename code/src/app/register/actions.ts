@@ -185,7 +185,7 @@ export async function quickSwitchAction(pin: string): Promise<{ success: boolean
     const { verifySecret } = await import("@/lib/auth/crypto");
     const pool = (await import("@/lib/db")).default;
 
-    const credential = await pgFindCredentialByPin((hash: string) => verifySecret(cleanPin, hash));
+    const credential = await pgFindCredentialByPin(cleanPin);
     if (!credential) return { success: false, error: "Invalid PIN" };
 
     const { readStore } = await import("@/lib/persistence/store");

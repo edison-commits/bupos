@@ -379,15 +379,19 @@ export async function pgFindCredentialByEmail(email: string): Promise<(AuthCrede
   };
 }
 
-export async function pgFindCredentialByPin(pinVerifier: (hash: string) => boolean): Promise<AuthCredentialRecord | null> {
+export async function pgFindCredentialByPin(pin: string): Promise<AuthCredentialRecord | null> {
+  // Fetch all pin_hash rows — verified in JS to avoid SQL-level crypto function dependency
+  // With only 3 employees this is fast; scrypt is async via promise to yield event loop
   const { rows } = await pool.query(
     `SELECT ac.employee_id, ac.email, ac.pin_hash, ac.pin_last_rotated_at
-     FROM auth_credentials ac JOIN employees e ON ac.employee_id = e.id
-     WHERE e.is_active = true`,
+     FROM auth_credentials ac
+     JOIN employees e ON ac.employee_id = e.id
+     WHERE e.is_active = true AND ac.pin_hash IS NOT NULL
+     LIMIT 20`,
   );
   for (const r of rows) {
     const row = r as Record<string, unknown>;
-    if (row.pin_hash && pinVerifier(row.pin_hash as string)) {
+    if (row.pin_hash && await verifySecretAsync(pin, row.pin_hash as string)) {
       return {
         employeeId: row.employee_id as string,
         email: (row.email as string) ?? undefined,
@@ -397,6 +401,20 @@ export async function pgFindCredentialByPin(pinVerifier: (hash: string) => boole
     }
   }
   return null;
+}
+
+/** Async scrypt verify — yields event loop between hash attempts to avoid Workers CPU spike */
+async function verifySecretAsync(secret: string, encoded: string): Promise<boolean> {
+  const { scryptSync, timingSafeEqual } = await import("node:crypto");
+  const [salt, stored] = encoded.split(":");
+  if (!salt || !stored) return false;
+  const KEY_LENGTH = 64;
+  try {
+    const derived = scryptSync(secret, salt, KEY_LENGTH);
+    return timingSafeEqual(derived, Buffer.from(stored, "hex"));
+  } catch {
+    return false;
+  }
 }
 
 // ── Audit events ──────────────────────────────────────────────────────

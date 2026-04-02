@@ -4,7 +4,8 @@ import { PageShell } from "@/components/ui/page-shell";
 import { registerLoginAction } from "@/app/register/actions";
 import { PinLoginForm } from "@/components/register/pin-login-form";
 import { getRegisterSession } from "@/lib/auth/session";
-import { readStore } from "@/lib/persistence/store";
+import { pgReadRegisterContext } from "@/lib/persistence/postgres-read-store";
+import pool from "@/lib/db";
 
 export default async function RegisterPage({
   searchParams,
@@ -14,10 +15,20 @@ export default async function RegisterPage({
   const params = await searchParams;
 
   const session = await getRegisterSession();
-  const store = await readStore();
+  let store: Awaited<ReturnType<typeof pgReadRegisterContext>> | null = null;
+  let locationForLogin: { id: string; name: string } | null = null;
+
+  if (session?.location?.id) {
+    store = await pgReadRegisterContext(session.location.id);
+  } else {
+    // Lightweight location fetch for PIN login form (no session yet)
+    const { rows } = await pool.query('SELECT id, name FROM locations WHERE is_active = true LIMIT 1');
+    locationForLogin = rows[0] ? { id: rows[0].id as string, name: rows[0].name as string } : null;
+  }
+
   const notice = typeof params.notice === "string" ? params.notice.replaceAll("+", " ") : undefined;
   const error = typeof params.error === "string" ? params.error.replaceAll("+", " ") : undefined;
-  const location = store.locations[0];
+  const location = store?.locations[0] ?? session?.location ?? locationForLogin;
 
   return (
     <PageShell

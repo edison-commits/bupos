@@ -51,11 +51,17 @@ export function TenderPanel({
   const [giftCardError, setGiftCardError] = useState<string | null>(null);
   const [giftCardRedeemAmount, setGiftCardRedeemAmount] = useState<string>("");
 
+  // Tip state
+  const [tipPercent, setTipPercent] = useState<number | null>(null);
+  const [customTip, setCustomTip] = useState<string>("");
+  const [showCustomTip, setShowCustomTip] = useState(false);
+
   // Virtual input state
-  type ActiveInput = "cash" | "loyalty" | "gift_card" | "split" | "gift_code" | null;
+  type ActiveInput = "cash" | "loyalty" | "gift_card" | "split" | "gift_code" | "tip" | null;
   const [activeInput, setActiveInput] = useState<ActiveInput>(null);
 
-  const grandTotal = totals.grandTotal;
+  const tipAmount = showCustomTip ? (Number(customTip) || 0) : (tipPercent != null ? Number((totals.grandTotal * tipPercent / 100).toFixed(2)) : 0);
+  const grandTotal = totals.grandTotal + tipAmount;
 
   // Loyalty calculations
   const availablePoints = customerLoyaltyPoints ?? 0;
@@ -170,6 +176,56 @@ export function TenderPanel({
             <p className="text-lg font-semibold text-[var(--text-secondary)] uppercase tracking-wide">Amount due</p>
             <p className="mt-1 text-5xl font-extrabold text-teal-600">${grandTotal.toFixed(2)}</p>
           </div>
+        </div>
+
+        {/* Tip UI */}
+        <div className="border-b border-[var(--border-subtle)] px-8 py-4">
+          <p className="text-sm font-bold text-[var(--text-secondary)] uppercase tracking-wide mb-3">Add tip</p>
+          <div className="flex gap-3">
+            {[15, 18, 20].map((pct) => (
+              <button
+                key={pct}
+                type="button"
+                onClick={() => { setTipPercent(pct); setShowCustomTip(false); setCustomTip(""); }}
+                className={`flex-1 rounded-2xl px-4 py-4 text-center font-bold transition-all ${
+                  !showCustomTip && tipPercent === pct
+                    ? "text-white shadow-md"
+                    : "bg-[var(--surface-panel-muted)] text-[var(--text-secondary)] hover:bg-zinc-200"
+                }`}
+                style={!showCustomTip && tipPercent === pct ? { background: 'var(--surface-accent)' } : undefined}
+              >
+                <span className="text-2xl">{pct}%</span>
+                <p className="text-sm mt-0.5 opacity-80">${(totals.grandTotal * pct / 100).toFixed(2)}</p>
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => { setShowCustomTip(true); setTipPercent(null); setActiveInput("tip"); }}
+              className={`flex-1 rounded-2xl px-4 py-4 text-center font-bold transition-all ${
+                showCustomTip
+                  ? "text-white shadow-md"
+                  : "bg-[var(--surface-panel-muted)] text-[var(--text-secondary)] hover:bg-zinc-200"
+              }`}
+              style={showCustomTip ? { background: 'var(--surface-accent)' } : undefined}
+            >
+              <span className="text-2xl">Custom</span>
+              {showCustomTip && customTip ? <p className="text-sm mt-0.5 opacity-80">${(Number(customTip) || 0).toFixed(2)}</p> : null}
+            </button>
+            {(tipPercent != null || (showCustomTip && Number(customTip) > 0)) && (
+              <button
+                type="button"
+                onClick={() => { setTipPercent(null); setShowCustomTip(false); setCustomTip(""); }}
+                className="rounded-2xl px-4 py-4 text-center font-bold bg-[var(--surface-panel-muted)] text-red-500 hover:bg-red-50 transition-all"
+              >
+                <span className="text-lg">No tip</span>
+              </button>
+            )}
+          </div>
+          {tipAmount > 0 && (
+            <p className="mt-2 text-lg font-semibold text-center" style={{ color: 'var(--surface-accent)' }}>
+              Tip: ${tipAmount.toFixed(2)} — New total: ${grandTotal.toFixed(2)}
+            </p>
+          )}
         </div>
 
         {/* Warnings */}
@@ -444,23 +500,32 @@ export function TenderPanel({
                 {splitTenders.length > 0 && (
                   <div className="space-y-3">
                     <p className="text-lg font-bold text-[var(--text-secondary)] uppercase tracking-wide">Allocated</p>
-                    {splitTenders.map((t, i) => (
-                      <div key={`${t.type}-${i}`} className="flex items-center justify-between rounded-xl border-3 border-[var(--border-subtle)] bg-[var(--surface-panel)] px-6 py-5">
-                        <span className="text-xl font-bold capitalize">
-                          {t.type === "store_credit" ? "Store Credit" : t.type === "loyalty" ? "Loyalty" : t.type === "gift_card" ? "Gift Card" : t.type}
-                        </span>
-                        <div className="flex items-center gap-4">
-                          <span className="text-2xl font-extrabold text-[var(--text-primary)]">${t.amount.toFixed(2)}</span>
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveSplitTender(i)}
-                            className="touch-button rounded text-red-600 hover:text-red-800 font-bold text-2xl"
-                          >
-                            ✕
-                          </button>
+                    {splitTenders.map((t, i) => {
+                      const runningTotal = splitTenders.slice(0, i + 1).reduce((s, x) => s + x.amount, 0);
+                      return (
+                        <div key={`${t.type}-${i}`} className="flex items-center justify-between rounded-xl border-3 border-emerald-400 bg-emerald-50/30 px-6 py-5">
+                          <div className="flex items-center gap-3">
+                            <span className="text-2xl">{tenderTypeIcons[t.type] || "💳"}</span>
+                            <div>
+                              <span className="text-xl font-bold capitalize">
+                                {t.type === "store_credit" ? "Store Credit" : t.type === "loyalty" ? "Loyalty" : t.type === "gift_card" ? "Gift Card" : t.type}
+                              </span>
+                              <p className="text-sm text-[var(--text-secondary)]">Running: ${runningTotal.toFixed(2)}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-4">
+                            <span className="text-2xl font-extrabold text-emerald-700">${t.amount.toFixed(2)}</span>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveSplitTender(i)}
+                              className="touch-button rounded text-red-600 hover:text-red-800 font-bold text-2xl"
+                            >
+                              ✕
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
 
@@ -495,22 +560,26 @@ export function TenderPanel({
                 {/* Add tender */}
                 {!splitComplete && (
                   <div className="space-y-3">
+                    <p className="text-lg font-bold text-[var(--text-secondary)] uppercase tracking-wide">Add another payment</p>
                     <div className="flex gap-3">
-                      <select
-                        value={splitType}
-                        onChange={(e) => setSplitType(e.target.value as TenderType)}
-                        className="rounded-xl border-3 border-[var(--border-subtle)] bg-white px-6 py-5 text-xl font-semibold"
-                      >
-                        {supportedTenders.filter((t) => t !== "split").map((t) => (
-                          <option key={t} value={t}>
-                            {t === "store_credit" ? "Store Credit" : t === "loyalty" ? "Loyalty" : t === "gift_card" ? "Gift Card" : t}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="relative">
+                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-2xl">{tenderTypeIcons[splitType] || "💳"}</span>
+                        <select
+                          value={splitType}
+                          onChange={(e) => setSplitType(e.target.value as TenderType)}
+                          className="rounded-xl border-3 border-[var(--border-subtle)] bg-white pl-14 pr-6 py-5 text-xl font-semibold appearance-none"
+                        >
+                          {supportedTenders.filter((t) => t !== "split").map((t) => (
+                            <option key={t} value={t}>
+                              {t === "store_credit" ? "Store Credit" : t === "loyalty" ? "Loyalty" : t === "gift_card" ? "Gift Card" : t}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                       <button
                         type="button"
                         onClick={() => setActiveInput("split")}
-                        className="flex-1 rounded-xl border-3 border-[var(--border-subtle)] bg-white px-6 py-5 text-right text-xl font-semibold hover:border-teal-300 transition-colors"
+                        className="flex-1 rounded-xl border-3 border-dashed border-[var(--border-subtle)] bg-white px-6 py-5 text-right text-xl font-semibold hover:border-teal-300 transition-colors"
                         style={{ color: splitAmount ? 'var(--text-primary)' : 'var(--text-secondary)' }}
                       >
                         {splitAmount || splitRemaining.toFixed(2)}
@@ -520,7 +589,7 @@ export function TenderPanel({
                         onClick={handleAddSplitTender}
                         className="touch-button rounded-xl bg-teal-600 px-8 py-5 text-xl font-bold text-white hover:bg-teal-700 transition-colors"
                       >
-                        Add
+                        + Add
                       </button>
                     </div>
                   </div>
@@ -577,6 +646,17 @@ export function TenderPanel({
         onEnter={() => { setActiveInput(null); handleAddSplitTender(); }}
         onClose={() => setActiveInput(null)}
         label="Split amount"
+        allowDecimal={true}
+      />
+
+      {/* Virtual Numpad for custom tip */}
+      <VirtualNumpad
+        visible={activeInput === "tip"}
+        value={customTip}
+        onChange={setCustomTip}
+        onEnter={() => setActiveInput(null)}
+        onClose={() => setActiveInput(null)}
+        label="Custom tip amount"
         allowDecimal={true}
       />
 

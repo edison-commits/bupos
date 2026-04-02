@@ -280,7 +280,7 @@ export async function signInRegister(pin: string, locationId: string) {
 
     // Run credential lookup + location check in parallel (avoid full readStore)
     const [credential, locResult] = await Promise.all([
-      pgFindCredentialByPin((hash: string) => verifySecret(cleanPin, hash)),
+      pgFindCredentialByPin(cleanPin),
       pool.query(
         `SELECT id, is_active FROM locations WHERE id = $1 AND is_active = true LIMIT 1`,
         [locationId],
