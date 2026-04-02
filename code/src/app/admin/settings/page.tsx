@@ -989,9 +989,9 @@ export default function SettingsPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 p-6">
+      <div className="min-h-screen bg-gray-50">
         <AdminTopNav />
-        <div className="max-w-6xl mx-auto">
+        <div className="max-w-6xl mx-auto px-6 pt-6 pb-8">
           <h1 className="text-3xl font-bold text-gray-900 mb-8">Settings</h1>
           <LoadingSkeleton />
         </div>
@@ -1000,8 +1000,9 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-6xl mx-auto">
+    <div className="min-h-screen bg-gray-50">
+      <AdminTopNav />
+      <div className="max-w-6xl mx-auto px-6 pt-6 pb-8">
         <h1 className="text-3xl font-bold text-gray-900 mb-8">Settings</h1>
 
         {globalError && (
