@@ -520,6 +520,128 @@ function LocationSection({
   );
 }
 
+function ReceiptPreview({ header, footer }: { header: string; footer: string }) {
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
+  const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+
+  const SAMPLE_ITEMS = [
+    { name: 'Cotton Crew Neck T-Shirt (L)', qty: 2, price: 24.99 },
+    { name: 'Slim Fit Denim Jeans (32)', qty: 1, price: 49.99 },
+    { name: 'Canvas Sneakers (M)', qty: 1, price: 34.99 },
+  ];
+  const subtotal = SAMPLE_ITEMS.reduce((s, i) => s + i.qty * i.price, 0);
+  const tax = subtotal * 0.0875;
+  const total = subtotal + tax;
+
+  return (
+    <div
+      className="rounded-xl shadow-xl w-72 overflow-hidden"
+      style={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', fontFamily: 'monospace' }}
+    >
+      {/* Receipt paper */}
+      <div className="p-4" style={{ backgroundColor: '#fefefe' }}>
+        {/* Tear line */}
+        <div className="flex items-center gap-1 mb-4">
+          <div className="flex-1 border-t-2 border-dashed border-gray-300" />
+          <span className="text-xs text-gray-400 uppercase tracking-widest px-2">receipt</span>
+          <div className="flex-1 border-t-2 border-dashed border-gray-300" />
+        </div>
+
+        {/* Header text */}
+        {header ? (
+          <p className="text-center text-xs mb-3 whitespace-pre-wrap" style={{ color: '#374151' }}>{header}</p>
+        ) : null}
+
+        {/* Store info */}
+        <div className="text-center text-sm font-bold mb-1" style={{ color: '#111827' }}>BasicUniformPOS</div>
+        <div className="text-center text-xs mb-1" style={{ color: '#6b7280' }}>123 Main Street</div>
+        <div className="text-center text-xs mb-1" style={{ color: '#6b7280' }}>Anytown, CA 90210</div>
+        <div className="text-center text-xs mb-3" style={{ color: '#6b7280' }}>(555) 123-4567</div>
+
+        {/* Date/time */}
+        <div className="flex justify-between text-xs mb-3" style={{ color: '#374151' }}>
+          <span>{dateStr}</span>
+          <span>{timeStr}</span>
+          <span>TRANS-001</span>
+        </div>
+
+        {/* Divider */}
+        <div className="border-t border-dashed border-gray-300 mb-3" />
+
+        {/* Column headers */}
+        <div className="flex justify-between text-xs font-bold mb-1" style={{ color: '#374151' }}>
+          <span>ITEM</span>
+          <span>AMT</span>
+        </div>
+        <div className="border-t border-dashed border-gray-200 mb-2" />
+
+        {/* Sample items */}
+        {SAMPLE_ITEMS.map((item, i) => (
+          <div key={i} className="mb-2">
+            <div className="flex justify-between items-start">
+              <div className="text-xs" style={{ color: '#374151' }}>
+                <span className="font-bold">{item.qty}x</span> {item.name}
+              </div>
+              <div className="text-xs font-bold whitespace-nowrap ml-2" style={{ color: '#374151' }}>
+                ${(item.qty * item.price).toFixed(2)}
+              </div>
+            </div>
+          </div>
+        ))}
+
+        {/* Divider */}
+        <div className="border-t border-dashed border-gray-300 mt-3 mb-3" />
+
+        {/* Totals */}
+        <div className="space-y-1 mb-3">
+          <div className="flex justify-between text-xs" style={{ color: '#374151' }}>
+            <span>Subtotal</span>
+            <span>${subtotal.toFixed(2)}</span>
+          </div>
+          <div className="flex justify-between text-xs" style={{ color: '#374151' }}>
+            <span>Tax (8.75%)</span>
+            <span>${tax.toFixed(2)}</span>
+          </div>
+          <div className="flex justify-between text-sm font-bold border-t border-gray-200 pt-1 mt-1" style={{ color: '#111827' }}>
+            <span>TOTAL</span>
+            <span>${total.toFixed(2)}</span>
+          </div>
+          <div className="flex justify-between text-xs mt-1" style={{ color: '#374151' }}>
+            <span>VISA **** 4242</span>
+            <span>${total.toFixed(2)}</span>
+          </div>
+        </div>
+
+        {/* Divider */}
+        <div className="border-t border-dashed border-gray-300 mb-3" />
+
+        {/* Footer text */}
+        {footer ? (
+          <p className="text-center text-xs whitespace-pre-wrap" style={{ color: '#6b7280' }}>{footer}</p>
+        ) : (
+          <p className="text-center text-xs italic" style={{ color: '#9ca3af' }}>No footer configured</p>
+        )}
+
+        {/* Barcode placeholder */}
+        <div className="mt-4 flex justify-center">
+          <div className="flex gap-px">
+            {[4,2,3,1,5,2,4,1,3,2,4,3,1,5,2,3,4,1,2,3,4,5,1,2,3,4,5,2,3,4,1,3,5,2,4].map((w, i) => (
+              <div key={i} style={{ width: w, height: 32, backgroundColor: '#111827' }} />
+            ))}
+          </div>
+        </div>
+
+        {/* Tear line */}
+        <div className="flex items-center gap-1 mt-4">
+          <div className="flex-1 border-t-2 border-dashed border-gray-300" />
+          <div className="flex-1 border-t-2 border-dashed border-gray-300" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ReceiptSection({
   data,
   isEditing,
@@ -590,48 +712,59 @@ function ReceiptSection({
 
       {error && <ErrorAlert message={error} />}
 
-      <div className="space-y-6 mb-6">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Header Text
-          </label>
-          <textarea
-            value={formData.header}
-            onChange={(e) => handleChange('header', e.target.value)}
-            rows={6}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent font-mono text-sm"
-            placeholder="Text to display at the top of receipts..."
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Footer Text
-          </label>
-          <textarea
-            value={formData.footer}
-            onChange={(e) => handleChange('footer', e.target.value)}
-            rows={6}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent font-mono text-sm"
-            placeholder="Text to display at the bottom of receipts..."
-          />
-        </div>
-      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        {/* Left: form */}
+        <div className="space-y-6">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Header Text
+            </label>
+            <textarea
+              value={formData.header}
+              onChange={(e) => handleChange('header', e.target.value)}
+              rows={6}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent font-mono text-sm"
+              placeholder="Text to display at the top of receipts..."
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Footer Text
+            </label>
+            <textarea
+              value={formData.footer}
+              onChange={(e) => handleChange('footer', e.target.value)}
+              rows={6}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent font-mono text-sm"
+              placeholder="Text to display at the bottom of receipts..."
+            />
+          </div>
 
-      <div className="flex gap-3">
-        <button
-          onClick={handleSave}
-          disabled={isSaving}
-          className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:bg-gray-400 transition font-medium flex items-center gap-2"
-        >
-          <Check size={18} /> Save
-        </button>
-        <button
-          onClick={onCancel}
-          disabled={isSaving}
-          className="px-4 py-2 bg-gray-300 text-gray-900 rounded-lg hover:bg-gray-400 disabled:bg-gray-200 transition font-medium flex items-center gap-2"
-        >
-          <X size={18} /> Cancel
-        </button>
+          <div className="flex gap-3">
+            <button
+              onClick={handleSave}
+              disabled={isSaving}
+              className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:bg-gray-400 transition font-medium flex items-center gap-2"
+            >
+              <Check size={18} /> Save
+            </button>
+            <button
+              onClick={onCancel}
+              disabled={isSaving}
+              className="px-4 py-2 bg-gray-300 text-gray-900 rounded-lg hover:bg-gray-400 disabled:bg-gray-200 transition font-medium flex items-center gap-2"
+            >
+              <X size={18} /> Cancel
+            </button>
+          </div>
+        </div>
+
+        {/* Right: live receipt preview */}
+        <div className="flex flex-col">
+          <p className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Live Preview</p>
+          <div className="flex-1 flex justify-center">
+            <ReceiptPreview header={formData.header} footer={formData.footer} />
+          </div>
+        </div>
       </div>
     </div>
   );
