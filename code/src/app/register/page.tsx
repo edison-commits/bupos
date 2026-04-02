@@ -5,6 +5,16 @@ import { registerLoginAction } from "@/app/register/actions";
 import { PinLoginForm } from "@/components/register/pin-login-form";
 import { getRegisterSession } from "@/lib/auth/session";
 import { readStore } from "@/lib/persistence/store";
+import pool from "@/lib/db";
+
+/** Single-row query — no joins, no full store load. Used only for unauthenticated PIN login. */
+async function getDefaultLocation() {
+  const { rows } = await pool.query(
+    "SELECT id, name FROM locations WHERE is_active = true LIMIT 1",
+  );
+  if (!rows[0]) throw new Error("No active location found");
+  return { id: rows[0].id as string, name: rows[0].name as string };
+}
 
 export default async function RegisterPage({
   searchParams,
@@ -12,23 +22,27 @@ export default async function RegisterPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const params = await searchParams;
-
   const session = await getRegisterSession();
-  const store = await readStore();
+
+  // Lightweight: only load full store when logged in (RegisterConsole needs it).
+  // Unauthenticated: just grab the active location name + id — single cheap query.
+  const store = session ? await readStore() : null;
+  const location = session
+    ? store!.locations[0] ?? session.location
+    : await getDefaultLocation();
 
   const notice = typeof params.notice === "string" ? params.notice.replaceAll("+", " ") : undefined;
   const error = typeof params.error === "string" ? params.error.replaceAll("+", " ") : undefined;
-  const location = store.locations[0] ?? session?.location;
 
   return (
     <PageShell
       eyebrow="Register"
-      title={session ? `${store.organization.name} · ${session.location.name}` : "Register login"}
+      title={session ? `${store!.organization.name} · ${session.location.name}` : "Register login"}
       description={session ? undefined : "Enter your PIN to open a register session."}
     >
       <AppNav />
       {session ? (
-        <RegisterConsole store={store} context={session} notice={notice} error={error} />
+        <RegisterConsole store={store!} context={session} notice={notice} error={error} />
       ) : (
         <div className="grid gap-6 xl:grid-cols-[1fr_0.9fr]">
           <section className="card px-6 py-6">
