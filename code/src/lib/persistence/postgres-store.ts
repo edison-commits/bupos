@@ -380,8 +380,9 @@ export async function pgFindCredentialByEmail(email: string): Promise<(AuthCrede
 }
 
 export async function pgFindCredentialByPin(pin: string): Promise<AuthCredentialRecord | null> {
-  // Fetch all pin_hash rows — verified in JS to avoid SQL-level crypto function dependency
-  // With only 3 employees this is fast; scrypt is async via promise to yield event loop
+  // Fetch all pin_hash rows — verified in JS to avoid SQL-level crypto dependency.
+  // crypto.scrypt runs in the Node.js thread pool (not on the Workers main thread),
+  // so parallel verification across all employees doesn't block the event loop.
   const { rows } = await pool.query(
     `SELECT ac.employee_id, ac.email, ac.pin_hash, ac.pin_last_rotated_at
      FROM auth_credentials ac
@@ -389,28 +390,40 @@ export async function pgFindCredentialByPin(pin: string): Promise<AuthCredential
      WHERE e.is_active = true AND ac.pin_hash IS NOT NULL
      LIMIT 20`,
   );
-  for (const r of rows) {
-    const row = r as Record<string, unknown>;
-    if (row.pin_hash && await verifySecretAsync(pin, row.pin_hash as string)) {
-      return {
-        employeeId: row.employee_id as string,
-        email: (row.email as string) ?? undefined,
-        pinHash: (row.pin_hash as string) ?? undefined,
-        pinLastRotatedAt: row.pin_last_rotated_at ? String(row.pin_last_rotated_at) : undefined,
-      };
-    }
-  }
-  return null;
+
+  // Verify all PINs in parallel — each scrypt call runs in the thread pool.
+  const results = await Promise.all(
+    rows.map(async (r) => {
+      const row = r as Record<string, unknown>;
+      if (!row.pin_hash) return null;
+      const valid = await verifySecretAsync(pin, row.pin_hash as string);
+      return valid ? row : null;
+    }),
+  );
+
+  const match = results.find((r) => r !== null);
+  if (!match) return null;
+  return {
+    employeeId: match.employee_id as string,
+    email: (match.email as string) ?? undefined,
+    pinHash: (match.pin_hash as string) ?? undefined,
+    pinLastRotatedAt: match.pin_last_rotated_at ? String(match.pin_last_rotated_at) : undefined,
+  };
 }
 
-/** Async scrypt verify — yields event loop between hash attempts to avoid Workers CPU spike */
+/** Async scrypt verify — runs in Node.js thread pool, does not block the Workers main thread. */
 async function verifySecretAsync(secret: string, encoded: string): Promise<boolean> {
-  const { scryptSync, timingSafeEqual } = await import("node:crypto");
+  const { scrypt, timingSafeEqual } = await import("node:crypto");
   const [salt, stored] = encoded.split(":");
   if (!salt || !stored) return false;
   const KEY_LENGTH = 64;
   try {
-    const derived = scryptSync(secret, salt, KEY_LENGTH);
+    const derived = await new Promise<Buffer>((resolve, reject) => {
+      scrypt(secret, salt, KEY_LENGTH, (err, derived) => {
+        if (err) reject(err);
+        else resolve(derived);
+      });
+    });
     return timingSafeEqual(derived, Buffer.from(stored, "hex"));
   } catch {
     return false;
