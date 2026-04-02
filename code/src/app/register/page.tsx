@@ -34,7 +34,7 @@ export default async function RegisterPage({
   const sidebarProps = session
     ? {
         employeeName: `${session.employee.firstName} ${session.employee.lastName}`,
-        isClockedIn: session.activeShift !== null,
+        isClockedIn: true,
       }
     : {};
 

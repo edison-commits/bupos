@@ -314,6 +314,16 @@ export async function signInRegister(pin: string, locationId: string) {
       redirect("/register?error=PIN+login+failed");
     }
 
+    // Fetch full location for org context
+    const { rows: locRows } = await pool.query(
+      `SELECT id, organization_id FROM locations WHERE id = $1 AND is_active = true LIMIT 1`,
+      [locationId],
+    );
+    if (!locRows[0]) {
+      redirect("/register?error=PIN+login+failed");
+    }
+    const loc = locRows[0] as Record<string, unknown>;
+
     const timestamp = new Date().toISOString();
     const employeeId = credential.employeeId;
     const organizationId = emp.organization_id as string;
@@ -348,7 +358,14 @@ export async function signInRegister(pin: string, locationId: string) {
       path: "/",
       expires: new Date(nextSession.expiresAt),
     });
-    return;
+
+    return {
+      employee: { id: employeeId, organizationId, roleKey },
+      location: { id: locationId, organizationId },
+      registerSession: { id: registerSessionId },
+      authSessionId: nextSession.id,
+      authSessionExpiresAt: nextSession.expiresAt,
+    };
   }
 
   // JSON path
@@ -405,7 +422,13 @@ export async function signInRegister(pin: string, locationId: string) {
       payload: { location_id: locationId, source: "local-session", register_session_id: registerSessionId },
       createdAt: timestamp,
     });
-    return nextSession;
+    return {
+      employee: { id: employee.id, organizationId: employee.organizationId },
+      location: { id: location.id, organizationId: location.organizationId },
+      registerSession: { id: registerSessionId },
+      authSessionId: nextSession.id,
+      authSessionExpiresAt: nextSession.expiresAt,
+    };
   });
 
   if (!session) {
@@ -413,12 +436,12 @@ export async function signInRegister(pin: string, locationId: string) {
   }
 
   const jar = await cookieStore();
-  jar.set(REGISTER_COOKIE, session.id, {
+  jar.set(REGISTER_COOKIE, session.authSessionId, {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
-    expires: new Date(session.expiresAt),
+    expires: new Date(session.authSessionExpiresAt),
   });
 }
 

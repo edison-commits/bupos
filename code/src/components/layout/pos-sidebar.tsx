@@ -37,7 +37,7 @@ export function PosSidebar({ employeeName, isClockedIn }: PosSidebarProps) {
         minHeight: "calc(100vh - 57px)",
       }}
     >
-      {/* Clocked-in employee banner */}
+      {/* Employee banner when logged in */}
       {isClockedIn && employeeName ? (
         <div
           className="flex flex-col items-center justify-center rounded-2xl px-4 py-5 text-center"
@@ -52,7 +52,7 @@ export function PosSidebar({ employeeName, isClockedIn }: PosSidebarProps) {
         </div>
       ) : (
         <Link
-          href="/admin/shift-close"
+          href="/admin/clock-in"
           className="flex items-center justify-center gap-3 rounded-2xl px-5 py-4 transition-all w-full text-center"
           style={{
             backgroundColor: "var(--surface-panel-muted, #f4f4f5)",

@@ -26,9 +26,32 @@ export async function registerLoginAction(formData: FormData) {
     redirect(`/register?error=Too+many+login+attempts.+Try+again+in+${secs}+seconds`);
   }
 
-  await signInRegister(String(formData.get("pin") ?? ""), locationId);
+  const loginResult = await signInRegister(
+    String(formData.get("pin") ?? ""),
+    locationId,
+  );
+  if (!loginResult) redirect("/register?error=PIN+login+failed");
+  const { employee, location, registerSession } = loginResult;
+
+  // Auto-open shift on login — workers clock in by entering their PIN
+  if (isPg()) {
+    const shiftId = randomUUID();
+    await pgOpenShift({
+      id: shiftId,
+      locationId: location.id,
+      employeeId: employee.id,
+      registerSessionId: registerSession.id,
+      openingFloat: 0,
+    });
+    await pgInsertAuditEvent(
+      employee.organizationId, location.id, employee.id,
+      "shift", shiftId, "shift_opened",
+      { register_session_id: registerSession.id, opening_float: "0.00" },
+    );
+  }
+
   revalidatePath("/register");
-  redirect("/register?notice=Register+session+opened");
+  redirect("/register?notice=Clocked+in");
 }
 
 export async function openShiftAction(formData: FormData) {
@@ -89,6 +112,7 @@ export async function openShiftAction(formData: FormData) {
   }
 
   revalidatePath("/register");
+  revalidatePath("/admin/clock-in");
   redirect("/register?notice=Shift+opened");
 }
 
