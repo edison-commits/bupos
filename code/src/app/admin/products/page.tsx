@@ -1,3 +1,4 @@
+import { AdminTopNav } from "@/components/layout/admin-top-nav";
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
@@ -251,6 +252,7 @@ export default function ProductsPage() {
 
   return (
     <div className="space-y-6 p-6">
+        <AdminTopNav />
       {/* Summary Cards */}
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
         {[

@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { RoleGate } from '@/components/admin/role-gate';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
 
+import { AdminTopNav } from "@/components/layout/admin-top-nav";
 interface AuditEvent {
   id: string;
   transaction_id: string;
@@ -197,6 +198,7 @@ export default function AuditPage() {
   return (
     <RoleGate allowedRoles={['owner', 'manager']}>
       <div className="space-y-6 p-6 max-w-7xl mx-auto">
+        <AdminTopNav />
         {/* Header */}
         <div>
           <h1 className="text-3xl font-bold text-slate-900">Audit Trail</h1>

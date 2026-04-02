@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { ChevronDown } from 'lucide-react';
 
+import { AdminTopNav } from "@/components/layout/admin-top-nav";
 interface Metrics {
   grossSales: number;
   discounts: number;
@@ -104,7 +105,8 @@ export default function DashboardPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
+    <div className="min-h-screen bg-gray-50 pt-6">
+        <AdminTopNav />
       <div className="mx-auto max-w-7xl space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">

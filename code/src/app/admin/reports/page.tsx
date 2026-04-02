@@ -1,3 +1,4 @@
+import { AdminTopNav } from "@/components/layout/admin-top-nav";
 "use client";
 
 import { useState, useEffect } from "react";
@@ -99,6 +100,7 @@ export default function ReportsPage() {
 
   return (
     <div className="grid gap-6 p-6">
+        <AdminTopNav />
       <div className="max-w-7xl mx-auto p-6"><h1 className="text-3xl font-bold text-gray-900 mb-2">Reports & Analytics</h1><p className="text-gray-500 mb-6">Comprehensive sales, inventory, and operational insights.</p>
         <div className="space-y-6">
           {/* Date Range Picker */}

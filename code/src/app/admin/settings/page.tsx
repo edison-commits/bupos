@@ -1,3 +1,4 @@
+import { AdminTopNav } from "@/components/layout/admin-top-nav";
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -758,6 +759,7 @@ export default function SettingsPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 p-6">
+        <AdminTopNav />
         <div className="max-w-6xl mx-auto">
           <h1 className="text-3xl font-bold text-gray-900 mb-8">Settings</h1>
           <LoadingSkeleton />

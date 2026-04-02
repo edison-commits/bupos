@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 
+import { AdminTopNav } from "@/components/layout/admin-top-nav";
 interface Product {
   id: string;
   name: string;
@@ -229,6 +230,7 @@ export default function ReceivingPage() {
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: 'var(--surface-default)' }}>
+        <AdminTopNav />
       {/* Header */}
       <div className="border-b" style={{ borderColor: 'var(--border-subtle)' }}>
         <div className="mx-auto max-w-6xl px-4 py-6">

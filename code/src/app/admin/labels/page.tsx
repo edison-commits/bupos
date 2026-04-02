@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
+import { AdminTopNav } from "@/components/layout/admin-top-nav";
 interface ProductVariant {
   id: string;
   sku: string;
@@ -192,6 +193,7 @@ export default function LabelsPage() {
 
   return (
     <div style={{ backgroundColor: 'var(--surface-default)' }} className="min-h-screen">
+        <AdminTopNav />
       {/* Header */}
       <div className="border-b" style={{ borderColor: 'var(--border-subtle)' }}>
         <div className="mx-auto max-w-7xl px-4 py-6">

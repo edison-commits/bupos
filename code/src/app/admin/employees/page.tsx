@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Plus, Search, Edit2, Lock, Eye, EyeOff } from 'lucide-react';
 
+import { AdminTopNav } from "@/components/layout/admin-top-nav";
 const ROLES: Record<string, { label: string; color: string }> = {
   owner: { label: 'Owner', color: 'bg-red-100 text-red-800' },
   manager: { label: 'Manager', color: 'bg-blue-100 text-blue-800' },
@@ -240,6 +241,7 @@ export default function EmployeeManagement() {
 
   return (
     <div className="min-h-screen bg-slate-50 p-4 md:p-8">
+        <AdminTopNav />
       {/* Success Alert */}
       {success && (
         <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-emerald-800">

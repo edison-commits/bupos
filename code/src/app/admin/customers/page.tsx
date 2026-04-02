@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Plus, Search, Edit2, Eye, AlertCircle, Loader2, DollarSign, Users, TrendingUp, Award } from 'lucide-react';
 
+import { AdminTopNav } from "@/components/layout/admin-top-nav";
 interface Customer {
   id: string;
   first_name: string;
@@ -203,6 +204,7 @@ export default function CustomerManagement() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
+        <AdminTopNav />
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         {/* Header */}
         <div className="mb-8 flex items-center justify-between">

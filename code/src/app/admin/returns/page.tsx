@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Search, Calendar, ChevronDown, ChevronUp, Plus, X, AlertCircle, CheckCircle, Loader } from 'lucide-react';
 
+import { AdminTopNav } from "@/components/layout/admin-top-nav";
 interface CartItem {
   product_id: string;
   product_name: string;
@@ -213,6 +214,7 @@ export default function ReturnsPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+        <AdminTopNav />
       {/* Header */}
       <div className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">

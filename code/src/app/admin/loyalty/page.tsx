@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { AlertCircle, Award, DollarSign, Loader2, Search, TrendingUp, Users, X } from 'lucide-react';
 
+import { AdminTopNav } from "@/components/layout/admin-top-nav";
 interface LoyaltyOverview {
   total_customers_enrolled: number;
   active_loyalty_customers: number;
@@ -231,6 +232,7 @@ export default function LoyaltyDashboard() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6">
+        <AdminTopNav />
       <div className="mx-auto max-w-7xl">
         {/* Header */}
         <div className="mb-8">
