@@ -32,6 +32,18 @@ jobs:
             -c "CREATE INDEX IF NOT EXISTS idx_products_product_brand ON products(product_brand) WHERE product_brand != '';"
           psql "${{ secrets.DATABASE_URL }}" \
             -c "CREATE INDEX IF NOT EXISTS idx_products_product_type ON products(product_type) WHERE product_type != '';"
+          psql "${{ secrets.DATABASE_URL }}" \
+            -c "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS receipt_store_name TEXT DEFAULT '';"
+          psql "${{ secrets.DATABASE_URL }}" \
+            -c "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS receipt_store_address TEXT DEFAULT '';"
+          psql "${{ secrets.DATABASE_URL }}" \
+            -c "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS receipt_store_city TEXT DEFAULT '';"
+          psql "${{ secrets.DATABASE_URL }}" \
+            -c "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS receipt_store_region TEXT DEFAULT '';"
+          psql "${{ secrets.DATABASE_URL }}" \
+            -c "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS receipt_store_postal_code TEXT DEFAULT '';"
+          psql "${{ secrets.DATABASE_URL }}" \
+            -c "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS receipt_store_phone TEXT DEFAULT '';"
         if: github.ref == 'refs/heads/master' && github.event_name == 'push'
 
       - name: Build & Deploy

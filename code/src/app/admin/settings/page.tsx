@@ -29,6 +29,12 @@ interface StoreSettings {
   receipt: {
     header: string;
     footer: string;
+    storeName: string;
+    storeAddress: string;
+    storeCity: string;
+    storeRegion: string;
+    storePostalCode: string;
+    storePhone: string;
   };
 }
 
@@ -56,6 +62,12 @@ const EMPTY_SETTINGS: StoreSettings = {
   receipt: {
     header: '',
     footer: '',
+    storeName: '',
+    storeAddress: '',
+    storeCity: '',
+    storeRegion: '',
+    storePostalCode: '',
+    storePhone: '',
   },
 };
 
@@ -520,7 +532,25 @@ function LocationSection({
   );
 }
 
-function ReceiptPreview({ header, footer }: { header: string; footer: string }) {
+function ReceiptPreview({
+  header,
+  footer,
+  storeName,
+  storeAddress,
+  storeCity,
+  storeRegion,
+  storePostalCode,
+  storePhone,
+}: {
+  header: string;
+  footer: string;
+  storeName: string;
+  storeAddress: string;
+  storeCity: string;
+  storeRegion: string;
+  storePostalCode: string;
+  storePhone: string;
+}) {
   const now = new Date();
   const dateStr = now.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
   const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
@@ -554,10 +584,16 @@ function ReceiptPreview({ header, footer }: { header: string; footer: string }) 
         ) : null}
 
         {/* Store info */}
-        <div className="text-center text-sm font-bold mb-1" style={{ color: '#111827' }}>BasicUniformPOS</div>
-        <div className="text-center text-xs mb-1" style={{ color: '#6b7280' }}>123 Main Street</div>
-        <div className="text-center text-xs mb-1" style={{ color: '#6b7280' }}>Anytown, CA 90210</div>
-        <div className="text-center text-xs mb-3" style={{ color: '#6b7280' }}>(555) 123-4567</div>
+        <div className="text-center text-sm font-bold mb-1" style={{ color: '#111827' }}>
+          {storeName || 'Store Name'}
+        </div>
+        {storeAddress ? <div className="text-center text-xs mb-1" style={{ color: '#6b7280' }}>{storeAddress}</div> : null}
+        {storeCity || storeRegion || storePostalCode
+          ? <div className="text-center text-xs mb-1" style={{ color: '#6b7280' }}>
+              {[storeCity, storeRegion, storePostalCode].filter(Boolean).join(', ')}
+            </div>
+          : null}
+        {storePhone ? <div className="text-center text-xs mb-3" style={{ color: '#6b7280' }}>{storePhone}</div> : null}
 
         {/* Date/time */}
         <div className="flex justify-between text-xs mb-3" style={{ color: '#374151' }}>
@@ -716,25 +752,77 @@ function ReceiptSection({
         {/* Left: form */}
         <div className="space-y-6">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-semibold text-gray-700 mb-2">
+              Store Info on Receipt
+            </label>
+            <div className="space-y-3">
+              <input
+                type="text"
+                value={formData.storeName}
+                onChange={(e) => handleChange('storeName', e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-sm"
+                placeholder="Store name (e.g. BasicUniformPOS)"
+              />
+              <input
+                type="text"
+                value={formData.storeAddress}
+                onChange={(e) => handleChange('storeAddress', e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-sm"
+                placeholder="Street address (e.g. 123 Main Street)"
+              />
+              <div className="grid grid-cols-3 gap-3">
+                <input
+                  type="text"
+                  value={formData.storeCity}
+                  onChange={(e) => handleChange('storeCity', e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-sm"
+                  placeholder="City"
+                />
+                <input
+                  type="text"
+                  value={formData.storeRegion}
+                  onChange={(e) => handleChange('storeRegion', e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-sm"
+                  placeholder="State"
+                />
+                <input
+                  type="text"
+                  value={formData.storePostalCode}
+                  onChange={(e) => handleChange('storePostalCode', e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-sm"
+                  placeholder="ZIP"
+                />
+              </div>
+              <input
+                type="text"
+                value={formData.storePhone}
+                onChange={(e) => handleChange('storePhone', e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-sm"
+                placeholder="Phone (e.g. (555) 123-4567)"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">
               Header Text
             </label>
             <textarea
               value={formData.header}
               onChange={(e) => handleChange('header', e.target.value)}
-              rows={6}
+              rows={4}
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent font-mono text-sm"
               placeholder="Text to display at the top of receipts..."
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-semibold text-gray-700 mb-2">
               Footer Text
             </label>
             <textarea
               value={formData.footer}
               onChange={(e) => handleChange('footer', e.target.value)}
-              rows={6}
+              rows={4}
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent font-mono text-sm"
               placeholder="Text to display at the bottom of receipts..."
             />
@@ -762,7 +850,16 @@ function ReceiptSection({
         <div className="flex flex-col">
           <p className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Live Preview</p>
           <div className="flex-1 flex justify-center">
-            <ReceiptPreview header={formData.header} footer={formData.footer} />
+            <ReceiptPreview
+              header={formData.header}
+              footer={formData.footer}
+              storeName={formData.storeName}
+              storeAddress={formData.storeAddress}
+              storeCity={formData.storeCity}
+              storeRegion={formData.storeRegion}
+              storePostalCode={formData.storePostalCode}
+              storePhone={formData.storePhone}
+            />
           </div>
         </div>
       </div>

@@ -10,7 +10,9 @@ export async function GET() {
       orgQuery(
         ORG_ID,
         `SELECT id, name, legal_name, slug, phone, email, website, timezone, currency_code,
-                receipt_header, receipt_footer
+                receipt_header, receipt_footer,
+                receipt_store_name, receipt_store_address, receipt_store_city,
+                receipt_store_region, receipt_store_postal_code, receipt_store_phone
          FROM organizations WHERE id = $1`,
         [ORG_ID]
       ),
@@ -56,6 +58,12 @@ export async function GET() {
       receipt: {
         header: org.receipt_header || '',
         footer: org.receipt_footer || '',
+        storeName: org.receipt_store_name || '',
+        storeAddress: org.receipt_store_address || '',
+        storeCity: org.receipt_store_city || '',
+        storeRegion: org.receipt_store_region || '',
+        storePostalCode: org.receipt_store_postal_code || '',
+        storePhone: org.receipt_store_phone || '',
       },
     });
   } catch (error) {
@@ -101,9 +109,19 @@ export async function PUT(request: NextRequest) {
         await orgQuery(
           ORG_ID,
           `UPDATE organizations
-           SET receipt_header = $1, receipt_footer = $2, updated_at = NOW()
-           WHERE id = $3`,
-          [data.header, data.footer, ORG_ID]
+           SET receipt_header = $1, receipt_footer = $2,
+               receipt_store_name = $3, receipt_store_address = $4,
+               receipt_store_city = $5, receipt_store_region = $6,
+               receipt_store_postal_code = $7, receipt_store_phone = $8,
+               updated_at = NOW()
+           WHERE id = $9`,
+          [
+            data.header, data.footer,
+            data.storeName ?? '', data.storeAddress ?? '',
+            data.storeCity ?? '', data.storeRegion ?? '',
+            data.storePostalCode ?? '', data.storePhone ?? '',
+            ORG_ID,
+          ]
         );
         break;
 
