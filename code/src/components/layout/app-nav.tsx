@@ -4,33 +4,21 @@ import Link from "next/link";
 import { useState } from "react";
 import { usePathname } from "next/navigation";
 
-const links = [
+const topLinks = [
   { href: "/", label: "Overview" },
-  { href: "/register", label: "Register shell" },
-  { href: "/admin", label: "Admin shell" },
-  { href: "/admin/dashboard", label: "Dashboard" },
-  { href: "/admin/transactions", label: "Transactions" },
-  { href: "/admin/returns", label: "Returns" },
-  { href: "/admin/inventory", label: "Inventory" },
-  { href: "/admin/products", label: "Products" },
-  { href: "/admin/receiving", label: "Receiving" },
-  { href: "/admin/employees", label: "Employees" },
-  { href: "/admin/customers", label: "Customers" },
-  { href: "/admin/loyalty", label: "Loyalty" },
-  { href: "/admin/shift-close", label: "Shift Close" },
-  { href: "/admin/cash-drawer", label: "Cash Drawer" },
-  { href: "/admin/reports", label: "Reports" },
-  { href: "/admin/audit", label: "Audit Log" },
-  { href: "/admin/purchase-orders", label: "Purchase Orders" },
-  { href: "/admin/labels", label: "Labels" },
-  { href: "/admin/settings", label: "Settings" },
+  { href: "/register", label: "Register" },
+  { href: "/admin", label: "Admin" },
 ];
 
 export function AppNav() {
   const [isOpen, setIsOpen] = useState(false);
   const pathname = usePathname();
 
-  const isActive = (href: string) => pathname === href;
+  const isActive = (href: string) => {
+    if (href === "/register") return pathname.startsWith("/register");
+    if (href === "/admin") return pathname.startsWith("/admin");
+    return pathname === href;
+  };
 
   return (
     <nav
@@ -57,8 +45,8 @@ export function AppNav() {
         </div>
 
         {/* Desktop Nav Links */}
-        <div className="hidden gap-6 md:flex">
-          {links.map((link) => (
+        <div className="hidden gap-1 md:flex">
+          {topLinks.map((link) => (
             <Link
               key={link.href}
               href={link.href}
@@ -67,11 +55,14 @@ export function AppNav() {
                   ? `var(--text-primary)`
                   : `var(--text-secondary)`,
                 borderBottomColor: isActive(link.href)
-                  ? `var(--text-primary)`
+                  ? `var(--surface-accent)`
                   : "transparent",
                 borderBottomWidth: "2px",
                 paddingBottom: "2px",
                 transition: "all 0.2s ease",
+                backgroundColor: isActive(link.href) ? `${link.href === "/register" ? "var(--surface-accent)" : "transparent"}` : "transparent",
+                borderRadius: "0.5rem",
+                padding: "0.25rem 0.75rem",
               }}
               className="text-base font-medium"
             >
@@ -122,7 +113,7 @@ export function AppNav() {
           }}
           className="flex flex-col gap-3 px-4 py-4 md:hidden"
         >
-          {links.map((link) => (
+          {topLinks.map((link) => (
             <Link
               key={link.href}
               href={link.href}
