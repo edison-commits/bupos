@@ -1,9 +1,10 @@
 'use client';
 
+import { AdminTopNav } from "@/components/layout/admin-top-nav";
+
 import { useState, useEffect } from 'react';
 import { Plus, Search, Edit2, Eye, AlertCircle, Loader2, DollarSign, Users, TrendingUp, Award } from 'lucide-react';
 
-import { AdminTopNav } from "@/components/layout/admin-top-nav";
 interface Customer {
   id: string;
   first_name: string;

@@ -1,5 +1,6 @@
-import { AdminTopNav } from "@/components/layout/admin-top-nav";
 "use client";
+
+import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import { useState, useEffect } from "react";
 

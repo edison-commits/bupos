@@ -1,9 +1,10 @@
 'use client';
 
+import { AdminTopNav } from "@/components/layout/admin-top-nav";
+
 import { useState, useEffect } from 'react';
 import { AlertCircle, Award, DollarSign, Loader2, Search, TrendingUp, Users, X } from 'lucide-react';
 
-import { AdminTopNav } from "@/components/layout/admin-top-nav";
 interface LoyaltyOverview {
   total_customers_enrolled: number;
   active_loyalty_customers: number;

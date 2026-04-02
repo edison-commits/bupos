@@ -1,10 +1,11 @@
 'use client';
 
+import { AdminTopNav } from "@/components/layout/admin-top-nav";
+
 import { useState, useEffect } from 'react';
 import { ChevronLeft, DollarSign, TrendingUp, AlertCircle, CheckCircle2, Clock } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
-import { AdminTopNav } from "@/components/layout/admin-top-nav";
 interface ShiftData {
   shift: {
     id: string;

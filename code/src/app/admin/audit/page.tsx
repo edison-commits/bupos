@@ -1,10 +1,11 @@
 'use client';
 
+import { AdminTopNav } from "@/components/layout/admin-top-nav";
+
 import { useState, useEffect } from 'react';
 import { RoleGate } from '@/components/admin/role-gate';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
 
-import { AdminTopNav } from "@/components/layout/admin-top-nav";
 interface AuditEvent {
   id: string;
   transaction_id: string;

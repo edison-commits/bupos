@@ -1,9 +1,10 @@
 'use client';
 
+import { AdminTopNav } from "@/components/layout/admin-top-nav";
+
 import { useState, useEffect } from 'react';
 import { ChevronDown } from 'lucide-react';
 
-import { AdminTopNav } from "@/components/layout/admin-top-nav";
 interface Metrics {
   grossSales: number;
   discounts: number;

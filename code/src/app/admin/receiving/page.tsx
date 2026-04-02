@@ -1,9 +1,10 @@
 'use client';
 
+import { AdminTopNav } from "@/components/layout/admin-top-nav";
+
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 
-import { AdminTopNav } from "@/components/layout/admin-top-nav";
 interface Product {
   id: string;
   name: string;

@@ -1,8 +1,9 @@
 'use client';
 
+import { AdminTopNav } from "@/components/layout/admin-top-nav";
+
 import { useCallback, useEffect, useState } from 'react';
 
-import { AdminTopNav } from "@/components/layout/admin-top-nav";
 interface ProductVariant {
   id: string;
   sku: string;
