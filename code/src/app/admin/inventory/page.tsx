@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 
 interface ProductVariant {
   variant_id: string | null;
@@ -18,22 +19,14 @@ interface Product {
   name: string;
   slug: string;
   categoryId: string | null;
+  productBrand: string;
+  productType: string;
   variants: ProductVariant[];
 }
 
 interface Category {
   id: string;
   name: string;
-}
-
-interface Product {
-  id: string;
-  name: string;
-  slug: string;
-  categoryId: string | null;
-  productBrand: string;
-  productType: string;
-  variants: ProductVariant[];
 }
 
 interface InventorySummary {
@@ -146,8 +139,10 @@ export default function InventoryPage() {
   const brands = data?.brands || [];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-8">
-      <div className="max-w-7xl mx-auto">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
+      {/* Top Navigation */}
+      <AdminTopNav />
+      <div className="max-w-7xl mx-auto px-8 pt-6 pb-8">
         {/* Header */}
         <div className="mb-8">
           <h1 className="text-4xl font-bold text-slate-900 mb-2">
@@ -328,6 +323,54 @@ export default function InventoryPage() {
               />
             ))
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AdminTopNav() {
+  const pathname = usePathname();
+
+  const links = [
+    { href: '/register', label: 'Register' },
+    { href: '/admin/dashboard', label: 'Dashboard' },
+    { href: '/admin/transactions', label: 'Transactions' },
+    { href: '/admin/inventory', label: 'Inventory' },
+    { href: '/admin/products', label: 'Products' },
+    { href: '/admin/customers', label: 'Customers' },
+    { href: '/admin/employees', label: 'Employees' },
+    { href: '/admin/settings', label: 'Settings' },
+  ];
+
+  const isActive = (href: string) => {
+    if (href === '/admin/inventory') return pathname === '/admin/inventory';
+    return pathname.startsWith(href);
+  };
+
+  return (
+    <div
+      className="sticky top-0 z-30 w-full"
+      style={{ backgroundColor: 'var(--surface-panel)', borderBottom: '1px solid var(--border-subtle)' }}
+    >
+      <div className="max-w-7xl mx-auto px-8">
+        <div className="flex items-center gap-1 overflow-x-auto py-2">
+          {links.map((link) => {
+            const active = isActive(link.href);
+            return (
+              <Link
+                key={link.href}
+                href={link.href}
+                className="flex-shrink-0 px-4 py-2 rounded-xl text-sm font-medium transition-all"
+                style={{
+                  backgroundColor: active ? 'var(--surface-accent)' : 'transparent',
+                  color: active ? '#ffffff' : 'var(--text-secondary)',
+                }}
+              >
+                {link.label}
+              </Link>
+            );
+          })}
         </div>
       </div>
     </div>
