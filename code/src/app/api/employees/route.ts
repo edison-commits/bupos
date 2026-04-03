@@ -33,8 +33,8 @@ export async function GET(request: NextRequest) {
     values.push(pageSize, (page - 1) * pageSize);
 
     const [countRes, dataRes] = await Promise.all([
-      pool.query(countQ, values.slice(0, idx - 1)),
-      pool.query(dataQ, values),
+      orgQuery(ORG_ID, countQ, values.slice(0, idx - 1)),
+      orgQuery(ORG_ID, dataQ, values),
     ]);
 
     const employees = dataRes.rows.map((row: Record<string, unknown>) => ({
