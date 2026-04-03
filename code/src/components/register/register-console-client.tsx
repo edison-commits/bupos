@@ -1,8 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useOnlineStatus } from "@/lib/offline/use-online-status";
-import { OfflineStatusBar } from "./offline-status-bar";
 import dynamic from "next/dynamic";
 import { openShiftAction, registerLogoutAction, quickSwitchAction } from "@/app/register/actions";
 import { closeShiftEnhancedAction, payInOutAction } from "@/app/register/shift-actions";
@@ -147,80 +145,56 @@ export function RegisterConsoleClient({
   if (context.activeShift && canOpenRegister) {
     return (
       <div className="space-y-4">
-        {/* Compact session bar */}
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-zinc-200 bg-white px-4 py-3 shadow-sm">
-          <div className="flex flex-wrap items-center gap-4 text-sm">
-            <span className="font-semibold">{context.employee.displayName}</span>
-            <span className="text-zinc-400">·</span>
-            <span className="text-zinc-600">{context.location.name}</span>
-            <span className="text-zinc-400">·</span>
-            <span className="text-zinc-500" suppressHydrationWarning>Shift opened {formatDateTime(context.activeShift.openedAt)}</span>
-            <span className="text-zinc-400">·</span>
-            <span className="text-zinc-500">Float ${context.activeShift.openingFloat.toFixed(2)}</span>
-            <span className="text-zinc-400">·</span>
-            <span className="text-zinc-500">Expected ${expectedCash.toFixed(2)}</span>
-            {payInOuts.length > 0 && (
-              <>
-                <span className="text-zinc-400">·</span>
-                <span className="text-zinc-500">
-                  {payInTotal > 0 && <span className="text-teal-600">+${payInTotal.toFixed(2)} in</span>}
-                  {payInTotal > 0 && payOutTotal > 0 && " / "}
-                  {payOutTotal > 0 && <span className="text-amber-600">−${payOutTotal.toFixed(2)} out</span>}
-                </span>
-              </>
-            )}
-          </div>
-          <div className="flex gap-2">
-            <a
-              href="/admin/clock-in"
-              className="touch-button flex items-center gap-1 rounded-xl bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100"
-            >
-              🕐 Clock In
-            </a>
-            <button
-              type="button"
-              onClick={() => setPayDirection("pay_in")}
-              className="touch-button rounded-xl bg-teal-50 px-3 text-sm font-semibold text-teal-700 hover:bg-teal-100"
-            >
-              Pay in
+        {/* Shift action buttons — info moved to header */}
+        <div className="flex flex-wrap gap-2">
+          <a
+            href="/admin/clock-in"
+            className="touch-button flex items-center gap-1 rounded-xl bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100"
+          >
+            🕐 Clock In
+          </a>
+          <button
+            type="button"
+            onClick={() => setPayDirection("pay_in")}
+            className="touch-button rounded-xl bg-teal-50 px-3 text-sm font-semibold text-teal-700 hover:bg-teal-100"
+          >
+            Pay in
+          </button>
+          <button
+            type="button"
+            onClick={() => setPayDirection("pay_out")}
+            className="touch-button rounded-xl bg-amber-50 px-3 text-sm font-semibold text-amber-700 hover:bg-amber-100"
+          >
+            Pay out
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowQuickSwitch(true)}
+            className="touch-button rounded-xl bg-indigo-50 px-3 text-sm font-semibold text-indigo-700 hover:bg-indigo-100"
+          >
+            Switch
+          </button>
+          <button
+            type="button"
+            disabled={closing}
+            onClick={() => setShowEODWizard(true)}
+            className="touch-button rounded-xl bg-teal-600 px-4 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-50"
+          >
+            End of day
+          </button>
+          <button
+            type="button"
+            disabled={closing}
+            onClick={() => setShowCloseModal(true)}
+            className="touch-button rounded-xl bg-amber-600 px-4 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+          >
+            Close shift
+          </button>
+          <form action={registerLogoutAction}>
+            <button className="touch-button rounded-xl bg-zinc-200 px-4 text-sm font-semibold text-zinc-700 hover:bg-zinc-300">
+              Log out
             </button>
-            <button
-              type="button"
-              onClick={() => setPayDirection("pay_out")}
-              className="touch-button rounded-xl bg-amber-50 px-3 text-sm font-semibold text-amber-700 hover:bg-amber-100"
-            >
-              Pay out
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowQuickSwitch(true)}
-              className="touch-button rounded-xl bg-indigo-50 px-3 text-sm font-semibold text-indigo-700 hover:bg-indigo-100"
-            >
-              Switch
-            </button>
-            <button
-              type="button"
-              disabled={closing}
-              onClick={() => setShowEODWizard(true)}
-              className="touch-button rounded-xl bg-teal-600 px-4 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-50"
-            >
-              End of day
-            </button>
-            <button
-              type="button"
-              disabled={closing}
-              onClick={() => setShowCloseModal(true)}
-              className="touch-button rounded-xl bg-amber-600 px-4 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
-            >
-              Close shift
-            </button>
-            <form action={registerLogoutAction}>
-              <button className="touch-button rounded-xl bg-zinc-200 px-4 text-sm font-semibold text-zinc-700 hover:bg-zinc-300">
-                Log out
-              </button>
-            </form>
-          </div>
-          <OfflineStatusBar />
+          </form>
         </div>
 
 {notice && <p className="rounded-2xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{notice}</p>}
