@@ -91,7 +91,7 @@ export async function PUT(request: NextRequest) {
           [data.name, data.legalName, data.phone, data.email, data.website,
            data.timezone, data.currencyCode, ORG_ID]
         );
-        break;
+        return NextResponse.json({ success: true });
 
       case 'location':
         await orgQuery(
@@ -103,7 +103,7 @@ export async function PUT(request: NextRequest) {
           [data.name, data.code, data.address1, data.city, data.region,
            data.postalCode, data.phone, data.taxRate, LOCATION_ID, ORG_ID]
         );
-        break;
+        return NextResponse.json({ success: true });
 
       case 'receipt':
         await orgQuery(
@@ -123,13 +123,11 @@ export async function PUT(request: NextRequest) {
             ORG_ID,
           ]
         );
-        break;
+        return NextResponse.json({ success: true });
 
       default:
         return NextResponse.json({ error: 'Unknown section' }, { status: 400 });
     }
-
-    return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Settings PUT error:', error);
     return NextResponse.json({ error: 'Failed to update settings' }, { status: 500 });
