@@ -382,7 +382,7 @@ function LocationSection({
           </div>
           <div>
             <label className="text-sm font-medium text-gray-600">State</label>
-            <p className="text-lg text-gray-900 mt-1">{data.region || '—'}</p>
+            <p className="text-lg text-gray-900 mt-1">{US_STATES.find(s => s.code === data.region)?.name ?? data.region ?? '—'}</p>
           </div>
           <div>
             <label className="text-sm font-medium text-gray-600">Postal Code</label>
@@ -491,9 +491,16 @@ function LocationSection({
             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent disabled:bg-gray-100"
           >
             <option value="">Select city…</option>
-            {formData.region && getCitiesForState(formData.region).map((city) => (
-              <option key={city} value={city}>{city}</option>
-            ))}
+            {formData.region && (() => {
+              const knownCities = getCitiesForState(formData.region);
+              const cityIsKnown = knownCities.includes(formData.city);
+              return knownCities.map((city) => (
+                <option key={city} value={city}>{city}</option>
+              ));
+            })()}
+            {formData.city && !getCitiesForState(formData.region).includes(formData.city) && (
+              <option value={formData.city}>{formData.city} (saved)</option>
+            )}
           </select>
         </div>
         <div>
