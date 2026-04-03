@@ -70,6 +70,7 @@ function getCategoryChipActive(index: number): string {
 
 export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) {
   const [activeCategoryId, setActiveCategoryId] = useState<string | "all" | "favorites">("all");
+  const [tileSize, setTileSize] = useState<'sm' | 'md' | 'lg'>('md');
   const [variantPickerProduct, setVariantPickerProduct] = useState<ProductGridItem | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [scanFeedback, setScanFeedback] = useState<string | null>(null);
@@ -245,6 +246,27 @@ export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) 
               : "bg-emerald-100 text-emerald-700"
           }`}>{scanFeedback}</p>
         )}
+
+        {/* Tile size control */}
+        <div className="flex items-center gap-1 mt-3">
+          <span className="text-sm font-medium text-zinc-500 mr-1">Tiles:</span>
+          {([['sm', 'S'], ['md', 'M'], ['lg', 'L']] as const).map(([size, label]) => (
+            <button
+              key={size}
+              type="button"
+              onClick={() => setTileSize(size)}
+              className="touch-button rounded-xl px-4 py-2 text-base font-semibold transition-all"
+              style={{
+                backgroundColor: tileSize === size ? 'var(--surface-accent)' : 'var(--surface-panel-muted, #f4f4f5)',
+                color: tileSize === size ? '#ffffff' : 'var(--text-secondary)',
+                minHeight: '44px',
+                minWidth: '44px',
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Virtual keyboard for search */}
@@ -291,7 +313,11 @@ export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) 
       </div>
 
       {/* Product grid with larger tiles */}
-      <div className="grid flex-1 auto-rows-min gap-4 overflow-y-auto grid-cols-2 md:grid-cols-3 xl:grid-cols-3">
+      <div className={`grid flex-1 auto-rows-min gap-4 overflow-y-auto ${
+        tileSize === 'sm' ? 'grid-cols-3 md:grid-cols-4 lg:grid-cols-5' :
+        tileSize === 'md' ? 'grid-cols-2 md:grid-cols-3 lg:grid-cols-4' :
+        'grid-cols-1 md:grid-cols-2 lg:grid-cols-3'
+      }`}>
         {filtered.map((item) => {
           const defaultVariant = item.variants.find((v) => v.id === item.product.defaultVariantId) ?? item.variants[0];
           const totalStock = item.inventory.reduce((sum, inv) => sum + inv.onHand, 0);
