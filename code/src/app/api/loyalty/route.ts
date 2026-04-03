@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
       const customerResult = await orgQuery(
         ORG_ID,
         `SELECT id, first_name, last_name, email, phone, loyalty_points, 
-                total_spend, visit_count, store_credit_balance, last_visit_at
+                total_spend, visit_count, store_credit_balance
          FROM customers
          WHERE id = $1`,
         [customerId],
@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
       // Get recent transactions for this customer
       const transactionResult = await orgQuery(
         ORG_ID,
-        `SELECT id, created_at, total_due, total_paid, status
+        `SELECT id, created_at, grand_total AS total_due, grand_total AS total_paid, status
          FROM transactions
          WHERE customer_id = $1
          ORDER BY created_at DESC
@@ -67,7 +67,7 @@ export async function GET(req: NextRequest) {
        ),
        top_customers AS (
          SELECT
-           id, first_name, last_name, email, loyalty_points, total_spend, visit_count, last_visit_at
+           id, first_name, last_name, email, loyalty_points, total_spend, visit_count
          FROM customers
          WHERE loyalty_points > 0
          ORDER BY loyalty_points DESC

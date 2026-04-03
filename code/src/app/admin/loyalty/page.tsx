@@ -184,7 +184,7 @@ export default function LoyaltyDashboard() {
       const allCustomers = [...topCustomers, ...recentActivity];
       const searchLower = searchQuery.toLowerCase();
       
-      let matchedCustomer = allCustomers.find(c =>
+      const matchedCustomer = allCustomers.find(c =>
         c.id === searchQuery ||
         `${c.first_name} ${c.last_name}`.toLowerCase().includes(searchLower) ||
         c.email?.toLowerCase().includes(searchLower)
@@ -223,7 +223,7 @@ export default function LoyaltyDashboard() {
     }
   };
 
-  const formatCurrency = (val: any) => {
+  const formatCurrency = (val: string | number) => {
     const num = typeof val === 'string' ? parseFloat(val) : val;
     return `$${num.toFixed(2)}`;
   };
