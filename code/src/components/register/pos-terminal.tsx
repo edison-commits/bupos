@@ -754,7 +754,7 @@ export function POSTerminal({
   const [showMoreActions, setShowMoreActions] = useState(false);
 
   return (
-    <div className="flex h-screen flex-col gap-3 overflow-hidden">
+    <div className="flex flex-1 flex-col gap-3 overflow-y-auto">
       {/* Offline status bar */}
       <OfflineStatusBar />
 

@@ -42,9 +42,9 @@ export default async function RegisterPage({
   const error = typeof params.error === "string" ? params.error.replaceAll("+", " ") : undefined;
 
   return (
-    <div className="pos-shell flex flex-col h-screen overflow-hidden">
+    <div className="pos-shell flex flex-col h-screen">
       <AppNav />
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 min-h-0 overflow-hidden">
         <PosSidebar {...sidebarProps} />
         <main className="flex-1 min-w-0 overflow-hidden">
           {session ? (
