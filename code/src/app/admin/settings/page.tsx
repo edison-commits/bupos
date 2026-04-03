@@ -4,6 +4,7 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import { useState, useEffect } from 'react';
 import { AlertCircle, Check, X } from 'lucide-react';
+import { getTaxRate, getCitiesForState, US_STATES } from '@/lib/tax-rates';
 
 interface StoreSettings {
   store: {
@@ -322,10 +323,21 @@ function LocationSection({
   error: string | null;
 }) {
   const [formData, setFormData] = useState<StoreSettings['location']>(data);
+  const [suggestedRate, setSuggestedRate] = useState<number | null>(null);
 
   useEffect(() => {
     setFormData(data);
   }, [data, isEditing]);
+
+  // Recalculate suggested rate when city or region changes
+  useEffect(() => {
+    if (formData.region) {
+      const rate = getTaxRate(formData.city, formData.region);
+      setSuggestedRate(rate);
+    } else {
+      setSuggestedRate(null);
+    }
+  }, [formData.city, formData.region]);
 
   const handleChange = (
     field: keyof StoreSettings['location'],
@@ -369,7 +381,7 @@ function LocationSection({
             <p className="text-lg text-gray-900 mt-1">{data.city || '—'}</p>
           </div>
           <div>
-            <label className="text-sm font-medium text-gray-600">Region/State</label>
+            <label className="text-sm font-medium text-gray-600">State</label>
             <p className="text-lg text-gray-900 mt-1">{data.region || '—'}</p>
           </div>
           <div>
@@ -381,8 +393,13 @@ function LocationSection({
             <p className="text-lg text-gray-900 mt-1">{data.phone || '—'}</p>
           </div>
           <div>
-            <label className="text-sm font-medium text-gray-600">Tax Rate (%)</label>
+            <label className="text-sm font-medium text-gray-600">Tax Rate</label>
             <p className="text-lg text-gray-900 mt-1">{data.taxRate.toFixed(2)}%</p>
+            {suggestedRate !== null && suggestedRate !== data.taxRate && (
+              <p className="text-xs text-zinc-400 mt-0.5">
+                Suggested: {(suggestedRate * 100).toFixed(2)}% for {data.city}
+              </p>
+            )}
           </div>
           <div>
             <label className="text-sm font-medium text-gray-600">Status</label>
@@ -446,24 +463,38 @@ function LocationSection({
           />
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">City</label>
-          <input
-            type="text"
-            value={formData.city}
-            onChange={(e) => handleChange('city', e.target.value)}
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            State
+          </label>
+          <select
+            value={formData.region}
+            onChange={(e) => {
+              handleChange('region', e.target.value);
+              handleChange('city', '');
+            }}
             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-          />
+          >
+            <option value="">Select state…</option>
+            {US_STATES.map((s) => (
+              <option key={s.code} value={s.code}>{s.name}</option>
+            ))}
+          </select>
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            Region/State
+            City
           </label>
-          <input
-            type="text"
-            value={formData.region}
-            onChange={(e) => handleChange('region', e.target.value)}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-          />
+          <select
+            value={formData.city}
+            onChange={(e) => handleChange('city', e.target.value)}
+            disabled={!formData.region}
+            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent disabled:bg-gray-100"
+          >
+            <option value="">Select city…</option>
+            {formData.region && getCitiesForState(formData.region).map((city) => (
+              <option key={city} value={city}>{city}</option>
+            ))}
+          </select>
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -489,15 +520,37 @@ function LocationSection({
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            Tax Rate (%)
+            Tax Rate
           </label>
-          <input
-            type="number"
-            step="0.01"
-            value={formData.taxRate}
-            onChange={(e) => handleChange('taxRate', parseFloat(e.target.value) || 0)}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-          />
+          <div className="flex gap-2">
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              max="100"
+              value={formData.taxRate}
+              onChange={(e) => handleChange('taxRate', parseFloat(e.target.value) || 0)}
+              className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+              placeholder="e.g. 8.75"
+            />
+            {suggestedRate !== null && suggestedRate !== formData.taxRate && (
+              <button
+                type="button"
+                onClick={() => handleChange('taxRate', Math.round(suggestedRate * 10000) / 100)}
+                className="shrink-0 px-3 py-2 text-sm font-semibold bg-teal-50 text-teal-700 rounded-lg hover:bg-teal-100 border border-teal-200 transition-colors"
+                title={`Apply ${(suggestedRate * 100).toFixed(2)}%`}
+              >
+                Apply {(suggestedRate * 100).toFixed(2)}%
+              </button>
+            )}
+          </div>
+          {suggestedRate !== null && (
+            <p className="text-xs text-zinc-500 mt-1">
+              {formData.city && formData.region
+                ? `Suggested combined rate for ${formData.city}, ${formData.region}: ${(suggestedRate * 100).toFixed(2)}%`
+                : `Select city & state to see suggested rate`}
+            </p>
+          )}
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
