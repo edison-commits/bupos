@@ -11,6 +11,11 @@ const adminLinks = [
   { href: "/admin/products", label: "Products" },
   { href: "/admin/customers", label: "Customers" },
   { href: "/admin/employees", label: "Employees" },
+  { href: "/admin/loyalty", label: "Loyalty" },
+  { href: "/admin/shifts", label: "Shifts" },
+  { href: "/admin/clock-in", label: "Clock In" },
+  { href: "/admin/cash-drawer", label: "Cash Drawer" },
+  { href: "/admin/receiving", label: "Receiving" },
   { href: "/admin/settings", label: "Settings" },
 ];
 
