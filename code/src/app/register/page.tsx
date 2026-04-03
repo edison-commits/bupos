@@ -42,31 +42,26 @@ export default async function RegisterPage({
   const error = typeof params.error === "string" ? params.error.replaceAll("+", " ") : undefined;
 
   return (
-    <div className="pos-shell">
+    <div className="pos-shell flex flex-col h-screen overflow-hidden">
       <AppNav />
-      <div className="mx-auto flex w-full max-w-7xl px-4 py-6 md:px-6">
+      <div className="flex flex-1 overflow-hidden">
         <PosSidebar {...sidebarProps} />
-        <main className="flex-1 min-w-0">
+        <main className="flex-1 min-w-0 overflow-hidden">
           {session ? (
             <RegisterConsole store={store!} context={session} notice={notice} error={error} />
           ) : (
-            <div className="grid gap-6 xl:grid-cols-[1fr_0.9fr]">
-              <section className="card px-6 py-6">
-                <h2 className="text-xl font-semibold">PIN login</h2>
-                <p className="mt-2 text-sm text-zinc-600">Enter your PIN to open a register session at {location.name}. Demo PINs: 1111 owner · 2222 manager · 3333 cashier.</p>
-                <form action={registerLoginAction} className="mt-5">
-                  <PinLoginForm locationId={location.id} />
-                </form>
-                {notice ? <p className="mt-4 rounded-2xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{notice}</p> : null}
-                {error ? <p className="mt-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p> : null}
-              </section>
-
-              <section className="card px-6 py-6">
-                <h2 className="text-xl font-semibold">BasicUniformPOS register</h2>
-                <p className="mt-3 text-sm text-zinc-600">
-                  Log in with your PIN, open a shift, and start selling. The register supports cash, card, and store credit payments with split tender. Manager approval is required for discounts, voids, and store credits above configured thresholds.
-                </p>
-              </section>
+            <div className="h-full flex items-center justify-center p-6">
+              <div className="w-full max-w-2xl">
+                <section className="card px-8 py-8">
+                  <h2 className="text-2xl font-semibold">PIN login</h2>
+                  <p className="mt-2 text-sm text-zinc-600">Enter your PIN to open a register session at {location.name}. Demo PINs: 1111 owner · 2222 manager · 3333 cashier.</p>
+                  <form action={registerLoginAction} className="mt-5">
+                    <PinLoginForm locationId={location.id} />
+                  </form>
+                  {notice ? <p className="mt-4 rounded-2xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{notice}</p> : null}
+                  {error ? <p className="mt-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p> : null}
+                </section>
+              </div>
             </div>
           )}
         </main>
