@@ -7,7 +7,6 @@ import { createCart, addItem, removeItem, updateQuantity, setDiscount, setDiscou
 import { checkoutAction } from "@/app/register/checkout-action";
 import { useOnlineStatus } from "@/lib/offline/use-online-status";
 import { savePendingTransaction, cacheCatalog } from "@/lib/offline/idb-store";
-import { OfflineStatusBar } from "./offline-status-bar";
 import { createCustomerAction } from "@/app/register/actions";
 import { logTransactionEvent, type TransactionEventType } from "@/app/register/event-action";
 import { ProductGrid, type ProductGridItem } from "./product-grid";
@@ -756,7 +755,6 @@ export function POSTerminal({
   return (
     <div className="flex flex-1 flex-col gap-3 overflow-y-auto">
       {/* Offline status bar */}
-      <OfflineStatusBar />
 
       <div className="flex flex-1 flex-col gap-3 lg:flex-row">
       {/* Left: Product grid + recommendations */}

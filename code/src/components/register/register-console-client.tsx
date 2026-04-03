@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useOnlineStatus } from "@/lib/offline/use-online-status";
+import { OfflineStatusBar } from "./offline-status-bar";
 import dynamic from "next/dynamic";
 import { openShiftAction, registerLogoutAction, quickSwitchAction } from "@/app/register/actions";
 import { closeShiftEnhancedAction, payInOutAction } from "@/app/register/shift-actions";
@@ -218,6 +220,7 @@ export function RegisterConsoleClient({
               </button>
             </form>
           </div>
+          <OfflineStatusBar />
         </div>
 
 {notice && <p className="rounded-2xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{notice}</p>}
