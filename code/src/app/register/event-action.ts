@@ -3,7 +3,6 @@
 import { randomUUID } from "node:crypto";
 import { mutateStore } from "@/lib/persistence/store";
 import pool, { orgTx } from "@/lib/db";
-import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 
 const isPg = () => !!process.env.USE_POSTGRES;
 
@@ -61,17 +60,29 @@ export async function logTransactionEvent(input: TransactionEventInput): Promise
         ],
       );
 
-      await pgInsertAuditEvent(
-        input.organizationId,
-        input.locationId,
-        input.employeeId,
-        "transaction",
-        input.referenceId,
-        input.eventType as "transaction_placeholder",
-        input.payload,
-      );
+      await client.query("COMMIT");
     } finally {
       client.release();
+    }
+
+    // Audit event — outside transaction
+    try {
+      await pool.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          randomUUID(),
+          input.organizationId,
+          input.locationId,
+          input.employeeId,
+          "transaction",
+          input.referenceId,
+          input.eventType as "transaction_placeholder",
+          JSON.stringify(input.payload),
+        ],
+      );
+    } catch (err) {
+      console.error("[event-action] audit event failed:", err);
     }
   } else {
     await mutateStore((store) => {

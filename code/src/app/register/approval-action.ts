@@ -4,7 +4,6 @@ import { randomUUID } from "node:crypto";
 import { readStore, mutateStore } from "@/lib/persistence/store";
 import { hasPermission } from "@/lib/domain/permissions";
 import pool, { orgTx } from "@/lib/db";
-import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import type { PermissionKey } from "@/lib/domain/types";
 
@@ -114,24 +113,36 @@ export async function verifyManagerApproval(pin: string, request: ApprovalReques
         ],
       );
 
-      await pgInsertAuditEvent(
-        request.organizationId,
-        request.locationId,
-        approverEmployee.id,
-        "transaction_exception",
-        exceptionId,
-        "manager_override",
-        {
-          action_type: request.actionType,
-          cashier_employee_id: request.cashierEmployeeId,
-          approver_employee_id: approverEmployee.id,
-          trigger_amount: request.triggerAmount.toFixed(2),
-          threshold_amount: request.thresholdAmount.toFixed(2),
-          reason_code: request.reasonCode ?? "none",
-        },
-      );
+      await client.query("COMMIT");
     } finally {
       client.release();
+    }
+
+    // Audit event — outside transaction so audit failure doesn't rollback the approval
+    try {
+      await pool.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          randomUUID(),
+          request.organizationId,
+          request.locationId,
+          approverEmployee.id,
+          "transaction_exception",
+          exceptionId,
+          "manager_override",
+          JSON.stringify({
+            action_type: request.actionType,
+            cashier_employee_id: request.cashierEmployeeId,
+            approver_employee_id: approverEmployee.id,
+            trigger_amount: request.triggerAmount.toFixed(2),
+            threshold_amount: request.thresholdAmount.toFixed(2),
+            reason_code: request.reasonCode ?? "none",
+          }),
+        ],
+      );
+    } catch (err) {
+      console.error("[approval-action] audit event failed:", err);
     }
   } else {
     await mutateStore((s) => {
