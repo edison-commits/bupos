@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { ESCPOSBuilder } from "@/lib/receipt/escpos";
 import dynamic from "next/dynamic";
 import { openShiftAction, registerLogoutAction, quickSwitchAction } from "@/app/register/actions";
 import { closeShiftEnhancedAction, payInOutAction } from "@/app/register/shift-actions";
@@ -71,6 +72,29 @@ export function RegisterConsoleClient({
   const [showQuickSwitch, setShowQuickSwitch] = useState(false);
   const [switchPin, setSwitchPin] = useState("");
   const [switching, setSwitching] = useState(false);
+  const [drawerStatus, setDrawerStatus] = useState<"idle" | "opening" | "done" | "error">("idle");
+
+  async function handleOpenDrawer() {
+    if (!("serial" in navigator)) {
+      setDrawerStatus("error");
+      return;
+    }
+    setDrawerStatus("opening");
+    try {
+      const port = await (navigator as any).serial.requestPort();
+      await port.open({ baudRate: 9600 });
+      const writer = port.writable.getWriter();
+      const cmd = new ESCPOSBuilder().init().openDrawer().build();
+      await writer.write(cmd);
+      writer.releaseLock();
+      await port.close();
+      setDrawerStatus("done");
+      setTimeout(() => setDrawerStatus("idle"), 2000);
+    } catch {
+      setDrawerStatus("error");
+      setTimeout(() => setDrawerStatus("idle"), 3000);
+    }
+  }
 
   // Dark mode by default for register — Toast POS feel
   useEffect(() => {
@@ -173,6 +197,17 @@ export function RegisterConsoleClient({
             className="touch-button rounded-xl bg-indigo-50 px-3 text-sm font-semibold text-indigo-700 hover:bg-indigo-100"
           >
             Switch
+          </button>
+          <button
+            type="button"
+            disabled={drawerStatus !== "idle"}
+            onClick={handleOpenDrawer}
+            className="touch-button rounded-xl bg-gray-700 px-3 text-sm font-semibold text-white hover:bg-gray-800 disabled:opacity-50"
+          >
+            {drawerStatus === "idle" && "Open Drawer"}
+            {drawerStatus === "opening" && "Opening…"}
+            {drawerStatus === "done" && "✓ Done"}
+            {drawerStatus === "error" && "Failed"}
           </button>
           <button
             type="button"
