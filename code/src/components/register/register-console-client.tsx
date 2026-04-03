@@ -11,7 +11,6 @@ import type { LocalStoreData, RegisterSessionContext } from "@/lib/persistence/t
 import { formatDateTime } from "@/lib/utils/date";
 import { ShiftCloseModal } from "./shift-close-modal";
 import { PayInOutModal, type PayDirection } from "./pay-in-out-modal";
-import { TimeClockWidget } from "./time-clock-widget";
 import { EODWizard } from "./eod-wizard";
 
 // Dynamic import with ssr: false to avoid module initialization errors
@@ -221,16 +220,7 @@ export function RegisterConsoleClient({
           </div>
         </div>
 
-        {/* Time Clock */}
-        <TimeClockWidget
-          employeeId={context.employee.id}
-          employeeName={context.employee.displayName}
-          locationId={context.location.id}
-          organizationId={context.employee.organizationId}
-          todayEntries={store.timeClockEntries.filter((e) => e.createdAt.startsWith(new Date().toISOString().slice(0, 10)))}
-        />
-
-        {notice && <p className="rounded-2xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{notice}</p>}
+{notice && <p className="rounded-2xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{notice}</p>}
         {(error || actionError) && (
           <p className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{error || actionError}</p>
         )}
