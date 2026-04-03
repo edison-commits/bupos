@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useId } from "react";
 import { ESCPOSBuilder } from "@/lib/receipt/escpos";
 import dynamic from "next/dynamic";
 import { openShiftAction, registerLogoutAction, quickSwitchAction } from "@/app/register/actions";
@@ -51,6 +51,58 @@ interface RegisterConsoleClientProps {
   payInOuts: PayInOutRecord[];
 }
 
+// Sortable button config — defined at module scope so TypeScript sees it in the component
+const STORAGE_KEY = "bupos-register-buttons";
+const LOCK_KEY = "bupos-register-buttons-locked";
+
+interface ButtonConfig {
+  id: string;
+  label: string;
+  type: "pay_in" | "pay_out" | "switch" | "drawer" | "eod" | "close" | "logout" | "clockin";
+  variant: "teal" | "amber" | "indigo" | "teal-solid" | "amber-solid" | "zinc" | "emerald" | "gray";
+  href?: string;
+}
+
+const DEFAULT_BUTTONS: ButtonConfig[] = [
+  { id: "clockin", label: "🕐 Clock In", type: "clockin", variant: "emerald", href: "/admin/clock-in" },
+  { id: "payin",   label: "Pay in",      type: "pay_in",  variant: "teal" },
+  { id: "payout",  label: "Pay out",     type: "pay_out", variant: "amber" },
+  { id: "switch",  label: "Switch",      type: "switch",   variant: "indigo" },
+  { id: "drawer",  label: "Open Drawer", type: "drawer",   variant: "gray" },
+  { id: "eod",     label: "End of day",  type: "eod",      variant: "teal-solid" },
+  { id: "close",   label: "Close shift", type: "close",   variant: "amber-solid" },
+  { id: "logout",  label: "Log out",     type: "logout",   variant: "zinc" },
+];
+
+function loadButtons(): ButtonConfig[] {
+  if (typeof window === "undefined") return DEFAULT_BUTTONS;
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (!saved) return DEFAULT_BUTTONS;
+    const order: string[] = JSON.parse(saved);
+    const map = new Map(DEFAULT_BUTTONS.map((b) => [b.id, b]));
+    const ordered = order.map((id) => map.get(id)).filter(Boolean) as ButtonConfig[];
+    for (const b of DEFAULT_BUTTONS) {
+      if (!ordered.find((x) => x.id === b.id)) ordered.push(b);
+    }
+    return ordered;
+  } catch { return DEFAULT_BUTTONS; }
+}
+
+function loadLocked(): boolean {
+  if (typeof window === "undefined") return false;
+  return localStorage.getItem(LOCK_KEY) === "true";
+}
+
+function saveButtons(order: ButtonConfig[]) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(order.map((b) => b.id)));
+}
+
+function saveLocked(locked: boolean) {
+  localStorage.setItem(LOCK_KEY, String(locked));
+}
+
+
 export function RegisterConsoleClient({
   store,
   context,
@@ -64,6 +116,7 @@ export function RegisterConsoleClient({
   recentShifts,
   payInOuts,
 }: RegisterConsoleClientProps) {
+  const uid = useId();
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [showEODWizard, setShowEODWizard] = useState(false);
   const [payDirection, setPayDirection] = useState<PayDirection | null>(null);
@@ -73,6 +126,12 @@ export function RegisterConsoleClient({
   const [switchPin, setSwitchPin] = useState("");
   const [switching, setSwitching] = useState(false);
   const [drawerStatus, setDrawerStatus] = useState<"idle" | "opening" | "done" | "error">("idle");
+
+  // Sortable button state
+  const [buttons, setButtons] = useState<ButtonConfig[]>(loadButtons);
+  const [isLocked, setIsLocked] = useState(loadLocked);
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
 
   async function handleOpenDrawer() {
     if (!("serial" in navigator)) {
@@ -94,6 +153,130 @@ export function RegisterConsoleClient({
       setDrawerStatus("error");
       setTimeout(() => setDrawerStatus("idle"), 3000);
     }
+  }
+
+  // Drag handlers
+  function handleDragStart(e: React.DragEvent, id: string) {
+    if (isLocked) return;
+    setDraggedId(id);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", id);
+  }
+  function handleDragOver(e: React.DragEvent, id: string) {
+    if (isLocked || draggedId === null || draggedId === id) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDragOverId(id);
+  }
+  function handleDrop(e: React.DragEvent, targetId: string) {
+    e.preventDefault();
+    if (isLocked || draggedId === null || draggedId === targetId) return;
+    setButtons((prev) => {
+      const next = [...prev];
+      const from = next.findIndex((b) => b.id === draggedId);
+      const to = next.findIndex((b) => b.id === targetId);
+      if (from < 0 || to < 0) return prev;
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      saveButtons(next);
+      return next;
+    });
+    setDraggedId(null);
+    setDragOverId(null);
+  }
+  function handleDragEnd() {
+    setDraggedId(null);
+    setDragOverId(null);
+  }
+  function toggleLock() {
+    const next = !isLocked;
+    setIsLocked(next);
+    saveLocked(next);
+    if (next) {
+      setDraggedId(null);
+      setDragOverId(null);
+    }
+  }
+
+  function variantClass(v: ButtonConfig["variant"]) {
+    switch (v) {
+      case "teal": return "bg-teal-50 text-teal-700 hover:bg-teal-100";
+      case "amber": return "bg-amber-50 text-amber-700 hover:bg-amber-100";
+      case "indigo": return "bg-indigo-50 text-indigo-700 hover:bg-indigo-100";
+      case "emerald": return "bg-emerald-50 text-emerald-700 hover:bg-emerald-100";
+      case "gray": return "bg-gray-700 text-white hover:bg-gray-800";
+      case "teal-solid": return "bg-teal-600 text-white hover:bg-teal-700";
+      case "amber-solid": return "bg-amber-600 text-white hover:bg-amber-700";
+      case "zinc": return "bg-zinc-200 text-zinc-700 hover:bg-zinc-300";
+    }
+  }
+
+  function renderButton(b: ButtonConfig) {
+    const isDragging = draggedId === b.id;
+    const isDropTarget = dragOverId === b.id && !isDragging;
+    const isDisabled =
+      (b.type === "drawer" && drawerStatus !== "idle") ||
+      (b.type === "eod" && closing) ||
+      (b.type === "close" && closing);
+    const dragProps = isLocked ? {} : {
+      draggable: true,
+      onDragStart: (e: React.DragEvent) => handleDragStart(e, b.id),
+      onDragOver: (e: React.DragEvent) => handleDragOver(e, b.id),
+      onDrop: (e: React.DragEvent) => handleDrop(e, b.id),
+      onDragEnd: handleDragEnd,
+    };
+
+    if (b.type === "clockin") {
+      return (
+        <a
+          key={b.id}
+          {...dragProps}
+          href={b.href}
+          className={`touch-button flex items-center gap-1 rounded-xl px-4 py-2 text-sm font-semibold ${variantClass(b.variant)} ${isDragging ? "opacity-40" : ""}`}
+        >
+          {!isLocked && <span className="text-xs opacity60">⋮⋮</span>}
+          {b.label}
+        </a>
+      );
+    }
+    if (b.type === "logout") {
+      return (
+        <form key={b.id} action={registerLogoutAction}>
+          <button
+            {...dragProps}
+            type="submit"
+            className={`touch-button flex items-center gap-1 rounded-xl px-4 py-2 text-sm font-semibold ${variantClass(b.variant)} ${isDragging ? "opacity-40" : ""}`}
+          >
+            {!isLocked && <span className="text-xs opacity-60">⋮⋮</span>}
+            {b.label}
+          </button>
+        </form>
+      );
+    }
+    const label = b.type === "drawer"
+      ? (drawerStatus === "idle" ? b.label : drawerStatus === "opening" ? "Opening…" : drawerStatus === "done" ? "✓ Done" : "Failed")
+      : b.label;
+    const clickHandlers: Record<string, () => void> = {
+      pay_in: () => setPayDirection("pay_in"),
+      pay_out: () => setPayDirection("pay_out"),
+      switch: () => setShowQuickSwitch(true),
+      drawer: handleOpenDrawer,
+      eod: () => setShowEODWizard(true),
+      close: () => setShowCloseModal(true),
+    };
+    return (
+      <button
+        key={b.id}
+        {...dragProps}
+        type="button"
+        disabled={isDisabled}
+        onClick={clickHandlers[b.type]}
+        className={`touch-button flex items-center gap-1 rounded-xl px-3 py-2 text-sm font-semibold ${variantClass(b.variant)} ${isDragging ? "opacity-40" : ""} ${isDropTarget ? "ring-2 ring-offset-1 ring-teal-400" : ""} ${isDisabled && b.type !== "drawer" ? "disabled:opacity-50" : ""}`}
+      >
+        {!isLocked && <span className="text-xs opacity-60">⋮⋮</span>}
+        {label}
+      </button>
+    );
   }
 
   // Dark mode by default for register — Toast POS feel
@@ -169,67 +352,20 @@ export function RegisterConsoleClient({
   if (context.activeShift && canOpenRegister) {
     return (
       <div className="space-y-4">
-        {/* Shift action buttons — info moved to header */}
+        {/* Sortable action buttons */}
         <div className="flex flex-wrap gap-2">
-          <a
-            href="/admin/clock-in"
-            className="touch-button flex items-center gap-1 rounded-xl bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100"
-          >
-            🕐 Clock In
-          </a>
+          {buttons.map(renderButton)}
           <button
             type="button"
-            onClick={() => setPayDirection("pay_in")}
-            className="touch-button rounded-xl bg-teal-50 px-3 text-sm font-semibold text-teal-700 hover:bg-teal-100"
+            onClick={toggleLock}
+            title={isLocked ? "Unlock to rearrange buttons" : "Lock button order"}
+            className={`touch-button flex items-center gap-1 rounded-xl px-3 py-2 text-sm font-semibold transition-colors ${isLocked ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200"}`}
           >
-            Pay in
+            {isLocked
+              ? <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+              : <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+            }
           </button>
-          <button
-            type="button"
-            onClick={() => setPayDirection("pay_out")}
-            className="touch-button rounded-xl bg-amber-50 px-3 text-sm font-semibold text-amber-700 hover:bg-amber-100"
-          >
-            Pay out
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowQuickSwitch(true)}
-            className="touch-button rounded-xl bg-indigo-50 px-3 text-sm font-semibold text-indigo-700 hover:bg-indigo-100"
-          >
-            Switch
-          </button>
-          <button
-            type="button"
-            disabled={drawerStatus !== "idle"}
-            onClick={handleOpenDrawer}
-            className="touch-button rounded-xl bg-gray-700 px-3 text-sm font-semibold text-white hover:bg-gray-800 disabled:opacity-50"
-          >
-            {drawerStatus === "idle" && "Open Drawer"}
-            {drawerStatus === "opening" && "Opening…"}
-            {drawerStatus === "done" && "✓ Done"}
-            {drawerStatus === "error" && "Failed"}
-          </button>
-          <button
-            type="button"
-            disabled={closing}
-            onClick={() => setShowEODWizard(true)}
-            className="touch-button rounded-xl bg-teal-600 px-4 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-50"
-          >
-            End of day
-          </button>
-          <button
-            type="button"
-            disabled={closing}
-            onClick={() => setShowCloseModal(true)}
-            className="touch-button rounded-xl bg-amber-600 px-4 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
-          >
-            Close shift
-          </button>
-          <form action={registerLogoutAction}>
-            <button className="touch-button rounded-xl bg-zinc-200 px-4 text-sm font-semibold text-zinc-700 hover:bg-zinc-300">
-              Log out
-            </button>
-          </form>
         </div>
 
 {notice && <p className="rounded-2xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{notice}</p>}
