@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useState } from "react";
 import { usePathname } from "next/navigation";
+import { formatDateTime } from "@/lib/utils/date";
+import { OfflineStatusBar } from "../register/offline-status-bar";
 
 const topLinks = [
   { href: "/", label: "Overview" },
@@ -10,7 +12,20 @@ const topLinks = [
   { href: "/admin", label: "Admin" },
 ];
 
-export function AppNav() {
+interface SessionInfo {
+  employeeName: string;
+  locationName: string;
+  shiftOpenedAt: string;
+  openingFloat: number;
+  payInTotal: number;
+  payOutTotal: number;
+}
+
+interface AppNavProps {
+  session?: SessionInfo;
+}
+
+export function AppNav({ session }: AppNavProps) {
   const [isOpen, setIsOpen] = useState(false);
   const pathname = usePathname();
 
@@ -29,9 +44,9 @@ export function AppNav() {
       }}
       className="sticky top-0 z-40"
     >
-      <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-4 py-3 md:px-6">
+      <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-4 py-3 md:px-6 gap-4">
         {/* Logo */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <div
             style={{ backgroundColor: "#14b8a6" }}
             className="h-2 w-2 rounded-full"
@@ -44,8 +59,32 @@ export function AppNav() {
           </span>
         </div>
 
+        {/* Session info — shown on register when logged in */}
+        {session && (
+          <div className="hidden lg:flex items-center gap-3 text-sm flex-1 justify-center">
+            <span className="font-semibold text-zinc-800">{session.employeeName}</span>
+            <span className="text-zinc-400">·</span>
+            <span className="text-zinc-600">{session.locationName}</span>
+            <span className="text-zinc-400">·</span>
+            <span className="text-zinc-500">Shift opened {formatDateTime(session.shiftOpenedAt)}</span>
+            <span className="text-zinc-400">·</span>
+            <span className="text-zinc-500">Float ${session.openingFloat.toFixed(2)}</span>
+            {(session.payInTotal > 0 || session.payOutTotal > 0) && (
+              <>
+                <span className="text-zinc-400">·</span>
+                <span className="text-zinc-500">
+                  {session.payInTotal > 0 && <span className="text-teal-600">+${session.payInTotal.toFixed(2)} in</span>}
+                  {session.payInTotal > 0 && session.payOutTotal > 0 && " / "}
+                  {session.payOutTotal > 0 && <span className="text-amber-600">−${session.payOutTotal.toFixed(2)} out</span>}
+                </span>
+              </>
+            )}
+            <OfflineStatusBar />
+          </div>
+        )}
+
         {/* Desktop Nav Links */}
-        <div className="hidden gap-1 md:flex">
+        <div className="hidden gap-1 md:flex shrink-0">
           {topLinks.map((link) => (
             <Link
               key={link.href}

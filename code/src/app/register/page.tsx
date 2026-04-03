@@ -38,12 +38,24 @@ export default async function RegisterPage({
       }
     : {};
 
+  // Compute session info for the header bar
+  const headerSession = session && store && session.activeShift
+    ? {
+        employeeName: `${session.employee.firstName} ${session.employee.lastName}`,
+        locationName: session.location.name,
+        shiftOpenedAt: session.activeShift.openedAt,
+        openingFloat: session.activeShift.openingFloat,
+        payInTotal: store.payInOuts.filter((p: any) => p.direction === "pay_in").reduce((s: number, p: any) => s + p.amount, 0),
+        payOutTotal: store.payInOuts.filter((p: any) => p.direction === "pay_out").reduce((s: number, p: any) => s + p.amount, 0),
+      }
+    : undefined;
+
   const notice = typeof params.notice === "string" ? params.notice.replaceAll("+", " ") : undefined;
   const error = typeof params.error === "string" ? params.error.replaceAll("+", " ") : undefined;
 
   return (
     <div className="pos-shell flex flex-col min-h-screen">
-      <AppNav />
+      <AppNav session={headerSession} />
       <div className="flex flex-1 min-h-0">
         <PosSidebar {...sidebarProps} />
         <main className="flex-1 min-w-0 overflow-hidden">
