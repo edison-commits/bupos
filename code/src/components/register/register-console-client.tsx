@@ -170,6 +170,12 @@ export function RegisterConsoleClient({
             )}
           </div>
           <div className="flex gap-2">
+            <a
+              href="/admin/clock-in"
+              className="touch-button flex items-center gap-1 rounded-xl bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100"
+            >
+              🕐 Clock In
+            </a>
             <button
               type="button"
               onClick={() => setPayDirection("pay_in")}

@@ -758,7 +758,7 @@ export function POSTerminal({
       {/* Offline status bar */}
       <OfflineStatusBar />
 
-      <div className="flex flex-1 flex-col gap-3 lg:flex-row overflow-hidden">
+      <div className="flex flex-1 flex-col gap-3 lg:flex-row">
       {/* Left: Product grid + recommendations */}
       <div className="flex flex-1 flex-col gap-2 overflow-hidden lg:flex-[1.2]">
         <div className="flex-1 overflow-hidden rounded-2xl border p-3 shadow-lg sm:p-4" style={{ borderColor: 'var(--border-subtle)', background: 'var(--surface-panel)' }}>
