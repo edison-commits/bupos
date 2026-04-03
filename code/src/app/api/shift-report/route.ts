@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { orgQuery, orgTx } from "@/lib/db";
+import { orgQuery, orgTx, pool } from "@/lib/db";
 import { randomUUID } from "node:crypto";
 
 const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
@@ -236,6 +236,7 @@ export async function POST(req: NextRequest) {
       if (!shiftId) return NextResponse.json({ error: "shiftId required" }, { status: 400 });
 
       const client = await orgTx(ORG_ID);
+      let auditPayload: { expected: number; declared: number; variance: number; blind: boolean; location_id: string; employee_id: string };
       try {
         const shift = await client.query(
           `SELECT s.*, rs.id AS reg_session_id FROM shifts s
@@ -284,30 +285,45 @@ export async function POST(req: NextRequest) {
           [expectedCash, declared, variance, note || null, blindClose || false, shiftId],
         );
 
-        // Audit event
-        await client.query(
-          `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
-           VALUES ($1, $2, $3, $4, 'shift', $5, 'shift_closed', $6, now())`,
-          [
-            randomUUID(), ORG_ID, s.location_id, employeeId || s.employee_id, shiftId,
-            JSON.stringify({ expected: expectedCash, declared, variance, blind: blindClose || false }),
-          ],
-        );
+        // Capture scope-dependent values before transaction block closes
+        auditPayload = {
+          expected: expectedCash,
+          declared,
+          variance,
+          blind: blindClose || false,
+          location_id: s.location_id,
+          employee_id: employeeId || s.employee_id,
+        };
 
         await client.query("COMMIT");
-        return NextResponse.json({
-          shiftId,
-          status: "closed",
-          expectedCash: Number(expectedCash.toFixed(2)),
-          declaredCash: Number(declared.toFixed(2)),
-          variance,
-        });
       } catch (e) {
         await client.query("ROLLBACK");
         throw e;
       } finally {
         client.release();
       }
+
+      // Audit event — outside transaction so audit failure doesn't rollback the shift close
+      try {
+        await pool.query(
+          `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+           VALUES ($1, $2, $3, $4, 'shift', $5, 'shift_closed', $6, now())`,
+          [
+            randomUUID(), ORG_ID, auditPayload.location_id, auditPayload.employee_id, shiftId,
+            JSON.stringify({ expected: auditPayload.expected, declared: auditPayload.declared, variance: auditPayload.variance, blind: auditPayload.blind }),
+          ],
+        );
+      } catch (err) {
+        console.error("[shift-report] audit event failed:", err);
+      }
+
+      return NextResponse.json({
+        shiftId,
+        status: "closed",
+        expectedCash: Number(auditPayload.expected.toFixed(2)),
+        declaredCash: Number(auditPayload.declared.toFixed(2)),
+        variance: auditPayload.variance,
+      });
     }
 
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });

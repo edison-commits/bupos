@@ -85,8 +85,17 @@ export async function createLayawayAction(
         );
       }
 
-      // 4. Audit event
-      await client.query(
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+
+    // Audit event — outside transaction so audit failure doesn't rollback the layaway
+    try {
+      await pool.query(
         `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
          VALUES ($1, $2, $3, $4, 'layaway', $5, 'layaway_created', $6, now())`,
         [
@@ -100,13 +109,8 @@ export async function createLayawayAction(
           }),
         ],
       );
-
-      await client.query("COMMIT");
-    } catch (e) {
-      await client.query("ROLLBACK");
-      throw e;
-    } finally {
-      client.release();
+    } catch (err) {
+      console.error("[layawayAction] audit event failed:", err);
     }
 
     revalidatePath("/register");

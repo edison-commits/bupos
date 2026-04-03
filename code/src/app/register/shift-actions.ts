@@ -43,8 +43,17 @@ export async function payInOutAction(input: PayInOutInput): Promise<{ success: b
         ],
       );
 
-      // 2. Audit event
-      await client.query(
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+
+    // Audit event — outside transaction so audit failure doesn't rollback the financial record
+    try {
+      await pool.query(
         `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
          VALUES ($1, $2, $3, $4, 'shift', $5, $6, $7, now())`,
         [
@@ -58,13 +67,8 @@ export async function payInOutAction(input: PayInOutInput): Promise<{ success: b
           }),
         ],
       );
-
-      await client.query("COMMIT");
-    } catch (e) {
-      await client.query("ROLLBACK");
-      throw e;
-    } finally {
-      client.release();
+    } catch (err) {
+      console.error("[payInOutAction] audit event failed:", err);
     }
 
     revalidatePath("/register");
@@ -153,8 +157,17 @@ export async function closeShiftEnhancedAction(
         [context.registerSession.id],
       );
 
-      // 3. Audit event
-      await client.query(
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+
+    // Audit event — outside transaction so audit failure doesn't rollback the shift close
+    try {
+      await pool.query(
         `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
          VALUES ($1, $2, $3, $4, 'shift', $5, 'shift_closed', $6, now())`,
         [
@@ -170,13 +183,8 @@ export async function closeShiftEnhancedAction(
           }),
         ],
       );
-
-      await client.query("COMMIT");
-    } catch (e) {
-      await client.query("ROLLBACK");
-      throw e;
-    } finally {
-      client.release();
+    } catch (err) {
+      console.error("[closeShiftEnhancedAction] audit event failed:", err);
     }
 
     revalidatePath("/register");

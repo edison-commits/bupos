@@ -139,22 +139,26 @@ export async function checkoutAction(
         [transactionId, cart.id, context.registerSession.id],
       );
 
-      // 6. Audit event
-      await client.query(
-        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
-         VALUES ($1, $2, $3, $4, 'transaction', $5, 'transaction_placeholder', $6, now())`,
-        [
-          randomUUID(), context.employee.organizationId, context.location.id,
-          context.employee.id, transactionId,
-          JSON.stringify({
-            register_session_id: context.registerSession.id,
-            item_count: totals.itemCount,
-            grand_total: totals.grandTotal.toFixed(2),
-            tender_count: tenders.length,
-            primary_tender_type: primaryTenderType,
-          }),
-        ],
-      );
+      // 6. Audit event — moved outside transaction (see below)
+      try {
+        await pool.query(
+          `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+           VALUES ($1, $2, $3, $4, 'transaction', $5, 'transaction_completed', $6, now())`,
+          [
+            randomUUID(), context.employee.organizationId, context.location.id,
+            context.employee.id, transactionId,
+            JSON.stringify({
+              register_session_id: context.registerSession.id,
+              item_count: totals.itemCount,
+              grand_total: totals.grandTotal.toFixed(2),
+              tender_count: tenders.length,
+              primary_tender_type: primaryTenderType,
+            }),
+          ],
+        );
+      } catch (err) {
+        console.error("[checkoutAction] audit event failed:", err);
+      }
 
       // 7. Update customer loyalty, spend, visits
       if (cart.customerId) {

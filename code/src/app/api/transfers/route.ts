@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { orgQuery, orgTx } from "@/lib/db";
+import { orgQuery, orgTx, pool } from "@/lib/db";
 import { randomUUID } from "node:crypto";
 
 const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
@@ -132,9 +132,9 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "At least one line item required" }, { status: 400 });
       }
 
+      const transferId = randomUUID();
       const client = await orgTx(ORG_ID);
       try {
-        const transferId = randomUUID();
         await client.query(
           `INSERT INTO transfers (id, organization_id, source_location_id, destination_location_id, status, requested_by, notes, created_at, updated_at)
            VALUES ($1, $2, $3, $4, 'requested', $5, $6, now(), now())`,
@@ -149,20 +149,26 @@ export async function POST(req: NextRequest) {
           );
         }
 
-        await client.query(
-          `INSERT INTO audit_events (id, organization_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
-           VALUES ($1, $2, $3, 'transfer', $4, 'transfer_created', $5, now())`,
-          [randomUUID(), ORG_ID, employeeId, transferId, JSON.stringify({ source: sourceLocationId, destination: destinationLocationId, line_count: lines.length })],
-        );
-
         await client.query("COMMIT");
-        return NextResponse.json({ id: transferId, status: "requested" }, { status: 201 });
       } catch (e) {
         await client.query("ROLLBACK");
         throw e;
       } finally {
         client.release();
       }
+
+      // Audit event — outside transaction
+      try {
+        await pool.query(
+          `INSERT INTO audit_events (id, organization_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+           VALUES ($1, $2, $3, 'transfer', $4, 'transfer_created', $5, now())`,
+          [randomUUID(), ORG_ID, employeeId, transferId, JSON.stringify({ source: sourceLocationId, destination: destinationLocationId, line_count: lines.length })],
+        );
+      } catch (err) {
+        console.error("[transfers] audit event failed:", err);
+      }
+
+      return NextResponse.json({ id: transferId, status: "requested" }, { status: 201 });
     }
 
     if (action === "ship") {

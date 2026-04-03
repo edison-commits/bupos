@@ -169,8 +169,17 @@ export async function processReturnAction(input: ReturnInput): Promise<ReturnRes
         }
       }
 
-      // 7. Audit event
-      await client.query(
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+
+    // Audit event — outside transaction so audit failure doesn't rollback the return
+    try {
+      await pool.query(
         `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
          VALUES ($1, $2, $3, $4, 'transaction', $5, 'return_processed', $6, now())`,
         [
@@ -184,13 +193,8 @@ export async function processReturnAction(input: ReturnInput): Promise<ReturnRes
           }),
         ],
       );
-
-      await client.query("COMMIT");
-    } catch (e) {
-      await client.query("ROLLBACK");
-      throw e;
-    } finally {
-      client.release();
+    } catch (err) {
+      console.error("[returnAction] audit event failed:", err);
     }
 
     revalidatePath("/register");

@@ -436,11 +436,15 @@ export async function pgInsertAuditEvent(
   orgId: string, locationId: string | null, employeeId: string | null,
   entityType: string, entityId: string | null, eventKind: string, payload: Record<string, unknown> = {},
 ) {
-  await pool.query(
-    `INSERT INTO audit_events (organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [orgId, locationId, employeeId, entityType, entityId, eventKind, JSON.stringify(payload)],
-  );
+  try {
+    await pool.query(
+      `INSERT INTO audit_events (organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [orgId, locationId, employeeId, entityType, entityId, eventKind, JSON.stringify(payload)],
+    );
+  } catch (err) {
+    console.error('[pgInsertAuditEvent] failed:', err);
+  }
 }
 
 // ── Organization ──────────────────────────────────────────────────────
