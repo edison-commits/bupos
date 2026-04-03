@@ -52,6 +52,34 @@ jobs:
             -c "CREATE INDEX IF NOT EXISTS idx_audit_events_entity ON audit_events(entity_type, entity_id);"
           psql "${{ secrets.DATABASE_URL }}" \
             -c "CREATE INDEX IF NOT EXISTS idx_audit_events_created ON audit_events(created_at DESC);"
+
+          # Scheduled shifts
+          psql "${{ secrets.DATABASE_URL }}" \
+            -c "CREATE TABLE IF NOT EXISTS scheduled_shifts (id UUID DEFAULT gen_random_uuid() PRIMARY KEY, organization_id UUID NOT NULL, location_id UUID NOT NULL, employee_id UUID NOT NULL, shift_date DATE NOT NULL, start_time TIME NOT NULL, end_time TIME NOT NULL, notes TEXT DEFAULT '', created_at TIMESTAMPTZ DEFAULT NOW(), created_by UUID, UNIQUE(location_id, employee_id, shift_date, start_time));"
+          psql "${{ secrets.DATABASE_URL }}" \
+            -c "CREATE INDEX IF NOT EXISTS idx_scheduled_shifts_loc_date ON scheduled_shifts(location_id, shift_date);"
+          psql "${{ secrets.DATABASE_URL }}" \
+            -c "CREATE INDEX IF NOT EXISTS idx_scheduled_shifts_employee ON scheduled_shifts(employee_id);"
+
+          # Time-off requests
+          psql "${{ secrets.DATABASE_URL }}" \
+            -c "CREATE TABLE IF NOT EXISTS time_off_requests (id UUID DEFAULT gen_random_uuid() PRIMARY KEY, organization_id UUID NOT NULL, employee_id UUID NOT NULL, request_type TEXT NOT NULL CHECK (request_type IN ('vacation','sick','personal','bereavement','jury_duty','other')), start_date DATE NOT NULL, end_date DATE NOT NULL, status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected')), notes TEXT DEFAULT '', requested_at TIMESTAMPTZ DEFAULT NOW(), reviewed_by UUID, reviewed_at TIMESTAMPTZ);"
+          psql "${{ secrets.DATABASE_URL }}" \
+            -c "CREATE INDEX IF NOT EXISTS idx_time_off_requests_org_employee ON time_off_requests(organization_id, employee_id);"
+
+          # Scheduled shifts
+          psql "${{ secrets.DATABASE_URL }}" \
+            -c "CREATE TABLE IF NOT EXISTS scheduled_shifts (id UUID DEFAULT gen_random_uuid() PRIMARY KEY, organization_id UUID NOT NULL, location_id UUID NOT NULL, employee_id UUID NOT NULL, shift_date DATE NOT NULL, start_time TIME NOT NULL, end_time TIME NOT NULL, notes TEXT DEFAULT '', created_at TIMESTAMPTZ DEFAULT NOW(), created_by UUID, UNIQUE(location_id, employee_id, shift_date, start_time));"
+          psql "${{ secrets.DATABASE_URL }}" \
+            -c "CREATE INDEX IF NOT EXISTS idx_scheduled_shifts_loc_date ON scheduled_shifts(location_id, shift_date);"
+          psql "${{ secrets.DATABASE_URL }}" \
+            -c "CREATE INDEX IF NOT EXISTS idx_scheduled_shifts_employee ON scheduled_shifts(employee_id);"
+
+          # Time-off requests
+          psql "${{ secrets.DATABASE_URL }}" \
+            -c "CREATE TABLE IF NOT EXISTS time_off_requests (id UUID DEFAULT gen_random_uuid() PRIMARY KEY, organization_id UUID NOT NULL, employee_id UUID NOT NULL, request_type TEXT NOT NULL CHECK (request_type IN ('vacation','sick','personal','bereavement','jury_duty','other')), start_date DATE NOT NULL, end_date DATE NOT NULL, status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected')), notes TEXT DEFAULT '', requested_at TIMESTAMPTZ DEFAULT NOW(), reviewed_by UUID, reviewed_at TIMESTAMPTZ);"
+          psql "${{ secrets.DATABASE_URL }}" \
+            -c "CREATE INDEX IF NOT EXISTS idx_time_off_requests_org_employee ON time_off_requests(organization_id, employee_id);"
         if: github.ref == 'refs/heads/master' && github.event_name == 'push'
 
       - name: Build & Deploy

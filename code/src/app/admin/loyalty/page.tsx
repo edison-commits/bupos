@@ -95,11 +95,22 @@ export default function LoyaltyDashboard() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch('/api/loyalty');
-      if (!response.ok) {
-        throw new Error('Failed to load loyalty data');
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      let data;
+      try {
+        const response = await fetch('/api/loyalty', { cache: 'no-store', signal: controller.signal });
+        clearTimeout(timeout);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: Failed to load loyalty data`);
+        }
+        data = await response.json();
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') {
+          throw new Error('Request timed out — please try again');
+        }
+        throw err;
       }
-      const data = await response.json();
       setOverview(data.overview);
       setTopCustomers(data.top_customers);
       setRecentActivity(data.recent_activity);

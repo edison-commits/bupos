@@ -80,12 +80,22 @@ export default function EmployeeManagement() {
         ...(search && { search }),
       });
 
-      const response = await fetch(`/api/employees?${params}`);
-      if (!response.ok) {
-        throw new Error('Failed to load employees');
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      let data;
+      try {
+        const response = await fetch(`/api/employees?${params}`, { cache: 'no-store', signal: controller.signal });
+        clearTimeout(timeout);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: Failed to load employees`);
+        }
+        data = await response.json();
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') {
+          throw new Error('Request timed out — please try again');
+        }
+        throw err;
       }
-
-      const data = await response.json();
       setEmployees(data.employees);
       setPagination(data.pagination);
     } catch (err) {
