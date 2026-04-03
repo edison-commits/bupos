@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
       `SELECT
          s.id,
          s.employee_id,
-         COALESCE(ep.display_name, e.display_name) AS employee_name,
+         COALESCE(e.display_name, e.first_name || ' ' || e.last_name) AS employee_name,
          s.opened_at,
          s.closed_at,
          s.status,
@@ -55,7 +55,6 @@ export async function GET(req: NextRequest) {
          s.closing_variance
        FROM shifts s
        LEFT JOIN employees e ON e.id = s.employee_id
-       LEFT JOIN employee_profiles ep ON ep.employee_id = s.employee_id
        WHERE ${where}
        ORDER BY s.opened_at DESC
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
