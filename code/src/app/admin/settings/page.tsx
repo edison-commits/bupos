@@ -948,7 +948,16 @@ export default function SettingsPage() {
     try {
       setLoading(true);
       setGlobalError(null);
-      const response = await fetch('/api/settings');
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      let response: Response;
+      try {
+        response = await fetch('/api/settings', { signal: controller.signal, cache: 'no-store' });
+        clearTimeout(timeout);
+      } catch (e) {
+        clearTimeout(timeout);
+        throw e;
+      }
       if (!response.ok) {
         throw new Error('Failed to fetch settings');
       }
@@ -996,17 +1005,26 @@ export default function SettingsPage() {
       setSavingSection('location');
       setSectionErrors((prev) => ({ ...prev, location: null }));
 
-      const response = await fetch('/api/settings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ section: 'location', data }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to save location settings');
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      let updated: StoreSettings;
+      try {
+        const response = await fetch('/api/settings', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ section: 'location', data }),
+          signal: controller.signal,
+          cache: 'no-store',
+        });
+        clearTimeout(timeout);
+        if (!response.ok) {
+          throw new Error('Failed to save location settings');
+        }
+        updated = await response.json();
+      } catch (e) {
+        clearTimeout(timeout);
+        throw e;
       }
-
-      const updated: StoreSettings = await response.json();
       setSettings(updated);
       setEditingSection(null);
     } catch (error) {
