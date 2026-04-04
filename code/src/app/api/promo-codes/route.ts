@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery, orgTx } from "@/lib/db";
+import { requireAdminPermission } from "@/lib/authz";
 import { randomUUID } from "node:crypto";
 
 const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
@@ -16,6 +17,7 @@ const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
  * Without params returns all promo codes.
  */
 export async function GET(req: NextRequest) {
+  await requireAdminPermission("audit.view");
   try {
     const sp = req.nextUrl.searchParams;
 
@@ -121,6 +123,7 @@ export async function GET(req: NextRequest) {
  *   action: "disable" — { promoCodeId }
  */
 export async function POST(req: NextRequest) {
+  await requireAdminPermission("catalog.manage");
   try {
     const body = await req.json();
     const { action } = body;
