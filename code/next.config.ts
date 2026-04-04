@@ -1,9 +1,22 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // pg must NOT be in serverExternalPackages — it needs to be bundled
-  // into the Worker. The nodejs_compat flag provides the Node.js APIs
-  // (net, tls, crypto) that pg requires.
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "images.unsplash.com",
+      },
+      {
+        protocol: "https",
+        hostname: "picsum.photos",
+      },
+      {
+        protocol: "https",
+        hostname: "plus.unsplash.com",
+      },
+    ],
+  },
 };
 
 export default nextConfig;

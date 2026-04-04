@@ -2,6 +2,9 @@ import { Pool } from '@neondatabase/serverless';
 
 const connectionString =
   process.env.DATABASE_URL ||
+  // NOTE: environment variable takes precedence for deployments.
+// LOCAL_DEV_URL is only used when DATABASE_URL is not set.
+const LOCAL_DEV_URL = process.env.DATABASE_URL ??
   'postgresql://postgres:postgres@localhost:5432/basicuniformpos';
 
 const isRemote =
