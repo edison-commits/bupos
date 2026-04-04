@@ -446,11 +446,23 @@ export async function pgCreateEmployee(data: {
 }
 
 export async function pgToggleEmployee(id: string): Promise<boolean> {
-  const { rowCount } = await pool.query(
-    `UPDATE employees SET is_active = NOT is_active, updated_at = $1 WHERE id = $2`,
-    [new Date().toISOString(), id],
-  );
-  return (rowCount ?? 0) > 0;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // Lock the row so concurrent toggle attempts are serialised.
+    await client.query(`SELECT id FROM employees WHERE id = $1 FOR UPDATE`, [id]);
+    const { rowCount } = await client.query(
+      `UPDATE employees SET is_active = NOT is_active, updated_at = $1 WHERE id = $2`,
+      [new Date().toISOString(), id],
+    );
+    await client.query('COMMIT');
+    return (rowCount ?? 0) > 0;
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 export async function pgReadEmployeeById(id: string): Promise<Employee | null> {

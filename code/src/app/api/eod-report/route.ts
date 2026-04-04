@@ -2,13 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
 import { requireAdminPermission } from "@/lib/authz";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
+import { BUPOS_LOCATION_ID } from "@/lib/env";
 
-const LOCATION_ID = "c57268b3-cb14-4c1a-bda6-55e49ddc6313";
+const LOCATION_ID = BUPOS_LOCATION_ID;
 const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
 
 /**
- * GET /api/eod-report
- * Preview the report data (for testing)
+ * GET /api/eod-report  [DEPRECATED — no UI consumer; hardcoded LOCATION_ID]
+ *
+ * Previously used by an EOD email cron. The email delivery now uses POST.
+ * GET has no active consumer and relies on the hardcoded BUPOS_LOCATION_ID,
+ * making it unreliable for multi-location deployments.
  */
 export async function GET(req: NextRequest) {
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);

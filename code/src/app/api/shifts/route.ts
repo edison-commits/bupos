@@ -1,3 +1,4 @@
+import { BUPOS_LOCATION_ID } from "@/lib/env";
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
 import { pgOpenShift } from "@/lib/persistence/postgres-store";
@@ -5,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { requireAdminPermission } from "@/lib/authz";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 
-const LOCATION_ID = "c57268b3-cb14-4c1a-bda6-55e49ddc6313";
+const LOCATION_ID = BUPOS_LOCATION_ID;
 
 export async function GET(req: NextRequest) {
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);

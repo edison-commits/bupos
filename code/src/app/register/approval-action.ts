@@ -5,6 +5,7 @@ import { readStore, mutateStore } from "@/lib/persistence/store";
 import { hasPermission } from "@/lib/domain/permissions";
 import pool, { orgTx } from "@/lib/db";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
+import { verifySecret } from "@/lib/auth/crypto";
 import type { PermissionKey } from "@/lib/domain/types";
 
 const isPg = () => !!process.env.USE_POSTGRES;
@@ -60,19 +61,17 @@ export async function verifyManagerApproval(pin: string, request: ApprovalReques
   // 1. Resolve the PIN to an employee
   const store = await readStore();
 
-  // Find employee by PIN — check against the known dev PINs first,
-  // then fall back to credential store for hashed PINs
+  // Find employee by PIN — resolve via the hashed PIN credentials in the authCredentials table.
+  // No hardcoded dev PINs; every approver must use their real stored credential.
   let approverEmployee = null;
 
-  // Dev PIN lookup (same as pin.ts)
-  const devPinMap: Record<string, string> = {
-    "1111": "emp_owner_1",
-    "2222": "emp_mgr_1",
-  };
-
-  const employeeIdFromPin = devPinMap[pin];
-  if (employeeIdFromPin) {
-    approverEmployee = store.employees.find((e) => e.id === employeeIdFromPin && e.isActive);
+  const matchedCredential = store.authCredentials.find(
+    (cred) => cred.pinHash && verifySecret(pin, cred.pinHash),
+  );
+  if (matchedCredential) {
+    approverEmployee = store.employees.find(
+      (e) => e.id === matchedCredential.employeeId && e.isActive,
+    );
   }
 
   if (!approverEmployee) {

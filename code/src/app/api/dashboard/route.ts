@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
-import { BUPOS_ORG_ID } from "@/lib/env";
+import { BUPOS_LOCATION_ID, BUPOS_ORG_ID } from "@/lib/env";
 
 
 /**
@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
   const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId ?? BUPOS_ORG_ID;
   try {
     const sp = req.nextUrl.searchParams;
-    const locationId = sp.get("location") || "c57268b3-cb14-4c1a-bda6-55e49ddc6313";
+    const locationId = sp.get("location") || BUPOS_LOCATION_ID;
     const range = sp.get("range") || "today";
 
     const now = new Date();

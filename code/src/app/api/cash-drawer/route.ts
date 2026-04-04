@@ -1,9 +1,10 @@
+import { BUPOS_LOCATION_ID } from '@/lib/env';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminPermission } from '@/lib/authz';
 import pool, { orgQuery, orgTx } from '@/lib/db';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
 
-const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
+const LOCATION_ID = BUPOS_LOCATION_ID;
 
 /**
  * GET /api/cash-drawer?action=status|history

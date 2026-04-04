@@ -280,8 +280,15 @@ export async function checkoutAction(
         ],
       ).catch((err) => console.error("[checkoutAction] audit event failed:", err));
 
-      // 7. Update customer loyalty, spend, visits
+      // 7. Update customer loyalty, spend, visits — lock row first to prevent double-awarding
+      // if two concurrent checkouts award points for the same customer (e.g. same
+      // offline+online txn syncing, or a retry). Step 7b (store credit) also locks this
+      // row; Postgres queues the locks so both updates are serialised correctly.
       if (cart.customerId) {
+        await client.query(
+          `SELECT id FROM customers WHERE id = $1 FOR UPDATE`,
+          [cart.customerId],
+        );
         await client.query(
           `UPDATE customers SET
             loyalty_points = GREATEST(0, loyalty_points - $1 + $2),

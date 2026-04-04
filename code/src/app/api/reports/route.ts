@@ -1,9 +1,10 @@
+import { BUPOS_LOCATION_ID } from "@/lib/env";
 import { pool } from "@/lib/db";
 import type { QueryResult } from "pg";
 import { NextResponse } from "next/server";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 
-const LOCATION_ID = "c57268b3-cb14-4c1a-bda6-55e49ddc6313";
+const LOCATION_ID = BUPOS_LOCATION_ID;
 
 const REPORT_TYPES = new Set(["summary", "category", "employee", "hourly", "tender", "products", "shifts"]);
 

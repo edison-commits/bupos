@@ -1,3 +1,4 @@
+import { BUPOS_LOCATION_ID } from '@/lib/env';
 import { NextRequest, NextResponse } from 'next/server';
 import { redirect } from 'next/navigation';
 import pool, { orgQuery } from '@/lib/db';
@@ -19,7 +20,7 @@ async function invalidateEmployeeSessions(employeeId: string): Promise<void> {
   );
 }
 
-const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
+const LOCATION_ID = BUPOS_LOCATION_ID;
 
 // GET: List all employees with their roles and location info
 export async function GET(request: NextRequest) {

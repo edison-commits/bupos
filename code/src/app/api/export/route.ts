@@ -1,3 +1,4 @@
+import { BUPOS_LOCATION_ID } from "@/lib/env";
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
@@ -60,7 +61,7 @@ export async function GET(req: NextRequest) {
       }
 
       case "inventory": {
-        const locationId = sp.get("location") || "c57268b3-cb14-4c1a-bda6-55e49ddc6313";
+        const locationId = sp.get("location") || BUPOS_LOCATION_ID;
         const rows = await orgQuery(
           orgId,
           `SELECT p.name AS product, pv.sku, pv.barcode, pv.size_label AS size, pv.color_label AS color, pv.price AS retail_price, pv.cost AS cost_price,
@@ -104,9 +105,17 @@ export async function GET(req: NextRequest) {
       }
 
       case "customers": {
+        // Default export omits PII (email, phone, address). Admin can opt-in with ?include_pii=true.
+        const includePii = sp.get("include_pii") === "true";
+        const piiColumns = includePii
+          ? `first_name, last_name, email, phone, address,`
+          : `first_name, last_name,`;
+        const piiHeaderFields = includePii
+          ? ["first_name", "last_name", "email", "phone", "address"]
+          : ["first_name", "last_name"];
         const rows = await orgQuery(
           orgId,
-          `SELECT first_name, last_name, email, phone, address,
+          `SELECT ${piiColumns}
                   loyalty_points, total_spend, visit_count, store_credit_balance,
                   tax_exempt, is_active, created_at
            FROM customers
@@ -114,7 +123,7 @@ export async function GET(req: NextRequest) {
           [],
         );
         csv = toCsv(rows.rows, [
-          "first_name", "last_name", "email", "phone", "address",
+          ...piiHeaderFields,
           "loyalty_points", "total_spend", "visit_count", "store_credit_balance",
           "tax_exempt", "is_active", "created_at",
         ]);

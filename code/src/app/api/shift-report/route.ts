@@ -3,10 +3,14 @@ import { orgQuery, orgTx, pool } from "@/lib/db";
 import { randomUUID } from "node:crypto";
 import { requireAdminPermission } from "@/lib/authz";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
+import { BUPOS_LOCATION_ID } from "@/lib/env";
 
 
 /**
- * GET /api/shift-report
+ * GET /api/shift-report  [DEPRECATED — not called from any UI component]
+ *
+ * Previously served the Z-report UI panel. That panel now uses /api/shift-close
+ * for reads and POST /api/shift-report only for the close_shift action.
  *
  * Query params:
  *   shift    — shift ID (returns full Z-report for that shift)
@@ -22,7 +26,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const sp = req.nextUrl.searchParams;
-    const locationId = sp.get("location") || "c57268b3-cb14-4c1a-bda6-55e49ddc6313";
+    const locationId = sp.get("location") || BUPOS_LOCATION_ID;
     const date = sp.get("date") || new Date().toISOString().slice(0, 10);
     const shiftId = sp.get("shift");
 
