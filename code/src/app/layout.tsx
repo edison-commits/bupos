@@ -1,5 +1,9 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
+
+export const viewport: Viewport = {
+  themeColor: "#0d9488",
+};
 
 export const metadata: Metadata = {
   title: "BasicUniformPOS",
@@ -9,7 +13,6 @@ export const metadata: Metadata = {
     capable: true,
     statusBarStyle: "black-translucent",
   },
-  themeColor: "#0d9488",
   icons: {
     apple: "/icon-192.png",
   },
