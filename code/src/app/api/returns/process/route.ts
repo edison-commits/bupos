@@ -122,6 +122,12 @@ export async function POST(request: NextRequest) {
 
         const variantId = variantResult.rows[0]?.id || item.product_id;
 
+        // Reject negative or zero quantity
+        if (!item.quantity || item.quantity <= 0) {
+          console.warn(`Skipping return line item with invalid quantity ${item.quantity} for variant ${variantId}`);
+          return;
+        }
+
         // Insert return line
         await pool.query(
           `INSERT INTO return_lines (return_id, product_variant_id, quantity, unit_price, restock)
@@ -129,13 +135,23 @@ export async function POST(request: NextRequest) {
           [returnId, variantId, item.quantity, item.unit_price]
         );
 
-        // Adjust inventory (restock)
-        await pool.query(
+        // Adjust inventory (restock) — use upsert to handle missing row
+        const invResult = await pool.query(
           `UPDATE inventory_levels
            SET on_hand = on_hand + $1, received_at = NOW(), updated_at = NOW()
-           WHERE product_variant_id = $2 AND location_id = $3`,
+           WHERE product_variant_id = $2 AND location_id = $3
+           RETURNING id`,
           [item.quantity, variantId, LOCATION_ID]
         );
+
+        // If no row existed, insert a new inventory_levels row
+        if (invResult.rowCount === 0) {
+          await pool.query(
+            `INSERT INTO inventory_levels (product_variant_id, location_id, on_hand, received_at)
+             VALUES ($1, $2, $3, NOW())`,
+            [variantId, LOCATION_ID, item.quantity]
+          );
+        }
       })
     );
 
