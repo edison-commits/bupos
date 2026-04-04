@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { cookies } from "next/headers";
 import pool, { orgTx } from "@/lib/db";
 import { requireRegisterPermission } from "@/lib/authz";
+import { registerConfiguration } from "@/lib/data/mock-data";
 
 const ORG_ID = process.env.BUPOS_ORG_ID || "33262270-7100-4b46-b2fb-8b50ad872bbb";
 const LOCATION_ID = process.env.BUPOS_LOCATION_ID || "c57268b3-cb14-4c1a-bda6-55e49ddc6313";
@@ -20,7 +21,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { id, cart, tenders, timestamp, registerSessionId } = body;
+    const { id, cart, tenders, timestamp, registerSessionId, approvedExceptions = [] } = body;
 
     if (!cart || !tenders || !Array.isArray(tenders) || tenders.length === 0) {
       return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
@@ -113,6 +114,18 @@ export async function POST(request: NextRequest) {
     const taxableAmount = Math.max(0, subtotal + modifiersTotal - discountTotal);
     const taxTotal = Number((taxableAmount * taxRate).toFixed(2));
     const grandTotal = Number((taxableAmount + taxTotal).toFixed(2));
+
+    // ── Server-side approval enforcement — mirrors checkout-action.ts ──────────
+    const thresholds = registerConfiguration.approvalThresholds;
+    if (cartDiscount > thresholds.discountOver && !approvedExceptions.includes("discount_threshold")) {
+      return NextResponse.json({ error: "Cart discount exceeds threshold without manager approval" }, { status: 403 });
+    }
+    const storeCreditTendered = tenders
+      .filter((t: { type: string }) => t.type === "store_credit")
+      .reduce((sum: number, t: { amount: number }) => sum + t.amount, 0);
+    if (storeCreditTendered > thresholds.storeCreditIssuanceOver && !approvedExceptions.includes("store_credit_threshold")) {
+      return NextResponse.json({ error: "Store credit issuance exceeds threshold without manager approval" }, { status: 403 });
+    }
 
     const totalTendered = tenders.reduce((sum: number, t: { amount: number }) => sum + t.amount, 0);
     const cashTendered = tenders.filter((t: { type: string }) => t.type === "cash").reduce((sum: number, t: { amount: number }) => sum + t.amount, 0);
@@ -210,6 +223,19 @@ export async function POST(request: NextRequest) {
             updated_at = now()
           WHERE id = $3`,
           [loyaltyPointsEarned, grandTotal, cart.customerId],
+        );
+      }
+
+      // 5b. Deduct store credit balance if used — mirrors checkout-action.ts step 7b
+      if (storeCreditTendered > 0 && cart.customerId) {
+        const { rows: balRows } = await syncClient.query(
+          `UPDATE customers SET store_credit_balance = GREATEST(0, store_credit_balance - $1), updated_at = now() WHERE id = $2 RETURNING store_credit_balance`,
+          [storeCreditTendered, cart.customerId],
+        );
+        await syncClient.query(
+          `INSERT INTO store_credit_ledger (id, organization_id, customer_id, transaction_type, amount, balance_after, employee_id, transaction_id, reason, created_at)
+           VALUES ($1, $2, $3, 'redemption', $4, $5, $6, $7, 'Offline sync redemption', now())`,
+          [randomUUID(), ORG_ID, cart.customerId, -storeCreditTendered, balRows[0]?.store_credit_balance ?? 0, employeeId, transactionId],
         );
       }
 
