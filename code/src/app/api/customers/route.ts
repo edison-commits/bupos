@@ -22,8 +22,8 @@ export async function GET(request: NextRequest) {
       const [customerRes, transactionsRes, statsRes] = await Promise.all([
         orgQuery(
           ORG_ID,
-          `SELECT * FROM customers WHERE id = $1`,
-          [id]
+          `SELECT * FROM customers WHERE id = $1 AND organization_id = $2`,
+          [id, ORG_ID]
         ),
         orgQuery(
           ORG_ID,
@@ -125,9 +125,9 @@ export async function PUT(request: NextRequest) {
       ORG_ID,
       `UPDATE customers
        SET first_name = $1, last_name = $2, email = $3, phone = $4, address = $5, notes = $6, is_active = $7, updated_at = NOW()
-       WHERE id = $8
+       WHERE id = $8 AND organization_id = $9
        RETURNING *`,
-      [first_name?.trim() || null, last_name?.trim() || null, email?.trim() || null, phone?.trim() || null, address?.trim() || null, notes?.trim() || null, is_active ?? true, id],
+      [first_name?.trim() || null, last_name?.trim() || null, email?.trim() || null, phone?.trim() || null, address?.trim() || null, notes?.trim() || null, is_active ?? true, id, ORG_ID],
     );
     if (rows.length === 0) return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
     return NextResponse.json({ customer: rows[0] });

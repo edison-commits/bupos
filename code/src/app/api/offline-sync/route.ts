@@ -77,33 +77,37 @@ export async function POST(request: NextRequest) {
     // Recalculate totals from the cart snapshot
     const items = cart.items || [];
     let subtotal = 0;
+    // Round each monetary operation to 2 decimal places to prevent float drift
+    // (e.g. 19.99 * 3 can be 59.9699999 in IEEE 754)
+    const m = (v: number) => Number(v.toFixed(2));
+
     let discountTotal = 0;
     let modifiersTotal = 0;
 
     for (const item of items) {
       const effectivePrice = item.overridePrice ?? item.unitPrice;
-      const lineBase = effectivePrice * item.quantity;
-      const lineMods = (item.modifierTotal || 0) * item.quantity;
+      const lineBase = m(effectivePrice * item.quantity);
+      const lineMods = m((item.modifierTotal || 0) * item.quantity);
       let lineDiscount = 0;
 
       if (item.lineDiscount) {
         if (item.lineDiscount.mode === "percent") {
-          lineDiscount = lineBase * Math.min(100, item.lineDiscount.value) / 100;
+          lineDiscount = m(lineBase * Math.min(100, item.lineDiscount.value) / 100);
         } else {
-          lineDiscount = Math.min(item.lineDiscount.value, lineBase);
+          lineDiscount = m(Math.min(item.lineDiscount.value, lineBase));
         }
       }
 
-      subtotal += lineBase;
-      modifiersTotal += lineMods;
-      discountTotal += lineDiscount;
+      subtotal = m(subtotal + lineBase);
+      modifiersTotal = m(modifiersTotal + lineMods);
+      discountTotal = m(discountTotal + lineDiscount);
     }
 
     // Cart-level discount
     const cartDiscount = cart.discountMode === "percent"
-      ? subtotal * Math.min(100, cart.discountAmount || 0) / 100
-      : (cart.discountAmount || 0);
-    discountTotal += cartDiscount;
+      ? m(subtotal * Math.min(100, cart.discountAmount || 0) / 100)
+      : m(cart.discountAmount || 0);
+    discountTotal = m(discountTotal + cartDiscount);
 
     const taxableAmount = Math.max(0, subtotal + modifiersTotal - discountTotal);
     const taxTotal = Number((taxableAmount * taxRate).toFixed(2));

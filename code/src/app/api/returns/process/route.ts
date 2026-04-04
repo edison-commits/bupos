@@ -199,8 +199,8 @@ export async function POST(request: NextRequest) {
     } else if (refund_method === 'store_credit') {
       // Look up customer by name
       const custResult = await client.query(
-        `SELECT id, store_credit_balance FROM customers WHERE first_name || ' ' || last_name = $1 LIMIT 1`,
-        [customer_name || '']
+        `SELECT id, store_credit_balance FROM customers WHERE first_name || ' ' || last_name = $1 AND organization_id = $2 LIMIT 1`,
+        [customer_name || '', ORG_ID]
       );
       if (custResult.rows.length > 0) {
         const customer = custResult.rows[0];

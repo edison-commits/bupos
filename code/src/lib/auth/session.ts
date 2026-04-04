@@ -6,6 +6,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { verifySecret } from "@/lib/auth/crypto";
 import { hasPermission } from "@/lib/domain/permissions";
+import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { mutateStore, readStore } from "@/lib/persistence/store";
 import type { AdminSessionContext, RegisterSessionContext, SessionRecord } from "@/lib/persistence/types";
 import type { RegisterSessionRecord, ShiftRecord, RoleKey } from "@/lib/domain/types";
@@ -275,6 +276,13 @@ export async function signInAdmin(email: string, password: string) {
 
 export async function signInRegister(pin: string, locationId: string) {
   const cleanPin = pin.trim();
+
+  // Rate-limit PIN attempts per location to prevent brute-force
+  const rl = checkRateLimit(`register:${locationId}`);
+  if (!rl.allowed) {
+    const secs = Math.ceil(rl.retryAfterMs / 1000);
+    redirect(`/register?error=Too+many+PIN+attempts.+Try+again+in+${secs}+seconds`);
+  }
 
   if (isPg()) {
     const { pgFindCredentialByPin } = await import("@/lib/persistence/postgres-store");

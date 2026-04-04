@@ -32,11 +32,11 @@ export async function GET(req: NextRequest) {
     if (customerId) {
       const customerResult = await orgQuery(
         ORG_ID,
-        `SELECT id, first_name, last_name, email, phone, loyalty_points, 
+        `SELECT id, first_name, last_name, email, phone, loyalty_points,
                 total_spend, visit_count, store_credit_balance
          FROM customers
-         WHERE id = $1`,
-        [customerId],
+         WHERE id = $1 AND organization_id = $2`,
+        [customerId, ORG_ID],
       );
 
       if (customerResult.rows.length === 0) {
@@ -190,8 +190,8 @@ export async function POST(req: NextRequest) {
     // Check if customer exists
     const checkResult = await orgQuery(
       ORG_ID,
-      `SELECT id, loyalty_points FROM customers WHERE id = $1`,
-      [customer_id],
+      `SELECT id, loyalty_points FROM customers WHERE id = $1 AND organization_id = $2`,
+      [customer_id, ORG_ID],
     );
 
     if (checkResult.rows.length === 0) {

@@ -110,7 +110,8 @@ async function generateReportData() {
          s.closed_at,
          EXTRACT(EPOCH FROM (COALESCE(s.closed_at, NOW()) - s.opened_at))::int AS duration_seconds
        FROM shifts s
-       WHERE DATE(s.opened_at) = $4::date
+       WHERE s.opened_at >= $1::timestamp AT TIME ZONE 'UTC'
+         AND s.opened_at < ($1::timestamp AT TIME ZONE 'UTC' + INTERVAL '1 day')
          AND s.location_id = $3
      ),
      low_stock AS (
