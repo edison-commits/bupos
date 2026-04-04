@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import pool from '@/lib/db';
+import { requireAdminPermission } from '@/lib/authz';
 
 const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
 
@@ -9,6 +10,7 @@ const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
  * PUT /api/suppliers - Update an existing supplier
  */
 export async function GET() {
+  await requireAdminPermission('audit.view');
   try {
     const { rows } = await pool.query(
       `SELECT * FROM suppliers WHERE organization_id = $1 ORDER BY name ASC`,
@@ -22,6 +24,7 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  await requireAdminPermission('catalog.manage');
   try {
     const { name, contact_name, email, phone, address, notes } = await request.json();
 
@@ -44,6 +47,7 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
+  await requireAdminPermission('catalog.manage');
   try {
     const { id, name, contact_name, email, phone, address, notes, is_active } = await request.json();
 
