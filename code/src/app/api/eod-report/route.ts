@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
+import { requireAdminPermission } from "@/lib/authz";
 
 const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
 const LOCATION_ID = "c57268b3-cb14-4c1a-bda6-55e49ddc6313";
@@ -11,6 +12,7 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
  */
 export async function GET(req: NextRequest) {
   try {
+    await requireAdminPermission('audit.view');
     const reportData = await generateReportData();
     return NextResponse.json(reportData);
   } catch (error) {
@@ -28,6 +30,7 @@ export async function GET(req: NextRequest) {
  */
 export async function POST(req: NextRequest) {
   try {
+    await requireAdminPermission('audit.view');
     const reportData = await generateReportData();
 
     // Send email if Resend API key is available
