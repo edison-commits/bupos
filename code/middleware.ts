@@ -4,6 +4,23 @@ import type { NextRequest } from 'next/server'
 export function middleware(request: NextRequest) {
   const response = NextResponse.next()
 
+  // CORS — allow same-origin and known cross-origin API callers
+  const origin = request.headers.get('origin') ?? '';
+  const allowedOrigins = [
+    'http://localhost:3000',
+    'https://bupos.basicuniform.com',
+  ];
+  const isCorsAllowed =
+    origin === '' || // same-origin
+    allowedOrigins.some((o) => origin.startsWith(o));
+  if (isCorsAllowed) {
+    response.headers.set('Access-Control-Allow-Origin', origin || "'self'");
+  }
+  response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+  response.headers.set('Access-Control-Allow-Credentials', 'true');
+  response.headers.set('Access-Control-Max-Age', '3600');
+
   // Prevent MIME type sniffing
   response.headers.set('X-Content-Type-Options', 'nosniff')
 

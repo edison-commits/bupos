@@ -9,6 +9,15 @@
  */
 import { getAdminSession } from "@/lib/auth/session";
 import { redirect } from "next/navigation";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: {
+    template: "%s | BasicUniformPOS Admin",
+    default: "Admin | BasicUniformPOS",
+  },
+  description: "BasicUniformPOS admin console: manage products, inventory, employees, sales, and store settings.",
+};
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const session = await getAdminSession();

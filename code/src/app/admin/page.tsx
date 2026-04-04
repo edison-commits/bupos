@@ -4,6 +4,12 @@ import { PageShell } from "@/components/ui/page-shell";
 import { getAdminSession } from "@/lib/auth/session";
 import { readStore } from "@/lib/persistence/store";
 import { redirect } from "next/navigation";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Admin Overview",
+  description: "Overview of your BasicUniformPOS store: sales, inventory alerts, and key metrics.",
+};
 
 export default async function AdminPage({
   searchParams,

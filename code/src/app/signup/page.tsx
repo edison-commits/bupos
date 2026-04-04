@@ -2,6 +2,12 @@ import Link from "next/link";
 import { getAdminSession } from "@/lib/auth/session";
 import { redirect } from "next/navigation";
 import { SignupForm } from "@/components/auth/signup-form";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Create Your Store",
+  description: "Set up your BasicUniformPOS store in minutes. Manage inventory, sales, employees, and customers from one place.",
+};
 
 export default async function SignupPage() {
   const session = await getAdminSession();

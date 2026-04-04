@@ -116,7 +116,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    return NextResponse.json({ return: retRows[0], return_number: returnNumber });
+    return NextResponse.json({ return: retRows[0], return_number: returnNumber }, { status: 201 });
   } catch (error) {
     console.error('Returns POST error:', error);
     return NextResponse.json({ error: 'Failed to create return' }, { status: 500 });

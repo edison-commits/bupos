@@ -5,7 +5,7 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 import { useState, useEffect, useCallback } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { authFetch } from '@/lib/api/client';
-
+import { formatCurrency } from '@/lib/format';
 interface Metrics {
   grossSales: number;
   discounts: number;
@@ -88,13 +88,6 @@ export default function DashboardPage() {
     const interval = setInterval(fetchData, 60000);
     return () => clearInterval(interval);
   }, [fetchData]);
-
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-    }).format(value);
-  };
 
   const formatTime = (dateString: string) => {
     const date = new Date(dateString);

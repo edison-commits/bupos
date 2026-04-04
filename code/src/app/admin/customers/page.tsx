@@ -5,7 +5,7 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 import { useState, useEffect } from 'react';
 import { Plus, Search, Edit2, Eye, AlertCircle, Loader2, DollarSign, Users, TrendingUp, Award } from 'lucide-react';
 import { authFetch } from '@/lib/api/client';
-
+import { formatCurrency } from '@/lib/format';
 interface Customer {
   id: string;
   first_name: string;
@@ -191,11 +191,6 @@ export default function CustomerManagement() {
     } finally {
       setSubmitting(false);
     }
-  };
-
-  const formatCurrency = (value: string | number) => {
-    const num = typeof value === 'string' ? parseFloat(value) : value;
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(num || 0);
   };
 
   const formatDate = (dateString: string) => {

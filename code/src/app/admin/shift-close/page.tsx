@@ -6,7 +6,7 @@ import { useState, useEffect } from 'react';
 import { ChevronLeft, DollarSign, TrendingUp, AlertCircle, CheckCircle2, Clock } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { authFetch } from '@/lib/api/client';
-
+import { formatCurrency } from '@/lib/format';
 interface ShiftData {
   shift: {
     id: string;
@@ -99,13 +99,6 @@ export default function ShiftClosePage() {
     } finally {
       setIsClosing(false);
     }
-  };
-
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-    }).format(value);
   };
 
   const formatTime = (dateString: string) => {

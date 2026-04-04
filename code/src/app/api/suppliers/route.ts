@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
       [orgId, name.trim(), contact_name || null, email || null, phone || null, address || null, notes || null],
     );
 
-    return NextResponse.json({ supplier: rows[0] });
+    return NextResponse.json({ supplier: rows[0] }, { status: 201 });
   } catch (error) {
     console.error('Suppliers POST error:', error);
     return NextResponse.json({ error: 'Failed to create supplier' }, { status: 500 });

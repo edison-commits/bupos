@@ -220,7 +220,7 @@ export async function POST(request: NextRequest) {
       );
       await client.query('COMMIT');
       invalidateProductsCache(orgId);
-      return NextResponse.json(result.rows[0]);
+      return NextResponse.json(result.rows[0], { status: 201 });
     }
 
     // Handle variant creation
@@ -249,7 +249,7 @@ export async function POST(request: NextRequest) {
       await client.query('COMMIT');
       invalidateProductsCache(orgId);
       invalidateVariantsCache(orgId);
-      return NextResponse.json(result.rows[0]);
+      return NextResponse.json(result.rows[0], { status: 201 });
     }
 
     // Handle product creation
@@ -262,7 +262,7 @@ export async function POST(request: NextRequest) {
     );
     await client.query('COMMIT');
     invalidateProductsCache(orgId);
-    return NextResponse.json(result.rows[0]);
+    return NextResponse.json(result.rows[0], { status: 201 });
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Products POST error:', error);

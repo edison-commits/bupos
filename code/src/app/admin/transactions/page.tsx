@@ -5,7 +5,7 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 import React, { useState, useEffect, useCallback } from 'react';
 import { ChevronDown, ChevronUp, Search, Download, Calendar, Filter } from 'lucide-react';
 import { authFetch } from '@/lib/api/client';
-
+import { formatCurrency } from '@/lib/format';
 interface Transaction {
   id: string;
   status: 'completed' | 'voided' | 'refunded';
@@ -74,13 +74,6 @@ const DATE_RANGES = [
   { label: 'This Month', value: 'month' },
   { label: 'All Time', value: 'all' },
 ];
-
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-  }).format(amount);
-}
 
 function formatDateTime(dateString: string): string {
   const date = new Date(dateString);

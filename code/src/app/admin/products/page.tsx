@@ -4,7 +4,7 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import { useCallback, useEffect, useState } from 'react';
 import { authFetch } from '@/lib/api/client';
-
+import { formatCurrency } from '@/lib/format';
 interface ProductVariant {
   id: string;
   sku: string;
@@ -472,7 +472,7 @@ function ProductRow({ product, expanded, onToggleExpand, onEdit, onDelete, onAdd
           <div className="text-right">
             <div className="text-xs text-emerald-600">Price Range</div>
             <div className="font-semibold text-emerald-900">
-              {product.price_range ? `$${product.price_range.min.toFixed(2)}-$${product.price_range.max.toFixed(2)}` : 'N/A'}
+              {product.price_range ? `${formatCurrency(product.price_range.min)}-${formatCurrency(product.price_range.max)}` : 'N/A'}
             </div>
           </div>
           <div className="text-right">
@@ -515,11 +515,11 @@ function ProductRow({ product, expanded, onToggleExpand, onEdit, onDelete, onAdd
                   <div className="flex items-center gap-6">
                     <div className="text-right">
                       <div className="text-xs text-emerald-600">Price</div>
-                      <div className="font-semibold text-emerald-900">${variant.price.toFixed(2)}</div>
+                      <div className="font-semibold text-emerald-900">{formatCurrency(variant.price)}</div>
                     </div>
                     <div className="text-right">
                       <div className="text-xs text-emerald-600">Cost</div>
-                      <div className="font-semibold text-emerald-900">${variant.cost.toFixed(2)}</div>
+                      <div className="font-semibold text-emerald-900">{formatCurrency(variant.cost)}</div>
                     </div>
                     <div className="text-right">
                       <div className="text-xs text-emerald-600">Stock</div>

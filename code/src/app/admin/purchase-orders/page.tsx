@@ -5,7 +5,7 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { authFetch } from '@/lib/api/client';
-
+import { formatCurrency } from '@/lib/format';
 interface Supplier {
   id: string;
   name: string;
@@ -457,7 +457,7 @@ export default function PurchaseOrdersPage() {
                       </p>
                       <p className="mt-1 text-xs" style={{ color: 'var(--text-secondary)' }}>
                         {po.line_count} lines • {po.total_units_ordered} units •{' '}
-                        <span className="font-medium">${po.total_cost.toFixed(2)}</span>
+                        <span className="font-medium">{formatCurrency(po.total_cost)}</span>
                       </p>
                     </div>
                     <div
@@ -563,7 +563,7 @@ export default function PurchaseOrdersPage() {
                     {selectedOrder.total_units_ordered} ordered / {selectedOrder.total_units_received} received
                   </p>
                   <p className="mt-1 text-lg font-bold" style={{ color: 'var(--text-primary)' }}>
-                    ${selectedOrder.total_cost.toFixed(2)}
+                    {formatCurrency(selectedOrder.total_cost)}
                   </p>
                 </div>
 
@@ -590,7 +590,7 @@ export default function PurchaseOrdersPage() {
                           {line.quantity_ordered} ordered, {line.quantity_received} received
                         </p>
                         <p style={{ color: 'var(--text-secondary)' }}>
-                          ${(line.unit_cost * line.quantity_ordered).toFixed(2)}
+                          {formatCurrency(line.unit_cost * line.quantity_ordered)}
                         </p>
                       </div>
                     ))}
@@ -870,7 +870,7 @@ export default function PurchaseOrdersPage() {
                               {line.sku}
                             </p>
                             <p style={{ color: 'var(--text-secondary)' }}>
-                              {line.quantity_ordered} @ ${line.unit_cost.toFixed(2)} each
+                              {line.quantity_ordered} @ {formatCurrency(line.unit_cost)} each
                             </p>
                           </div>
                           <button

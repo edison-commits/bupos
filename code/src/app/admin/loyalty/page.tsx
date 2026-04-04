@@ -5,7 +5,7 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 import { useState, useEffect } from 'react';
 import { AlertCircle, Award, DollarSign, Loader2, Search, TrendingUp, Users, X } from 'lucide-react';
 import { authFetch } from '@/lib/api/client';
-
+import { formatCurrency } from '@/lib/format';
 interface LoyaltyOverview {
   total_customers_enrolled: number;
   active_loyalty_customers: number;
@@ -223,11 +223,6 @@ export default function LoyaltyDashboard() {
     } finally {
       setDetailLoading(false);
     }
-  };
-
-  const formatCurrency = (val: string | number) => {
-    const num = typeof val === 'string' ? parseFloat(val) : val;
-    return `$${num.toFixed(2)}`;
   };
 
   const formatDate = (dateStr: string) => {

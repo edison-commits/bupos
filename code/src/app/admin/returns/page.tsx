@@ -5,7 +5,7 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 import React, { useState, useEffect, useCallback } from 'react';
 import { Search, Calendar, ChevronDown, ChevronUp, Plus, X, AlertCircle, CheckCircle, Loader } from 'lucide-react';
 import { authFetch } from '@/lib/api/client';
-
+import { formatCurrency } from '@/lib/format';
 interface CartItem {
   product_id: string;
   product_name: string;
@@ -49,13 +49,6 @@ interface SearchResult {
   transaction: Transaction;
   tenders: Tender[];
   items: CartItem[];
-}
-
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-  }).format(amount);
 }
 
 function formatDateTime(dateString: string): string {

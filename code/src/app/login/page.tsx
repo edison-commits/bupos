@@ -2,6 +2,12 @@ import { LoginForm } from "@/components/auth/login-form";
 import Link from "next/link";
 import { getAdminSession } from "@/lib/auth/session";
 import { redirect } from "next/navigation";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Sign In",
+  description: "Sign in to your BasicUniformPOS account to manage your store.",
+};
 
 export default async function LoginPage() {
   // If already logged in, go straight to admin

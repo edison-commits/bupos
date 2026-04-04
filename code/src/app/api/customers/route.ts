@@ -152,7 +152,7 @@ export async function POST(request: NextRequest) {
        RETURNING *`,
       [first_name.trim(), last_name.trim(), email?.trim() || null, phone?.trim() || null, address?.trim() || null, notes?.trim() || null],
     );
-    return NextResponse.json({ customer: rows[0] });
+    return NextResponse.json({ customer: rows[0] }, { status: 201 });
   } catch (error) {
     console.error('Customers POST error:', error);
     return NextResponse.json({ error: 'Failed to create customer' }, { status: 500 });

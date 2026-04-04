@@ -137,7 +137,7 @@ export async function POST(req: NextRequest) {
       openedNote: openedNote || undefined,
     });
 
-    return NextResponse.json({ shift, success: true });
+    return NextResponse.json({ shift, success: true }, { status: 201 });
   } catch (error) {
     console.error("[shifts POST]", error);
     return NextResponse.json({ error: "Failed to open shift" }, { status: 500 });
