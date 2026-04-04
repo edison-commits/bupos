@@ -18,8 +18,10 @@ export async function GET(req: NextRequest) {
 
   try {
     const sp = req.nextUrl.searchParams;
-    const page = Math.max(1, parseInt(sp.get("page") ?? "1", 10));
-    const pageSize = Math.min(100, Math.max(1, parseInt(sp.get("pageSize") ?? "20", 10)));
+    const pageRaw = parseInt(sp.get("page") ?? "1", 10);
+    const pageSizeRaw = parseInt(sp.get("pageSize") ?? "20", 10);
+    const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
+    const pageSize = Number.isFinite(pageSizeRaw) && pageSizeRaw > 0 ? Math.min(100, pageSizeRaw) : 20;
     const status = sp.get("status") ?? "all";
     const date = sp.get("date");
     const offset = (page - 1) * pageSize;

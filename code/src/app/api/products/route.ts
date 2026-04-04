@@ -1,7 +1,7 @@
 import { orgQuery, pool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminPermission } from '@/lib/authz';
-import { invalidateProductsCache } from '@/lib/persistence/postgres-store';
+import { invalidateProductsCache, invalidateVariantsCache } from '@/lib/persistence/postgres-store';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
 import { BUPOS_LOCATION_ID, BUPOS_ORG_ID } from '@/lib/env';
 
@@ -234,6 +234,7 @@ export async function POST(request: NextRequest) {
       );
       await client.query('COMMIT');
       invalidateProductsCache(orgId);
+      invalidateVariantsCache(orgId);
       return NextResponse.json(result.rows[0]);
     }
 
@@ -358,6 +359,7 @@ export async function PUT(request: NextRequest) {
 
       await client.query('COMMIT');
       invalidateProductsCache(orgId);
+      invalidateVariantsCache(orgId);
       return NextResponse.json(result.rows[0]);
     }
 
@@ -655,6 +657,7 @@ export async function PATCH(request: NextRequest) {
 
       await client.query('COMMIT');
       invalidateProductsCache(orgId);
+      invalidateVariantsCache(orgId);
       return NextResponse.json({ created, skipped, total: rows.length, results });
     }
 

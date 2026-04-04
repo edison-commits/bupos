@@ -9,8 +9,10 @@ export async function GET(request: NextRequest) {
 
   const search = request.nextUrl.searchParams.get('search')?.trim() || '';
   const id = request.nextUrl.searchParams.get('id')?.trim() || '';
-  const page = Math.max(1, parseInt(request.nextUrl.searchParams.get('page') || '1'));
-  const pageSize = Math.min(100, parseInt(request.nextUrl.searchParams.get('pageSize') || '50'));
+  const pageRaw = parseInt(request.nextUrl.searchParams.get('page') || '1', 10);
+  const pageSizeRaw = parseInt(request.nextUrl.searchParams.get('pageSize') || '50', 10);
+  const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
+  const pageSize = Number.isFinite(pageSizeRaw) && pageSizeRaw > 0 ? Math.min(100, pageSizeRaw) : 50;
 
   try {
     // Single customer detail with purchase history

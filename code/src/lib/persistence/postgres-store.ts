@@ -231,7 +231,10 @@ export async function pgUpdateProduct(id: string, data: Partial<{
 }
 
 export async function pgDeleteProduct(id: string): Promise<boolean> {
+  // Look up orgId before delete for cache invalidation
+  const [productRow] = await pool.query<{ organization_id: string }>('SELECT organization_id FROM products WHERE id = $1', [id]).then(r => r.rows);
   const { rowCount } = await pool.query('DELETE FROM products WHERE id = $1', [id]);
+  if (productRow) invalidateProductsCache(productRow.organization_id);
   return (rowCount ?? 0) > 0;
 }
 
@@ -269,6 +272,7 @@ export async function pgCreateVariant(data: {
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13) RETURNING *`,
     [data.id, data.organizationId, data.productId, data.sku, data.barcode ?? null, data.name, data.sizeLabel ?? null, data.colorLabel ?? null, data.price, data.compareAtPrice ?? null, data.cost ?? null, data.isActive, ts],
   );
+  invalidateVariantsCache(data.organizationId);
   return toVariant(rows[0]);
 }
 
@@ -293,12 +297,18 @@ export async function pgUpdateVariant(id: string, data: Partial<{
   sets.push(`updated_at = $${i++}`);
   vals.push(new Date().toISOString());
   vals.push(id);
+  // Look up orgId for cache invalidation before the update
+  const [variantRow] = await pool.query<{ organization_id: string }>('SELECT organization_id FROM product_variants WHERE id = $1', [id]).then(r => r.rows);
   const { rows } = await pool.query(`UPDATE product_variants SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`, vals);
+  if (variantRow) invalidateVariantsCache(variantRow.organization_id);
   return rows[0] ? toVariant(rows[0]) : null;
 }
 
 export async function pgDeleteVariant(id: string): Promise<boolean> {
+  // Look up orgId before delete for cache invalidation
+  const [variantRow] = await pool.query<{ organization_id: string }>('SELECT organization_id FROM product_variants WHERE id = $1', [id]).then(r => r.rows);
   const { rowCount } = await pool.query('DELETE FROM product_variants WHERE id = $1', [id]);
+  if (variantRow) invalidateVariantsCache(variantRow.organization_id);
   return (rowCount ?? 0) > 0;
 }
 
