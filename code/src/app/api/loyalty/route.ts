@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
+import { requireAdminPermission } from "@/lib/authz";
 
 const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
 
@@ -158,6 +159,7 @@ export async function GET(req: NextRequest) {
  * body: { customer_id, adjustment (positive or negative int), reason }
  */
 export async function POST(req: NextRequest) {
+  await requireAdminPermission("employee.manage");
   try {
     const body = await req.json();
     const { customer_id, adjustment, reason } = body;
