@@ -7,6 +7,29 @@ import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 import { registerConfiguration } from "@/lib/data/mock-data";
 
 import { BUPOS_LOCATION_ID } from '@/lib/env';
+interface CartPayload {
+  employeeId?: string;
+  registerSessionId?: string;
+  customerId?: string;
+  loyaltyPointsEarned?: number;
+  discountMode?: 'percent' | 'fixed';
+  discountAmount?: number;
+  items?: CartLineItem[];
+  [key: string]: unknown;
+}
+
+interface CartLineItem {
+  productVariantId: string;
+  quantity: number;
+  overridePrice?: number;
+  unitPrice?: number;
+  modifierTotal?: number;
+  lineDiscount?: {
+    mode: 'percent' | 'fixed';
+    value: number;
+  };
+  [key: string]: unknown;
+}
 
 /**
  * POST /api/offline-sync
@@ -24,10 +47,19 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { id, cart, tenders, timestamp, registerSessionId, approvedExceptions = [] } = body;
+    const { id, cart, tenders, timestamp, registerSessionId, approvedExceptions = [] } = body as {
+      id: string;
+      cart: CartPayload;
+      tenders: Array<{ type: string; amount: number }>;
+      timestamp?: string;
+      registerSessionId?: string;
+      approvedExceptions?: string[];
+    };
 
-    if (!Array.isArray(cart)) {
-      return NextResponse.json({ error: 'Invalid sync payload: cart must be an array' }, { status: 400 });
+    // cart is an object { items, employeeId, registerSessionId, discountMode, discountAmount, ... }
+    // tenders is an array [{ tenderType, amount }, ...]
+    if (!cart || typeof cart !== 'object' || Array.isArray(cart)) {
+      return NextResponse.json({ error: 'Invalid sync payload: cart must be an object' }, { status: 400 });
     }
     if (!Array.isArray(tenders)) {
       return NextResponse.json({ error: 'Invalid sync payload: tenders must be an array' }, { status: 400 });
@@ -94,7 +126,7 @@ export async function POST(request: NextRequest) {
     let modifiersTotal = 0;
 
     for (const item of items) {
-      const effectivePrice = item.overridePrice ?? item.unitPrice;
+      const effectivePrice = item.overridePrice ?? item.unitPrice ?? 0;
       const lineBase = m(effectivePrice * item.quantity);
       const lineMods = m((item.modifierTotal || 0) * item.quantity);
       let lineDiscount = 0;
