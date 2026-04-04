@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { randomUUID } from 'crypto';
 import { orgQuery } from '@/lib/db';
 import { requireAdminPermission } from '@/lib/authz';
 
@@ -61,14 +62,15 @@ export async function POST(request: NextRequest) {
     const refundAmount = lines.reduce((sum: number, l: { quantity: number; unit_price: number }) =>
       sum + (l.quantity * l.unit_price), 0);
 
+    const returnId = randomUUID();
+
     const { rows: retRows } = await orgQuery(
       ORG_ID,
-      `INSERT INTO returns (organization_id, location_id, return_number, customer_name, reason, notes, refund_method, refund_amount, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')
+      `INSERT INTO returns (id, organization_id, location_id, return_number, customer_name, reason, notes, refund_method, refund_amount, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')
        RETURNING *`,
-      [returnNumber, LOCATION_ID, customer_name || null, reason || 'other', notes || null, refund_method || 'store_credit', refundAmount],
+      [returnId, ORG_ID, LOCATION_ID, returnNumber, customer_name || null, reason || 'other', notes || null, refund_method || 'store_credit', refundAmount],
     );
-    const returnId = retRows[0].id;
 
     for (const line of lines) {
       await orgQuery(
