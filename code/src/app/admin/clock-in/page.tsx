@@ -30,10 +30,12 @@ export default function ClockInPage() {
   const [openedNote, setOpenedNote] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   // Load locations and employees on mount
   useEffect(() => {
     async function load() {
+      setIsLoading(true);
       try {
         const res = await fetch('/api/clock-in-data');
         if (res.status === 401) { window.location.href = '/?error=Please+sign+in'; return; }
@@ -42,7 +44,9 @@ export default function ClockInPage() {
         setEmployees(data.employees ?? []);
         if (data.locations?.[0]?.id) setLocationId(data.locations[0].id);
       } catch {
-        // silently fail — form stays empty
+        setError("Failed to load locations and employees — please refresh.");
+      } finally {
+        setIsLoading(false);
       }
     }
     load();
@@ -115,6 +119,13 @@ export default function ClockInPage() {
           </div>
         )}
 
+        {/* Loading spinner */}
+        {isLoading && (
+          <div className="mb-6 flex items-center justify-center py-8">
+            <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-2" style={{ borderTopColor: "var(--surface-accent)" }} />
+          </div>
+        )}
+
         {/* Location selector */}
         <div className="mb-5">
           <label className="block text-sm font-semibold mb-2" style={{ color: "var(--text-primary)" }}>
@@ -123,7 +134,8 @@ export default function ClockInPage() {
           <select
             value={locationId}
             onChange={e => setLocationId(e.target.value)}
-            className="w-full rounded-2xl border-2 px-5 py-4 text-base focus:outline-none focus:ring-2"
+            disabled={isLoading}
+            className="w-full rounded-2xl border-2 px-5 py-4 text-base focus:outline-none focus:ring-2 disabled:opacity-50"
             style={{
               borderColor: "var(--border-subtle)",
               backgroundColor: "var(--surface-panel-muted, #f4f4f5)",
@@ -145,7 +157,8 @@ export default function ClockInPage() {
           <select
             value={employeeId}
             onChange={e => setEmployeeId(e.target.value)}
-            className="w-full rounded-2xl border-2 px-5 py-4 text-base focus:outline-none focus:ring-2"
+            disabled={isLoading}
+            className="w-full rounded-2xl border-2 px-5 py-4 text-base focus:outline-none focus:ring-2 disabled:opacity-50"
             style={{
               borderColor: "var(--border-subtle)",
               backgroundColor: "var(--surface-panel-muted, #f4f4f5)",
@@ -172,7 +185,8 @@ export default function ClockInPage() {
               min="0"
               value={openingFloat}
               onChange={e => setOpeningFloat(e.target.value)}
-              className="w-full rounded-2xl border-2 py-5 pl-10 pr-6 text-3xl font-bold text-center focus:outline-none focus:ring-2"
+              disabled={isLoading}
+              className="w-full rounded-2xl border-2 py-5 pl-10 pr-6 text-3xl font-bold text-center focus:outline-none focus:ring-2 disabled:opacity-50"
               style={{
                 borderColor: "var(--border-subtle)",
                 backgroundColor: "var(--surface-panel-muted, #f4f4f5)",
@@ -195,7 +209,8 @@ export default function ClockInPage() {
             onChange={e => setOpenedNote(e.target.value)}
             placeholder="e.g. Register A, starting float confirmed"
             rows={2}
-            className="w-full rounded-2xl border-2 px-5 py-4 text-base focus:outline-none focus:ring-2 resize-none"
+            disabled={isLoading}
+            className="w-full rounded-2xl border-2 px-5 py-4 text-base focus:outline-none focus:ring-2 resize-none disabled:opacity-50"
             style={{
               borderColor: "var(--border-subtle)",
               backgroundColor: "var(--surface-panel-muted, #f4f4f5)",
