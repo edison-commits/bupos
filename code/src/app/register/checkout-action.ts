@@ -61,18 +61,55 @@ export async function checkoutAction(
   const totals = computeTotals(cart);
   const thresholds = registerConfiguration.approvalThresholds;
 
-  // ── Bug 1 fix (continued): look up actual pending exceptions from DB instead of
-  //    trusting the client-supplied approvedExceptions array.
+  // Look up pending exceptions for threshold enforcement (discount / store credit).
+  // Price-integrity verification (DB price vs cart unitPrice / overridePrice)
+  // is done inside the isPg() block below using the same exception query to avoid
+  // an extra round-trip.
   let pendingExceptions: string[] = [];
   if (isPg()) {
-    const { rows: excRows } = await orgQuery(
-      context.employee.organizationId,
-      `SELECT exception_code FROM register_session_exceptions
-       WHERE register_session_id = $1 AND status = 'pending'
-       AND (expires_at IS NULL OR expires_at > now())`,
-      [context.registerSession.id],
-    );
+    const variantIds = cart.items.map((i) => i.productVariantId);
+
+    // Fetch variant prices and pending exceptions in a single query batch
+    const [{ rows: variantRows }, { rows: excRows }] = await Promise.all([
+      orgQuery(
+        context.employee.organizationId,
+        `SELECT id, price FROM product_variants WHERE id = ANY($1::uuid[])`,
+        [variantIds],
+      ),
+      orgQuery(
+        context.employee.organizationId,
+        `SELECT exception_code FROM register_session_exceptions
+         WHERE register_session_id = $1 AND status = 'pending'
+         AND (expires_at IS NULL OR expires_at > now())`,
+        [context.registerSession.id],
+      ),
+    ]);
+
     pendingExceptions = excRows.map((r: { exception_code: string }) => r.exception_code);
+
+    // ── Price-integrity: the server MUST NOT trust unitPrice or overridePrice
+    //    supplied by the client cart. Compare against DB canonical prices and require
+    //    a manager-approved price_override exception for any override that changes
+    //    the price. This closes the cart-price-manipulation attack surface.
+    const dbPriceByVariant: Record<string, number> = {};
+    for (const row of variantRows) {
+      dbPriceByVariant[row.id] = Number(row.price);
+    }
+
+    for (const item of cart.items) {
+      const dbPrice = dbPriceByVariant[item.productVariantId];
+      if (dbPrice === undefined) {
+        redirect(`/register?error=Unknown+product+variant`);
+      }
+      if (item.unitPrice !== dbPrice) {
+        redirect(`/register?error=Price+tampering+detected`);
+      }
+      if (item.overridePrice !== undefined && item.overridePrice !== dbPrice) {
+        if (!pendingExceptions.includes("price_override")) {
+          redirect(`/register?error=Price+override+requires+manager+approval`);
+        }
+      }
+    }
   }
 
   // Server-side approval enforcement — compute effective cart discount for threshold check

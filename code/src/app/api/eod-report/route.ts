@@ -213,6 +213,7 @@ async function sendEmailReport(reportData: any) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify(emailPayload),
+    signal: AbortSignal.timeout(15_000),
   });
 
   if (!response.ok) {

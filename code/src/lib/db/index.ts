@@ -11,8 +11,10 @@ const isRemote =
 export const pool = new Pool({
   connectionString,
   ssl: isRemote ? { rejectUnauthorized: false } : undefined,
+  // Guard against runaway queries — 30 s is the sanity ceiling for any single statement.
+  statement_timeout: 30_000,
+  idleTimeoutMillis: 10_000,
   ...(isRemote && {
-    idleTimeoutMillis: 5_000,
     max: 10,
     allowIdleCursors: false,
   }),

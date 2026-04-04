@@ -137,7 +137,7 @@ export async function POST(req: NextRequest) {
 </body>
 </html>`;
 
-    // Send via Resend API
+    // Send via Resend API — 15 s timeout prevents hung connections from blocking the response
     const response = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
@@ -150,6 +150,7 @@ export async function POST(req: NextRequest) {
         subject: `Your receipt from ${storeName || "BasicUniformPOS"} — #${transactionId.slice(0, 8).toUpperCase()}`,
         html,
       }),
+      signal: AbortSignal.timeout(15_000),
     });
 
     if (!response.ok) {
