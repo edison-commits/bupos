@@ -1,30 +1,85 @@
-"use client";
+'use client';
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { openShiftAction } from "@/app/register/actions";
+import { useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+
+interface Employee {
+  id: string;
+  firstName: string;
+  lastName: string;
+  displayName: string;
+  role: string;
+}
+
+interface Location {
+  id: string;
+  name: string;
+}
 
 export default function ClockInPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const notice = searchParams.get("notice");
+  const urlError = searchParams.get("error");
+
+  const [locations, setLocations] = useState<Location[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [locationId, setLocationId] = useState("");
+  const [employeeId, setEmployeeId] = useState("");
   const [openingFloat, setOpeningFloat] = useState("0.00");
   const [openedNote, setOpenedNote] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Load locations and employees on mount
+  useEffect(() => {
+    async function load() {
+      try {
+        const res = await fetch('/api/clock-in-data');
+        if (res.status === 401) { window.location.href = '/?error=Please+sign+in'; return; }
+        const data = res.ok ? await res.json() : { locations: [], employees: [] };
+        setLocations(data.locations ?? []);
+        setEmployees(data.employees ?? []);
+        if (data.locations?.[0]?.id) setLocationId(data.locations[0].id);
+      } catch {
+        // silently fail — form stays empty
+      }
+    }
+    load();
+  }, []);
+
   const handleClockIn = async () => {
+    if (!locationId || !employeeId) {
+      setError("Please select both a location and an employee.");
+      return;
+    }
     setIsSubmitting(true);
     setError(null);
 
-    const formData = new FormData();
-    formData.set("openingFloat", openingFloat);
-    formData.set("openedNote", openedNote);
-
     try {
-      await openShiftAction(formData);
-      // openShiftAction redirects on success — this line won't be reached
-    } catch (e) {
-      // If redirect throws, it means success (Next.js redirect throws)
+      const res = await fetch("/api/shifts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          employeeId,
+          locationId,
+          openingFloat: parseFloat(openingFloat) || 0,
+          openedNote,
+        }),
+      });
+      const data = await res.json();
       setIsSubmitting(false);
+      if (!res.ok) {
+        setError(data.error || `Failed to open shift (${res.status})`);
+      } else {
+        setError(null);
+        alert("Shift opened successfully!");
+        setOpeningFloat("0.00");
+        setOpenedNote("");
+      }
+    } catch (e: unknown) {
+      setIsSubmitting(false);
+      setError(e instanceof Error ? e.message : "Something went wrong. Please try again.");
     }
   };
 
@@ -49,13 +104,64 @@ export default function ClockInPage() {
             Start Your Shift
           </h1>
           <p className="mt-2 text-sm" style={{ color: "var(--text-secondary)" }}>
-            Enter the opening cash float to begin.
+            Select location and employee, then enter the opening float.
           </p>
         </div>
 
+        {/* Notice banner */}
+        {notice && (
+          <div className="mb-6 rounded-2xl bg-green-50 border border-green-200 px-5 py-4 text-sm text-green-700 text-center font-medium">
+            {notice.replace("+", " ")}
+          </div>
+        )}
+
+        {/* Location selector */}
+        <div className="mb-5">
+          <label className="block text-sm font-semibold mb-2" style={{ color: "var(--text-primary)" }}>
+            Location
+          </label>
+          <select
+            value={locationId}
+            onChange={e => setLocationId(e.target.value)}
+            className="w-full rounded-2xl border-2 px-5 py-4 text-base focus:outline-none focus:ring-2"
+            style={{
+              borderColor: "var(--border-subtle)",
+              backgroundColor: "var(--surface-panel-muted, #f4f4f5)",
+              color: "var(--text-primary)",
+            }}
+          >
+            <option value="">Select location...</option>
+            {locations.map(l => (
+              <option key={l.id} value={l.id}>{l.name}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* Employee selector */}
+        <div className="mb-5">
+          <label className="block text-sm font-semibold mb-2" style={{ color: "var(--text-primary)" }}>
+            Employee
+          </label>
+          <select
+            value={employeeId}
+            onChange={e => setEmployeeId(e.target.value)}
+            className="w-full rounded-2xl border-2 px-5 py-4 text-base focus:outline-none focus:ring-2"
+            style={{
+              borderColor: "var(--border-subtle)",
+              backgroundColor: "var(--surface-panel-muted, #f4f4f5)",
+              color: "var(--text-primary)",
+            }}
+          >
+            <option value="">Select employee...</option>
+            {employees.map(emp => (
+              <option key={emp.id} value={emp.id}>{emp.displayName} ({emp.role})</option>
+            ))}
+          </select>
+        </div>
+
         {/* Opening Float */}
-        <div className="mb-6">
-          <label className="block text-sm font-semibold mb-3" style={{ color: "var(--text-primary)" }}>
+        <div className="mb-5">
+          <label className="block text-sm font-semibold mb-2" style={{ color: "var(--text-primary)" }}>
             Opening Float ($)
           </label>
           <div className="relative">
@@ -65,7 +171,7 @@ export default function ClockInPage() {
               step="0.01"
               min="0"
               value={openingFloat}
-              onChange={(e) => setOpeningFloat(e.target.value)}
+              onChange={e => setOpeningFloat(e.target.value)}
               className="w-full rounded-2xl border-2 py-5 pl-10 pr-6 text-3xl font-bold text-center focus:outline-none focus:ring-2"
               style={{
                 borderColor: "var(--border-subtle)",
@@ -81,12 +187,12 @@ export default function ClockInPage() {
 
         {/* Note */}
         <div className="mb-8">
-          <label className="block text-sm font-semibold mb-3" style={{ color: "var(--text-primary)" }}>
+          <label className="block text-sm font-semibold mb-2" style={{ color: "var(--text-primary)" }}>
             Note (optional)
           </label>
           <textarea
             value={openedNote}
-            onChange={(e) => setOpenedNote(e.target.value)}
+            onChange={e => setOpenedNote(e.target.value)}
             placeholder="e.g. Register A, starting float confirmed"
             rows={2}
             className="w-full rounded-2xl border-2 px-5 py-4 text-base focus:outline-none focus:ring-2 resize-none"
@@ -99,9 +205,9 @@ export default function ClockInPage() {
         </div>
 
         {/* Error */}
-        {error && (
+        {(error || urlError) && (
           <div className="mb-6 rounded-2xl bg-red-50 border border-red-200 px-5 py-4 text-sm text-red-700">
-            {error}
+            {error ?? urlError?.replace("+", " ")}
           </div>
         )}
 

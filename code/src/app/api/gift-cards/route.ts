@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery, orgTx } from "@/lib/db";
 import { randomUUID } from "node:crypto";
+import { requireAdminPermission } from "@/lib/authz";
 
-const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
+const ORG_ID = process.env.BUPOS_ORG_ID || "33262270-7100-4b46-b2fb-8b50ad872bbb";
 
 /**
  * GET /api/gift-cards
@@ -15,6 +16,8 @@ const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
  * Without params returns all gift cards with summary stats.
  */
 export async function GET(req: NextRequest) {
+  await requireAdminPermission('catalog.manage');
+
   try {
     const sp = req.nextUrl.searchParams;
 
@@ -113,6 +116,8 @@ export async function GET(req: NextRequest) {
  *   action: "disable"  — { giftCardId }
  */
 export async function POST(req: NextRequest) {
+  await requireAdminPermission('catalog.manage');
+
   try {
     const body = await req.json();
     const { action } = body;

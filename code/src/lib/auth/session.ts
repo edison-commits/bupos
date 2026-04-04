@@ -200,6 +200,7 @@ export async function signInAdmin(email: string, password: string) {
   if (isPg()) {
     // PG path: query auth_credentials + employees directly
     const { pgFindCredentialByEmail } = await import("@/lib/persistence/postgres-store");
+    const { invalidateStoreCache } = await import("@/lib/persistence/postgres-read-store");
     const credential = await pgFindCredentialByEmail(normalizedEmail);
     if (!credential?.passwordHash) {
       throw new Error("Invalid admin credentials");
@@ -223,6 +224,7 @@ export async function signInAdmin(email: string, password: string) {
     await pgDeleteSessionsByEmployee("admin", credential.employeeId);
     const nextSession = buildSession("admin", credential.employeeId, organizationId);
     await pgInsertSession(nextSession);
+    invalidateStoreCache(); // ensure next readStore() call picks up fresh data including this session's employee
 
     const jar = await cookieStore();
     jar.set(ADMIN_COOKIE, nextSession.id, {

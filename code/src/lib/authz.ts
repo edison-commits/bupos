@@ -41,6 +41,7 @@ export function hasPermission(role: RoleKey, permission: PermissionKey): boolean
 
 export function canManageEmployeeRole(actorRole: RoleKey, targetRole: RoleKey): boolean {
   if (actorRole === "owner") return true;
+  // Intentional: manager can manage support role (support is read-only audit, not a security risk)
   if (actorRole === "manager") return targetRole !== "owner" && targetRole !== "manager";
   return false;
 }
@@ -48,7 +49,7 @@ export function canManageEmployeeRole(actorRole: RoleKey, targetRole: RoleKey): 
 export async function requireAdminPermission(permission: PermissionKey) {
   const ctx = await getAdminSession();
   if (!ctx || !ctx.session || !ctx.employee) {
-    redirect("/admin/login");
+    redirect("/admin");
   }
   if (!hasPermission(ctx.employee.roleKey, permission)) {
     redirect("/admin?error=Unauthorized");

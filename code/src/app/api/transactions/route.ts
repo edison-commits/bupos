@@ -154,11 +154,10 @@ export async function GET(req: NextRequest) {
       [...values, limit, offset],
     );
 
-    // Extract item count from cart_snapshot
     const transactions = rows.rows.map((r: Record<string, unknown>) => {
-      const snapshot = r.cart_snapshot as { items?: unknown[] } | undefined;
-      const itemCount = snapshot?.items ? (snapshot.items as unknown[]).length : 0;
-      return { ...r, item_count: itemCount, item_count_raw: undefined, cart_snapshot: undefined };
+      const raw = r.item_count_raw as Array<{ items?: unknown[] }> | undefined;
+      const itemCount = raw?.[0]?.items ? (raw[0].items as unknown[]).length : 0;
+      return { ...r, item_count: itemCount, item_count_raw: undefined };
     });
 
     return NextResponse.json({

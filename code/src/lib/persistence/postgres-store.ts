@@ -3,6 +3,23 @@ import pool, { orgTx } from '@/lib/db';
 import type { Category, Employee, InventoryLevel, Product, ProductVariant, RegisterSessionRecord, ShiftRecord } from '@/lib/domain/types';
 import type { AuthCredentialRecord, InventoryAdjustmentRecord } from '@/lib/persistence/types';
 
+// Generic TTL cache for read functions
+// Caches the result for TTL_MS, then refetches.
+// Call the invalidate function after any mutation.
+const PG_READ_TTL_MS = 30_000;
+
+interface CacheEntry<T> { data: T; expiresAt: number; }
+
+// Per-org caches
+const _employeesCache = new Map<string, CacheEntry<Employee[]>>();
+const _productsCache = new Map<string, CacheEntry<Product[]>>();
+const _variantsCache = new Map<string, CacheEntry<ProductVariant[]>>();
+const _inventoryCache = new Map<string, CacheEntry<InventoryLevel[]>>();
+let _locationsCache: CacheEntry<import('@/lib/domain/types').Location[]> | null = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _orgCache: CacheEntry<any> | null = null;
+let _categoriesCache: CacheEntry<Category[]> | null = null;
+
 // ── Helpers ───────────────────────────────────────────────────────────
 
 function toCategory(row: Record<string, unknown>): Category {
@@ -90,9 +107,14 @@ function toEmployee(row: Record<string, unknown>): Employee {
 // ── Categories ────────────────────────────────────────────────────────
 
 export async function pgReadCategories(): Promise<Category[]> {
+  if (_categoriesCache && Date.now() < _categoriesCache.expiresAt) return _categoriesCache.data;
   const { rows } = await pool.query('SELECT * FROM categories ORDER BY sort_order');
-  return rows.map(toCategory);
+  const data = rows.map(toCategory);
+  _categoriesCache = { data, expiresAt: Date.now() + PG_READ_TTL_MS };
+  return data;
 }
+
+export function invalidateCategoriesCache(): void { _categoriesCache = null; }
 
 export async function pgCreateCategory(data: {
   id: string; organizationId: string; name: string; slug: string;
@@ -130,13 +152,26 @@ export async function pgDeleteCategory(id: string): Promise<boolean> {
 
 // ── Products ──────────────────────────────────────────────────────────
 
-export async function pgReadProducts(): Promise<Product[]> {
+// NOTE: callers should be updated to pass ORG_ID (organizationId) from their request context.
+
+export async function pgReadProducts(organizationId: string): Promise<Product[]> {
+  const cached = _productsCache.get(organizationId);
+  if (cached && Date.now() < cached.expiresAt) return cached.data;
   const { rows } = await pool.query(
     `SELECT p.*, COALESCE(array_agg(pmg.modifier_group_id) FILTER (WHERE pmg.modifier_group_id IS NOT NULL), '{}') AS modifier_group_ids
      FROM products p LEFT JOIN product_modifier_groups pmg ON p.id = pmg.product_id
+     WHERE p.organization_id = $1
      GROUP BY p.id ORDER BY p.name`,
+    [organizationId],
   );
-  return rows.map(toProduct);
+  const data = rows.map(toProduct);
+  _productsCache.set(organizationId, { data, expiresAt: Date.now() + PG_READ_TTL_MS });
+  return data;
+}
+
+export function invalidateProductsCache(orgId?: string): void {
+  if (orgId) _productsCache.delete(orgId);
+  else _productsCache.clear();
 }
 
 export async function pgCreateProduct(data: {
@@ -197,9 +232,23 @@ export async function pgDeleteProduct(id: string): Promise<boolean> {
 
 // ── Variants ──────────────────────────────────────────────────────────
 
-export async function pgReadVariants(): Promise<ProductVariant[]> {
-  const { rows } = await pool.query('SELECT * FROM product_variants ORDER BY name');
-  return rows.map(toVariant);
+// NOTE: callers should be updated to pass ORG_ID (organizationId) from their request context.
+
+export async function pgReadVariants(organizationId: string): Promise<ProductVariant[]> {
+  const cached = _variantsCache.get(organizationId);
+  if (cached && Date.now() < cached.expiresAt) return cached.data;
+  const { rows } = await pool.query(
+    'SELECT * FROM product_variants WHERE organization_id = $1 ORDER BY name',
+    [organizationId],
+  );
+  const data = rows.map(toVariant);
+  _variantsCache.set(organizationId, { data, expiresAt: Date.now() + PG_READ_TTL_MS });
+  return data;
+}
+
+export function invalidateVariantsCache(orgId?: string): void {
+  if (orgId) _variantsCache.delete(orgId);
+  else _variantsCache.clear();
 }
 
 export async function pgCreateVariant(data: {
@@ -248,9 +297,23 @@ export async function pgDeleteVariant(id: string): Promise<boolean> {
 
 // ── Inventory ─────────────────────────────────────────────────────────
 
-export async function pgReadInventory(): Promise<InventoryLevel[]> {
-  const { rows } = await pool.query('SELECT * FROM inventory_levels');
-  return rows.map(toInventory);
+// NOTE: callers should be updated to pass ORG_ID (organizationId) from their request context.
+
+export async function pgReadInventory(organizationId: string): Promise<InventoryLevel[]> {
+  const cached = _inventoryCache.get(organizationId);
+  if (cached && Date.now() < cached.expiresAt) return cached.data;
+  const { rows } = await pool.query(
+    'SELECT * FROM inventory_levels WHERE organization_id = $1',
+    [organizationId],
+  );
+  const data = rows.map(toInventory);
+  _inventoryCache.set(organizationId, { data, expiresAt: Date.now() + PG_READ_TTL_MS });
+  return data;
+}
+
+export function invalidateInventoryCache(orgId?: string): void {
+  if (orgId) _inventoryCache.delete(orgId);
+  else _inventoryCache.clear();
 }
 
 export async function pgCreateInventoryLevel(data: {
@@ -308,11 +371,21 @@ export async function pgAdjustInventory(inventoryLevelId: string, delta: number,
 
 // ── Employees ─────────────────────────────────────────────────────────
 
-export async function pgReadEmployees(): Promise<Employee[]> {
+export async function pgReadEmployees(organizationId: string): Promise<Employee[]> {
+  const cached = _employeesCache.get(organizationId);
+  if (cached && Date.now() < cached.expiresAt) return cached.data;
   const { rows } = await pool.query(
-    `SELECT * FROM employees ORDER BY last_name`,
+    `SELECT * FROM employees WHERE organization_id = $1 ORDER BY last_name`,
+    [organizationId],
   );
-  return rows.map(toEmployee);
+  const data = rows.map(toEmployee);
+  _employeesCache.set(organizationId, { data, expiresAt: Date.now() + PG_READ_TTL_MS });
+  return data;
+}
+
+export function invalidateEmployeesCache(orgId?: string): void {
+  if (orgId) _employeesCache.delete(orgId);
+  else _employeesCache.clear();
 }
 
 export async function pgCreateEmployee(data: {
@@ -326,11 +399,11 @@ export async function pgCreateEmployee(data: {
     const { rows } = await client.query(
       `INSERT INTO employees (id, organization_id, role_key, first_name, last_name, display_name, email, pin_hint, is_active, location_ids, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::uuid[], $11, $11) RETURNING *`,
-      [data.id, data.organizationId, data.roleKey, data.firstName, data.lastName, data.displayName, data.email ?? null, data.pinHint, data.isActive, `{${data.locationIds.join(',')}}`, ts],
+      [data.id, data.organizationId, data.roleKey, data.firstName, data.lastName, data.displayName, data.email ?? null, data.pinHint, data.isActive, data.locationIds, ts],
     );
     await client.query(
-      `INSERT INTO auth_credentials (employee_id, email, password_hash, pin_hash, pin_last_rotated_at, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $5, $5)`,
+      `INSERT INTO auth_credentials (employee_id, email, password_hash, pin_hash, pin_last_rotated_at, failed_pin_attempts, last_failed_pin_at, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, 0, NULL, $5, $5)`,
       [data.id, data.email ?? null, data.passwordHash ?? null, data.pinHash, ts],
     );
     await client.query('COMMIT');
@@ -380,24 +453,78 @@ export async function pgFindCredentialByEmail(email: string): Promise<(AuthCrede
 }
 
 export async function pgFindCredentialByPin(pin: string): Promise<AuthCredentialRecord | null> {
-  // Fetch all pin_hash rows — verified in JS to avoid SQL-level crypto dependency.
+  const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
+  const RATE_LIMIT_MAX_ATTEMPTS = 5;
+
+  // Fetch all pin_hash rows with current failed-attempt state.
   // crypto.scrypt runs in the Node.js thread pool (not on the Workers main thread),
   // so parallel verification across all employees doesn't block the event loop.
   const { rows } = await pool.query(
-    `SELECT ac.employee_id, ac.email, ac.pin_hash, ac.pin_last_rotated_at
+    `SELECT ac.employee_id, ac.email, ac.pin_hash, ac.pin_last_rotated_at,
+            ac.failed_pin_attempts, ac.last_failed_pin_at
      FROM auth_credentials ac
      JOIN employees e ON ac.employee_id = e.id
      WHERE e.is_active = true AND ac.pin_hash IS NOT NULL
      LIMIT 20`,
   );
 
+  // Check rate limit: reject if any candidate has exceeded max failed attempts within the window.
+  const now = Date.now();
+  const rateLimited = rows.some((r) => {
+    const row = r as Record<string, unknown>;
+    const attempts = (row.failed_pin_attempts as number) ?? 0;
+    const lastAttempt = row.last_failed_pin_at as Date | null;
+    if (attempts < RATE_LIMIT_MAX_ATTEMPTS) return false;
+    if (!lastAttempt) return false;
+    return now - new Date(lastAttempt).getTime() < RATE_LIMIT_WINDOW_MS;
+  });
+  if (rateLimited) {
+    // Too many recent failures — return null to slow down brute-force attacks.
+    return null;
+  }
+
   // Verify all PINs in parallel — each scrypt call runs in the thread pool.
+  // The strategy is: increment first, then check rate limit, then verify.
+  // This ensures that on the 6th failed attempt the counter is already 6
+  // (>= limit) and the crypto verification is skipped entirely, rather than
+  // running one extra verify that confirms the PIN is correct before the
+  // counter ever reaches the blocking threshold.
   const results = await Promise.all(
     rows.map(async (r) => {
       const row = r as Record<string, unknown>;
       if (!row.pin_hash) return null;
+
+      const employeeId = row.employee_id as string;
+      const prevAttempts = (row.failed_pin_attempts as number) ?? 0;
+
+      // Increment first so the rate-limit check is applied to the
+      // PROVISIONAL count.  If this pushes the counter to the ceiling
+      // the verify is skipped entirely — no leaked timing/result.
+      await pool.query(
+        `UPDATE auth_credentials
+           SET failed_pin_attempts = failed_pin_attempts + 1,
+               last_failed_pin_at = NOW()
+           WHERE employee_id = $1`,
+        [employeeId],
+      );
+
+      // After incrementing, re-check: if already at/over the ceiling the
+      // account is locked — reject without running the expensive scrypt.
+      if (prevAttempts >= RATE_LIMIT_MAX_ATTEMPTS) return null;
+
       const valid = await verifySecretAsync(pin, row.pin_hash as string);
-      return valid ? row : null;
+
+      if (valid) {
+        await pool.query(
+          `UPDATE auth_credentials SET failed_pin_attempts = 0, last_failed_pin_at = NULL
+           WHERE employee_id = $1`,
+          [employeeId],
+        );
+        return row;
+      }
+
+      // Failed: counter is already incremented above; leave it there.
+      return null;
     }),
   );
 
@@ -487,8 +614,9 @@ export async function pgUpdateOrganization(id: string, data: Partial<{
 }
 
 export async function pgReadLocations() {
+  if (_locationsCache && Date.now() < _locationsCache.expiresAt) return _locationsCache.data;
   const { rows } = await pool.query('SELECT * FROM locations WHERE is_active = true ORDER BY name');
-  return rows.map((r: Record<string, unknown>) => ({
+  const data = rows.map((r: Record<string, unknown>) => ({
     id: r.id as string, organizationId: r.organization_id as string,
     name: r.name as string, code: r.code as string,
     address1: r.address_1 as string, city: r.city as string,
@@ -498,7 +626,11 @@ export async function pgReadLocations() {
     isActive: r.is_active as boolean,
     createdAt: String(r.created_at), updatedAt: String(r.updated_at),
   }));
+  _locationsCache = { data, expiresAt: Date.now() + PG_READ_TTL_MS };
+  return data;
 }
+
+export function invalidateLocationsCache(): void { _locationsCache = null; }
 
 export async function pgUpdateLocation(id: string, data: Partial<{
   name: string; address1: string; city: string; region: string;
@@ -586,7 +718,7 @@ export async function pgEndRegisterSession(id: string): Promise<void> {
 }
 
 export async function pgOpenShift(data: {
-  id: string; locationId: string; employeeId: string; registerSessionId: string;
+  id: string; locationId: string; employeeId: string; registerSessionId: string | null;
   openingFloat: number; openedNote?: string;
 }): Promise<ShiftRecord> {
   // Get organizationId from location
@@ -605,10 +737,13 @@ export async function pgOpenShift(data: {
        VALUES ($1, $2, $3, $4, 'open', $5, $6, $7) RETURNING *`,
       [data.id, data.locationId, data.employeeId, data.registerSessionId, ts, data.openingFloat, data.openedNote ?? null],
     );
-    await client.query(
-      `UPDATE register_sessions SET active_shift_id = $1 WHERE id = $2`,
-      [data.id, data.registerSessionId],
-    );
+    // Only update register_sessions if a register session is provided (admin-initiated shifts have none)
+    if (data.registerSessionId) {
+      await client.query(
+        `UPDATE register_sessions SET active_shift_id = $1 WHERE id = $2`,
+        [data.id, data.registerSessionId],
+      );
+    }
     await client.query('COMMIT');
     return toShift(rows[0]);
   } catch (e) {

@@ -1,10 +1,20 @@
 import { orgQuery, pool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
 
-const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
-const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
+const ORG_ID = process.env.BUPOS_ORG_ID || '33262270-7100-4b46-b2fb-8b50ad872bbb';
+const LOCATION_ID = process.env.BUPOS_LOCATION_ID || 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
+
+// 30-second response cache
+const _productsCache = new Map<string, { data: unknown; expiresAt: number }>();
+const PROD_CACHE_TTL = 30_000;
 
 export async function GET(request: NextRequest) {
+  const cacheKey = request.nextUrl.toString();
+  const cached = _productsCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiresAt) {
+    return NextResponse.json(cached.data);
+  }
+
   try {
     const searchParams = request.nextUrl.searchParams;
     const search = searchParams.get('search')?.toLowerCase() || '';
@@ -160,11 +170,13 @@ export async function GET(request: NextRequest) {
     const categories = categoriesResult.rows;
     const summary = summaryResult.rows[0];
 
-    return NextResponse.json({
+    const response = {
       products,
       categories,
       summary,
-    });
+    };
+    _productsCache.set(cacheKey, { data: response, expiresAt: Date.now() + PROD_CACHE_TTL });
+    return NextResponse.json(response);
   } catch (error) {
     console.error('Products GET error:', error);
     return NextResponse.json(
@@ -373,12 +385,13 @@ export async function DELETE(request: NextRequest) {
 }
 
 export async function PATCH(request: NextRequest) {
+  const client = await pool.connect();
   try {
     const body = await request.json();
     const { action } = body;
 
     if (action === 'import_csv') {
-      const { rows } = body; // array of product rows from CSV
+      const { rows } = body;
       if (!Array.isArray(rows)) {
         return NextResponse.json({ error: 'Invalid CSV data' }, { status: 400 });
       }
@@ -387,118 +400,233 @@ export async function PATCH(request: NextRequest) {
       let created = 0;
       let skipped = 0;
 
-      // Build category lookup map
-      const catsResult = await orgQuery(ORG_ID, `SELECT id, name FROM categories WHERE organization_id = $1`, [ORG_ID]);
+      await client.query('BEGIN');
+      await client.query(`SET LOCAL app.current_org_id = '${ORG_ID}'`);
+
+      // Build lookup maps
+      const catsResult = await client.query(
+        `SELECT id, name FROM categories WHERE organization_id = $1`,
+        [ORG_ID]
+      );
       const catMap = new Map(catsResult.rows.map((r: any) => [r.name.toLowerCase(), r.id]));
 
-      // Get existing products by name (within this org)
-      const existingResult = await orgQuery(ORG_ID, `SELECT id, name, category_id FROM products WHERE organization_id = $1`, [ORG_ID]);
-      const productMap = new Map(existingResult.rows.map((r: any) => [r.name.toLowerCase(), r]));
+      const existingResult = await client.query(
+        `SELECT id, name, category_id FROM products WHERE organization_id = $1`,
+        [ORG_ID]
+      );
+      const productsByName = new Map(existingResult.rows.map((r: any) => [r.name.toLowerCase(), { id: r.id, categoryId: r.category_id }]));
 
-      // Get existing variants by SKU
-      const variantResult = await orgQuery(ORG_ID, `SELECT id, sku FROM product_variants WHERE organization_id = $1 AND sku IS NOT NULL AND sku != ''`, [ORG_ID]);
+      const variantResult = await client.query(
+        `SELECT id, sku FROM product_variants WHERE organization_id = $1 AND sku IS NOT NULL AND sku != ''`,
+        [ORG_ID]
+      );
       const skuMap = new Map(variantResult.rows.map((r: any) => [r.sku.toLowerCase(), r.id]));
 
-      for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
-        const rowNum = i + 2; // +2 for 1-indexed + header row
-
-        try {
-          const name = String(row.name || row.Name || row.PRODUCT_NAME || '').trim();
-          const sku = String(row.sku || row.SKU || row.Variant_SKU || '').trim().toLowerCase();
-          const price = parseFloat(row.price || row.Price || row.PRICE || '0');
-          const categoryName = String(row.category || row.Category || row.CATEGORY_NAME || '').trim().toLowerCase();
-          const sizeLabel = String(row.size || row.Size || row.SIZE_LABEL || '').trim();
-          const colorLabel = String(row.color || row.Color || row.COLOR_LABEL || '').trim();
-          const cost = parseFloat(row.cost || row.Cost || row.COST || '0') || 0;
-          const barcode = String(row.barcode || row.Barcode || row.BARCODE || '').trim();
-          const description = String(row.description || row.Description || row.DESCRIPTION || '').trim();
-          const imageUrl = String(row.image_url || row.imageUrl || row.IMAGE_URL || '').trim();
-          const isActive = String(row.is_active || row.isActive || row.IS_ACTIVE || 'true').toLowerCase() !== 'false';
-
-          if (!name) {
-            results.push({ row: rowNum, status: 'skipped', name: '(empty)', message: 'Missing product name' });
-            skipped++;
-            continue;
-          }
-          if (!sku) {
-            results.push({ row: rowNum, status: 'skipped', name, message: 'Missing SKU' });
-            skipped++;
-            continue;
-          }
-          if (isNaN(price) || price <= 0) {
-            results.push({ row: rowNum, status: 'skipped', name, message: 'Invalid price' });
-            skipped++;
-            continue;
-          }
-
-          // Look up or create category
-          let categoryId: string | null = null;
-          if (categoryName) {
-            if (catMap.has(categoryName)) {
-              categoryId = catMap.get(categoryName)!;
-            } else {
-              const slug = categoryName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-              const catInsert = await orgQuery(
-                ORG_ID,
-                `INSERT INTO categories (id, organization_id, name, slug, created_at, updated_at)
-                 VALUES (gen_random_uuid(), $1, $2, $3, NOW(), NOW())
-                 RETURNING id`,
-                [ORG_ID, categoryName.charAt(0).toUpperCase() + categoryName.slice(1), slug]
-              );
-              categoryId = catInsert.rows[0].id;
-              catMap.set(categoryName, categoryId);
-            }
-          }
-
-          // Check if variant with this SKU already exists
-          if (skuMap.has(sku)) {
-            results.push({ row: rowNum, status: 'skipped', name, message: `SKU "${sku}" already exists` });
-            skipped++;
-            continue;
-          }
-
-          // Get or create product by name
-          let productId: string;
-          if (productMap.has(name.toLowerCase())) {
-            productId = productMap.get(name.toLowerCase())!.id;
-          } else {
-            const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-            const prodInsert = await orgQuery(
-              ORG_ID,
-              `INSERT INTO products (id, organization_id, category_id, name, slug, description, image_url, is_active, is_touch_favorite, created_at, updated_at)
-               VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, false, NOW(), NOW())
-               RETURNING id`,
-              [ORG_ID, categoryId, name, slug, description || null, imageUrl || null, isActive]
-            );
-            productId = prodInsert.rows[0].id;
-            productMap.set(name.toLowerCase(), { id: productId });
-          }
-
-          // Insert variant
-          const variantName = [sizeLabel, colorLabel].filter(Boolean).join(' / ') || name;
-          const varInsert = await orgQuery(
-            ORG_ID,
-            `INSERT INTO product_variants (id, organization_id, product_id, sku, barcode, name, size_label, color_label, price, cost, is_active, created_at, updated_at)
-             VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
-             RETURNING id`,
-            [ORG_ID, productId, sku, barcode || null, variantName, sizeLabel || null, colorLabel || null, price, cost, isActive]
-          );
-          skuMap.set(sku, varInsert.rows[0].id);
-          results.push({ row: rowNum, status: 'created', name });
-          created++;
-        } catch (rowErr) {
-          results.push({ row: rowNum, status: 'skipped', name: String(row.name || '?'), message: String((rowErr as Error).message) });
-          skipped++;
+      // Pre-collect new categories to batch insert
+      const newCategories: { displayName: string; slug: string }[] = [];
+      for (const row of rows) {
+        const categoryName = String(row.category || row.Category || row.CATEGORY_NAME || '').trim().toLowerCase();
+        if (categoryName && !catMap.has(categoryName) && !newCategories.some(c => c.displayName.toLowerCase() === categoryName)) {
+          const displayName = categoryName.charAt(0).toUpperCase() + categoryName.slice(1);
+          const slug = categoryName.replace(/[^a-z0-9]+/g, '-');
+          newCategories.push({ displayName, slug });
         }
       }
 
+      // Pre-collect new products to batch insert
+      const newProducts: { name: string; slug: string; categoryId: string | null; description: string | null; imageUrl: string | null; isActive: boolean }[] = [];
+      for (const row of rows) {
+        const name = String(row.name || row.Name || row.PRODUCT_NAME || '').trim();
+        const categoryName = String(row.category || row.Category || row.CATEGORY_NAME || '').trim().toLowerCase();
+        const description = String(row.description || row.Description || row.DESCRIPTION || '').trim();
+        const imageUrl = String(row.image_url || row.imageUrl || row.IMAGE_URL || '').trim();
+        const isActive = String(row.is_active || row.isActive || row.IS_ACTIVE || 'true').toLowerCase() !== 'false';
+        const nameKey = name.toLowerCase();
+        if (!name || productsByName.has(nameKey) || newProducts.some(p => p.name.toLowerCase() === nameKey)) continue;
+        let categoryId: string | null = null;
+        if (categoryName) {
+          if (catMap.has(categoryName)) {
+            categoryId = catMap.get(categoryName)!;
+          } else {
+            categoryId = `new:${categoryName}`;
+          }
+        }
+        newProducts.push({
+          name,
+          slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+          categoryId,
+          description: description || null,
+          imageUrl: imageUrl || null,
+          isActive,
+        });
+      }
+
+      // Pre-collect SKUs in this batch to detect within-batch duplicates
+      const skusInBatch = new Set<string>();
+      for (const row of rows) {
+        const sku = String(row.sku || row.SKU || row.Variant_SKU || '').trim().toLowerCase();
+        if (sku) skusInBatch.add(sku);
+      }
+
+      const variantsToInsert: { productId: string; sku: string; barcode: string | null; variantName: string; sizeLabel: string | null; colorLabel: string | null; price: number; cost: number; isActive: boolean; row: number; name: string }[] = [];
+
+      // Validate rows and collect variants (no INSERTs yet)
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const rowNum = i + 2; // +2 for 1-indexed + header row
+        const name = String(row.name || row.Name || row.PRODUCT_NAME || '').trim();
+        const sku = String(row.sku || row.SKU || row.Variant_SKU || '').trim().toLowerCase();
+        const price = parseFloat(row.price || row.Price || row.PRICE || '0');
+        const categoryName = String(row.category || row.Category || row.CATEGORY_NAME || '').trim().toLowerCase();
+        const sizeLabel = String(row.size || row.Size || row.SIZE_LABEL || '').trim();
+        const colorLabel = String(row.color || row.Color || row.COLOR_LABEL || '').trim();
+        const cost = parseFloat(row.cost || row.Cost || row.COST || '0') || 0;
+        const barcode = String(row.barcode || row.Barcode || row.BARCODE || '').trim();
+        const description = String(row.description || row.Description || row.DESCRIPTION || '').trim();
+        const imageUrl = String(row.image_url || row.imageUrl || row.IMAGE_URL || '').trim();
+        const isActive = String(row.is_active || row.isActive || row.IS_ACTIVE || 'true').toLowerCase() !== 'false';
+
+        if (!name) { results.push({ row: rowNum, status: 'skipped', name: '(empty)', message: 'Missing product name' }); skipped++; continue; }
+        if (!sku) { results.push({ row: rowNum, status: 'skipped', name, message: 'Missing SKU' }); skipped++; continue; }
+        if (isNaN(price) || price <= 0) { results.push({ row: rowNum, status: 'skipped', name, message: 'Invalid price' }); skipped++; continue; }
+
+        // Resolve category
+        let categoryId: string | null = null;
+        if (categoryName) {
+          if (catMap.has(categoryName)) {
+            categoryId = catMap.get(categoryName)!;
+          } else {
+            results.push({ row: rowNum, status: 'skipped', name, message: `Category "${categoryName}" not found after batch insert` }); skipped++; continue;
+          }
+        }
+
+        // Resolve product
+        const nameKey = name.toLowerCase();
+        let productId: string;
+        const existingProd = productsByName.get(nameKey);
+        if (existingProd) {
+          productId = existingProd.id;
+        } else {
+          const newProd = newProducts.find(p => p.name.toLowerCase() === nameKey);
+          if (newProd) {
+            productId = `new:${newProducts.indexOf(newProd)}`;
+          } else {
+            results.push({ row: rowNum, status: 'skipped', name, message: 'Product not found in batch context' }); skipped++; continue;
+          }
+        }
+
+        // Check SKU duplicates
+        if (skuMap.has(sku)) {
+          results.push({ row: rowNum, status: 'skipped', name, message: `SKU "${sku}" already exists in database` }); skipped++; continue;
+        }
+        // Deduplicate within this batch — keep first occurrence
+        if (skusInBatch.has(sku)) {
+          skusInBatch.delete(sku);
+        } else {
+          results.push({ row: rowNum, status: 'skipped', name, message: `Duplicate SKU "${sku}" in import batch` }); skipped++; continue;
+        }
+
+        const variantName = [sizeLabel, colorLabel].filter(Boolean).join(' / ') || name;
+        variantsToInsert.push({ productId, sku, barcode: barcode || null, variantName, sizeLabel: sizeLabel || null, colorLabel: colorLabel || null, price, cost, isActive, row: rowNum, name });
+        skuMap.set(sku, sku);
+        created++;
+        results.push({ row: rowNum, status: 'created', name });
+      }
+
+      // Batch insert categories
+      if (newCategories.length > 0) {
+        const catValues: string[] = [];
+        const catParams: string[] = [];
+        let idx = 1;
+        for (const cat of newCategories) {
+          catValues.push(`(gen_random_uuid(), $1, $${idx}, $${idx + 1}, NOW(), NOW())`);
+          catParams.push(cat.displayName, cat.slug);
+          idx += 2;
+        }
+        await client.query(
+          `INSERT INTO categories (id, organization_id, name, slug, created_at, updated_at) VALUES ${catValues.join(', ')}`,
+          [ORG_ID, ...catParams]
+        );
+        // Refresh catMap with newly inserted categories
+        const newCatResult = await client.query(
+          `SELECT id, name FROM categories WHERE organization_id = $1 AND name = ANY($2)`,
+          [ORG_ID, newCategories.map(c => c.displayName)]
+        );
+        for (const r of newCatResult.rows) catMap.set(r.name.toLowerCase(), r.id);
+      }
+
+      // Resolve product categoryIds and batch insert products
+      for (const p of newProducts) {
+        if (p.categoryId && (p.categoryId as string).startsWith('new:')) {
+          const catName = (p.categoryId as string).slice(4);
+          p.categoryId = catMap.get(catName) || null;
+        }
+      }
+      if (newProducts.length > 0) {
+        const prodValues: string[] = [];
+        const prodParams: (string | number | boolean | null)[] = [];
+        let idx = 1;
+        for (const p of newProducts) {
+          prodValues.push(`(gen_random_uuid(), $1, $${idx}, $${idx + 1}, $${idx + 2}, $${idx + 3}, $${idx + 4}, $${idx + 5}, false, NOW(), NOW())`);
+          prodParams.push(p.categoryId, p.name, p.slug, p.description, p.imageUrl, p.isActive);
+          idx += 6;
+        }
+        await client.query(
+          `INSERT INTO products (id, organization_id, category_id, name, slug, description, image_url, is_active, is_touch_favorite, created_at, updated_at) VALUES ${prodValues.join(', ')}`,
+          [ORG_ID, ...prodParams]
+        );
+        // Refresh product map with newly inserted products
+        const newProdResult = await client.query(
+          `SELECT id, name FROM products WHERE organization_id = $1 AND name = ANY($2)`,
+          [ORG_ID, newProducts.map(p => p.name)]
+        );
+        for (const r of newProdResult.rows) {
+          const key = r.name.toLowerCase();
+          const existing = productsByName.get(key);
+          if (!existing || typeof existing.id !== 'string' || !existing.id.startsWith('new:')) {
+            productsByName.set(key, { id: r.id, categoryId: null });
+          } else {
+            existing.id = r.id;
+          }
+        }
+      }
+
+      // Resolve final product IDs for variants
+      for (const v of variantsToInsert) {
+        if ((v.productId as string).startsWith('new:')) {
+          const idx = parseInt((v.productId as string).slice(4), 10);
+          v.productId = newProducts[idx] ? (productsByName.get(newProducts[idx].name.toLowerCase())?.id || 'unknown') : 'unknown';
+        }
+      }
+
+      // Batch insert variants in chunks of 500
+      const CHUNK_SIZE = 500;
+      for (let c = 0; c < variantsToInsert.length; c += CHUNK_SIZE) {
+        const chunk = variantsToInsert.slice(c, c + CHUNK_SIZE);
+        const varValues: string[] = [];
+        const varParams: (string | number | boolean | null)[] = [];
+        let idx = 1;
+        for (const v of chunk) {
+          varValues.push(`(gen_random_uuid(), $1, $2, $${idx}, $${idx + 1}, $${idx + 2}, $${idx + 3}, $${idx + 4}, $${idx + 5}, $${idx + 6}, $${idx + 7}, NOW(), NOW())`);
+          varParams.push(v.productId, v.sku, v.barcode, v.variantName, v.sizeLabel, v.colorLabel, v.price, v.cost, v.isActive);
+          idx += 8;
+        }
+        await client.query(
+          `INSERT INTO product_variants (id, organization_id, product_id, sku, barcode, name, size_label, color_label, price, cost, is_active, created_at, updated_at) VALUES ${varValues.join(', ')}`,
+          [ORG_ID, ...varParams]
+        );
+      }
+
+      await client.query('COMMIT');
       return NextResponse.json({ created, skipped, total: rows.length, results });
     }
 
     return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('Products PATCH error:', error);
     return NextResponse.json({ error: 'Failed to process request' }, { status: 500 });
+  } finally {
+    client.release();
   }
 }

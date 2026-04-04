@@ -1,10 +1,19 @@
 import { orgQuery } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
 
-const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
-const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
+const ORG_ID = process.env.BUPOS_ORG_ID || '33262270-7100-4b46-b2fb-8b50ad872bbb';
+const LOCATION_ID = process.env.BUPOS_LOCATION_ID || 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
+
+// 30-second response cache — keyed by URL so search params are included
+const _inventoryCache = new Map<string, { data: unknown; expiresAt: number }>();
+const INV_CACHE_TTL = 30_000;
 
 export async function GET(request: NextRequest) {
+  const cacheKey = request.nextUrl.toString();
+  const cached = _inventoryCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiresAt) {
+    return NextResponse.json(cached.data);
+  }
   try {
     const searchParams = request.nextUrl.searchParams;
     const search = searchParams.get('search')?.toLowerCase() || '';
@@ -75,10 +84,10 @@ export async function GET(request: NextRequest) {
       orgQuery(
         ORG_ID,
         `
-        SELECT DISTINCT p.category_id as id, p.category_id as name
-        FROM products p
-        WHERE p.category_id IS NOT NULL
-        ORDER BY p.category_id
+        SELECT DISTINCT c.id, c.name
+        FROM categories c
+        INNER JOIN products p ON p.category_id = c.id
+        ORDER BY c.name
         `,
         []
       ),
@@ -197,7 +206,7 @@ export async function GET(request: NextRequest) {
     const types = typesResult.rows.map((r: any) => r.value).filter(Boolean);
     const brands = brandsResult.rows.map((r: any) => r.value).filter(Boolean);
 
-    return NextResponse.json({
+    const response = {
       products: filteredProducts,
       categories: categoriesResult.rows,
       types,
@@ -208,7 +217,9 @@ export async function GET(request: NextRequest) {
         lowStockCount: parseInt(summary.low_stock_count) || 0,
         outOfStockCount: parseInt(summary.out_of_stock_count) || 0,
       },
-    });
+    };
+    _inventoryCache.set(cacheKey, { data: response, expiresAt: Date.now() + INV_CACHE_TTL });
+    return NextResponse.json(response);
   } catch (error) {
     console.error('Inventory API error:', error);
     return NextResponse.json(

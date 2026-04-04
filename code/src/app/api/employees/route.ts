@@ -1,13 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { redirect } from 'next/navigation';
 import pool, { orgQuery } from '@/lib/db';
 import { hashSecret, verifySecret } from '@/lib/auth/crypto';
 import { randomUUID } from 'crypto';
+import { requireAdminPermission } from '@/lib/authz';
+import { getAdminSession } from '@/lib/auth/session';
 
 const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
 const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
 
 // GET: List all employees with their roles and location info
 export async function GET(request: NextRequest) {
+  // Require only a valid admin session — no specific permission needed for read-only list
+  const ctx = await getAdminSession();
+  if (!ctx || !ctx.session || !ctx.employee) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   const search = request.nextUrl.searchParams.get('search')?.trim() || '';
   const page = Math.max(1, parseInt(request.nextUrl.searchParams.get('page') || '1'));
   const pageSize = Math.min(100, parseInt(request.nextUrl.searchParams.get('pageSize') || '50'));
@@ -68,6 +76,7 @@ export async function GET(request: NextRequest) {
 
 // POST: Create new employee with auth credential (PIN)
 export async function POST(request: NextRequest) {
+  await requireAdminPermission('employee.manage');
   try {
     const {
       firstName,
@@ -168,6 +177,7 @@ export async function POST(request: NextRequest) {
 
 // PUT: Update employee details
 export async function PUT(request: NextRequest) {
+  await requireAdminPermission('employee.manage');
   try {
     const {
       id,
@@ -266,6 +276,7 @@ export async function PUT(request: NextRequest) {
 
 // PATCH: Toggle active status or reset PIN
 export async function PATCH(request: NextRequest) {
+  await requireAdminPermission('employee.manage');
   try {
     const { action, id, pin } = await request.json();
 

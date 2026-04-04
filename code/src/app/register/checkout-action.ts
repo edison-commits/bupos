@@ -124,12 +124,16 @@ export async function checkoutAction(
         ],
       );
 
-      // 4. Decrement inventory
-      for (const item of cart.items) {
+      // 4. Decrement inventory (batched)
+      if (cart.items.length > 0) {
+        const variantIds = cart.items.map((i) => i.productVariantId);
+        const quantities = cart.items.map((i) => -i.quantity);
         await client.query(
-          `UPDATE inventory_levels SET on_hand = GREATEST(0, on_hand - $1), updated_at = now()
-           WHERE product_variant_id = $2 AND location_id = $3`,
-          [item.quantity, item.productVariantId, context.location.id],
+          `UPDATE inventory_levels il
+           SET on_hand = GREATEST(0, il.on_hand + delta.qty), updated_at = now()
+           FROM (SELECT unnest($1::uuid[]) as variant_id, unnest($2::int[]) as qty) AS delta
+           WHERE il.product_variant_id = delta.variant_id AND il.location_id = $3`,
+          [variantIds, quantities, context.location.id],
         );
       }
 
@@ -139,26 +143,22 @@ export async function checkoutAction(
         [transactionId, cart.id, context.registerSession.id],
       );
 
-      // 6. Audit event — moved outside transaction (see below)
-      try {
-        await pool.query(
-          `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
-           VALUES ($1, $2, $3, $4, 'transaction', $5, 'transaction_completed', $6, now())`,
-          [
-            randomUUID(), context.employee.organizationId, context.location.id,
-            context.employee.id, transactionId,
-            JSON.stringify({
-              register_session_id: context.registerSession.id,
-              item_count: totals.itemCount,
-              grand_total: totals.grandTotal.toFixed(2),
-              tender_count: tenders.length,
-              primary_tender_type: primaryTenderType,
-            }),
-          ],
-        );
-      } catch (err) {
-        console.error("[checkoutAction] audit event failed:", err);
-      }
+      // 6. Audit event — fire-and-forget (uses tx client, non-fatal)
+      client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'transaction', $5, 'transaction_completed', $6, now())`,
+        [
+          randomUUID(), context.employee.organizationId, context.location.id,
+          context.employee.id, transactionId,
+          JSON.stringify({
+            register_session_id: context.registerSession.id,
+            item_count: totals.itemCount,
+            grand_total: totals.grandTotal.toFixed(2),
+            tender_count: tenders.length,
+            primary_tender_type: primaryTenderType,
+          }),
+        ],
+      ).catch((err) => console.error("[checkoutAction] audit event failed:", err));
 
       // 7. Update customer loyalty, spend, visits
       if (cart.customerId) {
@@ -174,15 +174,14 @@ export async function checkoutAction(
 
         // 7b. Deduct store credit if used
         if (storeCreditTenderedTotal > 0) {
-          await client.query(
-            `UPDATE customers SET store_credit_balance = GREATEST(0, store_credit_balance - $1), updated_at = now() WHERE id = $2`,
+          const { rows: balRows } = await client.query(
+            `UPDATE customers SET store_credit_balance = GREATEST(0, store_credit_balance - $1), updated_at = now() WHERE id = $2 RETURNING store_credit_balance`,
             [storeCreditTenderedTotal, cart.customerId],
           );
-          const newBal = await client.query(`SELECT store_credit_balance FROM customers WHERE id = $1`, [cart.customerId]);
           await client.query(
             `INSERT INTO store_credit_ledger (id, organization_id, customer_id, transaction_type, amount, balance_after, employee_id, transaction_id, reason, created_at)
              VALUES ($1, $2, $3, 'redemption', $4, $5, $6, $7, 'Checkout redemption', now())`,
-            [randomUUID(), context.employee.organizationId, cart.customerId, -storeCreditTenderedTotal, newBal.rows[0]?.store_credit_balance ?? 0, context.employee.id, transactionId],
+            [randomUUID(), context.employee.organizationId, cart.customerId, -storeCreditTenderedTotal, balRows[0]?.store_credit_balance ?? 0, context.employee.id, transactionId],
           );
         }
       }

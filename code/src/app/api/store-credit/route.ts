@@ -36,9 +36,9 @@ export async function GET(req: NextRequest) {
         `SELECT scl.*, e.display_name AS employee_name
          FROM store_credit_ledger scl
          LEFT JOIN employees e ON e.id = scl.employee_id
-         WHERE scl.customer_id = $1
+         WHERE scl.organization_id = $2 AND scl.customer_id = $1
          ORDER BY scl.created_at DESC`,
-        [customerId],
+        [customerId, ORG_ID],
       );
 
       return NextResponse.json({
@@ -62,10 +62,11 @@ export async function GET(req: NextRequest) {
       `SELECT
          COALESCE(SUM(store_credit_balance), 0)::numeric AS total_outstanding,
          COUNT(*) FILTER (WHERE store_credit_balance > 0)::int AS customers_with_credit,
-         COALESCE(SUM(amount) FILTER (WHERE transaction_type = 'issuance'), 0)::numeric AS total_issued,
-         COALESCE(SUM(ABS(amount)) FILTER (WHERE transaction_type = 'redemption'), 0)::numeric AS total_redeemed
+         COALESCE(SUM(scl.amount) FILTER (WHERE scl.transaction_type = 'issuance'), 0)::numeric AS total_issued,
+         COALESCE(SUM(ABS(scl.amount)) FILTER (WHERE scl.transaction_type = 'redemption'), 0)::numeric AS total_redeemed
        FROM customers
-       LEFT JOIN store_credit_ledger ON customers.id = store_credit_ledger.customer_id`,
+       LEFT JOIN store_credit_ledger scl ON scl.customer_id = customers.id AND scl.organization_id = $1
+       WHERE customers.organization_id = $1`,
       [],
     );
 
@@ -76,6 +77,7 @@ export async function GET(req: NextRequest) {
        FROM store_credit_ledger scl
        LEFT JOIN employees e ON e.id = scl.employee_id
        LEFT JOIN customers c ON c.id = scl.customer_id
+       WHERE scl.organization_id = $1
        ORDER BY scl.created_at DESC
        LIMIT 50`,
       [],

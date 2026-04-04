@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery, orgTx } from "@/lib/db";
+import { requireAdminPermission } from "@/lib/authz";
 
 const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
 const LOCATION_ID = "c57268b3-cb14-4c1a-bda6-55e49ddc6313";
@@ -10,6 +11,8 @@ const LOCATION_ID = "c57268b3-cb14-4c1a-bda6-55e49ddc6313";
  * If no shift param, fetches the most recent open shift.
  */
 export async function GET(req: NextRequest) {
+  await requireAdminPermission('register.open');
+
   try {
     let shiftId = req.nextUrl.searchParams.get("shift");
 
@@ -70,6 +73,8 @@ export async function GET(req: NextRequest) {
  * Body: { shiftId, declaredCash, notes? }
  */
 export async function POST(req: NextRequest) {
+  await requireAdminPermission('register.open');
+
   try {
     const { shiftId, declaredCash, notes } = await req.json();
 

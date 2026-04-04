@@ -1,8 +1,8 @@
-import pool from '@/lib/db'
-import { NextRequest, NextResponse } from 'next/server'
+import { orgQuery } from '@/lib/db';
+import { NextRequest, NextResponse } from 'next/server';
 
-const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb'
-const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313'
+const ORG_ID = process.env.BUPOS_ORG_ID || '33262270-7100-4b46-b2fb-8b50ad872bbb';
+const LOCATION_ID = process.env.BUPOS_LOCATION_ID || 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
 
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get('code')
@@ -18,14 +18,15 @@ export async function GET(request: NextRequest) {
 
   try {
     // SKU lives on product_variants, not products — search variants joined with products
-    const { rows } = await pool.query(
+    const { rows } = await orgQuery(
+      ORG_ID,
       `SELECT pv.id as variant_id, pv.sku, pv.size_label, pv.color_label, pv.price, pv.cost,
               p.id as product_id, p.name as product_name, p.slug as product_slug, p.category_id
        FROM product_variants pv
        JOIN products p ON pv.product_id = p.id
        WHERE p.organization_id = $1 AND LOWER(pv.sku) = $2
        LIMIT 1`,
-      [ORG_ID, normalizedCode]
+      [normalizedCode]
     )
 
     if (rows.length === 0) {
@@ -38,7 +39,8 @@ export async function GET(request: NextRequest) {
     const r = rows[0]
 
     // Get inventory for this variant + location
-    const invRes = await pool.query(
+    const invRes = await orgQuery(
+      ORG_ID,
       `SELECT on_hand FROM inventory_levels
        WHERE product_variant_id = $1 AND location_id = $2
        LIMIT 1`,

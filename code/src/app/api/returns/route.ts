@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { orgQuery } from '@/lib/db';
 
-const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
-const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
+const ORG_ID = process.env.BUPOS_ORG_ID || '33262270-7100-4b46-b2fb-8b50ad872bbb';
+const LOCATION_ID = process.env.BUPOS_LOCATION_ID || 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
 
 /**
  * Returns API
@@ -12,7 +12,8 @@ const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
  */
 export async function GET() {
   try {
-    const { rows } = await pool.query(
+    const { rows } = await orgQuery(
+      ORG_ID,
       `SELECT r.*,
         l.name as location_name,
         COUNT(rl.id)::int as line_count,
@@ -23,7 +24,7 @@ export async function GET() {
       WHERE r.organization_id = $1
       GROUP BY r.id, l.name
       ORDER BY r.created_at DESC`,
-      [ORG_ID],
+      [],
     );
     return NextResponse.json({ returns: rows });
   } catch (error) {
@@ -41,13 +42,14 @@ export async function POST(request: NextRequest) {
     }
 
     // Generate return number: RET-BEL-YYMMDD-NNN
-    const { rows: locRows } = await pool.query('SELECT name FROM locations WHERE id = $1', [LOCATION_ID]);
+    const { rows: locRows } = await orgQuery(ORG_ID, 'SELECT name FROM locations WHERE id = $1', [LOCATION_ID]);
     const locCode = (locRows[0]?.name || 'STR').slice(0, 3).toUpperCase();
     const now = new Date();
     const dateStr = `${String(now.getFullYear()).slice(-2)}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
-    const { rows: countRows } = await pool.query(
+    const { rows: countRows } = await orgQuery(
+      ORG_ID,
       `SELECT COUNT(*)::int as cnt FROM returns WHERE organization_id = $1 AND return_number LIKE $2`,
-      [ORG_ID, `RET-${locCode}-${dateStr}-%`],
+      [`RET-${locCode}-${dateStr}-%`],
     );
     const seq = (countRows[0].cnt || 0) + 1;
     const returnNumber = `RET-${locCode}-${dateStr}-${String(seq).padStart(3, '0')}`;
@@ -56,16 +58,18 @@ export async function POST(request: NextRequest) {
     const refundAmount = lines.reduce((sum: number, l: { quantity: number; unit_price: number }) =>
       sum + (l.quantity * l.unit_price), 0);
 
-    const { rows: retRows } = await pool.query(
+    const { rows: retRows } = await orgQuery(
+      ORG_ID,
       `INSERT INTO returns (organization_id, location_id, return_number, customer_name, reason, notes, refund_method, refund_amount, status)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')
        RETURNING *`,
-      [ORG_ID, LOCATION_ID, returnNumber, customer_name || null, reason || 'other', notes || null, refund_method || 'store_credit', refundAmount],
+      [LOCATION_ID, returnNumber, customer_name || null, reason || 'other', notes || null, refund_method || 'store_credit', refundAmount],
     );
     const returnId = retRows[0].id;
 
     for (const line of lines) {
-      await pool.query(
+      await orgQuery(
+        ORG_ID,
         `INSERT INTO return_lines (return_id, product_variant_id, quantity, unit_price, restock)
          VALUES ($1, $2, $3, $4, $5)`,
         [returnId, line.product_variant_id, line.quantity || 1, line.unit_price || 0, line.restock !== false],
@@ -86,7 +90,8 @@ export async function PUT(request: NextRequest) {
 
     // If completing, restock items marked for restock
     if (status === 'completed') {
-      const { rows: lines } = await pool.query(
+      const { rows: lines } = await orgQuery(
+        ORG_ID,
         `SELECT rl.* FROM return_lines rl
          JOIN returns r ON rl.return_id = r.id
          WHERE r.id = $1 AND rl.restock = true`,
@@ -94,7 +99,8 @@ export async function PUT(request: NextRequest) {
       );
 
       for (const line of lines) {
-        await pool.query(
+        await orgQuery(
+          ORG_ID,
           `UPDATE inventory_levels SET on_hand = on_hand + $1, received_at = NOW(), updated_at = NOW()
            WHERE product_variant_id = $2 AND location_id = (SELECT location_id FROM returns WHERE id = $3)`,
           [line.quantity, line.product_variant_id, id],
@@ -102,9 +108,10 @@ export async function PUT(request: NextRequest) {
       }
     }
 
-    const { rows } = await pool.query(
-      `UPDATE returns SET status = $1, processed_by = $2 WHERE id = $3 AND organization_id = $4 RETURNING *`,
-      [status, processed_by || null, id, ORG_ID],
+    const { rows } = await orgQuery(
+      ORG_ID,
+      `UPDATE returns SET status = $1, processed_by = $2 WHERE id = $3 RETURNING *`,
+      [status, processed_by || null, id],
     );
 
     if (rows.length === 0) return NextResponse.json({ error: 'Return not found' }, { status: 404 });

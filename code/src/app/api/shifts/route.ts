@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
+import { pgOpenShift } from "@/lib/persistence/postgres-store";
+import { randomUUID } from "node:crypto";
 
 const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
 const LOCATION_ID = "c57268b3-cb14-4c1a-bda6-55e49ddc6313";
@@ -83,5 +85,44 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     console.error("[shifts GET]", error);
     return NextResponse.json({ error: "Failed to load shifts" }, { status: 500 });
+  }
+}
+
+// POST /api/shifts — open a new shift (admin-initiated, no register session required)
+export async function POST(req: NextRequest) {
+  try {
+    const { employeeId, locationId, openingFloat, openedNote } = await req.json();
+
+    if (!employeeId || !locationId) {
+      return NextResponse.json({ error: "Employee and location are required" }, { status: 400 });
+    }
+    if (typeof openingFloat !== "number" || openingFloat < 0) {
+      return NextResponse.json({ error: "Opening float must be 0 or greater" }, { status: 400 });
+    }
+
+    // Check for existing open shift
+    const existing = await orgQuery(
+      ORG_ID,
+      `SELECT id FROM shifts WHERE employee_id = $1 AND location_id = $2 AND status = 'open' LIMIT 1`,
+      [employeeId, locationId],
+    );
+    if (existing.rows.length > 0) {
+      return NextResponse.json({ error: "Employee already has an open shift" }, { status: 409 });
+    }
+
+    const shiftId = randomUUID();
+    const shift = await pgOpenShift({
+      id: shiftId,
+      locationId,
+      employeeId,
+      registerSessionId: null, // admin-initiated
+      openingFloat,
+      openedNote: openedNote || undefined,
+    });
+
+    return NextResponse.json({ shift, success: true });
+  } catch (error) {
+    console.error("[shifts POST]", error);
+    return NextResponse.json({ error: "Failed to open shift" }, { status: 500 });
   }
 }

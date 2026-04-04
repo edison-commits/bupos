@@ -31,9 +31,8 @@ export async function POST(req: NextRequest) {
 
     const apiKey = process.env.RESEND_API_KEY;
     if (!apiKey) {
-      // Fallback: log the receipt and return success (for dev/testing without Resend)
-      console.log("[email-receipt] No RESEND_API_KEY set. Would send to:", to, "txn:", transactionId);
-      return NextResponse.json({ sent: true, provider: "mock", message: "RESEND_API_KEY not configured — receipt logged but not emailed" });
+      console.error("[email-receipt] RESEND_API_KEY is not configured. Receipt NOT sent to:", to, "txn:", transactionId);
+      return NextResponse.json({ sent: false, error: "RESEND_API_KEY not configured" }, { status: 500 });
     }
 
     const fromEmail = process.env.RESEND_FROM_EMAIL || "receipts@basicuniformpos.com";
@@ -47,9 +46,14 @@ export async function POST(req: NextRequest) {
       </tr>`
     ).join("");
 
+    // HTML escape helper to prevent XSS in user-controlled fields
+    const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[c]!);
+
     const tenderRows = (tenders || []).map((t: { type: string; amount: number }) =>
       `<div style="display:flex;justify-content:space-between;padding:2px 0;">
-        <span style="text-transform:capitalize;">${t.type === "store_credit" ? "Store credit" : t.type}</span>
+        <span style="text-transform:capitalize;">${t.type === "store_credit" ? "Store credit" : esc(t.type)}</span>
         <span>$${t.amount.toFixed(2)}</span>
       </div>`
     ).join("");

@@ -3,8 +3,9 @@
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { requireRegisterPermission } from "@/lib/authz";
-import { getRegisterSession, signInRegister, signOutRegister } from "@/lib/auth/session";
+import { pool } from "@/lib/db";
+import { requireRegisterPermission, requireAdminPermission } from "@/lib/authz";
+import { getRegisterSession, getAdminSession, signInRegister, signOutRegister } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { mutateStore } from "@/lib/persistence/store";
 import {
@@ -114,6 +115,56 @@ export async function openShiftAction(formData: FormData) {
   revalidatePath("/register");
   revalidatePath("/admin/clock-in");
   redirect("/register?notice=Shift+opened");
+}
+
+/**
+ * Admin version of openShiftAction — for use from admin pages.
+ * Does NOT require a register session. Uses admin auth instead.
+ */
+export async function adminOpenShiftAction(formData: FormData) {
+  const locationId = String(formData.get("locationId") ?? "");
+  const employeeId = String(formData.get("employeeId") ?? "");
+  const openingFloat = Number(formData.get("openingFloat") ?? 0);
+  const openedNote = String(formData.get("openedNote") ?? "").trim();
+
+  // Only require admin auth — not POS register permission
+  const ctx = await getAdminSession();
+  if (!ctx || !ctx.session || !ctx.employee) {
+    redirect("/?error=Not+authorized+to+open+shifts");
+  }
+  if (!locationId || !employeeId) {
+    redirect("/admin/clock-in?error=Location+and+employee+are+required");
+  }
+  if (Number.isNaN(openingFloat) || openingFloat < 0) {
+    redirect("/admin/clock-in?error=Opening+float+must+be+0+or+greater");
+  }
+
+  // Check if employee already has an open shift at this location
+  if (isPg()) {
+    const { rows: existing } = await pool.query(
+      `SELECT id FROM shifts WHERE employee_id = $1 AND location_id = $2 AND status = 'open' LIMIT 1`,
+      [employeeId, locationId],
+    );
+    if (existing.length > 0) {
+      redirect("/admin/clock-in?error=Employee+already+has+an+open+shift");
+    }
+    const shiftId = randomUUID();
+    await (await import("@/lib/persistence/postgres-store")).pgOpenShift({
+      id: shiftId, locationId, employeeId, registerSessionId: null,
+      openingFloat, openedNote: openedNote || undefined,
+    });
+    await (await import("@/lib/persistence/postgres-store")).pgInsertAuditEvent(
+      ctx.employee.organizationId, locationId, ctx.employee.id,
+      "shift", shiftId, "shift_opened",
+      { employee_id: employeeId, opening_float: openingFloat.toFixed(2) },
+    );
+  } else {
+    redirect("/admin/clock-in?error=Admin+shift+opening+not+supported+in+JSON+mode");
+  }
+
+  revalidatePath("/admin/clock-in");
+  revalidatePath("/admin/shifts");
+  redirect("/admin/clock-in?notice=Shift+opened");
 }
 
 export async function closeShiftAction(formData: FormData) {

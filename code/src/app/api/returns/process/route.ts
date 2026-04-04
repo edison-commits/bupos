@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { pool, orgQuery } from '@/lib/db';
+import { requireRegisterPermission } from '@/lib/authz';
 
 const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
 const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
@@ -33,6 +34,8 @@ interface ProcessReturnRequest {
  */
 export async function POST(request: NextRequest) {
   try {
+    // Auth guard — require an active register session with register.open permission
+    await requireRegisterPermission('register.open');
     const body: ProcessReturnRequest = await request.json();
 
     const {

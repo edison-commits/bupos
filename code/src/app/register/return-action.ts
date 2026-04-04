@@ -125,12 +125,16 @@ export async function processReturnAction(input: ReturnInput): Promise<ReturnRes
         ],
       );
 
-      // 4. Restore inventory
-      for (const item of input.items) {
+      // 4. Restore inventory (batched)
+      if (input.items.length > 0) {
+        const variantIds = input.items.map((i) => i.productVariantId);
+        const quantities = input.items.map((i) => i.quantity);
         await client.query(
-          `UPDATE inventory_levels SET on_hand = on_hand + $1, updated_at = now()
-           WHERE product_variant_id = $2 AND location_id = $3`,
-          [item.quantity, item.productVariantId, context.location.id],
+          `UPDATE inventory_levels il
+           SET on_hand = il.on_hand + delta.qty, updated_at = now()
+           FROM (SELECT unnest($1::uuid[]) as variant_id, unnest($2::int[]) as qty) AS delta
+           WHERE il.product_variant_id = delta.variant_id AND il.location_id = $3`,
+          [variantIds, quantities, context.location.id],
         );
       }
 
@@ -149,13 +153,9 @@ export async function processReturnAction(input: ReturnInput): Promise<ReturnRes
         );
         const customerId = origRows[0]?.customer_id;
         if (customerId) {
-          await client.query(
-            `UPDATE customers SET store_credit_balance = store_credit_balance + $1, updated_at = now() WHERE id = $2`,
-            [refundGrandTotal, customerId],
-          );
           const { rows: balRows } = await client.query(
-            `SELECT store_credit_balance FROM customers WHERE id = $1`,
-            [customerId],
+            `UPDATE customers SET store_credit_balance = store_credit_balance + $1, updated_at = now() WHERE id = $2 RETURNING store_credit_balance`,
+            [refundGrandTotal, customerId],
           );
           await client.query(
             `INSERT INTO store_credit_ledger (id, organization_id, customer_id, transaction_type, amount, balance_after, employee_id, transaction_id, reason)

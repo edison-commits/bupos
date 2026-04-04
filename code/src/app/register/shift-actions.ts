@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { requireRegisterPermission } from "@/lib/authz";
 import { mutateStore } from "@/lib/persistence/store";
 import { generateAndPersistFlags } from "@/lib/behavior/flag-engine";
-import pool, { orgTx } from "@/lib/db";
+import { orgTx } from "@/lib/db";
 
 const isPg = () => !!process.env.USE_POSTGRES;
 
@@ -43,17 +43,8 @@ export async function payInOutAction(input: PayInOutInput): Promise<{ success: b
         ],
       );
 
-      await client.query("COMMIT");
-    } catch (e) {
-      await client.query("ROLLBACK");
-      throw e;
-    } finally {
-      client.release();
-    }
-
-    // Audit event — outside transaction so audit failure doesn't rollback the financial record
-    try {
-      await pool.query(
+      // 2. Audit event — inside transaction (atomic with pay-in/out)
+      await client.query(
         `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
          VALUES ($1, $2, $3, $4, 'shift', $5, $6, $7, now())`,
         [
@@ -67,8 +58,13 @@ export async function payInOutAction(input: PayInOutInput): Promise<{ success: b
           }),
         ],
       );
-    } catch (err) {
-      console.error("[payInOutAction] audit event failed:", err);
+
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
     }
 
     revalidatePath("/register");
@@ -157,17 +153,8 @@ export async function closeShiftEnhancedAction(
         [context.registerSession.id],
       );
 
-      await client.query("COMMIT");
-    } catch (e) {
-      await client.query("ROLLBACK");
-      throw e;
-    } finally {
-      client.release();
-    }
-
-    // Audit event — outside transaction so audit failure doesn't rollback the shift close
-    try {
-      await pool.query(
+      // 3. Audit event — inside transaction (atomic with shift close)
+      await client.query(
         `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
          VALUES ($1, $2, $3, $4, 'shift', $5, 'shift_closed', $6, now())`,
         [
@@ -183,8 +170,13 @@ export async function closeShiftEnhancedAction(
           }),
         ],
       );
-    } catch (err) {
-      console.error("[closeShiftEnhancedAction] audit event failed:", err);
+
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
     }
 
     revalidatePath("/register");

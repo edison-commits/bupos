@@ -76,12 +76,16 @@ export async function createLayawayAction(
         );
       }
 
-      // 3. Reserve inventory (decrement on_hand)
-      for (const item of cart.items) {
+      // 3. Reserve inventory (decrement on_hand, batched)
+      if (cart.items.length > 0) {
+        const variantIds = cart.items.map((i) => i.productVariantId);
+        const quantities = cart.items.map((i) => -i.quantity);
         await client.query(
-          `UPDATE inventory_levels SET on_hand = GREATEST(0, on_hand - $1), updated_at = now()
-           WHERE product_variant_id = $2 AND location_id = $3`,
-          [item.quantity, item.productVariantId, context.location.id],
+          `UPDATE inventory_levels il
+           SET on_hand = GREATEST(0, il.on_hand + delta.qty), updated_at = now()
+           FROM (SELECT unnest($1::uuid[]) as variant_id, unnest($2::int[]) as qty) AS delta
+           WHERE il.product_variant_id = delta.variant_id AND il.location_id = $3`,
+          [variantIds, quantities, context.location.id],
         );
       }
 

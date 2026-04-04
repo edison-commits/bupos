@@ -21,8 +21,28 @@ import {
   pgReadPromoCodes,
 } from '@/lib/persistence/postgres-phase3';
 import type { LocalStoreData } from '@/lib/persistence/types';
-import type { TransactionExceptionPlaceholder } from '@/lib/domain/types';
-import type { Organization, Location, ModifierGroup, Modifier, TenderType, AuditEventKind } from '@/lib/domain/types';
+import type { Organization, Location, ModifierGroup, Modifier, TenderType } from '@/lib/domain/types';
+
+// In-memory cache — shared across all requests on the server process
+// TTL of 30s means the first request pays the ~600ms Postgres cost,
+// all subsequent requests for the next 30s are served from memory (~0ms).
+const STORE_CACHE_TTL_MS = 30_000;
+let _storeCache: { data: LocalStoreData; expiresAt: number } | null = null;
+
+function _getCachedStore(): LocalStoreData | null {
+  if (!_storeCache) return null;
+  if (Date.now() > _storeCache.expiresAt) {
+    _storeCache = null;
+    return null;
+  }
+  return _storeCache.data;
+}
+
+// Call this after any mutation that changes core store data
+// to ensure the next read gets fresh data.
+export function invalidateStoreCache(): void {
+  _storeCache = null;
+}
 
 function toOrg(r: Record<string, unknown>): Organization {
   return {
@@ -88,10 +108,13 @@ function toModifier(r: Record<string, unknown>): Modifier {
 
 /**
  * Build the full LocalStoreData from Postgres.
- * This lets all page components that depend on `readStore()` work
- * when running in PG mode (including Cloudflare Workers).
+ * Results are cached in-memory for 30 seconds to avoid repeated
+ * ~600ms Postgres round-trips on every API request.
+ * Call invalidateStoreCache() after mutations to force a refresh.
  */
 export async function readStoreFromPg(): Promise<LocalStoreData> {
+  const cached = _getCachedStore();
+  if (cached) return cached;
   // Read path uses pool.query directly — RLS fallback policy allows access
   // when no org context is set. Write paths use orgTx() for strict isolation.
   // CRITICAL: Run all queries in parallel to avoid Cloudflare Worker CPU timeouts.
@@ -117,16 +140,13 @@ export async function readStoreFromPg(): Promise<LocalStoreData> {
     shiftResult,
     rsResult,
     pioResult,
-    tenderResult,
-    eventResult,
-    excResult,
   ] = await Promise.all([
     pool.query('SELECT * FROM locations WHERE organization_id = $1 AND is_active = true ORDER BY name', [orgId]),
-    pgReadEmployees(),
+    pgReadEmployees(orgId),
     pgReadCategories(),
-    pgReadProducts(),
-    pgReadVariants(),
-    pgReadInventory(),
+    pgReadProducts(orgId),
+    pgReadVariants(orgId),
+    pgReadInventory(orgId),
     pgReadCustomers(orgId),
     pgReadPromoCodes(orgId),
     pool.query('SELECT * FROM modifier_groups WHERE organization_id = $1 ORDER BY name', [orgId]),
@@ -136,9 +156,10 @@ export async function readStoreFromPg(): Promise<LocalStoreData> {
     pool.query('SELECT * FROM shifts ORDER BY opened_at DESC LIMIT 200'),
     pool.query('SELECT * FROM register_sessions ORDER BY started_at DESC LIMIT 200'),
     pool.query('SELECT * FROM pay_in_outs ORDER BY created_at DESC LIMIT 500'),
-    pool.query('SELECT * FROM transaction_tenders ORDER BY created_at DESC LIMIT 1000'),
-    pool.query('SELECT * FROM transaction_events ORDER BY created_at DESC LIMIT 1000'),
-    pool.query('SELECT * FROM transaction_exceptions ORDER BY created_at DESC LIMIT 500'),
+    // NOTE: transaction_tenders, transaction_events, and transaction_exceptions are
+    // intentionally excluded from this initial load. They contain 1000–2500+ historical
+    // rows that are not needed for register-terminal operation. Load them on demand via
+    // a separate historical-data function when viewing reports or transaction history.
   ]);
 
   const locations = locResult.rows.map(toLocation);
@@ -208,31 +229,10 @@ export async function readStoreFromPg(): Promise<LocalStoreData> {
     createdAt: String(r.created_at),
   }));
 
-  const transactionTenderPlaceholders = tenderResult.rows.map((r: Record<string, unknown>) => ({
-    id: r.id as string,
-    transactionId: r.transaction_id as string,
-    tenderType: r.tender_type as TenderType,
-    amount: Number(r.amount),
-    metadata: (r.metadata as Record<string, string>) ?? undefined,
-  }));
-
-  const transactionEventPlaceholders = eventResult.rows.map((r: Record<string, unknown>) => ({
-    id: r.id as string,
-    transactionId: r.transaction_id as string,
-    eventKind: r.event_kind as AuditEventKind,
-    actorEmployeeId: r.actor_employee_id as string,
-    notes: (r.notes as string) ?? undefined,
-    payload: (r.payload as Record<string, string>) ?? undefined,
-    createdAt: String(r.created_at),
-  }));
-
-  const transactionExceptionPlaceholders = excResult.rows.map((r: Record<string, unknown>) => ({
-    id: r.id as string,
-    transactionId: r.transaction_id as string,
-    exceptionCode: r.exception_code as TransactionExceptionPlaceholder['exceptionCode'],
-    requiresManagerApproval: r.requires_manager_approval as boolean,
-    resolvedAt: r.resolved_at ? String(r.resolved_at) : undefined,
-  }));
+  // Historical transaction placeholders are loaded on demand (see note above).
+  const transactionTenderPlaceholders: LocalStoreData['transactionTenderPlaceholders'] = [];
+  const transactionEventPlaceholders: LocalStoreData['transactionEventPlaceholders'] = [];
+  const transactionExceptionPlaceholders: LocalStoreData['transactionExceptionPlaceholders'] = [];
 
   // Register configuration (static for now)
   const registerConfiguration = {
@@ -248,7 +248,7 @@ export async function readStoreFromPg(): Promise<LocalStoreData> {
     },
   };
 
-  return {
+  const result: LocalStoreData = {
     organization: org,
     locations,
     employees,
@@ -289,4 +289,8 @@ export async function readStoreFromPg(): Promise<LocalStoreData> {
     registers: [],
     recountSchedules: [],
   };
+
+  // Cache the result
+  _storeCache = { data: result, expiresAt: Date.now() + STORE_CACHE_TTL_MS };
+  return result;
 }

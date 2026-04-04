@@ -100,7 +100,7 @@ export async function GET(req: NextRequest) {
           ORG_ID,
           `SELECT first_name, last_name, email, phone, address,
                   loyalty_points, total_spend, visit_count, store_credit_balance,
-                  tax_exempt, is_active, last_visit_at, created_at
+                  tax_exempt, is_active, created_at
            FROM customers
            ORDER BY last_name, first_name`,
           [],
@@ -108,7 +108,7 @@ export async function GET(req: NextRequest) {
         csv = toCsv(rows.rows, [
           "first_name", "last_name", "email", "phone", "address",
           "loyalty_points", "total_spend", "visit_count", "store_credit_balance",
-          "tax_exempt", "is_active", "last_visit_at", "created_at",
+          "tax_exempt", "is_active", "created_at",
         ]);
         filename = `customers_${new Date().toISOString().slice(0, 10)}.csv`;
         break;

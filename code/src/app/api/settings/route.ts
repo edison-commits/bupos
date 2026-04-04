@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/db';
 
-const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
-const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
+const ORG_ID = process.env.BUPOS_ORG_ID || '33262270-7100-4b46-b2fb-8b50ad872bbb';
+const LOCATION_ID = process.env.BUPOS_LOCATION_ID || 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
 
 export async function GET() {
   try {
