@@ -36,7 +36,8 @@ interface ProcessReturnRequest {
 export async function POST(request: NextRequest) {
   try {
     // Auth guard — require an active register session with register.open permission
-    await requireRegisterPermission('register.open');
+    const authCtx = await requireRegisterPermission('register.open');
+    const employeeId = authCtx.employee.id;
     const body: ProcessReturnRequest = await request.json();
 
     const {
@@ -47,7 +48,6 @@ export async function POST(request: NextRequest) {
       refund_method,
       items,
       refund_amount,
-      processed_by,
     } = body;
 
     if (!transaction_id || !items || items.length === 0) {
@@ -57,15 +57,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate transaction exists
+    // Validate transaction exists and get its grand_total
     const txnResult = await orgQuery(
       ORG_ID,
-      `SELECT id FROM transactions WHERE id = $1`,
+      `SELECT id, grand_total FROM transactions WHERE id = $1`,
       [transaction_id]
     );
 
     if (txnResult.rows.length === 0) {
       return NextResponse.json({ error: 'Transaction not found' }, { status: 404 });
+    }
+
+    const originalTotal = Number(txnResult.rows[0].grand_total) || 0;
+    if (refund_amount > originalTotal) {
+      return NextResponse.json(
+        { error: `Refund amount ${refund_amount} exceeds original transaction total ${originalTotal}` },
+        { status: 400 }
+      );
     }
 
     // Generate return number: RET-BEL-YYMMDD-NNN
@@ -185,7 +193,7 @@ export async function POST(request: NextRequest) {
             ORG_ID,
             `INSERT INTO store_credit_ledger (customer_id, amount, balance_after, reason, created_by)
              VALUES ($1, $2, $3, $4, $5)`,
-            [customer.id, refund_amount, newBalance, `Return: ${reason}`, processed_by || null]
+            [customer.id, refund_amount, newBalance, `Return: ${reason}`, employeeId]
           );
         } catch {
           // Ledger table may not exist — balance update above is the critical part
