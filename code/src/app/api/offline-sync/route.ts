@@ -198,8 +198,15 @@ export async function POST(request: NextRequest) {
         ],
       );
 
-      // 4. Decrement inventory (batched) — lock rows + check stock before applying to prevent oversell
-      if (items.length > 0) {
+      // 4. Idempotency: skip inventory/loyalty if already synced (check transaction_events for a prior offline_sync)
+      const { rows: existingEvents } = await syncClient.query(
+        `SELECT id FROM transaction_events WHERE transaction_id = $1 AND payload->>'synced_at' IS NOT NULL LIMIT 1`,
+        [transactionId],
+      );
+      const isAlreadySynced = existingEvents.length > 0;
+
+      // 5. Decrement inventory (batched) — lock rows + check stock before applying to prevent oversell
+      if (items.length > 0 && !isAlreadySynced) {
         const variantIds = items.map((i: { productVariantId: string }) => i.productVariantId);
         const quantities = items.map((i: { quantity: number }) => -i.quantity);
 
@@ -244,11 +251,11 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // 5. Restore loyalty points earned — mirrors checkout-action.ts step 7
+      // 6. Restore loyalty points earned — mirrors checkout-action.ts step 7
       const loyaltyPointsEarned = cart.customerId
         ? (cart.loyaltyPointsEarned ?? Math.floor(grandTotal))
         : 0;
-      if (loyaltyPointsEarned > 0 && cart.customerId) {
+      if (loyaltyPointsEarned > 0 && cart.customerId && !isAlreadySynced) {
         await syncClient.query(
           `UPDATE customers SET
             loyalty_points = loyalty_points + $1,
@@ -260,8 +267,8 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // 5b. Deduct store credit balance if used — mirrors checkout-action.ts step 7b
-      if (storeCreditTendered > 0 && cart.customerId) {
+      // 6b. Deduct store credit balance if used — mirrors checkout-action.ts step 7b
+      if (storeCreditTendered > 0 && cart.customerId && !isAlreadySynced) {
         const { rows: balRows } = await syncClient.query(
           `UPDATE customers SET store_credit_balance = GREATEST(0, store_credit_balance - $1), updated_at = now() WHERE id = $2 RETURNING store_credit_balance`,
           [storeCreditTendered, cart.customerId],

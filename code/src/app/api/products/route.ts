@@ -189,7 +189,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('Products GET error:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to fetch products' },
+      { error: 'Failed to fetch products' },
       { status: 500 }
     );
   }
@@ -252,7 +252,7 @@ export async function POST(request: NextRequest) {
     await client.query('ROLLBACK');
     console.error('Products POST error:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to create product' },
+      { error: 'Failed to create product' },
       { status: 500 }
     );
   } finally {
@@ -368,7 +368,7 @@ export async function PUT(request: NextRequest) {
     await client.query('ROLLBACK');
     console.error('Products PUT error:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to update product' },
+      { error: 'Failed to update product' },
       { status: 500 }
     );
   } finally {
@@ -407,7 +407,7 @@ export async function DELETE(request: NextRequest) {
     await client.query('ROLLBACK');
     console.error('Products DELETE error:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to delete product' },
+      { error: 'Failed to delete product' },
       { status: 500 }
     );
   } finally {

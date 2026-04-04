@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { randomUUID } from 'node:crypto';
 import { orgTx } from '@/lib/db';
 import { requireRegisterPermission } from '@/lib/authz';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
 import { checkRateLimit } from '@/lib/auth/rate-limit';
-
-const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
 
 interface ReturnLineItem {
   product_id: string;
@@ -111,7 +110,7 @@ export async function POST(request: NextRequest) {
     // Generate return number: RET-BEL-YYMMDD-NNN
     const locResult = await client.query(
       'SELECT name FROM locations WHERE id = $1',
-      [LOCATION_ID]
+      [authCtx.location.id]
     );
     const locCode = (locResult.rows[0]?.name || 'STR').slice(0, 3).toUpperCase();
     const now = new Date();
@@ -121,32 +120,52 @@ export async function POST(request: NextRequest) {
       `SELECT COUNT(*)::int as cnt FROM returns WHERE organization_id = $1 AND return_number LIKE $2`,
       [orgId, `RET-${locCode}-${dateStr}-%`]
     );
-    const seq = (countResult.rows[0]?.cnt || 0) + 1;
-    const returnNumber = `RET-${locCode}-${dateStr}-${String(seq).padStart(3, '0')}`;
 
-    // Create return record
-    const retResult = await client.query(
-      `INSERT INTO returns (
-        organization_id, location_id, transaction_id, return_number,
-        customer_name, reason, notes, refund_method, refund_amount, status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       RETURNING id`,
-      [
-        orgId,
-        LOCATION_ID,
-        transaction_id,
-        returnNumber,
-        customer_name || null,
-        reason || 'other',
-        notes || null,
-        refund_method || 'store_credit',
-        refund_amount,
-        'completed',
-      ]
-    );
+    // Create return record — retry loop handles concurrent collision on return_number
+    let returnId: string | null = null;
+    let returnNumber = '';
+    for (let attempt = 0; attempt < 5; attempt++) {
+      // Re-fetch count on retry to get a fresh sequence number
+      const seqCountResult = attempt === 0
+        ? countResult
+        : await client.query(
+            `SELECT COUNT(*)::int as cnt FROM returns WHERE organization_id = $1 AND return_number LIKE $2`,
+            [orgId, `RET-${locCode}-${dateStr}-%`]
+          );
+      const seq = (seqCountResult.rows[0]?.cnt || 0) + 1;
+      returnNumber = `RET-${locCode}-${dateStr}-${String(seq).padStart(3, '0')}`;
 
-    const returnId = retResult.rows[0].id;
-
+      try {
+        const retResult = await client.query(
+          `INSERT INTO returns (
+            organization_id, location_id, transaction_id, return_number,
+            customer_name, reason, notes, refund_method, refund_amount, status
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+           RETURNING id`,
+          [
+            orgId,
+            authCtx.location.id,
+            transaction_id,
+            returnNumber,
+            customer_name || null,
+            reason || 'other',
+            notes || null,
+            refund_method || 'store_credit',
+            refund_amount,
+            'completed',
+          ],
+        );
+        returnId = retResult.rows[0]?.id ?? null;
+        break; // success
+      } catch (e) {
+        // If unique constraint violation, retry with new number; otherwise propagate
+        if (e instanceof Error && !e.message.includes('duplicate key') && !e.message.includes('23505')) throw e;
+      }
+    }
+    if (!returnId) {
+      await client.query('ROLLBACK');
+      return NextResponse.json({ error: 'Failed to generate unique return number' }, { status: 500 });
+    }
     // Pre-resolve all variant IDs before mutating state
     const variantIds = await Promise.all(
       items.map(async (item) => {
@@ -185,7 +204,7 @@ export async function POST(request: NextRequest) {
          SET on_hand = on_hand + $1, received_at = NOW(), updated_at = NOW()
          WHERE product_variant_id = $2 AND location_id = $3
          RETURNING id`,
-        [item.quantity, variantId, LOCATION_ID]
+        [item.quantity, variantId, authCtx.location.id]
       );
 
       // If no row existed, insert a new inventory_levels row
@@ -193,7 +212,7 @@ export async function POST(request: NextRequest) {
         await client.query(
           `INSERT INTO inventory_levels (organization_id, product_variant_id, location_id, on_hand, received_at, updated_at)
            VALUES ($1, $2, $3, $4, NOW(), NOW())`,
-          [orgId, variantId, LOCATION_ID, item.quantity]
+          [orgId, variantId, authCtx.location.id, item.quantity]
         );
       }
     }
@@ -220,16 +239,12 @@ export async function POST(request: NextRequest) {
           `UPDATE customers SET store_credit_balance = $1, updated_at = NOW() WHERE id = $2`,
           [newBalance, customer.id]
         );
-        // Insert ledger record if store_credit_ledger table exists
-        try {
-          await client.query(
-            `INSERT INTO store_credit_ledger (customer_id, amount, balance_after, reason, created_by)
-             VALUES ($1, $2, $3, $4, $5)`,
-            [customer.id, refund_amount, newBalance, `Return: ${reason}`, employeeId]
-          );
-        } catch {
-          // Ledger table may not exist — balance update above is the critical part
-        }
+        // Insert ledger record
+        await client.query(
+          `INSERT INTO store_credit_ledger (id, organization_id, customer_id, transaction_type, amount, balance_after, employee_id, transaction_id, reason, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`,
+          [randomUUID(), orgId, customer.id, 'refund', refund_amount, newBalance, employeeId, transaction_id, `Return: ${reason}`]
+        );
       }
     }
 
@@ -244,7 +259,7 @@ export async function POST(request: NextRequest) {
     await client.query('ROLLBACK');
     console.error('POST /api/returns/process error:', error);
     return NextResponse.json(
-      { error: 'Failed to process return: ' + (error instanceof Error ? error.message : 'Unknown error') },
+      { error: 'Failed to process return' },
       { status: 500 }
     );
   } finally {

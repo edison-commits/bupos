@@ -80,7 +80,13 @@ export const readStore = cache(async function readStore(): Promise<LocalStoreDat
   const { readFile } = await getFs();
   const { STORE_PATH: storePath } = await getPaths();
   const raw = await readFile(storePath, "utf8");
-  return normalizeStore(JSON.parse(raw) as LocalStoreData);
+  let parsed: LocalStoreData;
+  try {
+    parsed = JSON.parse(raw) as LocalStoreData;
+  } catch {
+    throw new Error("Failed to parse store file — data may be corrupt. Restore from backup.");
+  }
+  return normalizeStore(parsed);
 });
 
 export async function writeStore(store: LocalStoreData) {

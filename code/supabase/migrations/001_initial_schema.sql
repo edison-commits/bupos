@@ -106,6 +106,16 @@ CREATE TABLE modifiers (
 CREATE INDEX idx_modifiers_organization_id ON modifiers(organization_id);
 CREATE INDEX idx_modifiers_modifier_group_id ON modifiers(modifier_group_id);
 
+-- Product ↔ Modifier Groups junction (required by pgCreateProduct / pgUpdateProduct)
+CREATE TABLE IF NOT EXISTS product_modifier_groups (
+  product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  modifier_group_id UUID NOT NULL REFERENCES modifier_groups(id) ON DELETE CASCADE,
+  PRIMARY KEY (product_id, modifier_group_id)
+);
+
+CREATE INDEX idx_product_modifier_groups_product_id ON product_modifier_groups(product_id);
+CREATE INDEX idx_product_modifier_groups_modifier_group_id ON product_modifier_groups(modifier_group_id);
+
 -- Products
 CREATE TABLE products (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -159,6 +169,7 @@ CREATE TABLE inventory_levels (
   on_hand INTEGER NOT NULL DEFAULT 0,
   reserved INTEGER NOT NULL DEFAULT 0,
   reorder_point INTEGER NOT NULL DEFAULT 0,
+  received_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
@@ -270,6 +281,7 @@ CREATE TABLE transaction_tenders (
   transaction_id UUID NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
   tender_type TEXT NOT NULL CHECK (tender_type IN ('cash', 'card', 'store_credit', 'loyalty', 'gift_card', 'split')),
   amount NUMERIC(12, 2) NOT NULL,
+  is_refund BOOLEAN DEFAULT false NOT NULL,
   metadata JSONB DEFAULT '{}' NOT NULL,
   created_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
