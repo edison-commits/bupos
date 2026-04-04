@@ -32,7 +32,9 @@ export async function GET(request: NextRequest) {
   if (!orgId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  const search = request.nextUrl.searchParams.get('search')?.trim() || '';
+  // Escape SQL LIKE wildcards in search so % and _ are treated as literal characters
+  const rawSearch = request.nextUrl.searchParams.get('search')?.trim() || '';
+  const search = rawSearch.replace(/[%_\\]/g, '\\$&');
   const pageRaw = parseInt(request.nextUrl.searchParams.get('page') || '1', 10);
   const pageSizeRaw = parseInt(request.nextUrl.searchParams.get('pageSize') || '50', 10);
   const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;

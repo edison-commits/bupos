@@ -37,19 +37,19 @@ export async function POST(req: NextRequest) {
 
     const fromEmail = process.env.RESEND_FROM_EMAIL || "receipts@basicuniformpos.com";
 
+    // HTML escape helper to prevent XSS in user-controlled fields
+    const esc = (s: string) => String(s).replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[c]!);
+
     // Build HTML receipt
     const itemRows = (items || []).map((item: { name: string; qty: number; price: number }) =>
       `<tr>
-        <td style="padding:6px 0;border-bottom:1px solid #f0f0f0;">${item.name}</td>
+        <td style="padding:6px 0;border-bottom:1px solid #f0f0f0;">${esc(item.name)}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #f0f0f0;text-align:center;">${item.qty}</td>
         <td style="padding:6px 0;border-bottom:1px solid #f0f0f0;text-align:right;">$${(item.price * item.qty).toFixed(2)}</td>
       </tr>`
     ).join("");
-
-    // HTML escape helper to prevent XSS in user-controlled fields
-    const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    })[c]!);
 
     const tenderRows = (tenders || []).map((t: { type: string; amount: number }) =>
       `<div style="display:flex;justify-content:space-between;padding:2px 0;">
@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
 
       <!-- Header -->
       <div style="background:#18181b;color:white;padding:24px;text-align:center;">
-        <h1 style="margin:0;font-size:20px;font-weight:700;">${storeName || "BasicUniformPOS"}</h1>
+        <h1 style="margin:0;font-size:20px;font-weight:700;">${esc(storeName || "BasicUniformPOS")}</h1>
         <p style="margin:8px 0 0;font-size:13px;opacity:0.7;">Receipt</p>
       </div>
 

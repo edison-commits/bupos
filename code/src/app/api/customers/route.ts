@@ -7,7 +7,9 @@ export async function GET(request: NextRequest) {
   const ctx = await (await import('@/lib/auth/session')).getAdminSession();
   const orgId = ctx?.employee?.organizationId ?? BUPOS_ORG_ID;
 
-  const search = request.nextUrl.searchParams.get('search')?.trim() || '';
+  // Escape SQL LIKE wildcards in search so % and _ are treated as literal characters
+  const rawSearch = request.nextUrl.searchParams.get('search')?.trim() || '';
+  const search = rawSearch.replace(/[%_\\]/g, '\\$&');
   const id = request.nextUrl.searchParams.get('id')?.trim() || '';
   const statsOnly = request.nextUrl.searchParams.get('stats')?.trim() === 'true';
   const pageRaw = parseInt(request.nextUrl.searchParams.get('page') || '1', 10);

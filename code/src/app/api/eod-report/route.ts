@@ -39,28 +39,31 @@ export async function POST(req: NextRequest) {
   if (!orgId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  const reportData = await generateReportData(orgId);
+  let reportData: any;
   try {
-    // Send email if Resend API key is available
-    if (RESEND_API_KEY) {
-      await sendEmailReport(reportData);
-      return NextResponse.json({
-        success: true,
-        message: "Report generated and sent",
-        reportData,
-      });
-    } else {
-      return NextResponse.json({
-        success: true,
-        message: "Report generated (email not sent - no API key)",
-        reportData,
-      });
-    }
+    reportData = await generateReportData(orgId);
   } catch (error) {
-    console.error("EOD Report POST error:", error);
+    console.error("EOD Report: data generation failed:", error);
+    return NextResponse.json({ error: "Failed to generate report data" }, { status: 500 });
+  }
+
+  if (!RESEND_API_KEY) {
+    return NextResponse.json({
+      success: true,
+      message: "Report generated (email not sent - no API key)",
+      reportData,
+    });
+  }
+
+  try {
+    await sendEmailReport(reportData);
+    return NextResponse.json({ success: true, message: "Report generated and sent", reportData });
+  } catch (error) {
+    console.error("EOD Report: email send failed:", error);
+    // Report was generated OK; email delivery failed — surface this clearly
     return NextResponse.json(
-      { error: "Failed to generate and send report" },
-      { status: 500 }
+      { error: "Report generated but email delivery failed", details: String(error) },
+      { status: 502 }
     );
   }
 }
@@ -235,6 +238,10 @@ function generateEmailHTML(data: any): string {
 
   const formatCurrency = (val: number) => `$${Number(val).toFixed(2)}`;
   const formatCount = (val: number) => (val || 0).toString();
+  // Escape user-controlled strings to prevent XSS in HTML email body
+  const esc = (s: any) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[c]!);
 
   return `
 <!DOCTYPE html>
@@ -262,7 +269,7 @@ function generateEmailHTML(data: any): string {
   <div class="container">
     <div class="header">
       <h1>BasicUniform POS - Daily Report</h1>
-      <p style="margin: 0; opacity: 0.95;">${date}</p>
+      <p style="margin: 0; opacity: 0.95;">${esc(date)}</p>
     </div>
 
     <div class="section">
@@ -307,7 +314,7 @@ function generateEmailHTML(data: any): string {
             .map(
               (pm: any) => `
             <tr>
-              <td>${pm.payment_method}</td>
+              <td>${esc(pm.payment_method)}</td>
               <td>${pm.transaction_count}</td>
               <td>${formatCurrency(pm.total_amount)}</td>
             </tr>
@@ -339,7 +346,7 @@ function generateEmailHTML(data: any): string {
             .map(
               (p: any) => `
             <tr>
-              <td>${p.name}<br><span style="font-size: 12px; color: #999;">SKU: ${p.sku}</span></td>
+              <td>${esc(p.name)}<br><span style="font-size: 12px; color: #999;">SKU: ${esc(p.sku)}</span></td>
               <td>${p.total_quantity}</td>
               <td>${formatCurrency(p.total_revenue)}</td>
             </tr>
@@ -371,7 +378,7 @@ function generateEmailHTML(data: any): string {
             .map(
               (e: any) => `
             <tr>
-              <td>${e.employee_name}</td>
+              <td>${esc(e.employee_name)}</td>
               <td>${e.transaction_count}</td>
               <td>${formatCurrency(e.total_sales)}</td>
             </tr>
@@ -394,7 +401,7 @@ function generateEmailHTML(data: any): string {
         ${low_stock_items.length} item(s) below reorder point:
       </p>
       <ul style="margin: 10px 0 0 0; padding-left: 20px;">
-        ${low_stock_items.map((item: any) => `<li>${item.name} (SKU: ${item.sku}) - ${item.on_hand} on hand</li>`).join("")}
+        ${low_stock_items.map((item: any) => `<li>${esc(item.name)} (SKU: ${esc(item.sku)}) - ${item.on_hand} on hand</li>`).join("")}
       </ul>
     </div>
     `
