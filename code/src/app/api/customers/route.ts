@@ -89,6 +89,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  await requireAdminPermission('employee.manage');
   try {
     const { first_name, last_name, email, phone, address, notes } = await request.json();
     if (!first_name?.trim() || !last_name?.trim()) {
@@ -110,6 +111,7 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
+  await requireAdminPermission('employee.manage');
   try {
     const { id, first_name, last_name, email, phone, address, notes, is_active } = await request.json();
     if (!id) return NextResponse.json({ error: 'Customer ID required' }, { status: 400 });
