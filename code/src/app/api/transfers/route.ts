@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery, orgTx, pool } from "@/lib/db";
 import { randomUUID } from "node:crypto";
+import { requireAdminPermission } from "@/lib/authz";
 
 const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
 
@@ -14,6 +15,8 @@ const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
  */
 export async function GET(req: NextRequest) {
   try {
+    await requireAdminPermission("audit.view");
+
     const sp = req.nextUrl.searchParams;
 
     // ── Single transfer detail ──
@@ -116,6 +119,8 @@ export async function GET(req: NextRequest) {
  */
 export async function POST(req: NextRequest) {
   try {
+    await requireAdminPermission("catalog.manage");
+
     const body = await req.json();
     const { action } = body;
 
