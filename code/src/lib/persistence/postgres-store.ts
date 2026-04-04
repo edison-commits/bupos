@@ -468,27 +468,10 @@ export async function pgFindCredentialByPin(pin: string): Promise<AuthCredential
      LIMIT 20`,
   );
 
-  // Check rate limit: reject if any candidate has exceeded max failed attempts within the window.
-  const now = Date.now();
-  const rateLimited = rows.some((r) => {
-    const row = r as Record<string, unknown>;
-    const attempts = (row.failed_pin_attempts as number) ?? 0;
-    const lastAttempt = row.last_failed_pin_at as Date | null;
-    if (attempts < RATE_LIMIT_MAX_ATTEMPTS) return false;
-    if (!lastAttempt) return false;
-    return now - new Date(lastAttempt).getTime() < RATE_LIMIT_WINDOW_MS;
-  });
-  if (rateLimited) {
-    // Too many recent failures — return null to slow down brute-force attacks.
-    return null;
-  }
-
   // Verify all PINs in parallel — each scrypt call runs in the thread pool.
-  // The strategy is: increment first, then check rate limit, then verify.
-  // This ensures that on the 6th failed attempt the counter is already 6
-  // (>= limit) and the crypto verification is skipped entirely, rather than
-  // running one extra verify that confirms the PIN is correct before the
-  // counter ever reaches the blocking threshold.
+  // Per-employee rate limiting: check BEFORE incrementing to avoid incrementing
+  // locked accounts. If a specific employee is already locked (>=5 attempts within
+  // 15 min), reject only that employee — other employees are unaffected.
   const results = await Promise.all(
     rows.map(async (r) => {
       const row = r as Record<string, unknown>;
@@ -496,10 +479,21 @@ export async function pgFindCredentialByPin(pin: string): Promise<AuthCredential
 
       const employeeId = row.employee_id as string;
       const prevAttempts = (row.failed_pin_attempts as number) ?? 0;
+      const lastAttempt = row.last_failed_pin_at as Date | null;
+      const now = Date.now();
 
-      // Increment first so the rate-limit check is applied to the
-      // PROVISIONAL count.  If this pushes the counter to the ceiling
-      // the verify is skipped entirely — no leaked timing/result.
+      // Check per-employee rate limit BEFORE incrementing.
+      // If this specific employee has >=5 failed attempts within the window,
+      // reject only this employee (not all candidates).
+      if (
+        prevAttempts >= RATE_LIMIT_MAX_ATTEMPTS &&
+        lastAttempt &&
+        now - new Date(lastAttempt).getTime() < RATE_LIMIT_WINDOW_MS
+      ) {
+        return null;
+      }
+
+      // Not locked — increment the counter first (sets the provisional count).
       await pool.query(
         `UPDATE auth_credentials
            SET failed_pin_attempts = failed_pin_attempts + 1,
@@ -507,10 +501,6 @@ export async function pgFindCredentialByPin(pin: string): Promise<AuthCredential
            WHERE employee_id = $1`,
         [employeeId],
       );
-
-      // After incrementing, re-check: if already at/over the ceiling the
-      // account is locked — reject without running the expensive scrypt.
-      if (prevAttempts >= RATE_LIMIT_MAX_ATTEMPTS) return null;
 
       const valid = await verifySecretAsync(pin, row.pin_hash as string);
 
