@@ -99,7 +99,7 @@ export async function POST(request: NextRequest) {
     const { rows } = await orgQuery(
       ORG_ID,
       `INSERT INTO customers (first_name, last_name, email, phone, address, notes, loyalty_points, total_spend, visit_count, store_credit_balance)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 0, 0, 0, 0)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 0, 0, 0)
        RETURNING *`,
       [first_name.trim(), last_name.trim(), email?.trim() || null, phone?.trim() || null, address?.trim() || null, notes?.trim() || null],
     );
