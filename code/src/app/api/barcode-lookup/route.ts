@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
        JOIN products p ON pv.product_id = p.id
        WHERE p.organization_id = $1 AND LOWER(pv.sku) = $2
        LIMIT 1`,
-      [normalizedCode]
+      [ORG_ID, normalizedCode]
     )
 
     if (rows.length === 0) {
