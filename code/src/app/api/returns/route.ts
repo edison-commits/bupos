@@ -7,20 +7,29 @@ import { BUPOS_LOCATION_ID } from '@/lib/env';
 
 /**
  * Returns API
- * GET  - List all returns
+ * GET  - List all returns (paginated)
  * POST - Create a new return with line items
  * PUT  - Update status (approve/complete/reject). On complete with restock, updates inventory.
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
   const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
   if (!orgId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  const page = Math.max(1, parseInt(request.nextUrl.searchParams.get('page') ?? '1'));
+  const pageSize = Math.min(100, Math.max(1, parseInt(request.nextUrl.searchParams.get('pageSize') ?? '20')));
+  const offset = (page - 1) * pageSize;
   try {
-    const { rows } = await orgQuery(
-      orgId,
-      `SELECT r.*,
+    const [countResult, { rows }] = await Promise.all([
+      orgQuery(
+        orgId,
+        `SELECT COUNT(*)::int as total FROM returns WHERE organization_id = $1`,
+        [],
+      ),
+      orgQuery(
+        orgId,
+        `SELECT r.*,
         l.name as location_name,
         COUNT(rl.id)::int as line_count,
         COALESCE(SUM(rl.quantity), 0)::int as total_items
@@ -29,10 +38,13 @@ export async function GET() {
       LEFT JOIN return_lines rl ON r.id = rl.return_id
       WHERE r.organization_id = $1
       GROUP BY r.id, l.name
-      ORDER BY r.created_at DESC`,
-      [],
-    );
-    return NextResponse.json({ returns: rows });
+      ORDER BY r.created_at DESC
+      LIMIT $2 OFFSET $3`,
+        [orgId, pageSize, offset],
+      ),
+    ]);
+    const total = countResult.rows[0]?.total ?? 0;
+    return NextResponse.json({ returns: rows, total, page });
   } catch (error) {
     console.error('Returns GET error:', error);
     return NextResponse.json({ error: 'Failed to fetch returns' }, { status: 500 });
