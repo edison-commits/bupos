@@ -34,6 +34,7 @@ export function CustomerDatabase() {
       const params = new URLSearchParams({ page: String(page), pageSize: '50' });
       if (debouncedSearch) params.set('search', debouncedSearch);
       const res = await fetch(`/api/customers?${params}`);
+      if (!res.ok) throw new Error('Failed to load customers');
       const data = await res.json();
       setCustomers(data.customers || []);
       setPagination(data.pagination || { page: 1, pageSize: 50, total: 0, totalPages: 0 });

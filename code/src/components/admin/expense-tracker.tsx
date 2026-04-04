@@ -46,6 +46,7 @@ export function ExpenseTracker() {
       if (month) params.set('month', month);
       if (catFilter) params.set('category', catFilter);
       const res = await fetch(`/api/expenses?${params}`);
+      if (!res.ok) throw new Error('Failed to load expenses');
       const data = await res.json();
       setExpenses(data.expenses || []);
       setSummary(data.summary || []);

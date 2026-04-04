@@ -27,6 +27,7 @@ export function SupplierManager() {
   const fetchSuppliers = useCallback(async () => {
     try {
       const res = await fetch('/api/suppliers');
+      if (!res.ok) throw new Error('Failed to load suppliers');
       const data = await res.json();
       setSuppliers(data.suppliers || []);
     } catch {

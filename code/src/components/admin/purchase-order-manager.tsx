@@ -89,6 +89,7 @@ export function PurchaseOrderManager() {
   const fetchOrders = useCallback(async () => {
     try {
       const res = await fetch('/api/purchase-orders');
+      if (!res.ok) throw new Error('Failed to load purchase orders');
       const data = await res.json();
       setOrders(data.orders || []);
     } catch { /* */ } finally { setLoading(false); }
@@ -97,6 +98,7 @@ export function PurchaseOrderManager() {
   const fetchSuppliers = useCallback(async () => {
     try {
       const res = await fetch('/api/suppliers');
+      if (!res.ok) throw new Error('Failed to load suppliers');
       const data = await res.json();
       setSuppliers((data.suppliers || []).filter((s: Supplier) => s.is_active));
     } catch { /* */ }
@@ -107,6 +109,7 @@ export function PurchaseOrderManager() {
   const openDetail = async (poId: string) => {
     try {
       const res = await fetch(`/api/purchase-orders?id=${poId}`);
+      if (!res.ok) throw new Error('Failed to load PO details');
       const data = await res.json();
       setDetail(data.order);
       setDetailLines(data.lines || []);

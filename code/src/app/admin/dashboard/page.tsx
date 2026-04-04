@@ -69,6 +69,7 @@ export default function DashboardPage() {
     setLoading(true);
     try {
       const response = await fetch(`/api/dashboard?range=${range}`);
+      if (!response.ok) throw new Error('Failed to fetch dashboard data');
       const result = await response.json();
       setData(result);
     } catch (error) {

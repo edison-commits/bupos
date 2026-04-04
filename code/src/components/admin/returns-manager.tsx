@@ -60,6 +60,7 @@ export function ReturnsManager() {
   const fetchReturns = useCallback(async () => {
     try {
       const res = await fetch('/api/returns');
+      if (!res.ok) throw new Error('Failed to load returns');
       const data = await res.json();
       setReturns(data.returns || []);
     } catch { /* */ } finally { setLoading(false); }
@@ -72,6 +73,7 @@ export function ReturnsManager() {
     setSearching(true);
     try {
       const res = await fetch(`/api/inventory?search=${encodeURIComponent(itemSearch)}&pageSize=15`);
+      if (!res.ok) throw new Error('Failed to search items');
       const data = await res.json();
       setSearchResults((data.items || []).map((i: Record<string, unknown>) => ({
         variant_id: i.variant_id, variant_name: i.variant_name, sku: i.sku,

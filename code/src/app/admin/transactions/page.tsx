@@ -285,6 +285,7 @@ export default function TransactionsPage() {
       params.append('limit', '10');
 
       const response = await fetch(`/api/transactions?${params.toString()}`);
+      if (!response.ok) throw new Error('Failed to fetch transactions');
       const data: ApiResponse = await response.json();
       setTransactions(data.transactions);
       setPagination(data.pagination);
