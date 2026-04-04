@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/db';
-import { requireRegisterPermission } from '@/lib/authz';
+import { requireRegisterPermission, requireAdminPermission } from '@/lib/authz';
 
 const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
 
@@ -12,6 +12,7 @@ const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
  *   dateRange — 'today', 'week', 'month', 'all'
  */
 export async function GET(req: NextRequest) {
+  await requireAdminPermission('employee.manage');
   await requireRegisterPermission('register.open');
 
   try {
