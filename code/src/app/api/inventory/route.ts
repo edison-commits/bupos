@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/db';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
-import { BUPOS_LOCATION_ID } from '@/lib/env';
+import { BUPOS_LOCATION_ID, BUPOS_ORG_ID } from '@/lib/env';
 
 interface ProductRow {
   product_id: string;
@@ -14,7 +14,7 @@ interface ProductRow {
   sku: string | null;
   size_label: string | null;
   color_label: string | null;
-  price: string | null;
+  price: string | null;  // Postgres returns numerics as strings
   cost: string | null;
   quantity: number;
 }
@@ -32,17 +32,12 @@ const INV_CACHE_TTL = 30_000;
 const MAX_CACHE_SIZE = 50;
 
 export async function GET(request: NextRequest) {
-  // Auth required only for write operations; GET is a read-only view
   const cacheKey = request.nextUrl.toString();
   const cached = _inventoryCache.get(cacheKey);
-  // Require any valid session (admin or register) before serving inventory data
+
+  // Resolve orgId: prefer session (authenticated), fall back to env (public read)
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }  if (!adminCtx && !registerCtx) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId ?? BUPOS_ORG_ID;
 
   if (cached && Date.now() < cached.expiresAt) {
     return NextResponse.json(cached.data);
@@ -209,8 +204,8 @@ export async function GET(request: NextRequest) {
           sku: row.sku,
           size_label: row.size_label,
           color_label: row.color_label,
-          price: row.price,
-          cost: row.cost,
+          price: row.price != null ? Number(row.price) : null,
+          cost: row.cost != null ? Number(row.cost) : null,
           quantity: row.quantity,
         });
       }
