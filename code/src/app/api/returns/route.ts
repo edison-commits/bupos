@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/db';
+import { requireAdminPermission } from '@/lib/authz';
 
 const ORG_ID = process.env.BUPOS_ORG_ID || '33262270-7100-4b46-b2fb-8b50ad872bbb';
 const LOCATION_ID = process.env.BUPOS_LOCATION_ID || 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
@@ -11,6 +12,7 @@ const LOCATION_ID = process.env.BUPOS_LOCATION_ID || 'c57268b3-cb14-4c1a-bda6-55
  * PUT  - Update status (approve/complete/reject). On complete with restock, updates inventory.
  */
 export async function GET() {
+  await requireAdminPermission('audit.view');
   try {
     const { rows } = await orgQuery(
       ORG_ID,
@@ -63,7 +65,7 @@ export async function POST(request: NextRequest) {
       `INSERT INTO returns (organization_id, location_id, return_number, customer_name, reason, notes, refund_method, refund_amount, status)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')
        RETURNING *`,
-      [LOCATION_ID, returnNumber, customer_name || null, reason || 'other', notes || null, refund_method || 'store_credit', refundAmount],
+      [returnNumber, LOCATION_ID, customer_name || null, reason || 'other', notes || null, refund_method || 'store_credit', refundAmount],
     );
     const returnId = retRows[0].id;
 
@@ -84,6 +86,7 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
+  await requireAdminPermission('employee.manage');
   try {
     const { id, status, processed_by } = await request.json();
     if (!id || !status) return NextResponse.json({ error: 'ID and status required' }, { status: 400 });

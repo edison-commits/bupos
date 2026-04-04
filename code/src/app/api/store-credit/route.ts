@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery, orgTx } from "@/lib/db";
 import { randomUUID } from "node:crypto";
+import { requireAdminPermission } from "@/lib/authz";
 
 const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
 
@@ -102,6 +103,7 @@ export async function GET(req: NextRequest) {
  * Issues store credit to a customer. Amount must be positive.
  */
 export async function POST(req: NextRequest) {
+  await requireAdminPermission('approval.store_credit');
   try {
     const { customerId, amount, reason, employeeId, approvedBy } = await req.json();
 

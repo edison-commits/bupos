@@ -5,6 +5,7 @@ import { hashSecret, verifySecret } from '@/lib/auth/crypto';
 import { randomUUID } from 'crypto';
 import { requireAdminPermission } from '@/lib/authz';
 import { getAdminSession } from '@/lib/auth/session';
+import { invalidateEmployeesCache } from '@/lib/persistence/postgres-store';
 
 const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
 const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
@@ -168,6 +169,7 @@ export async function POST(request: NextRequest) {
       updatedAt: rows[0].updated_at,
     };
 
+    invalidateEmployeesCache(ORG_ID);
     return NextResponse.json({ employee }, { status: 201 });
   } catch (error) {
     console.error('Employees POST error:', error);
@@ -267,6 +269,7 @@ export async function PUT(request: NextRequest) {
       updatedAt: rows[0].updated_at,
     };
 
+    invalidateEmployeesCache(ORG_ID);
     return NextResponse.json({ employee });
   } catch (error) {
     console.error('Employees PUT error:', error);
@@ -311,6 +314,7 @@ export async function PATCH(request: NextRequest) {
         updatedAt: rows[0].updated_at,
       };
 
+      invalidateEmployeesCache(ORG_ID);
       return NextResponse.json({ employee });
     } else if (action === 'reset-pin') {
       // Reset PIN

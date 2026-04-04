@@ -21,6 +21,7 @@ interface ProcessReturnRequest {
   refund_method: 'original_tender' | 'store_credit' | 'cash';
   items: ReturnLineItem[];
   refund_amount: number;
+  processed_by?: string;
 }
 
 /**
@@ -46,6 +47,7 @@ export async function POST(request: NextRequest) {
       refund_method,
       items,
       refund_amount,
+      processed_by,
     } = body;
 
     if (!transaction_id || !items || items.length === 0) {
@@ -146,17 +148,32 @@ export async function POST(request: NextRequest) {
         [transaction_id, refund_method === 'cash' ? 'cash' : 'credit_card', refund_amount]
       );
     } else if (refund_method === 'store_credit') {
-      // Create store credit record (if customer exists)
+      // Look up customer by name
       const custResult = await orgQuery(
         ORG_ID,
-        `SELECT id FROM customers WHERE first_name || ' ' || last_name = $1 LIMIT 1`,
+        `SELECT id, store_credit_balance FROM customers WHERE first_name || ' ' || last_name = $1 LIMIT 1`,
         [customer_name || '']
       );
-
       if (custResult.rows.length > 0) {
-        const customerId = custResult.rows[0].id;
-        // Insert store credit (you may need to create a store_credits table if it doesn't exist)
-        // For now, we'll just record it as a note in the return
+        const customer = custResult.rows[0];
+        const newBalance = (customer.store_credit_balance || 0) + refund_amount;
+        // Update customer store credit balance
+        await orgQuery(
+          ORG_ID,
+          `UPDATE customers SET store_credit_balance = $1, updated_at = NOW() WHERE id = $2`,
+          [newBalance, customer.id]
+        );
+        // Insert ledger record if store_credit_ledger table exists
+        try {
+          await orgQuery(
+            ORG_ID,
+            `INSERT INTO store_credit_ledger (customer_id, amount, balance_after, reason, created_by)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [customer.id, refund_amount, newBalance, `Return: ${reason}`, processed_by || null]
+          );
+        } catch {
+          // Ledger table may not exist — balance update above is the critical part
+        }
       }
     }
 

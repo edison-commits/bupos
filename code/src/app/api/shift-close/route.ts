@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { orgQuery, orgTx } from "@/lib/db";
+import { orgQuery } from "@/lib/db";
 import { requireAdminPermission } from "@/lib/authz";
+import { pgCloseShift } from "@/lib/persistence/postgres-store";
 
 const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
 const LOCATION_ID = "c57268b3-cb14-4c1a-bda6-55e49ddc6313";
@@ -85,35 +86,43 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Get shift to find registerSessionId
+    const shiftRes = await orgQuery(
+      ORG_ID,
+      `SELECT register_session_id FROM shifts WHERE id = $1`,
+      [shiftId],
+    );
+    if (shiftRes.rows.length === 0) {
+      return NextResponse.json({ error: "Shift not found" }, { status: 404 });
+    }
+    const registerSessionId = shiftRes.rows[0].register_session_id;
+
     const report = await buildZReport(shiftId);
     const expectedCash = report.expectedCash;
-    const variance = Number(declaredCash) - expectedCash;
-    const ts = new Date().toISOString();
 
-    const client = await orgTx(ORG_ID);
-    try {
-      await client.query(
-        `UPDATE shifts SET
-           status = 'closed',
-           closed_at = $1,
-           closing_declared_cash = $2,
-           closing_expected_cash = $3,
-           closing_variance = $4,
-           closed_note = $5
+    // Use pgCloseShift if register session exists, otherwise do inline close
+    if (registerSessionId) {
+      await pgCloseShift(shiftId, registerSessionId, {
+        closingExpectedCash: expectedCash,
+        closingDeclaredCash: Number(declaredCash),
+        closedNote: notes,
+      });
+    } else {
+      // Admin-initiated shift — no register session to clean up
+      const ts = new Date().toISOString();
+      const variance = Number((Number(declaredCash) - expectedCash).toFixed(2));
+      await orgQuery(
+        ORG_ID,
+        `UPDATE shifts SET status = 'closed', closed_at = $1, closing_expected_cash = $2,
+         closing_declared_cash = $3, closing_variance = $4, closed_note = $5
          WHERE id = $6`,
-        [ts, declaredCash, expectedCash, variance, notes || null, shiftId],
+        [ts, expectedCash, Number(declaredCash), variance, notes || null, shiftId],
       );
-      await client.query("COMMIT");
-    } catch (err) {
-      await client.query("ROLLBACK");
-      throw err;
-    } finally {
-      client.release();
     }
 
     return NextResponse.json({
       success: true,
-      shift: { id: shiftId, closedAt: ts, expectedCash, declaredCash: Number(declaredCash), variance },
+      shift: { id: shiftId, closedAt: new Date().toISOString(), expectedCash, declaredCash: Number(declaredCash), variance: Number((Number(declaredCash) - expectedCash).toFixed(2)) },
       report,
     });
   } catch (error) {

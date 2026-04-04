@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/db';
+import { requireAdminPermission } from '@/lib/authz';
 
 const ORG_ID = process.env.BUPOS_ORG_ID || '33262270-7100-4b46-b2fb-8b50ad872bbb';
 const LOCATION_ID = process.env.BUPOS_LOCATION_ID || 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
 
 export async function GET() {
+  await requireAdminPermission('catalog.manage');
   try {
     const [orgResult, locationResult] = await Promise.all([
       orgQuery(
@@ -73,6 +75,7 @@ export async function GET() {
 }
 
 export async function PUT(request: NextRequest) {
+  await requireAdminPermission('catalog.manage');
   try {
     const { section, data } = await request.json();
 

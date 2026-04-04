@@ -1,5 +1,7 @@
 import { orgQuery, pool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
+import { requireAdminPermission } from '@/lib/authz';
+import { invalidateProductsCache } from '@/lib/persistence/postgres-store';
 
 const ORG_ID = process.env.BUPOS_ORG_ID || '33262270-7100-4b46-b2fb-8b50ad872bbb';
 const LOCATION_ID = process.env.BUPOS_LOCATION_ID || 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
@@ -187,6 +189,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  await requireAdminPermission('catalog.manage');
   const client = await pool.connect();
   try {
     const body = await request.json();
@@ -205,6 +208,7 @@ export async function POST(request: NextRequest) {
         [ORG_ID, name, slug]
       );
       await client.query('COMMIT');
+      invalidateProductsCache(ORG_ID);
       return NextResponse.json(result.rows[0]);
     }
 
@@ -218,6 +222,7 @@ export async function POST(request: NextRequest) {
         [ORG_ID, body.product_id, sku, barcode, name, size_label, color_label, price, compare_at_price, cost]
       );
       await client.query('COMMIT');
+      invalidateProductsCache(ORG_ID);
       return NextResponse.json(result.rows[0]);
     }
 
@@ -230,6 +235,7 @@ export async function POST(request: NextRequest) {
       [ORG_ID, category_id || null, name, slug, description || null, image_url || null, is_active, is_touch_favorite]
     );
     await client.query('COMMIT');
+    invalidateProductsCache(ORG_ID);
     return NextResponse.json(result.rows[0]);
   } catch (error) {
     await client.query('ROLLBACK');
@@ -244,6 +250,7 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
+  await requireAdminPermission('catalog.manage');
   const client = await pool.connect();
   try {
     const body = await request.json();
@@ -306,6 +313,7 @@ export async function PUT(request: NextRequest) {
       );
 
       await client.query('COMMIT');
+      invalidateProductsCache(ORG_ID);
       return NextResponse.json(result.rows[0]);
     }
 
@@ -334,10 +342,12 @@ export async function PUT(request: NextRequest) {
       );
 
       await client.query('COMMIT');
+      invalidateProductsCache(ORG_ID);
       return NextResponse.json(result.rows[0]);
     }
 
     await client.query('COMMIT');
+    invalidateProductsCache(ORG_ID);
     return NextResponse.json({ message: 'No updates made' });
   } catch (error) {
     await client.query('ROLLBACK');
@@ -352,6 +362,7 @@ export async function PUT(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
+  await requireAdminPermission('catalog.manage');
   const client = await pool.connect();
   try {
     const body = await request.json();
@@ -371,6 +382,7 @@ export async function DELETE(request: NextRequest) {
     );
 
     await client.query('COMMIT');
+    invalidateProductsCache(ORG_ID);
     return NextResponse.json({ message: 'Product deleted', id: result.rows[0].id });
   } catch (error) {
     await client.query('ROLLBACK');
