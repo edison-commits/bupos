@@ -36,7 +36,7 @@ function now() {
 }
 
 export async function adminLoginAction(formData: FormData) {
-  const email = String(formData.get("email") ?? "");
+  const email = String(formData.get("email") ?? "").trim().toLowerCase();
 
   // Rate-limit by email to prevent password brute-force (5 attempts/min)
   const rl = checkRateLimit(`admin:${email}`);
@@ -50,11 +50,49 @@ export async function adminLoginAction(formData: FormData) {
   } catch {
     redirect("/?error=Invalid+admin+credentials");
   }
+
+  // Audit: log successful admin login (non-fatal — redirect still proceeds)
+  if (isPg()) {
+    const { getAdminSession } = await import("@/lib/auth/session");
+    const ctx = await getAdminSession();
+    if (ctx) {
+      pgInsertAuditEvent(
+        ctx.employee.organizationId, null, ctx.employee.id,
+        "session", ctx.session.id, "admin_login",
+        { email, role: ctx.employee.roleKey },
+      ).catch((err) => console.error("[adminLoginAction] audit failed:", err));
+    }
+  }
+
   redirect("/admin?notice=Signed+in");
 }
 
 export async function adminLogoutAction() {
+  // Capture session context before destroying the cookie
+  let actorOrgId: string | null = null;
+  let actorEmployeeId: string | null = null;
+  let sessionId: string | null = null;
+  if (isPg()) {
+    const { getAdminSession } = await import("@/lib/auth/session");
+    const ctx = await getAdminSession();
+    if (ctx) {
+      actorOrgId = ctx.employee.organizationId;
+      actorEmployeeId = ctx.employee.id;
+      sessionId = ctx.session.id;
+    }
+  }
+
   await signOutAdmin();
+
+  // Audit: log admin logout (non-fatal — redirect still proceeds)
+  if (isPg() && actorOrgId && actorEmployeeId) {
+    pgInsertAuditEvent(
+      actorOrgId, null, actorEmployeeId,
+      "session", sessionId, "admin_logout",
+      {},
+    ).catch((err) => console.error("[adminLogoutAction] audit failed:", err));
+  }
+
   redirect("/?notice=Signed+out");
 }
 
@@ -296,13 +334,20 @@ export async function toggleEmployeeAction(formData: FormData) {
   const { employee: actor } = await requireAdminPermission("employee.manage");
   const employeeId = String(formData.get("employeeId") ?? "");
 
+  let newStatus: boolean | null = null;
   if (isPg()) {
     const target = await pgReadEmployeeById(employeeId);
     if (!target) redirect("/admin?error=Employee+not+found");
     if (!canManageEmployeeRole(actor.roleKey, target!.roleKey)) {
       redirect("/admin?error=You+cannot+change+that+employee");
     }
+    newStatus = !target!.isActive;
     await pgToggleEmployee(employeeId);
+    await pgInsertAuditEvent(
+      actor.organizationId, null, actor.id,
+      "employee", employeeId, "employee_status_changed",
+      { action: newStatus ? "activated" : "deactivated", target_role: target!.roleKey },
+    );
   } else {
     await mutateStore((store) => {
       const employee = store.employees.find((entry) => entry.id === employeeId);
@@ -310,7 +355,8 @@ export async function toggleEmployeeAction(formData: FormData) {
       if (!canManageEmployeeRole(actor.roleKey, employee!.roleKey)) {
         redirect("/admin?error=You+cannot+change+that+employee");
       }
-      employee!.isActive = !employee!.isActive;
+      newStatus = !employee!.isActive;
+      employee!.isActive = newStatus;
       employee!.updatedAt = now();
     });
   }

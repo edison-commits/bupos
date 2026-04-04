@@ -2,7 +2,8 @@
 
 import { mutateStore } from "@/lib/persistence/store";
 import { getAdminSession } from "@/lib/auth/session";
-import { orgTx, orgQuery } from "@/lib/db";
+import { orgTx, orgQuery, pool } from "@/lib/db";
+import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 import type { GiftCard, GiftCardTransaction } from "@/lib/domain/types";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
@@ -42,6 +43,12 @@ export async function activateGiftCardAction(formData: FormData) {
         [randomUUID(), gcId, amount, ctx.employee.id],
       );
       await client.query("COMMIT");
+      // Audit event (non-fatal — committed regardless)
+      pgInsertAuditEvent(
+        orgId, null, ctx.employee.id,
+        "gift_card", gcId, "gift_card_activated",
+        { code: `****${code.slice(-4)}`, amount, customer_id: customerId || null },
+      ).catch((err) => console.error("[activateGiftCardAction] audit failed:", err));
     } catch (e) {
       await client.query("ROLLBACK");
       throw e;
@@ -105,6 +112,12 @@ export async function reloadGiftCardAction(formData: FormData) {
         [randomUUID(), giftCardId, amount, newBal, ctx.employee.id],
       );
       await client.query("COMMIT");
+      // Audit event (non-fatal — committed regardless)
+      pgInsertAuditEvent(
+        orgId, null, ctx.employee.id,
+        "gift_card", giftCardId, "gift_card_reloaded",
+        { amount, new_balance: newBal },
+      ).catch((err) => console.error("[reloadGiftCardAction] audit failed:", err));
     } catch (e) {
       await client.query("ROLLBACK");
       throw e;
@@ -133,14 +146,20 @@ export async function reloadGiftCardAction(formData: FormData) {
 }
 
 export async function disableGiftCardAction(giftCardId: string) {
+  const ctx = await getAdminSession();
+  if (!ctx) throw new Error("Not authenticated");
   if (isPg()) {
-    const ctx = await getAdminSession();
-    if (!ctx) throw new Error("Not authenticated");
     await orgQuery(
       ctx.employee.organizationId,
       `UPDATE gift_cards SET status = 'disabled', updated_at = now() WHERE id = $1`,
       [giftCardId],
     );
+    // Audit event (non-fatal)
+    pgInsertAuditEvent(
+      ctx.employee.organizationId, null, ctx.employee.id,
+      "gift_card", giftCardId, "gift_card_disabled",
+      {},
+    ).catch((err) => console.error("[disableGiftCardAction] audit failed:", err));
   } else {
     await mutateStore((store) => {
       const gc = store.giftCards.find((g) => g.id === giftCardId);

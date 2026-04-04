@@ -34,8 +34,15 @@ export async function registerLoginAction(formData: FormData) {
   if (!loginResult) redirect("/register?error=PIN+login+failed");
   const { employee, location, registerSession } = loginResult;
 
-  // Auto-open shift on login — workers clock in by entering their PIN
+  // Audit: log register login (non-fatal — shift open and redirect proceed regardless)
   if (isPg()) {
+    pgInsertAuditEvent(
+      employee.organizationId, location.id, employee.id,
+      "session", registerSession.id, "register_login",
+      { location_id: location.id, register_session_id: registerSession.id },
+    ).catch((err) => console.error("[registerLoginAction] login audit failed:", err));
+
+    // Auto-open shift on login — workers clock in by entering their PIN
     const shiftId = randomUUID();
     await pgOpenShift({
       id: shiftId,
@@ -237,7 +244,21 @@ export async function registerLogoutAction() {
     redirect("/register");
   }
 
+  // Capture context for audit before destroying the session
+  const { employee, location, registerSession } = session;
+  const sessionId = session.session.id;
+
   await signOutRegister();
+
+  // Audit: log register logout (non-fatal — redirect still proceeds)
+  if (isPg()) {
+    pgInsertAuditEvent(
+      employee.organizationId, location.id, employee.id,
+      "session", sessionId, "register_logout",
+      { register_session_id: registerSession.id },
+    ).catch((err) => console.error("[registerLogoutAction] audit failed:", err));
+  }
+
   revalidatePath("/register");
   redirect("/register?notice=Register+session+closed");
 }

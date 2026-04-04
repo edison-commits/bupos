@@ -2,7 +2,8 @@
 
 import { mutateStore } from "@/lib/persistence/store";
 import { getAdminSession } from "@/lib/auth/session";
-import { orgTx } from "@/lib/db";
+import { orgTx, pool } from "@/lib/db";
+import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 import type { StoreCreditEntry } from "@/lib/domain/types";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
@@ -42,6 +43,12 @@ export async function issueStoreCreditAction(formData: FormData) {
         [randomUUID(), orgId, customerId, amount, newBalance, ctx.employee.id, reason],
       );
       await client.query("COMMIT");
+      // Audit event (non-fatal — committed regardless)
+      pgInsertAuditEvent(
+        orgId, null, ctx.employee.id,
+        "customer", customerId, "store_credit_issued",
+        { amount, new_balance: newBalance, reason },
+      ).catch((err) => console.error("[issueStoreCreditAction] audit failed:", err));
     } catch (e) {
       await client.query("ROLLBACK");
       throw e;

@@ -1,7 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { signInAdmin } from "@/lib/auth/session";
+import { signInAdmin, getAdminSession } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { hashSecret, verifySecret } from "@/lib/auth/crypto";
 import { randomUUID } from "node:crypto";
@@ -106,6 +106,21 @@ export async function signupAction(_prev: { error: string } | null, formData: Fo
 
     // Sign them in
     await signInAdmin(email, password);
+
+    // Audit: log new store/owner signup (non-fatal — redirect still proceeds)
+    const ctx = await getAdminSession();
+    if (ctx) {
+      pool.query(
+        `INSERT INTO audit_events (organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          orgId, locationId, employeeId,
+          "organization", orgId, "store_signup",
+          JSON.stringify({ store_name: storeName, owner_email: email, plan: "free" }),
+          now,
+        ],
+      ).catch(() => {});
+    }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Signup failed";
     // Don't expose internal errors
