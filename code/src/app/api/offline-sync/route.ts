@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { cookies } from "next/headers";
-import pool, { orgTx } from "@/lib/db";
+import pool, { orgTx, orgQuery } from "@/lib/db";
 import { requireRegisterPermission } from "@/lib/authz";
 import { registerConfiguration } from "@/lib/data/mock-data";
 
@@ -61,23 +61,17 @@ export async function POST(request: NextRequest) {
     // Look up location's tax rate from DB instead of hardcoding
     let taxRate = 0.1025; // default fallback
     try {
-      const taxClient = await orgTx(ORG_ID);
-      try {
-        const { rows: locRows } = await taxClient.query(
-          `SELECT tax_rate FROM locations WHERE id = $1`,
-          [LOCATION_ID],
-        );
-        if (locRows[0]?.tax_rate != null) {
-          taxRate = Number(locRows[0].tax_rate);
-        }
-        await taxClient.query("COMMIT");
-      } catch {
-        await taxClient.query("ROLLBACK");
-      } finally {
-        taxClient.release();
+      const { rows: locRows } = await orgQuery(
+        ORG_ID,
+        `SELECT tax_rate FROM locations WHERE id = $1`,
+        [LOCATION_ID],
+      );
+      if (locRows[0]?.tax_rate != null) {
+        taxRate = Number(locRows[0].tax_rate);
       }
     } catch {
-      // Use default tax rate if lookup fails
+      // Use default tax rate if lookup fails — log for observability
+      console.warn("[offline-sync] tax rate lookup failed, using default 0.1025");
     }
 
     // Recalculate totals from the cart snapshot

@@ -5,6 +5,12 @@ import { requireAdminPermission } from '@/lib/authz';
 const ORG_ID = process.env.BUPOS_ORG_ID || '33262270-7100-4b46-b2fb-8b50ad872bbb';
 
 export async function GET(request: NextRequest) {
+  // Require a valid admin session
+  const ctx = await (await import('@/lib/auth/session')).getAdminSession();
+  if (!ctx || !ctx.session || !ctx.employee) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const search = request.nextUrl.searchParams.get('search')?.trim() || '';
   const id = request.nextUrl.searchParams.get('id')?.trim() || '';
   const page = Math.max(1, parseInt(request.nextUrl.searchParams.get('page') || '1'));

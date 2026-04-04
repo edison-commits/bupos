@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import pool from '@/lib/db';
+import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
 
 const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
 
@@ -13,6 +14,10 @@ const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
  * Also returns items with no supplier assigned so they can be flagged.
  */
 export async function GET() {
+  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
+  if (!adminCtx && !registerCtx) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     // Find all low/out-of-stock items with supplier info if available
     const { rows } = await pool.query(

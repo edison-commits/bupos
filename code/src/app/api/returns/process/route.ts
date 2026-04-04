@@ -60,6 +60,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (refund_amount < 0) {
+      await client.query('ROLLBACK');
+      return NextResponse.json(
+        { error: `Refund amount cannot be negative: ${refund_amount}` },
+        { status: 400 }
+      );
+    }
+
+    // Validate that at least one item has a valid quantity before creating the return record
+    const validItems = items.filter((item: ReturnLineItem) => item.quantity > 0);
+    if (validItems.length === 0) {
+      await client.query('ROLLBACK');
+      return NextResponse.json(
+        { error: 'At least one return item must have a positive quantity' },
+        { status: 400 }
+      );
+    }
+
     // Validate transaction exists and get its grand_total
     const txnResult = await client.query(
       `SELECT id, grand_total FROM transactions WHERE id = $1`,

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery, pool } from '@/lib/db';
 import { requireAdminPermission } from '@/lib/authz';
+import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
 
 const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
 const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
@@ -16,6 +17,11 @@ const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
  */
 
 export async function GET(request: NextRequest) {
+  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
+  if (!adminCtx && !registerCtx) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const poId = request.nextUrl.searchParams.get('id');
 
   try {

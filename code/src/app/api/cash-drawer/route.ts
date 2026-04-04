@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminPermission } from '@/lib/authz';
 import pool, { orgQuery, orgTx } from '@/lib/db';
+import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
 
 const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
 const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
@@ -12,6 +13,11 @@ const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
  * action=history: Returns last 10 closed shifts with summary
  */
 export async function GET(req: NextRequest) {
+  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
+  if (!adminCtx && !registerCtx) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
     const action = req.nextUrl.searchParams.get('action') || 'status';
 

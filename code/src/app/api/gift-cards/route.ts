@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { orgQuery, orgTx } from "@/lib/db";
 import { randomUUID } from "node:crypto";
 import { requireAdminPermission } from "@/lib/authz";
+import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 
 const ORG_ID = process.env.BUPOS_ORG_ID || "33262270-7100-4b46-b2fb-8b50ad872bbb";
 
@@ -16,6 +17,11 @@ const ORG_ID = process.env.BUPOS_ORG_ID || "33262270-7100-4b46-b2fb-8b50ad872bbb
  * Without params returns all gift cards with summary stats.
  */
 export async function GET(req: NextRequest) {
+  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
+  if (!adminCtx && !registerCtx) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const sp = req.nextUrl.searchParams;
 

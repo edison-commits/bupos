@@ -18,6 +18,15 @@ const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
  */
 export async function GET(req: NextRequest) {
   try {
+    // Validate that the request has a valid session (admin or register)
+    const [adminCtx, registerCtx] = await Promise.all([
+      (await import("@/lib/auth/session")).getAdminSession(),
+      (await import("@/lib/auth/session")).getRegisterSession(),
+    ]);
+    if (!adminCtx && !registerCtx) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const sp = req.nextUrl.searchParams;
 
     // ── Validate a code (for register use) ──

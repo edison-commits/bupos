@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { orgQuery, orgTx, pool } from "@/lib/db";
 import { randomUUID } from "node:crypto";
 import { requireAdminPermission } from "@/lib/authz";
+import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 
 const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
 
@@ -14,6 +15,11 @@ const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
  *   date     — specific date YYYY-MM-DD (defaults to today)
  */
 export async function GET(req: NextRequest) {
+  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
+  if (!adminCtx && !registerCtx) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const sp = req.nextUrl.searchParams;
     const locationId = sp.get("location") || "c57268b3-cb14-4c1a-bda6-55e49ddc6313";

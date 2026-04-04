@@ -2,6 +2,7 @@ import { orgQuery, pool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminPermission } from '@/lib/authz';
 import { invalidateProductsCache } from '@/lib/persistence/postgres-store';
+import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
 
 const ORG_ID = process.env.BUPOS_ORG_ID || '33262270-7100-4b46-b2fb-8b50ad872bbb';
 const LOCATION_ID = process.env.BUPOS_LOCATION_ID || 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
@@ -12,6 +13,11 @@ const PROD_CACHE_TTL = 30_000;
 const MAX_CACHE_SIZE = 50;
 
 export async function GET(request: NextRequest) {
+  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
+  if (!adminCtx && !registerCtx) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const cacheKey = request.nextUrl.toString();
   const cached = _productsCache.get(cacheKey);
   if (cached && Date.now() < cached.expiresAt) {

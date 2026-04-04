@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import pool from '@/lib/db';
 import { requireAdminPermission } from '@/lib/authz';
+import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
 
 const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
 
@@ -10,6 +11,11 @@ const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
  * PUT /api/suppliers - Update an existing supplier
  */
 export async function GET() {
+  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
+  if (!adminCtx && !registerCtx) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
     const { rows } = await pool.query(
       `SELECT * FROM suppliers WHERE organization_id = $1 ORDER BY name ASC`,

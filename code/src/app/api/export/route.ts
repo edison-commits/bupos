@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
+import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 
 const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
 
@@ -15,6 +16,11 @@ const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
  *   location — location ID for inventory
  */
 export async function GET(req: NextRequest) {
+  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
+  if (!adminCtx && !registerCtx) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const sp = req.nextUrl.searchParams;
     const type = sp.get("type");

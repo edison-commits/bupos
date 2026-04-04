@@ -15,6 +15,15 @@ const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
  * - Points distribution histogram
  */
 export async function GET(req: NextRequest) {
+  // Require a valid session (admin or register)
+  const [adminCtx, registerCtx] = await Promise.all([
+    (await import("@/lib/auth/session")).getAdminSession(),
+    (await import("@/lib/auth/session")).getRegisterSession(),
+  ]);
+  if (!adminCtx && !registerCtx) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const sp = req.nextUrl.searchParams;
 
