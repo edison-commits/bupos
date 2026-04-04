@@ -5,6 +5,7 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 import { useState, useEffect } from 'react';
 import { AlertCircle, Check, X } from 'lucide-react';
 import { getTaxRate, getCitiesForState, US_STATES } from '@/lib/tax-rates';
+import { authFetch } from '@/lib/api/client';
 
 interface StoreSettings {
   store: {
@@ -952,7 +953,7 @@ export default function SettingsPage() {
       const timeout = setTimeout(() => controller.abort(), 15000);
       let response: Response;
       try {
-        response = await fetch('/api/settings', { signal: controller.signal, cache: 'no-store' });
+        response = await authFetch('/api/settings', { signal: controller.signal, cache: 'no-store' });
         clearTimeout(timeout);
       } catch (e) {
         clearTimeout(timeout);
@@ -977,7 +978,7 @@ export default function SettingsPage() {
       setSavingSection('store');
       setSectionErrors((prev) => ({ ...prev, store: null }));
 
-      const response = await fetch('/api/settings', {
+      const response = await authFetch('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ section: 'store', data }),
@@ -1009,7 +1010,7 @@ export default function SettingsPage() {
       const timeout = setTimeout(() => controller.abort(), 15000);
       let updated: StoreSettings;
       try {
-        const response = await fetch('/api/settings', {
+        const response = await authFetch('/api/settings', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ section: 'location', data }),
@@ -1042,7 +1043,7 @@ export default function SettingsPage() {
       setSavingSection('receipt');
       setSectionErrors((prev) => ({ ...prev, receipt: null }));
 
-      const response = await fetch('/api/settings', {
+      const response = await authFetch('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ section: 'receipt', data }),

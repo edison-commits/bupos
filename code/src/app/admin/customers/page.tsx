@@ -4,6 +4,7 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import { useState, useEffect } from 'react';
 import { Plus, Search, Edit2, Eye, AlertCircle, Loader2, DollarSign, Users, TrendingUp, Award } from 'lucide-react';
+import { authFetch } from '@/lib/api/client';
 
 interface Customer {
   id: string;
@@ -81,7 +82,7 @@ export default function CustomerManagement() {
         ...(search && { search }),
       });
 
-      const response = await fetch(`/api/customers?${params}`);
+      const response = await authFetch(`/api/customers?${params}`);
       if (!response.ok) {
         throw new Error('Failed to load customers');
       }
@@ -98,7 +99,7 @@ export default function CustomerManagement() {
 
   const loadStats = async () => {
     try {
-      const response = await fetch(`/api/customers?page=1&pageSize=1`);
+      const response = await authFetch(`/api/customers?page=1&pageSize=1`);
       if (!response.ok) return;
 
       const data = await response.json();
@@ -150,7 +151,7 @@ export default function CustomerManagement() {
     setModalMode('detail');
     setDetailLoading(true);
     try {
-      const response = await fetch(`/api/customers?id=${customer.id}`);
+      const response = await authFetch(`/api/customers?id=${customer.id}`);
       if (!response.ok) throw new Error('Failed to load customer details');
 
       const data = await response.json();
@@ -176,7 +177,7 @@ export default function CustomerManagement() {
         ? formData
         : { id: selectedCustomer?.id, ...formData };
 
-      const response = await fetch('/api/customers', {
+      const response = await authFetch('/api/customers', {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),

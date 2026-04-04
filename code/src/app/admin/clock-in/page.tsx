@@ -2,6 +2,7 @@
 
 import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { authFetch } from '@/lib/api/client';
 
 interface Employee {
   id: string;
@@ -37,7 +38,7 @@ function ClockInContent() {
     async function load() {
       setIsLoading(true);
       try {
-        const res = await fetch('/api/clock-in-data');
+        const res = await authFetch('/api/clock-in-data');
         if (res.status === 401) { window.location.href = '/?error=Please+sign+in'; return; }
         const data = res.ok ? await res.json() : { locations: [], employees: [] };
         setLocations(data.locations ?? []);
@@ -61,7 +62,7 @@ function ClockInContent() {
     setError(null);
 
     try {
-      const res = await fetch("/api/shifts", {
+      const res = await authFetch("/api/shifts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

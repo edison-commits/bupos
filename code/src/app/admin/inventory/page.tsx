@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { AdminTopNav } from "@/components/layout/admin-top-nav";
+import { authFetch } from '@/lib/api/client';
 
 interface ProductVariant {
   variant_id: string | null;
@@ -67,7 +68,7 @@ export default function InventoryPage() {
       if (selectedBrand) params.append('brand', selectedBrand);
       if (stockFilter !== 'all') params.append('stock', stockFilter);
 
-      const response = await fetch(`/api/inventory?${params.toString()}`);
+      const response = await authFetch(`/api/inventory?${params.toString()}`);
       if (!response.ok) {
         throw new Error('Failed to fetch inventory');
       }

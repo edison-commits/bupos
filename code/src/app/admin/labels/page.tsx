@@ -3,6 +3,7 @@
 import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import { useCallback, useEffect, useState } from 'react';
+import { authFetch } from '@/lib/api/client';
 
 interface ProductVariant {
   id: string;
@@ -110,7 +111,7 @@ export default function LabelsPage() {
     }
     setSearchLoading(true);
     try {
-      const res = await fetch(`/api/products?search=${encodeURIComponent(query)}`);
+      const res = await authFetch(`/api/products?search=${encodeURIComponent(query)}`);
       if (!res.ok) throw new Error('Search failed');
       const data = await res.json();
       // Extract variants from products

@@ -4,6 +4,7 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import { useState, useEffect } from 'react';
 import { AlertCircle, Award, DollarSign, Loader2, Search, TrendingUp, Users, X } from 'lucide-react';
+import { authFetch } from '@/lib/api/client';
 
 interface LoyaltyOverview {
   total_customers_enrolled: number;
@@ -99,7 +100,7 @@ export default function LoyaltyDashboard() {
       const timeout = setTimeout(() => controller.abort(), 15000);
       let data;
       try {
-        const response = await fetch('/api/loyalty', { cache: 'no-store', signal: controller.signal });
+        const response = await authFetch('/api/loyalty', { cache: 'no-store', signal: controller.signal });
         clearTimeout(timeout);
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: Failed to load loyalty data`);
@@ -147,7 +148,7 @@ export default function LoyaltyDashboard() {
 
     setAdjustmentLoading(true);
     try {
-      const response = await fetch('/api/loyalty', {
+      const response = await authFetch('/api/loyalty', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -210,7 +211,7 @@ export default function LoyaltyDashboard() {
   const loadCustomerDetails = async (customerId: string) => {
     setDetailLoading(true);
     try {
-      const response = await fetch(`/api/loyalty?customer_id=${customerId}`);
+      const response = await authFetch(`/api/loyalty?customer_id=${customerId}`);
       if (!response.ok) {
         throw new Error('Failed to load customer details');
       }

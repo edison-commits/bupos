@@ -4,6 +4,7 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { ChevronDown, ChevronUp, Search, Download, Calendar, Filter } from 'lucide-react';
+import { authFetch } from '@/lib/api/client';
 
 interface Transaction {
   id: string;
@@ -284,7 +285,7 @@ export default function TransactionsPage() {
       params.append('page', currentPage.toString());
       params.append('limit', '10');
 
-      const response = await fetch(`/api/transactions?${params.toString()}`);
+      const response = await authFetch(`/api/transactions?${params.toString()}`);
       if (!response.ok) throw new Error('Failed to fetch transactions');
       const data: ApiResponse = await response.json();
       setTransactions(data.transactions);
@@ -298,7 +299,7 @@ export default function TransactionsPage() {
 
   const fetchDetail = useCallback(async (id: string) => {
     try {
-      const response = await fetch(`/api/transactions?id=${id}`);
+      const response = await authFetch(`/api/transactions?id=${id}`);
       const data: DetailResponse = await response.json();
       setDetail(data);
     } catch (error) {

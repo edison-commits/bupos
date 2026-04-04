@@ -5,6 +5,7 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 import { useState, useEffect } from 'react';
 import { ChevronLeft, DollarSign, TrendingUp, AlertCircle, CheckCircle2, Plus, Minus } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { authFetch } from '@/lib/api/client';
 
 interface Shift {
   id: string;
@@ -64,8 +65,8 @@ export default function CashDrawerPage() {
       setError(null);
 
       const [statusRes, historyRes] = await Promise.all([
-        fetch('/api/cash-drawer?action=status'),
-        fetch('/api/cash-drawer?action=history'),
+        authFetch('/api/cash-drawer?action=status'),
+        authFetch('/api/cash-drawer?action=history'),
       ]);
 
       if (!statusRes.ok || !historyRes.ok) {
@@ -94,7 +95,7 @@ export default function CashDrawerPage() {
       setIsOpeningShift(true);
       setError(null);
 
-      const response = await fetch('/api/cash-drawer', {
+      const response = await authFetch('/api/cash-drawer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -127,7 +128,7 @@ export default function CashDrawerPage() {
       setIsProcessing(true);
       setError(null);
 
-      const response = await fetch('/api/cash-drawer', {
+      const response = await authFetch('/api/cash-drawer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -164,7 +165,7 @@ export default function CashDrawerPage() {
       setIsClosing(true);
       setError(null);
 
-      const response = await fetch('/api/cash-drawer', {
+      const response = await authFetch('/api/cash-drawer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

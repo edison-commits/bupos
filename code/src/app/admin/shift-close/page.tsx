@@ -5,6 +5,7 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 import { useState, useEffect } from 'react';
 import { ChevronLeft, DollarSign, TrendingUp, AlertCircle, CheckCircle2, Clock } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { authFetch } from '@/lib/api/client';
 
 interface ShiftData {
   shift: {
@@ -45,7 +46,7 @@ export default function ShiftClosePage() {
     try {
       setLoading(true);
       setError(null);
-      const response = await fetch('/api/shift-close');
+      const response = await authFetch('/api/shift-close');
       if (!response.ok) {
         throw new Error('Failed to load shift data');
       }
@@ -68,7 +69,7 @@ export default function ShiftClosePage() {
       setIsClosing(true);
       setError(null);
 
-      const response = await fetch('/api/shift-close', {
+      const response = await authFetch('/api/shift-close', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

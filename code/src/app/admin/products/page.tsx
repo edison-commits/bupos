@@ -3,6 +3,7 @@
 import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import { useCallback, useEffect, useState } from 'react';
+import { authFetch } from '@/lib/api/client';
 
 interface ProductVariant {
   id: string;
@@ -83,7 +84,7 @@ export default function ProductsPage() {
       if (selectedCategory) params.append('category', selectedCategory);
       if (activeFilter !== 'all') params.append('active', activeFilter === 'active' ? 'true' : 'false');
 
-      const response = await fetch(`/api/products?${params.toString()}`);
+      const response = await authFetch(`/api/products?${params.toString()}`);
       if (!response.ok) throw new Error('Failed to fetch products');
       const result = await response.json();
       setData(result);
@@ -111,7 +112,7 @@ export default function ProductsPage() {
   const handleAddProduct = async (formData: Partial<Product>) => {
     setSaving(true);
     try {
-      const response = await fetch('/api/products', {
+      const response = await authFetch('/api/products', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData),
@@ -129,7 +130,7 @@ export default function ProductsPage() {
   const handleEditProduct = async (productId: string, formData: Partial<Product>) => {
     setSaving(true);
     try {
-      const response = await fetch(`/api/products`, {
+      const response = await authFetch(`/api/products`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: productId, ...formData }),
@@ -147,7 +148,7 @@ export default function ProductsPage() {
   const handleAddVariant = async (productId: string, formData: Partial<ProductVariant>) => {
     setSaving(true);
     try {
-      const response = await fetch('/api/products', {
+      const response = await authFetch('/api/products', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ product_id: productId, variant: formData }),
@@ -165,7 +166,7 @@ export default function ProductsPage() {
   const handleDeleteProduct = async (productId: string) => {
     if (!window.confirm('Soft-delete this product? It will be marked inactive.')) return;
     try {
-      const response = await fetch('/api/products', {
+      const response = await authFetch('/api/products', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: productId }),
@@ -180,7 +181,7 @@ export default function ProductsPage() {
   const handleImportCSV = async (rows: Record<string, string>[]) => {
     setSaving(true);
     try {
-      const response = await fetch('/api/products', {
+      const response = await authFetch('/api/products', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'import_csv', rows }),
@@ -201,7 +202,7 @@ export default function ProductsPage() {
     if (!newCategory.trim()) return;
     setSaving(true);
     try {
-      const response = await fetch('/api/products', {
+      const response = await authFetch('/api/products', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ category: { name: newCategory, slug: newCategory.toLowerCase().replace(/\s+/g, '-') } }),

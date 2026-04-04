@@ -3,6 +3,7 @@
 import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import { useState, useEffect } from "react";
+import { authFetch } from '@/lib/api/client';
 
 type DateRange = "today" | "week" | "month" | "custom";
 type ReportType = "summary" | "category" | "employee" | "hourly" | "tender" | "products" | "shifts";
@@ -60,7 +61,7 @@ export default function ReportsPage() {
     }));
 
     try {
-      const response = await fetch(`/api/reports?type=${type}&from=${from}&to=${to}`);
+      const response = await authFetch(`/api/reports?type=${type}&from=${from}&to=${to}`);
       if (!response.ok) throw new Error(`Failed to fetch ${type} report`);
 
       const data = await response.json();

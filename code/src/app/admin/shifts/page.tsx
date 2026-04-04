@@ -4,6 +4,7 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 import { useState, useEffect } from "react";
 import { formatDateTime } from "@/lib/utils/date";
 import Link from "next/link";
+import { authFetch } from '@/lib/api/client';
 
 type ShiftStatus = "open" | "closed";
 
@@ -60,7 +61,7 @@ export default function ShiftsPage() {
       });
       if (dateFilter) params.set("date", dateFilter);
 
-      const res = await fetch(`/api/shifts?${params}`, { cache: "no-store" });
+      const res = await authFetch(`/api/shifts?${params}`, { cache: "no-store" });
       if (!res.ok) throw new Error("Failed to load shifts");
       const data: ShiftsResponse = await res.json();
       setShifts(data.shifts);

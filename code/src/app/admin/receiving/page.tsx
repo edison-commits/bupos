@@ -4,6 +4,7 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { authFetch } from '@/lib/api/client';
 
 interface Product {
   id: string;
@@ -76,7 +77,7 @@ export default function ReceivingPage() {
     if (mode !== 'po') return;
     setPosLoading(true);
     try {
-      const response = await fetch('/api/receiving?type=open_pos');
+      const response = await authFetch('/api/receiving?type=open_pos');
       if (!response.ok) throw new Error('Failed to fetch purchase orders');
       const json = await response.json();
       setPurchaseOrders(json.orders || []);
@@ -90,7 +91,7 @@ export default function ReceivingPage() {
   // Fetch PO details
   const fetchPODetails = useCallback(async (poId: string) => {
     try {
-      const response = await fetch(`/api/receiving?type=po_details&id=${poId}`);
+      const response = await authFetch(`/api/receiving?type=po_details&id=${poId}`);
       if (!response.ok) throw new Error('Failed to fetch PO details');
       const json = await response.json();
       setPoDetails(json.lines || []);
@@ -107,7 +108,7 @@ export default function ReceivingPage() {
     }
     setSearchLoading(true);
     try {
-      const response = await fetch(`/api/receiving?type=search&q=${encodeURIComponent(query)}`);
+      const response = await authFetch(`/api/receiving?type=search&q=${encodeURIComponent(query)}`);
       if (!response.ok) throw new Error('Search failed');
       const json = await response.json();
       setSearchResults(json.variants || []);
@@ -202,7 +203,7 @@ export default function ReceivingPage() {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const response = await fetch('/api/receiving', {
+      const response = await authFetch('/api/receiving', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

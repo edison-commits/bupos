@@ -108,10 +108,23 @@ export async function POST(request: NextRequest) {
       [transaction_id],
     );
     const priorRefunds = Number(priorRefResult.rows[0]?.prior_refunds) || 0;
-    if (refund_amount > originalTotal - priorRefunds) {
+
+    // Cap refund at what was actually tendered (cash/card) in the original transaction,
+    // not the grand_total — grand_total includes gift card redemptions which reduce
+    // the actual cash outlay. Refunding must not exceed actual cash/card received.
+    const tenderResult = await client.query(
+      `SELECT COALESCE(SUM(ABS(amount)), 0)::numeric AS cash_tendered
+       FROM transaction_tenders
+       WHERE transaction_id = $1 AND is_refund = false AND tender_type NOT IN ('gift_card_redemption', 'store_credit')`,
+      [transaction_id],
+    );
+    const cashTendered = Number(tenderResult.rows[0]?.cash_tendered) || 0;
+    const maxRefundable = cashTendered - priorRefunds;
+
+    if (refund_amount > maxRefundable) {
       await client.query('ROLLBACK');
       return NextResponse.json(
-        { error: `Refund amount ${refund_amount} exceeds remaining refundable amount ${Number((originalTotal - priorRefunds).toFixed(2))} (original: ${originalTotal}, already refunded: ${priorRefunds})` },
+        { error: `Refund amount ${refund_amount} exceeds remaining refundable amount ${Number(maxRefundable.toFixed(2))}` },
         { status: 400 }
       );
     }

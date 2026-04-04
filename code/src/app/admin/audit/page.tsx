@@ -5,6 +5,7 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 import { useState, useEffect } from 'react';
 import { RoleGate } from '@/components/admin/role-gate';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { authFetch } from '@/lib/api/client';
 
 interface AuditEvent {
   id: string;
@@ -112,7 +113,7 @@ export default function AuditPage() {
 
   const loadEmployees = async () => {
     try {
-      const response = await fetch('/api/employees?pageSize=999');
+      const response = await authFetch('/api/employees?pageSize=999');
       if (response.ok) {
         const data = await response.json();
         setEmployees(data.employees || []);
@@ -124,7 +125,7 @@ export default function AuditPage() {
 
   const loadEventKinds = async () => {
     try {
-      const response = await fetch('/api/audit?page=1&pageSize=1');
+      const response = await authFetch('/api/audit?page=1&pageSize=1');
       if (response.ok) {
         const data = await response.json();
         const kinds = new Set<string>();
@@ -152,7 +153,7 @@ export default function AuditPage() {
         ...(filters.eventKind && { event_kind: filters.eventKind }),
       });
 
-      const response = await fetch(`/api/audit?${params}`);
+      const response = await authFetch(`/api/audit?${params}`);
       if (!response.ok) {
         throw new Error('Failed to load audit events');
       }

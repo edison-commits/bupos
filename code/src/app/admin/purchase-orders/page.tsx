@@ -4,6 +4,7 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { authFetch } from '@/lib/api/client';
 
 interface Supplier {
   id: string;
@@ -130,7 +131,7 @@ export default function PurchaseOrdersPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/purchase-orders');
+      const res = await authFetch('/api/purchase-orders');
       if (!res.ok) throw new Error('Failed to fetch purchase orders');
       const data = await res.json();
       setOrders(data.orders || []);
@@ -144,7 +145,7 @@ export default function PurchaseOrdersPage() {
   // Fetch suppliers
   const fetchSuppliers = useCallback(async () => {
     try {
-      const res = await fetch('/api/suppliers');
+      const res = await authFetch('/api/suppliers');
       if (!res.ok) throw new Error('Failed to fetch suppliers');
       const data = await res.json();
       setSuppliers(data.suppliers || []);
@@ -156,7 +157,7 @@ export default function PurchaseOrdersPage() {
   // Fetch single PO details
   const fetchPODetails = useCallback(async (poId: string) => {
     try {
-      const res = await fetch(`/api/purchase-orders?id=${poId}`);
+      const res = await authFetch(`/api/purchase-orders?id=${poId}`);
       if (!res.ok) throw new Error('Failed to fetch PO details');
       const data = await res.json();
       setSelectedOrder(data);
@@ -173,7 +174,7 @@ export default function PurchaseOrdersPage() {
     }
     setSearchLoading(true);
     try {
-      const res = await fetch(`/api/products?search=${encodeURIComponent(query)}`);
+      const res = await authFetch(`/api/products?search=${encodeURIComponent(query)}`);
       if (!res.ok) throw new Error('Search failed');
       const data = await res.json();
       // Extract variants from products
@@ -262,7 +263,7 @@ export default function PurchaseOrdersPage() {
     setCreating(true);
     setError(null);
     try {
-      const res = await fetch('/api/purchase-orders', {
+      const res = await authFetch('/api/purchase-orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -299,7 +300,7 @@ export default function PurchaseOrdersPage() {
     setUpdating(true);
     setError(null);
     try {
-      const res = await fetch('/api/purchase-orders', {
+      const res = await authFetch('/api/purchase-orders', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: poId, status: newStatus }),

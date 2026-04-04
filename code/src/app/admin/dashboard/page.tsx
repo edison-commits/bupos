@@ -4,6 +4,7 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import { useState, useEffect } from 'react';
 import { ChevronDown } from 'lucide-react';
+import { authFetch } from '@/lib/api/client';
 
 interface Metrics {
   grossSales: number;
@@ -68,7 +69,7 @@ export default function DashboardPage() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const response = await fetch(`/api/dashboard?range=${range}`);
+      const response = await authFetch(`/api/dashboard?range=${range}`);
       if (!response.ok) throw new Error('Failed to fetch dashboard data');
       const result = await response.json();
       setData(result);

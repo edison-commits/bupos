@@ -4,6 +4,7 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import { useState, useEffect } from 'react';
 import { Plus, Search, Edit2, Lock, Eye, EyeOff } from 'lucide-react';
+import { authFetch } from '@/lib/api/client';
 
 const ROLES: Record<string, { label: string; color: string }> = {
   owner: { label: 'Owner', color: 'bg-red-100 text-red-800' },
@@ -85,7 +86,7 @@ export default function EmployeeManagement() {
       const timeout = setTimeout(() => controller.abort(), 15000);
       let data;
       try {
-        const response = await fetch(`/api/employees?${params}`, { cache: 'no-store', signal: controller.signal });
+        const response = await authFetch(`/api/employees?${params}`, { cache: 'no-store', signal: controller.signal });
         clearTimeout(timeout);
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: Failed to load employees`);
@@ -125,7 +126,7 @@ export default function EmployeeManagement() {
     setSubmitting(true);
     setError(null);
     try {
-      const response = await fetch('/api/employees', {
+      const response = await authFetch('/api/employees', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData),
@@ -154,7 +155,7 @@ export default function EmployeeManagement() {
     setError(null);
 
     try {
-      const response = await fetch('/api/employees', {
+      const response = await authFetch('/api/employees', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -185,7 +186,7 @@ export default function EmployeeManagement() {
     setError(null);
 
     try {
-      const response = await fetch('/api/employees', {
+      const response = await authFetch('/api/employees', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -211,7 +212,7 @@ export default function EmployeeManagement() {
 
   const handleToggleStatus = async (employee: Employee) => {
     try {
-      const response = await fetch('/api/employees', {
+      const response = await authFetch('/api/employees', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

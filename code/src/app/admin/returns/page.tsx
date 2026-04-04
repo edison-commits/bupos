@@ -4,6 +4,7 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { Search, Calendar, ChevronDown, ChevronUp, Plus, X, AlertCircle, CheckCircle, Loader } from 'lucide-react';
+import { authFetch } from '@/lib/api/client';
 
 interface CartItem {
   product_id: string;
@@ -94,7 +95,7 @@ export default function ReturnsPage() {
         params.append('dateRange', searchDateRange);
       }
 
-      const response = await fetch(`/api/returns/search?${params.toString()}`);
+      const response = await authFetch(`/api/returns/search?${params.toString()}`);
       if (!response.ok) {
         throw new Error('Failed to search transaction');
       }
@@ -157,7 +158,7 @@ export default function ReturnsPage() {
 
     setProcessing(true);
     try {
-      const response = await fetch('/api/returns/process', {
+      const response = await authFetch('/api/returns/process', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
