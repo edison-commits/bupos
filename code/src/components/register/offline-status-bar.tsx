@@ -23,14 +23,6 @@ export function OfflineStatusBar() {
     return () => clearInterval(interval);
   }, []);
 
-  // Auto-sync when coming back online
-  useEffect(() => {
-    if (isOnline && pendingCount > 0 && !syncing) {
-      handleSync();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOnline, pendingCount]);
-
   const handleSync = useCallback(async () => {
     if (syncing) return;
     setSyncing(true);
@@ -55,6 +47,13 @@ export function OfflineStatusBar() {
       setTimeout(() => setSyncResult(null), 5_000);
     }
   }, [syncing]);
+
+  // Auto-sync when coming back online (depends on handleSync so it re-runs when syncing status changes)
+  useEffect(() => {
+    if (isOnline && pendingCount > 0 && !syncing) {
+      handleSync();
+    }
+  }, [isOnline, pendingCount, syncing, handleSync]);
 
   // If online and nothing pending, show a minimal green dot
   if (isOnline && pendingCount === 0 && !syncResult) {

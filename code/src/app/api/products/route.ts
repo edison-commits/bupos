@@ -338,7 +338,7 @@ export async function PUT(request: NextRequest) {
       fields.push('updated_at = NOW()');
 
       const result = await client.query(
-        `UPDATE products SET ${fields.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
+        `UPDATE products SET ${fields.join(', ')} WHERE id = $${paramIndex} RETURNING id, name, slug, category_id, description, image_url, is_active, is_touch_favorite, updated_at`,
         [...values, id]
       );
 
@@ -373,7 +373,7 @@ export async function PUT(request: NextRequest) {
       fields.push('updated_at = NOW()');
 
       const result = await client.query(
-        `UPDATE product_variants SET ${fields.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
+        `UPDATE product_variants SET ${fields.join(', ')} WHERE id = $${paramIndex} RETURNING id, sku, price, cost, updated_at`,
         [...values, updates.variant_id]
       );
 

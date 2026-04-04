@@ -2,7 +2,7 @@
 
 import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { authFetch } from '@/lib/api/client';
 
@@ -66,7 +66,7 @@ export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       const response = await authFetch(`/api/dashboard?range=${range}`);
@@ -78,16 +78,16 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [range]);
 
   useEffect(() => {
     fetchData();
-  }, [range]);
+  }, [fetchData]);
 
   useEffect(() => {
     const interval = setInterval(fetchData, 60000);
     return () => clearInterval(interval);
-  }, [range]);
+  }, [fetchData]);
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('en-US', {

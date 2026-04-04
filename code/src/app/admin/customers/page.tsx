@@ -99,23 +99,16 @@ export default function CustomerManagement() {
 
   const loadStats = async () => {
     try {
-      const response = await authFetch(`/api/customers?page=1&pageSize=1`);
-      if (!response.ok) return;
-
-      const data = await response.json();
-      const total = data.pagination.total;
-      const now = new Date();
-      const monthAgo = new Date(now.getFullYear(), now.getMonth(), 1);
-
-      const newThisMonth = data.customers.filter((c: Customer) => new Date(c.created_at) >= monthAgo).length;
-      const avgSpend = total > 0 ? data.customers.reduce((sum: number, c: Customer) => sum + (Number(c.total_spend) || 0), 0) / total : 0;
-      const totalPoints = data.customers.reduce((sum: number, c: Customer) => sum + (c.loyalty_points || 0), 0);
-
+      const params = new URLSearchParams({ stats: 'true' });
+      if (search) params.set('search', search);
+      const res = await authFetch(`/api/customers?${params}`);
+      if (!res.ok) return;
+      const { total, newThisMonth, avgSpend, totalPointsOutstanding } = await res.json();
       setStats({
         totalCustomers: total,
-        newThisMonth,
-        avgSpend,
-        totalPointsOutstanding: totalPoints,
+        newThisMonth: newThisMonth ?? 0,
+        avgSpend: avgSpend ?? 0,
+        totalPointsOutstanding: totalPointsOutstanding ?? 0,
       });
     } catch (err) {
       console.error('Failed to load stats:', err);

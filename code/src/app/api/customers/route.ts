@@ -9,10 +9,47 @@ export async function GET(request: NextRequest) {
 
   const search = request.nextUrl.searchParams.get('search')?.trim() || '';
   const id = request.nextUrl.searchParams.get('id')?.trim() || '';
+  const statsOnly = request.nextUrl.searchParams.get('stats')?.trim() === 'true';
   const pageRaw = parseInt(request.nextUrl.searchParams.get('page') || '1', 10);
   const pageSizeRaw = parseInt(request.nextUrl.searchParams.get('pageSize') || '50', 10);
   const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
   const pageSize = Number.isFinite(pageSizeRaw) && pageSizeRaw > 0 ? Math.min(100, pageSizeRaw) : 50;
+
+  // Stats-only mode: return aggregate stats without fetching customer rows
+  if (statsOnly) {
+    try {
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      const searchWhere = search
+        ? ` AND (first_name ILIKE $2 OR last_name ILIKE $2 OR email ILIKE $2 OR phone ILIKE $2)`
+        : '';
+      const searchVal = search ? [`%${search}%`] : [];
+
+      const [statsRes] = await Promise.all([
+        orgQuery(
+          orgId,
+          `SELECT
+             COUNT(*)::int AS total,
+             COUNT(*) FILTER (WHERE created_at >= $3)::int AS new_this_month,
+             COALESCE(AVG(total_spend) FILTER (WHERE total_spend IS NOT NULL), 0)::numeric AS avg_spend,
+             COALESCE(SUM(loyalty_points), 0)::bigint AS total_points
+           FROM customers
+           WHERE organization_id = $1${searchWhere}`,
+          [orgId, ...searchVal, monthStart]
+        ),
+      ]);
+      const s = statsRes.rows[0];
+      return NextResponse.json({
+        total: s.total,
+        newThisMonth: s.new_this_month,
+        avgSpend: Number(s.avg_spend) || 0,
+        totalPointsOutstanding: Number(s.total_points) || 0,
+      });
+    } catch (error) {
+      console.error('Customers stats error:', error);
+      return NextResponse.json({ error: 'Failed to fetch stats' }, { status: 500 });
+    }
+  }
 
   try {
     // Single customer detail with purchase history
@@ -71,7 +108,10 @@ export async function GET(request: NextRequest) {
     }
 
     const countQ = `SELECT COUNT(*)::int as total FROM customers c WHERE 1=1${whereExtra}`;
-    const dataQ = `SELECT * FROM customers c WHERE 1=1${whereExtra}
+    const dataQ = `SELECT c.id, c.first_name, c.last_name, c.email, c.phone, c.address,
+      c.loyalty_points, c.total_spend, c.visit_count, c.store_credit_balance,
+      c.is_active, c.created_at, c.updated_at
+      FROM customers c WHERE 1=1${whereExtra}
       ORDER BY c.updated_at DESC LIMIT $${idx} OFFSET $${idx + 1}`;
 
     values.push(pageSize, (page - 1) * pageSize);
