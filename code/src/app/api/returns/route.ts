@@ -66,32 +66,46 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'At least one return item is required' }, { status: 400 });
     }
 
-    // Generate return number: RET-BEL-YYMMDD-NNN
+    // Generate return number: RET-BEL-YYMMDD-NNN — retry loop handles concurrent collision
     const { rows: locRows } = await orgQuery(orgId, 'SELECT name FROM locations WHERE id = $1', [BUPOS_LOCATION_ID]);
     const locCode = (locRows[0]?.name || 'STR').slice(0, 3).toUpperCase();
     const now = new Date();
     const dateStr = `${String(now.getFullYear()).slice(-2)}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
-    const { rows: countRows } = await orgQuery(
-      orgId,
-      `SELECT COUNT(*)::int as cnt FROM returns WHERE organization_id = $1 AND return_number LIKE $2`,
-      [`RET-${locCode}-${dateStr}-%`],
-    );
-    const seq = (countRows[0].cnt || 0) + 1;
-    const returnNumber = `RET-${locCode}-${dateStr}-${String(seq).padStart(3, '0')}`;
 
-    // Calculate refund amount
+    // Calculate refund amount upfront (needed before the insert)
     const refundAmount = lines.reduce((sum: number, l: { quantity: number; unit_price: number }) =>
       sum + (l.quantity * l.unit_price), 0);
 
     const returnId = randomUUID();
+    let returnNumber = '';
+    let retRows: any = null;
 
-    const { rows: retRows } = await orgQuery(
-      orgId,
-      `INSERT INTO returns (id, organization_id, location_id, return_number, customer_name, reason, notes, refund_method, refund_amount, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')
-       RETURNING *`,
-      [returnId, orgId, BUPOS_LOCATION_ID, returnNumber, customer_name || null, reason || 'other', notes || null, refund_method || 'store_credit', refundAmount],
-    );
+    // Retry loop: count → generate → insert; on duplicate key, re-count and retry
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const { rows: countRows } = await orgQuery(
+        orgId,
+        `SELECT COUNT(*)::int as cnt FROM returns WHERE organization_id = $1 AND return_number LIKE $2`,
+        [`RET-${locCode}-${dateStr}-%`],
+      );
+      const seq = (countRows[0].cnt || 0) + 1;
+      returnNumber = `RET-${locCode}-${dateStr}-${String(seq).padStart(3, '0')}`;
+      try {
+        retRows = await orgQuery(
+          orgId,
+          `INSERT INTO returns (id, organization_id, location_id, return_number, customer_name, reason, notes, refund_method, refund_amount, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')
+           RETURNING *`,
+          [returnId, orgId, BUPOS_LOCATION_ID, returnNumber, customer_name || null, reason || 'other', notes || null, refund_method || 'store_credit', refundAmount],
+        );
+        break;
+      } catch (e) {
+        if (!(e instanceof Error && (e.message.includes('duplicate key') || e.message.includes('23505')))) throw e;
+        // collision — retry with fresh count
+      }
+    }
+    if (!retRows) {
+      return NextResponse.json({ error: 'Failed to generate unique return number' }, { status: 500 });
+    }
 
     for (const line of lines) {
       await orgQuery(

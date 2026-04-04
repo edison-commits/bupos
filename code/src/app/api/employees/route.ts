@@ -133,6 +133,18 @@ export async function POST(request: NextRequest) {
     const pinHash = hashSecret(pin);
     const now = new Date().toISOString();
 
+    // Prevent PIN collision: reject if this exact hash already belongs to another employee
+    const pinCheck = await pool.query(
+      `SELECT employee_id FROM auth_credentials WHERE pin_hash = $1 LIMIT 1`,
+      [pinHash],
+    );
+    if (pinCheck.rows.length > 0) {
+      return NextResponse.json(
+        { error: 'This PIN is already in use by another employee. Choose a different PIN.' },
+        { status: 409 },
+      );
+    }
+
     // Use orgQuery for RLS-scoped insertion
     const { rows } = await orgQuery(
       orgId,
@@ -344,6 +356,18 @@ export async function PATCH(request: NextRequest) {
 
       const pinHash = hashSecret(pin);
       const now = new Date().toISOString();
+
+      // Prevent PIN collision with other employees
+      const pinCheck = await pool.query(
+        `SELECT employee_id FROM auth_credentials WHERE pin_hash = $1 AND employee_id != $2 LIMIT 1`,
+        [pinHash, id],
+      );
+      if (pinCheck.rows.length > 0) {
+        return NextResponse.json(
+          { error: 'This PIN is already in use by another employee. Choose a different PIN.' },
+          { status: 409 },
+        );
+      }
 
       const { rows } = await pool.query(
         `UPDATE auth_credentials SET pin_hash = $1, pin_last_rotated_at = $2, updated_at = $2

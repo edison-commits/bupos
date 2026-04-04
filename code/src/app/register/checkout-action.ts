@@ -103,8 +103,9 @@ export async function checkoutAction(
 
   // Loyalty calculations
   const loyaltyConfig = registerConfiguration.loyalty;
+  // Rounding before flooring cancels binary float drift (e.g. 10.00*0.1 = 0.9999999 → round=1 → floor=1)
   const loyaltyPointsEarned = cart.customerId
-    ? Math.floor(totals.grandTotal * loyaltyConfig.earnRatePerDollar)
+    ? Math.floor(Math.round(totals.grandTotal * loyaltyConfig.earnRatePerDollar))
     : 0;
   const loyaltyPointsRedeemed = loyaltyTendered > 0 && cart.customerId
     ? Math.round(loyaltyTendered / loyaltyConfig.redemptionValuePerPoint)
@@ -241,33 +242,53 @@ export async function checkoutAction(
           [loyaltyPointsRedeemed, loyaltyPointsEarned, totals.grandTotal, cart.customerId],
         );
 
-        // 7b. Deduct store credit if used
+        // 7b. Deduct store credit if used — verify sufficient balance before deducting
         if (storeCreditTenderedTotal > 0) {
           const { rows: balRows } = await client.query(
-            `UPDATE customers SET store_credit_balance = GREATEST(0, store_credit_balance - $1), updated_at = now() WHERE id = $2 RETURNING store_credit_balance`,
-            [storeCreditTenderedTotal, cart.customerId],
+            `SELECT store_credit_balance FROM customers WHERE id = $1 FOR UPDATE`,
+            [cart.customerId],
+          );
+          const currentBalance = Number(balRows[0]?.store_credit_balance ?? 0);
+          if (currentBalance < storeCreditTenderedTotal) {
+            await client.query('ROLLBACK');
+            redirect(`/register?error=Insufficient+store+credit+balance`);
+          }
+          const newBalance = currentBalance - storeCreditTenderedTotal;
+          await client.query(
+            `UPDATE customers SET store_credit_balance = $1, updated_at = now() WHERE id = $2`,
+            [newBalance, cart.customerId],
           );
           await client.query(
             `INSERT INTO store_credit_ledger (id, organization_id, customer_id, transaction_type, amount, balance_after, employee_id, transaction_id, reason, created_at)
              VALUES ($1, $2, $3, 'redemption', $4, $5, $6, $7, 'Checkout redemption', now())`,
-            [randomUUID(), context.employee.organizationId, cart.customerId, -storeCreditTenderedTotal, balRows[0]?.store_credit_balance ?? 0, context.employee.id, transactionId],
+            [randomUUID(), context.employee.organizationId, cart.customerId, -storeCreditTenderedTotal, newBalance, context.employee.id, transactionId],
           );
         }
       }
 
-      // 8. Deduct gift card balance if used
+      // 8. Deduct gift card balance if used — with balance check to prevent over-redemption
       if (giftCardTendered > 0) {
         for (const tender of tenders) {
           if (tender.type !== "gift_card" || !tender.metadata?.gift_card_id) continue;
-          await client.query(
-            `UPDATE gift_cards SET balance = GREATEST(0, balance - $1), status = CASE WHEN balance - $1 <= 0 THEN 'depleted' ELSE status END, updated_at = now() WHERE id = $2`,
-            [tender.amount, tender.metadata.gift_card_id],
+          // Lock row and verify sufficient balance before deducting
+          const { rows: gcRows } = await client.query(
+            `SELECT balance, status FROM gift_cards WHERE id = $1 FOR UPDATE`,
+            [tender.metadata.gift_card_id],
           );
-          const gcBal = await client.query(`SELECT balance FROM gift_cards WHERE id = $1`, [tender.metadata.gift_card_id]);
+          const card = gcRows[0];
+          if (!card || card.status !== 'active' || Number(card.balance) < tender.amount) {
+            await client.query('ROLLBACK');
+            redirect(`/register?error=Gift+card+insufficient+balance`);
+          }
+          const newBalance = Number(card.balance) - tender.amount;
+          await client.query(
+            `UPDATE gift_cards SET balance = $1, status = CASE WHEN $1 <= 0 THEN 'depleted' ELSE 'active' END, updated_at = now() WHERE id = $2`,
+            [newBalance, tender.metadata.gift_card_id],
+          );
           await client.query(
             `INSERT INTO gift_card_transactions (id, gift_card_id, transaction_type, amount, balance_after, employee_id, transaction_id, reason, created_at)
              VALUES ($1, $2, 'redemption', $3, $4, $5, $6, 'Checkout redemption', now())`,
-            [randomUUID(), tender.metadata.gift_card_id, -tender.amount, gcBal.rows[0]?.balance ?? 0, context.employee.id, transactionId],
+            [randomUUID(), tender.metadata.gift_card_id, -tender.amount, newBalance, context.employee.id, transactionId],
           );
         }
       }

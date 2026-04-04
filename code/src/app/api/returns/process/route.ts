@@ -99,10 +99,19 @@ export async function POST(request: NextRequest) {
     }
 
     const originalTotal = Number(txnResult.rows[0].grand_total) || 0;
-    if (refund_amount > originalTotal) {
+
+    // Sum all prior refunds for this transaction so we don't over-refund
+    const priorRefResult = await client.query(
+      `SELECT COALESCE(SUM(ABS(amount)), 0)::numeric AS prior_refunds
+       FROM transaction_tenders
+       WHERE transaction_id = $1 AND is_refund = true`,
+      [transaction_id],
+    );
+    const priorRefunds = Number(priorRefResult.rows[0]?.prior_refunds) || 0;
+    if (refund_amount > originalTotal - priorRefunds) {
       await client.query('ROLLBACK');
       return NextResponse.json(
-        { error: `Refund amount ${refund_amount} exceeds original transaction total ${originalTotal}` },
+        { error: `Refund amount ${refund_amount} exceeds remaining refundable amount ${Number((originalTotal - priorRefunds).toFixed(2))} (original: ${originalTotal}, already refunded: ${priorRefunds})` },
         { status: 400 }
       );
     }

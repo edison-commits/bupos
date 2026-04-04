@@ -226,6 +226,20 @@ export async function POST(request: NextRequest) {
     // Handle variant creation
     if (body.product_id && body.variant) {
       const { sku, barcode, name, size_label, color_label, price, compare_at_price, cost } = body.variant;
+      if (!sku) {
+        return NextResponse.json({ error: 'SKU is required for variants' }, { status: 400 });
+      }
+      if (typeof price === 'number' && price < 0) {
+        return NextResponse.json({ error: 'Price cannot be negative' }, { status: 400 });
+      }
+      // Reject duplicate SKU within this org
+      const dupCheck = await client.query(
+        `SELECT id FROM product_variants WHERE organization_id = $1 AND LOWER(sku) = LOWER($2) LIMIT 1`,
+        [orgId, sku],
+      );
+      if (dupCheck.rows.length > 0) {
+        return NextResponse.json({ error: `SKU "${sku}" already exists` }, { status: 409 });
+      }
       const result = await client.query(
         `INSERT INTO product_variants (id, organization_id, product_id, sku, barcode, name, size_label, color_label, price, compare_at_price, cost, is_active, created_at, updated_at)
          VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, NOW(), NOW())
@@ -335,6 +349,12 @@ export async function PUT(request: NextRequest) {
 
     // Handle variant update
     if (updates.variant_id && (updates.price !== undefined || updates.cost !== undefined)) {
+      if (typeof updates.price === 'number' && updates.price < 0) {
+        return NextResponse.json({ error: 'Price cannot be negative' }, { status: 400 });
+      }
+      if (typeof updates.cost === 'number' && updates.cost < 0) {
+        return NextResponse.json({ error: 'Cost cannot be negative' }, { status: 400 });
+      }
       const fields = [];
       const values = [];
       let paramIndex = 1;
