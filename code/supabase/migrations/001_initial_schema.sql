@@ -9,7 +9,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- ============================================================================
 
 -- Organizations - multi-tenant root entity
-CREATE TABLE organizations (
+CREATE TABLE IF NOT EXISTS organizations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL,
   slug TEXT NOT NULL UNIQUE,
@@ -20,10 +20,10 @@ CREATE TABLE organizations (
   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_organizations_slug ON organizations(slug);
+CREATE INDEX IF NOT EXISTS idx_organizations_slug ON organizations(slug);
 
 -- Locations - per-store records
-CREATE TABLE locations (
+CREATE TABLE IF NOT EXISTS locations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
@@ -37,11 +37,11 @@ CREATE TABLE locations (
   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_locations_organization_id ON locations(organization_id);
-CREATE INDEX idx_locations_code ON locations(code);
+CREATE INDEX IF NOT EXISTS idx_locations_organization_id ON locations(organization_id);
+CREATE INDEX IF NOT EXISTS idx_locations_code ON locations(code);
 
 -- Employees
-CREATE TABLE employees (
+CREATE TABLE IF NOT EXISTS employees (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   role_key TEXT NOT NULL CHECK (role_key IN ('owner', 'manager', 'cashier', 'inventory_clerk', 'support')),
@@ -56,12 +56,12 @@ CREATE TABLE employees (
   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_employees_organization_id ON employees(organization_id);
-CREATE INDEX idx_employees_email ON employees(email);
-CREATE INDEX idx_employees_is_active ON employees(is_active);
+CREATE INDEX IF NOT EXISTS idx_employees_organization_id ON employees(organization_id);
+CREATE INDEX IF NOT EXISTS idx_employees_email ON employees(email);
+CREATE INDEX IF NOT EXISTS idx_employees_is_active ON employees(is_active);
 
 -- Categories
-CREATE TABLE categories (
+CREATE TABLE IF NOT EXISTS categories (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
@@ -73,12 +73,12 @@ CREATE TABLE categories (
   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_categories_organization_id ON categories(organization_id);
-CREATE INDEX idx_categories_parent_category_id ON categories(parent_category_id);
-CREATE INDEX idx_categories_slug ON categories(slug);
+CREATE INDEX IF NOT EXISTS idx_categories_organization_id ON categories(organization_id);
+CREATE INDEX IF NOT EXISTS idx_categories_parent_category_id ON categories(parent_category_id);
+CREATE INDEX IF NOT EXISTS idx_categories_slug ON categories(slug);
 
 -- Modifier Groups
-CREATE TABLE modifier_groups (
+CREATE TABLE IF NOT EXISTS modifier_groups (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
@@ -89,10 +89,10 @@ CREATE TABLE modifier_groups (
   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_modifier_groups_organization_id ON modifier_groups(organization_id);
+CREATE INDEX IF NOT EXISTS idx_modifier_groups_organization_id ON modifier_groups(organization_id);
 
 -- Modifiers
-CREATE TABLE modifiers (
+CREATE TABLE IF NOT EXISTS modifiers (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   modifier_group_id UUID NOT NULL REFERENCES modifier_groups(id) ON DELETE CASCADE,
@@ -103,8 +103,8 @@ CREATE TABLE modifiers (
   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_modifiers_organization_id ON modifiers(organization_id);
-CREATE INDEX idx_modifiers_modifier_group_id ON modifiers(modifier_group_id);
+CREATE INDEX IF NOT EXISTS idx_modifiers_organization_id ON modifiers(organization_id);
+CREATE INDEX IF NOT EXISTS idx_modifiers_modifier_group_id ON modifiers(modifier_group_id);
 
 -- Product ↔ Modifier Groups junction (required by pgCreateProduct / pgUpdateProduct)
 CREATE TABLE IF NOT EXISTS product_modifier_groups (
@@ -113,11 +113,11 @@ CREATE TABLE IF NOT EXISTS product_modifier_groups (
   PRIMARY KEY (product_id, modifier_group_id)
 );
 
-CREATE INDEX idx_product_modifier_groups_product_id ON product_modifier_groups(product_id);
-CREATE INDEX idx_product_modifier_groups_modifier_group_id ON product_modifier_groups(modifier_group_id);
+CREATE INDEX IF NOT EXISTS idx_product_modifier_groups_product_id ON product_modifier_groups(product_id);
+CREATE INDEX IF NOT EXISTS idx_product_modifier_groups_modifier_group_id ON product_modifier_groups(modifier_group_id);
 
 -- Products
-CREATE TABLE products (
+CREATE TABLE IF NOT EXISTS products (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   category_id UUID NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
@@ -133,12 +133,12 @@ CREATE TABLE products (
   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_products_organization_id ON products(organization_id);
-CREATE INDEX idx_products_category_id ON products(category_id);
-CREATE INDEX idx_products_is_active ON products(is_active);
+CREATE INDEX IF NOT EXISTS idx_products_organization_id ON products(organization_id);
+CREATE INDEX IF NOT EXISTS idx_products_category_id ON products(category_id);
+CREATE INDEX IF NOT EXISTS idx_products_is_active ON products(is_active);
 
 -- Product Variants
-CREATE TABLE product_variants (
+CREATE TABLE IF NOT EXISTS product_variants (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
@@ -155,13 +155,13 @@ CREATE TABLE product_variants (
   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_product_variants_organization_id ON product_variants(organization_id);
-CREATE INDEX idx_product_variants_product_id ON product_variants(product_id);
-CREATE INDEX idx_product_variants_sku ON product_variants(sku);
-CREATE INDEX idx_product_variants_barcode ON product_variants(barcode);
+CREATE INDEX IF NOT EXISTS idx_product_variants_organization_id ON product_variants(organization_id);
+CREATE INDEX IF NOT EXISTS idx_product_variants_product_id ON product_variants(product_id);
+CREATE INDEX IF NOT EXISTS idx_product_variants_sku ON product_variants(sku);
+CREATE INDEX IF NOT EXISTS idx_product_variants_barcode ON product_variants(barcode);
 
 -- Inventory Levels
-CREATE TABLE inventory_levels (
+CREATE TABLE IF NOT EXISTS inventory_levels (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
@@ -174,12 +174,12 @@ CREATE TABLE inventory_levels (
   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_inventory_levels_organization_id ON inventory_levels(organization_id);
-CREATE INDEX idx_inventory_levels_location_id ON inventory_levels(location_id);
-CREATE INDEX idx_inventory_levels_product_variant_id ON inventory_levels(product_variant_id);
+CREATE INDEX IF NOT EXISTS idx_inventory_levels_organization_id ON inventory_levels(organization_id);
+CREATE INDEX IF NOT EXISTS idx_inventory_levels_location_id ON inventory_levels(location_id);
+CREATE INDEX IF NOT EXISTS idx_inventory_levels_product_variant_id ON inventory_levels(product_variant_id);
 
 -- Customers
-CREATE TABLE customers (
+CREATE TABLE IF NOT EXISTS customers (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   first_name TEXT NOT NULL,
@@ -196,12 +196,12 @@ CREATE TABLE customers (
   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_customers_organization_id ON customers(organization_id);
-CREATE INDEX idx_customers_email ON customers(email);
-CREATE INDEX idx_customers_phone ON customers(phone);
+CREATE INDEX IF NOT EXISTS idx_customers_organization_id ON customers(organization_id);
+CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email);
+CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone);
 
 -- Register Sessions - user's POS session
-CREATE TABLE register_sessions (
+CREATE TABLE IF NOT EXISTS register_sessions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   auth_session_id UUID NOT NULL,
   employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
@@ -217,12 +217,12 @@ CREATE TABLE register_sessions (
   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_register_sessions_employee_id ON register_sessions(employee_id);
-CREATE INDEX idx_register_sessions_location_id ON register_sessions(location_id);
-CREATE INDEX idx_register_sessions_status ON register_sessions(status);
+CREATE INDEX IF NOT EXISTS idx_register_sessions_employee_id ON register_sessions(employee_id);
+CREATE INDEX IF NOT EXISTS idx_register_sessions_location_id ON register_sessions(location_id);
+CREATE INDEX IF NOT EXISTS idx_register_sessions_status ON register_sessions(status);
 
 -- Shifts
-CREATE TABLE shifts (
+CREATE TABLE IF NOT EXISTS shifts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
   employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
@@ -241,13 +241,13 @@ CREATE TABLE shifts (
   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_shifts_location_id ON shifts(location_id);
-CREATE INDEX idx_shifts_employee_id ON shifts(employee_id);
-CREATE INDEX idx_shifts_register_session_id ON shifts(register_session_id);
-CREATE INDEX idx_shifts_status ON shifts(status);
+CREATE INDEX IF NOT EXISTS idx_shifts_location_id ON shifts(location_id);
+CREATE INDEX IF NOT EXISTS idx_shifts_employee_id ON shifts(employee_id);
+CREATE INDEX IF NOT EXISTS idx_shifts_register_session_id ON shifts(register_session_id);
+CREATE INDEX IF NOT EXISTS idx_shifts_status ON shifts(status);
 
 -- Transactions - main POS transaction record
-CREATE TABLE transactions (
+CREATE TABLE IF NOT EXISTS transactions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
@@ -267,16 +267,16 @@ CREATE TABLE transactions (
   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_transactions_organization_id ON transactions(organization_id);
-CREATE INDEX idx_transactions_location_id ON transactions(location_id);
-CREATE INDEX idx_transactions_register_session_id ON transactions(register_session_id);
-CREATE INDEX idx_transactions_employee_id ON transactions(employee_id);
-CREATE INDEX idx_transactions_customer_id ON transactions(customer_id);
-CREATE INDEX idx_transactions_status ON transactions(status);
-CREATE INDEX idx_transactions_created_at ON transactions(created_at);
+CREATE INDEX IF NOT EXISTS idx_transactions_organization_id ON transactions(organization_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_location_id ON transactions(location_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_register_session_id ON transactions(register_session_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_employee_id ON transactions(employee_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_customer_id ON transactions(customer_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status);
+CREATE INDEX IF NOT EXISTS idx_transactions_created_at ON transactions(created_at);
 
 -- Transaction Tenders - normalized tender lines
-CREATE TABLE transaction_tenders (
+CREATE TABLE IF NOT EXISTS transaction_tenders (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   transaction_id UUID NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
   tender_type TEXT NOT NULL CHECK (tender_type IN ('cash', 'card', 'store_credit', 'loyalty', 'gift_card', 'split')),
@@ -286,11 +286,11 @@ CREATE TABLE transaction_tenders (
   created_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_transaction_tenders_transaction_id ON transaction_tenders(transaction_id);
-CREATE INDEX idx_transaction_tenders_tender_type ON transaction_tenders(tender_type);
+CREATE INDEX IF NOT EXISTS idx_transaction_tenders_transaction_id ON transaction_tenders(transaction_id);
+CREATE INDEX IF NOT EXISTS idx_transaction_tenders_tender_type ON transaction_tenders(tender_type);
 
 -- Transaction Events - audit trail for transaction actions
-CREATE TABLE transaction_events (
+CREATE TABLE IF NOT EXISTS transaction_events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   transaction_id UUID NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
   actor_employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
@@ -300,12 +300,12 @@ CREATE TABLE transaction_events (
   created_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_transaction_events_transaction_id ON transaction_events(transaction_id);
-CREATE INDEX idx_transaction_events_actor_employee_id ON transaction_events(actor_employee_id);
-CREATE INDEX idx_transaction_events_event_kind ON transaction_events(event_kind);
+CREATE INDEX IF NOT EXISTS idx_transaction_events_transaction_id ON transaction_events(transaction_id);
+CREATE INDEX IF NOT EXISTS idx_transaction_events_actor_employee_id ON transaction_events(actor_employee_id);
+CREATE INDEX IF NOT EXISTS idx_transaction_events_event_kind ON transaction_events(event_kind);
 
 -- Transaction Exceptions - approval-required exceptions
-CREATE TABLE transaction_exceptions (
+CREATE TABLE IF NOT EXISTS transaction_exceptions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   transaction_id UUID NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
   exception_code TEXT NOT NULL,
@@ -314,10 +314,10 @@ CREATE TABLE transaction_exceptions (
   created_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_transaction_exceptions_transaction_id ON transaction_exceptions(transaction_id);
+CREATE INDEX IF NOT EXISTS idx_transaction_exceptions_transaction_id ON transaction_exceptions(transaction_id);
 
 -- Audit Events - comprehensive audit trail
-CREATE TABLE audit_events (
+CREATE TABLE IF NOT EXISTS audit_events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   location_id UUID REFERENCES locations(id) ON DELETE SET NULL,
@@ -329,14 +329,14 @@ CREATE TABLE audit_events (
   created_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_audit_events_organization_id ON audit_events(organization_id);
-CREATE INDEX idx_audit_events_location_id ON audit_events(location_id);
-CREATE INDEX idx_audit_events_actor_employee_id ON audit_events(actor_employee_id);
-CREATE INDEX idx_audit_events_event_kind ON audit_events(event_kind);
-CREATE INDEX idx_audit_events_created_at ON audit_events(created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_events_organization_id ON audit_events(organization_id);
+CREATE INDEX IF NOT EXISTS idx_audit_events_location_id ON audit_events(location_id);
+CREATE INDEX IF NOT EXISTS idx_audit_events_actor_employee_id ON audit_events(actor_employee_id);
+CREATE INDEX IF NOT EXISTS idx_audit_events_event_kind ON audit_events(event_kind);
+CREATE INDEX IF NOT EXISTS idx_audit_events_created_at ON audit_events(created_at);
 
 -- Pay In / Out Records
-CREATE TABLE pay_in_outs (
+CREATE TABLE IF NOT EXISTS pay_in_outs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   shift_id UUID NOT NULL REFERENCES shifts(id) ON DELETE CASCADE,
   location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
@@ -348,12 +348,12 @@ CREATE TABLE pay_in_outs (
   created_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_pay_in_outs_shift_id ON pay_in_outs(shift_id);
-CREATE INDEX idx_pay_in_outs_location_id ON pay_in_outs(location_id);
-CREATE INDEX idx_pay_in_outs_employee_id ON pay_in_outs(employee_id);
+CREATE INDEX IF NOT EXISTS idx_pay_in_outs_shift_id ON pay_in_outs(shift_id);
+CREATE INDEX IF NOT EXISTS idx_pay_in_outs_location_id ON pay_in_outs(location_id);
+CREATE INDEX IF NOT EXISTS idx_pay_in_outs_employee_id ON pay_in_outs(employee_id);
 
 -- Auth Credentials - employee authentication
-CREATE TABLE auth_credentials (
+CREATE TABLE IF NOT EXISTS auth_credentials (
   employee_id UUID PRIMARY KEY REFERENCES employees(id) ON DELETE CASCADE,
   email TEXT,
   password_hash TEXT,
@@ -364,10 +364,10 @@ CREATE TABLE auth_credentials (
   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_auth_credentials_email ON auth_credentials(email);
+CREATE INDEX IF NOT EXISTS idx_auth_credentials_email ON auth_credentials(email);
 
 -- Sessions - auth/admin sessions
-CREATE TABLE sessions (
+CREATE TABLE IF NOT EXISTS sessions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
   scope TEXT NOT NULL CHECK (scope IN ('admin', 'register')),
@@ -377,12 +377,12 @@ CREATE TABLE sessions (
   expires_at TIMESTAMPTZ NOT NULL
 );
 
-CREATE INDEX idx_sessions_employee_id ON sessions(employee_id);
-CREATE INDEX idx_sessions_scope ON sessions(scope);
-CREATE INDEX idx_sessions_expires_at ON sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_employee_id ON sessions(employee_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_scope ON sessions(scope);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 
 -- Inventory Adjustments
-CREATE TABLE inventory_adjustments (
+CREATE TABLE IF NOT EXISTS inventory_adjustments (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   inventory_level_id UUID NOT NULL REFERENCES inventory_levels(id) ON DELETE CASCADE,
   product_variant_id UUID NOT NULL REFERENCES product_variants(id) ON DELETE CASCADE,
@@ -394,16 +394,16 @@ CREATE TABLE inventory_adjustments (
   created_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_inventory_adjustments_inventory_level_id ON inventory_adjustments(inventory_level_id);
-CREATE INDEX idx_inventory_adjustments_employee_id ON inventory_adjustments(employee_id);
-CREATE INDEX idx_inventory_adjustments_location_id ON inventory_adjustments(location_id);
+CREATE INDEX IF NOT EXISTS idx_inventory_adjustments_inventory_level_id ON inventory_adjustments(inventory_level_id);
+CREATE INDEX IF NOT EXISTS idx_inventory_adjustments_employee_id ON inventory_adjustments(employee_id);
+CREATE INDEX IF NOT EXISTS idx_inventory_adjustments_location_id ON inventory_adjustments(location_id);
 
 -- ============================================================================
 -- PHASE 2 TABLES
 -- ============================================================================
 
 -- Gift Cards
-CREATE TABLE gift_cards (
+CREATE TABLE IF NOT EXISTS gift_cards (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   code TEXT NOT NULL UNIQUE,
@@ -418,13 +418,13 @@ CREATE TABLE gift_cards (
   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_gift_cards_organization_id ON gift_cards(organization_id);
-CREATE INDEX idx_gift_cards_code ON gift_cards(code);
-CREATE INDEX idx_gift_cards_customer_id ON gift_cards(customer_id);
-CREATE INDEX idx_gift_cards_status ON gift_cards(status);
+CREATE INDEX IF NOT EXISTS idx_gift_cards_organization_id ON gift_cards(organization_id);
+CREATE INDEX IF NOT EXISTS idx_gift_cards_code ON gift_cards(code);
+CREATE INDEX IF NOT EXISTS idx_gift_cards_customer_id ON gift_cards(customer_id);
+CREATE INDEX IF NOT EXISTS idx_gift_cards_status ON gift_cards(status);
 
 -- Gift Card Transactions
-CREATE TABLE gift_card_transactions (
+CREATE TABLE IF NOT EXISTS gift_card_transactions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   gift_card_id UUID NOT NULL REFERENCES gift_cards(id) ON DELETE CASCADE,
   transaction_type TEXT NOT NULL CHECK (transaction_type IN ('activation', 'reload', 'redemption', 'refund', 'adjustment', 'void')),
@@ -436,11 +436,11 @@ CREATE TABLE gift_card_transactions (
   created_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_gift_card_transactions_gift_card_id ON gift_card_transactions(gift_card_id);
-CREATE INDEX idx_gift_card_transactions_transaction_id ON gift_card_transactions(transaction_id);
+CREATE INDEX IF NOT EXISTS idx_gift_card_transactions_gift_card_id ON gift_card_transactions(gift_card_id);
+CREATE INDEX IF NOT EXISTS idx_gift_card_transactions_transaction_id ON gift_card_transactions(transaction_id);
 
 -- Store Credit Ledger
-CREATE TABLE store_credit_ledger (
+CREATE TABLE IF NOT EXISTS store_credit_ledger (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
@@ -454,12 +454,12 @@ CREATE TABLE store_credit_ledger (
   created_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_store_credit_ledger_organization_id ON store_credit_ledger(organization_id);
-CREATE INDEX idx_store_credit_ledger_customer_id ON store_credit_ledger(customer_id);
-CREATE INDEX idx_store_credit_ledger_transaction_id ON store_credit_ledger(transaction_id);
+CREATE INDEX IF NOT EXISTS idx_store_credit_ledger_organization_id ON store_credit_ledger(organization_id);
+CREATE INDEX IF NOT EXISTS idx_store_credit_ledger_customer_id ON store_credit_ledger(customer_id);
+CREATE INDEX IF NOT EXISTS idx_store_credit_ledger_transaction_id ON store_credit_ledger(transaction_id);
 
 -- Employee Behavior Flags
-CREATE TABLE behavior_flags (
+CREATE TABLE IF NOT EXISTS behavior_flags (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
@@ -478,12 +478,12 @@ CREATE TABLE behavior_flags (
   created_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_behavior_flags_organization_id ON behavior_flags(organization_id);
-CREATE INDEX idx_behavior_flags_employee_id ON behavior_flags(employee_id);
-CREATE INDEX idx_behavior_flags_severity ON behavior_flags(severity);
+CREATE INDEX IF NOT EXISTS idx_behavior_flags_organization_id ON behavior_flags(organization_id);
+CREATE INDEX IF NOT EXISTS idx_behavior_flags_employee_id ON behavior_flags(employee_id);
+CREATE INDEX IF NOT EXISTS idx_behavior_flags_severity ON behavior_flags(severity);
 
 -- Layaways
-CREATE TABLE layaways (
+CREATE TABLE IF NOT EXISTS layaways (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
@@ -508,14 +508,14 @@ CREATE TABLE layaways (
   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_layaways_organization_id ON layaways(organization_id);
-CREATE INDEX idx_layaways_location_id ON layaways(location_id);
-CREATE INDEX idx_layaways_customer_id ON layaways(customer_id);
-CREATE INDEX idx_layaways_employee_id ON layaways(employee_id);
-CREATE INDEX idx_layaways_status ON layaways(status);
+CREATE INDEX IF NOT EXISTS idx_layaways_organization_id ON layaways(organization_id);
+CREATE INDEX IF NOT EXISTS idx_layaways_location_id ON layaways(location_id);
+CREATE INDEX IF NOT EXISTS idx_layaways_customer_id ON layaways(customer_id);
+CREATE INDEX IF NOT EXISTS idx_layaways_employee_id ON layaways(employee_id);
+CREATE INDEX IF NOT EXISTS idx_layaways_status ON layaways(status);
 
 -- Layaway Payments
-CREATE TABLE layaway_payments (
+CREATE TABLE IF NOT EXISTS layaway_payments (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   layaway_id UUID NOT NULL REFERENCES layaways(id) ON DELETE CASCADE,
   tender_type TEXT NOT NULL,
@@ -525,10 +525,10 @@ CREATE TABLE layaway_payments (
   created_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_layaway_payments_layaway_id ON layaway_payments(layaway_id);
+CREATE INDEX IF NOT EXISTS idx_layaway_payments_layaway_id ON layaway_payments(layaway_id);
 
 -- Stocktakes
-CREATE TABLE stocktakes (
+CREATE TABLE IF NOT EXISTS stocktakes (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
@@ -543,12 +543,12 @@ CREATE TABLE stocktakes (
   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_stocktakes_organization_id ON stocktakes(organization_id);
-CREATE INDEX idx_stocktakes_location_id ON stocktakes(location_id);
-CREATE INDEX idx_stocktakes_status ON stocktakes(status);
+CREATE INDEX IF NOT EXISTS idx_stocktakes_organization_id ON stocktakes(organization_id);
+CREATE INDEX IF NOT EXISTS idx_stocktakes_location_id ON stocktakes(location_id);
+CREATE INDEX IF NOT EXISTS idx_stocktakes_status ON stocktakes(status);
 
 -- Stocktake Lines
-CREATE TABLE stocktake_lines (
+CREATE TABLE IF NOT EXISTS stocktake_lines (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   stocktake_id UUID NOT NULL REFERENCES stocktakes(id) ON DELETE CASCADE,
   product_variant_id UUID NOT NULL REFERENCES product_variants(id) ON DELETE CASCADE,
@@ -560,10 +560,10 @@ CREATE TABLE stocktake_lines (
   created_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_stocktake_lines_stocktake_id ON stocktake_lines(stocktake_id);
+CREATE INDEX IF NOT EXISTS idx_stocktake_lines_stocktake_id ON stocktake_lines(stocktake_id);
 
 -- Transfers
-CREATE TABLE transfers (
+CREATE TABLE IF NOT EXISTS transfers (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   source_location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
@@ -581,13 +581,13 @@ CREATE TABLE transfers (
   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_transfers_organization_id ON transfers(organization_id);
-CREATE INDEX idx_transfers_source_location_id ON transfers(source_location_id);
-CREATE INDEX idx_transfers_destination_location_id ON transfers(destination_location_id);
-CREATE INDEX idx_transfers_status ON transfers(status);
+CREATE INDEX IF NOT EXISTS idx_transfers_organization_id ON transfers(organization_id);
+CREATE INDEX IF NOT EXISTS idx_transfers_source_location_id ON transfers(source_location_id);
+CREATE INDEX IF NOT EXISTS idx_transfers_destination_location_id ON transfers(destination_location_id);
+CREATE INDEX IF NOT EXISTS idx_transfers_status ON transfers(status);
 
 -- Transfer Lines
-CREATE TABLE transfer_lines (
+CREATE TABLE IF NOT EXISTS transfer_lines (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   transfer_id UUID NOT NULL REFERENCES transfers(id) ON DELETE CASCADE,
   product_variant_id UUID NOT NULL REFERENCES product_variants(id) ON DELETE CASCADE,
@@ -597,14 +597,14 @@ CREATE TABLE transfer_lines (
   created_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_transfer_lines_transfer_id ON transfer_lines(transfer_id);
+CREATE INDEX IF NOT EXISTS idx_transfer_lines_transfer_id ON transfer_lines(transfer_id);
 
 -- ============================================================================
 -- PHASE 3 TABLES
 -- ============================================================================
 
 -- Time Clock Entries
-CREATE TABLE time_clock_entries (
+CREATE TABLE IF NOT EXISTS time_clock_entries (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
@@ -615,13 +615,13 @@ CREATE TABLE time_clock_entries (
   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_time_clock_entries_organization_id ON time_clock_entries(organization_id);
-CREATE INDEX idx_time_clock_entries_employee_id ON time_clock_entries(employee_id);
-CREATE INDEX idx_time_clock_entries_location_id ON time_clock_entries(location_id);
-CREATE INDEX idx_time_clock_entries_event_type ON time_clock_entries(event_type);
+CREATE INDEX IF NOT EXISTS idx_time_clock_entries_organization_id ON time_clock_entries(organization_id);
+CREATE INDEX IF NOT EXISTS idx_time_clock_entries_employee_id ON time_clock_entries(employee_id);
+CREATE INDEX IF NOT EXISTS idx_time_clock_entries_location_id ON time_clock_entries(location_id);
+CREATE INDEX IF NOT EXISTS idx_time_clock_entries_event_type ON time_clock_entries(event_type);
 
 -- Promo Codes
-CREATE TABLE promo_codes (
+CREATE TABLE IF NOT EXISTS promo_codes (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   code TEXT NOT NULL UNIQUE,
@@ -638,12 +638,12 @@ CREATE TABLE promo_codes (
   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_promo_codes_organization_id ON promo_codes(organization_id);
-CREATE INDEX idx_promo_codes_code ON promo_codes(code);
-CREATE INDEX idx_promo_codes_status ON promo_codes(status);
+CREATE INDEX IF NOT EXISTS idx_promo_codes_organization_id ON promo_codes(organization_id);
+CREATE INDEX IF NOT EXISTS idx_promo_codes_code ON promo_codes(code);
+CREATE INDEX IF NOT EXISTS idx_promo_codes_status ON promo_codes(status);
 
 -- Promo Redemptions
-CREATE TABLE promo_redemptions (
+CREATE TABLE IF NOT EXISTS promo_redemptions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   promo_code_id UUID NOT NULL REFERENCES promo_codes(id) ON DELETE CASCADE,
   transaction_id UUID NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
@@ -652,8 +652,8 @@ CREATE TABLE promo_redemptions (
   created_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
-CREATE INDEX idx_promo_redemptions_promo_code_id ON promo_redemptions(promo_code_id);
-CREATE INDEX idx_promo_redemptions_transaction_id ON promo_redemptions(transaction_id);
+CREATE INDEX IF NOT EXISTS idx_promo_redemptions_promo_code_id ON promo_redemptions(promo_code_id);
+CREATE INDEX IF NOT EXISTS idx_promo_redemptions_transaction_id ON promo_redemptions(transaction_id);
 
 -- ============================================================================
 -- CONSTRAINTS AND REFERENTIAL INTEGRITY
