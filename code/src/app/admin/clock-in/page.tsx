@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 interface Employee {
@@ -16,7 +16,7 @@ interface Location {
   name: string;
 }
 
-export default function ClockInPage() {
+function ClockInContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const notice = searchParams.get("notice");
@@ -252,5 +252,13 @@ export default function ClockInPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function ClockInPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: "var(--surface-app)" }}><div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-2" style={{ borderTopColor: "var(--surface-accent)" }} /></div>}>
+      <ClockInContent />
+    </Suspense>
   );
 }
