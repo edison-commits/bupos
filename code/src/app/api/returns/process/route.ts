@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { pool, orgTx, orgQuery } from '@/lib/db';
+import { orgTx } from '@/lib/db';
 import { requireRegisterPermission } from '@/lib/authz';
 
 const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
