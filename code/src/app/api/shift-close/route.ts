@@ -3,6 +3,7 @@ import { orgQuery } from "@/lib/db";
 import { requireAdminPermission } from "@/lib/authz";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 import { pgCloseShift } from "@/lib/persistence/postgres-store";
+import { checkRateLimit } from "@/lib/auth/rate-limit";
 
 const LOCATION_ID = "c57268b3-cb14-4c1a-bda6-55e49ddc6313";
 
@@ -78,6 +79,13 @@ export async function GET(req: NextRequest) {
  */
 export async function POST(req: NextRequest) {
   const ctx = await requireAdminPermission('register.open');
+  const employeeId = ctx.employee.id;
+
+  const rl = checkRateLimit(`shift-close:${employeeId}`);
+  if (!rl.allowed) {
+    return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+  }
+
   const orgId = ctx.employee.organizationId;
   if (!orgId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { orgTx } from '@/lib/db';
 import { requireRegisterPermission } from '@/lib/authz';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
+import { checkRateLimit } from '@/lib/auth/rate-limit';
 
 const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
 
@@ -40,10 +41,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   const authCtx = await requireRegisterPermission('register.open');
+  const employeeId = authCtx.employee.id;
+
+  const rl = checkRateLimit(`returns:${employeeId}`);
+  if (!rl.allowed) {
+    return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+  }
+
   const client = await orgTx(orgId);
 
   try {
-    const employeeId = authCtx.employee.id;
     const body: ProcessReturnRequest = await request.json();
 
     const {

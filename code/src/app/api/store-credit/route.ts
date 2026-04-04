@@ -3,6 +3,7 @@ import { orgQuery, orgTx } from "@/lib/db";
 import { randomUUID } from "node:crypto";
 import { requireAdminPermission } from "@/lib/authz";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
+import { checkRateLimit } from "@/lib/auth/rate-limit";
 
 
 /**
@@ -112,6 +113,13 @@ export async function GET(req: NextRequest) {
  */
 export async function POST(req: NextRequest) {
   const ctx = await requireAdminPermission('approval.store_credit');
+  const employeeId = ctx.employee.id;
+
+  const rl = checkRateLimit(`store-credit:${employeeId}`);
+  if (!rl.allowed) {
+    return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+  }
+
   const orgId = ctx.employee.organizationId;
   if (!orgId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
