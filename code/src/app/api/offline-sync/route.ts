@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { cookies } from "next/headers";
 import pool, { orgTx } from "@/lib/db";
+import { requireRegisterPermission } from "@/lib/authz";
 
 const ORG_ID = process.env.BUPOS_ORG_ID || "33262270-7100-4b46-b2fb-8b50ad872bbb";
 const LOCATION_ID = process.env.BUPOS_LOCATION_ID || "c57268b3-cb14-4c1a-bda6-55e49ddc6313";
@@ -14,6 +15,9 @@ const LOCATION_ID = process.env.BUPOS_LOCATION_ID || "c57268b3-cb14-4c1a-bda6-55
  * rather than requiring a live session.
  */
 export async function POST(request: NextRequest) {
+  // Auth: require a real session cookie before accepting any offline-sync payload.
+  await requireRegisterPermission("register.open");
+
   try {
     const body = await request.json();
     const { id, cart, tenders, timestamp, registerSessionId } = body;
