@@ -630,6 +630,7 @@ export async function PATCH(request: NextRequest) {
       }
 
       await client.query('COMMIT');
+      invalidateProductsCache(ORG_ID);
       return NextResponse.json({ created, skipped, total: rows.length, results });
     }
 
