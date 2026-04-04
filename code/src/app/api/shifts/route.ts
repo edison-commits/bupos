@@ -5,12 +5,14 @@ import { randomUUID } from "node:crypto";
 import { requireAdminPermission } from "@/lib/authz";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 
-const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
 const LOCATION_ID = "c57268b3-cb14-4c1a-bda6-55e49ddc6313";
 
 export async function GET(req: NextRequest) {
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  if (!adminCtx && !registerCtx) {
+  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }  if (!adminCtx && !registerCtx) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -42,7 +44,7 @@ export async function GET(req: NextRequest) {
 
     // Total count
     const countResult = await orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT COUNT(*)::int AS total FROM shifts s WHERE ${where}`,
       params,
     );
@@ -50,7 +52,7 @@ export async function GET(req: NextRequest) {
 
     // Paginated shifts
     const shifts = await orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT
          s.id,
          s.employee_id,
@@ -97,7 +99,11 @@ export async function GET(req: NextRequest) {
 
 // POST /api/shifts — open a new shift (admin-initiated, no register session required)
 export async function POST(req: NextRequest) {
-  await requireAdminPermission('register.open');
+  const ctx = await requireAdminPermission('register.open');
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const { employeeId, locationId, openingFloat, openedNote } = await req.json();
 
@@ -110,7 +116,7 @@ export async function POST(req: NextRequest) {
 
     // Check for existing open shift
     const existing = await orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT id FROM shifts WHERE employee_id = $1 AND location_id = $2 AND status = 'open' LIMIT 1`,
       [employeeId, locationId],
     );

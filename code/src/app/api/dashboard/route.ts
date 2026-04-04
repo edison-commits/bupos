@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 
-const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
 
 /**
  * GET /api/dashboard
@@ -16,7 +15,10 @@ const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
  */
 export async function GET(req: NextRequest) {
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  if (!adminCtx && !registerCtx) {
+  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }  if (!adminCtx && !registerCtx) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   try {
@@ -44,7 +46,7 @@ export async function GET(req: NextRequest) {
     const [metricsResult, tenderResult, hourlyResult, employeeResult, lowStockResult, recentResult] = await Promise.all([
       // 1. Key metrics
       orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT
            COUNT(*) FILTER (WHERE status = 'completed')::int AS transaction_count,
            COUNT(*) FILTER (WHERE status = 'voided')::int AS void_count,
@@ -61,7 +63,7 @@ export async function GET(req: NextRequest) {
 
       // 2. Tender breakdown
       orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT tt.tender_type, SUM(tt.amount)::numeric AS total, COUNT(*)::int AS count
          FROM transaction_tenders tt
          JOIN transactions t ON t.id = tt.transaction_id
@@ -73,7 +75,7 @@ export async function GET(req: NextRequest) {
 
       // 3. Hourly breakdown
       orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT
            EXTRACT(HOUR FROM created_at)::int AS hour,
            COUNT(*)::int AS count,
@@ -87,7 +89,7 @@ export async function GET(req: NextRequest) {
 
       // 4. Employee performance
       orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT t.employee_id, e.display_name,
                 COUNT(*)::int AS transaction_count,
                 SUM(t.grand_total)::numeric AS total_sales,
@@ -102,7 +104,7 @@ export async function GET(req: NextRequest) {
 
       // 5. Low stock alerts
       orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT il.on_hand, il.reorder_point, pv.sku, pv.barcode, p.name AS product_name,
                 pv.size_label AS size, pv.color_label AS color
          FROM inventory_levels il
@@ -116,7 +118,7 @@ export async function GET(req: NextRequest) {
 
       // 6. Recent transactions
       orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT t.id, t.grand_total, t.tender_type, t.status, t.created_at,
                 e.display_name AS employee_name
          FROM transactions t

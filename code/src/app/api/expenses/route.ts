@@ -3,12 +3,14 @@ import pool from '@/lib/db';
 import { requireAdminPermission } from '@/lib/authz';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
 
-const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
 const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
 
 export async function GET(request: NextRequest) {
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  if (!adminCtx && !registerCtx) {
+  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }  if (!adminCtx && !registerCtx) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -17,7 +19,7 @@ export async function GET(request: NextRequest) {
 
   try {
     let where = 'WHERE e.organization_id = $1';
-    const values: unknown[] = [ORG_ID];
+    const values: unknown[] = [orgId];
     let idx = 2;
 
     if (month) {
@@ -55,7 +57,11 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  await requireAdminPermission('catalog.manage');
+  const ctx = await requireAdminPermission('catalog.manage');
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const { category, description, amount, expense_date, is_recurring, recurrence_period, notes } = await request.json();
     if (!category || !description || !amount) {
@@ -65,7 +71,7 @@ export async function POST(request: NextRequest) {
     const { rows } = await pool.query(
       `INSERT INTO expenses (organization_id, location_id, category, description, amount, expense_date, is_recurring, recurrence_period, notes)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-      [ORG_ID, LOCATION_ID, category, description, amount, expense_date || new Date().toISOString().slice(0, 10), is_recurring || false, recurrence_period || null, notes || null],
+      [orgId, LOCATION_ID, category, description, amount, expense_date || new Date().toISOString().slice(0, 10), is_recurring || false, recurrence_period || null, notes || null],
     );
     return NextResponse.json({ expense: rows[0] });
   } catch (error) {
@@ -75,12 +81,16 @@ export async function POST(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
-  await requireAdminPermission('catalog.manage');
+  const ctx = await requireAdminPermission('catalog.manage');
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const { id } = await request.json();
     if (!id) return NextResponse.json({ error: 'Expense ID required' }, { status: 400 });
 
-    await pool.query('DELETE FROM expenses WHERE id = $1 AND organization_id = $2', [id, ORG_ID]);
+    await pool.query('DELETE FROM expenses WHERE id = $1 AND organization_id = $2', [id, orgId]);
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Expenses DELETE error:', error);

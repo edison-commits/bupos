@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { orgQuery, orgTx, pool } from "@/lib/db";
 import { randomUUID } from "node:crypto";
 import { requireAdminPermission } from "@/lib/authz";
+import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 
-const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
 
 /**
  * GET /api/transfers
@@ -14,6 +14,11 @@ const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
  *   location — filter by source or destination location
  */
 export async function GET(req: NextRequest) {
+  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
+  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const sp = req.nextUrl.searchParams;
 
@@ -21,7 +26,7 @@ export async function GET(req: NextRequest) {
     const id = sp.get("id");
     if (id) {
       const transfer = await orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT t.*,
                 sl.name AS source_location_name,
                 dl.name AS destination_location_name,
@@ -45,7 +50,7 @@ export async function GET(req: NextRequest) {
       }
 
       const lines = await orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT tl.*,
                 p.name AS product_name,
                 pv.sku, pv.barcode,
@@ -83,7 +88,7 @@ export async function GET(req: NextRequest) {
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
     const transfers = await orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT t.*,
               sl.name AS source_location_name,
               dl.name AS destination_location_name,
@@ -116,8 +121,12 @@ export async function GET(req: NextRequest) {
  *   action: "cancel"  — { transferId, employeeId }
  */
 export async function POST(req: NextRequest) {
+  const ctx = await requireAdminPermission("catalog.manage");
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
-    await requireAdminPermission("catalog.manage");
 
     const body = await req.json();
     const { action } = body;
@@ -136,12 +145,12 @@ export async function POST(req: NextRequest) {
       }
 
       const transferId = randomUUID();
-      const client = await orgTx(ORG_ID);
+      const client = await orgTx(orgId);
       try {
         await client.query(
           `INSERT INTO transfers (id, organization_id, source_location_id, destination_location_id, status, requested_by, notes, created_at, updated_at)
            VALUES ($1, $2, $3, $4, 'requested', $5, $6, now(), now())`,
-          [transferId, ORG_ID, sourceLocationId, destinationLocationId, employeeId, notes || null],
+          [transferId, orgId, sourceLocationId, destinationLocationId, employeeId, notes || null],
         );
 
         for (const line of lines) {
@@ -165,7 +174,7 @@ export async function POST(req: NextRequest) {
         await pool.query(
           `INSERT INTO audit_events (id, organization_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
            VALUES ($1, $2, $3, 'transfer', $4, 'transfer_created', $5, now())`,
-          [randomUUID(), ORG_ID, employeeId, transferId, JSON.stringify({ source: sourceLocationId, destination: destinationLocationId, line_count: lines.length })],
+          [randomUUID(), orgId, employeeId, transferId, JSON.stringify({ source: sourceLocationId, destination: destinationLocationId, line_count: lines.length })],
         );
       } catch (err) {
         console.error("[transfers] audit event failed:", err);
@@ -178,7 +187,7 @@ export async function POST(req: NextRequest) {
       const { transferId, employeeId } = body;
       if (!transferId) return NextResponse.json({ error: "transferId required" }, { status: 400 });
 
-      const client = await orgTx(ORG_ID);
+      const client = await orgTx(orgId);
       try {
         const t = await client.query(
           `SELECT * FROM transfers WHERE id = $1 AND status = 'requested' FOR UPDATE`,
@@ -228,7 +237,7 @@ export async function POST(req: NextRequest) {
       const { transferId, employeeId } = body;
       if (!transferId) return NextResponse.json({ error: "transferId required" }, { status: 400 });
 
-      const client = await orgTx(ORG_ID);
+      const client = await orgTx(orgId);
       try {
         const t = await client.query(
           `SELECT * FROM transfers WHERE id = $1 AND status = 'in_transit' FOR UPDATE`,
@@ -263,7 +272,7 @@ export async function POST(req: NextRequest) {
              VALUES ($1, $2, $3, $4, $5, 0, 0, now(), now())
              ON CONFLICT (product_variant_id, location_id)
              DO UPDATE SET on_hand = inventory_levels.on_hand + $5, updated_at = now()`,
-            [randomUUID(), ORG_ID, line.product_variant_id, transfer.destination_location_id, line.qty],
+            [randomUUID(), orgId, line.product_variant_id, transfer.destination_location_id, line.qty],
           );
         }
 
@@ -282,7 +291,7 @@ export async function POST(req: NextRequest) {
       if (!transferId) return NextResponse.json({ error: "transferId required" }, { status: 400 });
 
       const result = await orgQuery(
-        ORG_ID,
+        orgId,
         `UPDATE transfers SET status = 'cancelled', cancelled_by = $1, cancelled_at = now(), updated_at = now()
          WHERE id = $2 AND status = 'requested'
          RETURNING id`,

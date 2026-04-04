@@ -7,7 +7,6 @@ import { requireAdminPermission } from '@/lib/authz';
 import { getAdminSession } from '@/lib/auth/session';
 import { invalidateEmployeesCache } from '@/lib/persistence/postgres-store';
 
-const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
 const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
 
 // GET: List all employees with their roles and location info
@@ -17,13 +16,17 @@ export async function GET(request: NextRequest) {
   if (!ctx || !ctx.session || !ctx.employee) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   const search = request.nextUrl.searchParams.get('search')?.trim() || '';
   const page = Math.max(1, parseInt(request.nextUrl.searchParams.get('page') || '1'));
   const pageSize = Math.min(100, parseInt(request.nextUrl.searchParams.get('pageSize') || '50'));
 
   try {
     let whereExtra = '';
-    const values: unknown[] = [ORG_ID];
+    const values: unknown[] = [orgId];
     let idx = 2;
 
     if (search) {
@@ -42,8 +45,8 @@ export async function GET(request: NextRequest) {
     values.push(pageSize, (page - 1) * pageSize);
 
     const [countRes, dataRes] = await Promise.all([
-      orgQuery(ORG_ID, countQ, values.slice(0, idx - 1)),
-      orgQuery(ORG_ID, dataQ, values),
+      orgQuery(orgId, countQ, values.slice(0, idx - 1)),
+      orgQuery(orgId, dataQ, values),
     ]);
 
     const employees = dataRes.rows.map((row: Record<string, unknown>) => ({
@@ -77,7 +80,11 @@ export async function GET(request: NextRequest) {
 
 // POST: Create new employee with auth credential (PIN)
 export async function POST(request: NextRequest) {
-  await requireAdminPermission('employee.manage');
+  const ctx = await requireAdminPermission('employee.manage');
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const {
       firstName,
@@ -126,7 +133,7 @@ export async function POST(request: NextRequest) {
 
     // Use orgQuery for RLS-scoped insertion
     const { rows } = await orgQuery(
-      ORG_ID,
+      orgId,
       `INSERT INTO employees (
         id, organization_id, role_key, first_name, last_name, display_name,
         email, phone, pin_hint, is_active, location_ids, created_at, updated_at
@@ -134,7 +141,7 @@ export async function POST(request: NextRequest) {
       RETURNING id, first_name, last_name, display_name, email, role_key, is_active, location_ids, pin_hint, created_at, updated_at`,
       [
         employeeId,
-        ORG_ID,
+        orgId,
         roleKey,
         firstName.trim(),
         lastName.trim(),
@@ -169,7 +176,7 @@ export async function POST(request: NextRequest) {
       updatedAt: rows[0].updated_at,
     };
 
-    invalidateEmployeesCache(ORG_ID);
+    invalidateEmployeesCache(orgId);
     return NextResponse.json({ employee }, { status: 201 });
   } catch (error) {
     console.error('Employees POST error:', error);
@@ -179,7 +186,11 @@ export async function POST(request: NextRequest) {
 
 // PUT: Update employee details
 export async function PUT(request: NextRequest) {
-  await requireAdminPermission('employee.manage');
+  const ctx = await requireAdminPermission('employee.manage');
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const {
       id,
@@ -242,7 +253,7 @@ export async function PUT(request: NextRequest) {
     sets.push(`updated_at = $${idx++}`);
     vals.push(new Date().toISOString());
     vals.push(id);
-    vals.push(ORG_ID);
+    vals.push(orgId);
 
     const { rows } = await pool.query(
       `UPDATE employees SET ${sets.join(', ')}
@@ -269,7 +280,7 @@ export async function PUT(request: NextRequest) {
       updatedAt: rows[0].updated_at,
     };
 
-    invalidateEmployeesCache(ORG_ID);
+    invalidateEmployeesCache(orgId);
     return NextResponse.json({ employee });
   } catch (error) {
     console.error('Employees PUT error:', error);
@@ -279,7 +290,11 @@ export async function PUT(request: NextRequest) {
 
 // PATCH: Toggle active status or reset PIN
 export async function PATCH(request: NextRequest) {
-  await requireAdminPermission('employee.manage');
+  const ctx = await requireAdminPermission('employee.manage');
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const { action, id, pin } = await request.json();
 
@@ -293,7 +308,7 @@ export async function PATCH(request: NextRequest) {
         `UPDATE employees SET is_active = NOT is_active, updated_at = NOW()
          WHERE id = $1 AND organization_id = $2
          RETURNING id, first_name, last_name, display_name, email, role_key, is_active, location_ids, pin_hint, created_at, updated_at`,
-        [id, ORG_ID]
+        [id, orgId]
       );
 
       if (rows.length === 0) {
@@ -314,7 +329,7 @@ export async function PATCH(request: NextRequest) {
         updatedAt: rows[0].updated_at,
       };
 
-      invalidateEmployeesCache(ORG_ID);
+      invalidateEmployeesCache(orgId);
       return NextResponse.json({ employee });
     } else if (action === 'reset-pin') {
       // Reset PIN

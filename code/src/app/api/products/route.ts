@@ -4,7 +4,6 @@ import { requireAdminPermission } from '@/lib/authz';
 import { invalidateProductsCache } from '@/lib/persistence/postgres-store';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
 
-const ORG_ID = process.env.BUPOS_ORG_ID || '33262270-7100-4b46-b2fb-8b50ad872bbb';
 const LOCATION_ID = process.env.BUPOS_LOCATION_ID || 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
 
 // 30-second response cache
@@ -14,7 +13,8 @@ const MAX_CACHE_SIZE = 50;
 
 export async function GET(request: NextRequest) {
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  if (!adminCtx && !registerCtx) {
+  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
+  if (!orgId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -57,7 +57,7 @@ export async function GET(request: NextRequest) {
     const [productsResult, categoriesResult, summaryResult] = await Promise.all([
       // Get products with variants and inventory
       orgQuery(
-        ORG_ID,
+        orgId,
         `
         SELECT
           p.id,
@@ -95,7 +95,7 @@ export async function GET(request: NextRequest) {
 
       // Get all categories
       orgQuery(
-        ORG_ID,
+        orgId,
         `
         SELECT id, name, slug
         FROM categories
@@ -106,7 +106,7 @@ export async function GET(request: NextRequest) {
 
       // Get summary statistics
       orgQuery(
-        ORG_ID,
+        orgId,
         `
         SELECT
           COUNT(DISTINCT p.id) as total_products,
@@ -200,14 +200,18 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  await requireAdminPermission('catalog.manage');
+  const ctx = await requireAdminPermission('catalog.manage');
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   const client = await pool.connect();
   try {
     const body = await request.json();
 
     // Set RLS context
     await client.query('BEGIN');
-    await client.query(`SET LOCAL app.current_org_id = '${ORG_ID}'`);
+    await client.query(`SET LOCAL app.current_org_id = '${orgId}'`);
 
     // Handle category creation
     if (body.category) {
@@ -216,10 +220,10 @@ export async function POST(request: NextRequest) {
         `INSERT INTO categories (id, organization_id, name, slug, created_at, updated_at)
          VALUES (gen_random_uuid(), $1, $2, $3, NOW(), NOW())
          RETURNING id, name, slug`,
-        [ORG_ID, name, slug]
+        [orgId, name, slug]
       );
       await client.query('COMMIT');
-      invalidateProductsCache(ORG_ID);
+      invalidateProductsCache(orgId);
       return NextResponse.json(result.rows[0]);
     }
 
@@ -230,10 +234,10 @@ export async function POST(request: NextRequest) {
         `INSERT INTO product_variants (id, organization_id, product_id, sku, barcode, name, size_label, color_label, price, compare_at_price, cost, is_active, created_at, updated_at)
          VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, NOW(), NOW())
          RETURNING id, sku, barcode, name, size_label, color_label, price, compare_at_price, cost, is_active`,
-        [ORG_ID, body.product_id, sku, barcode, name, size_label, color_label, price, compare_at_price, cost]
+        [orgId, body.product_id, sku, barcode, name, size_label, color_label, price, compare_at_price, cost]
       );
       await client.query('COMMIT');
-      invalidateProductsCache(ORG_ID);
+      invalidateProductsCache(orgId);
       return NextResponse.json(result.rows[0]);
     }
 
@@ -243,10 +247,10 @@ export async function POST(request: NextRequest) {
       `INSERT INTO products (id, organization_id, category_id, name, slug, description, image_url, is_active, is_touch_favorite, created_at, updated_at)
        VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
        RETURNING id, name, slug, category_id, description, image_url, is_active, is_touch_favorite`,
-      [ORG_ID, category_id || null, name, slug, description || null, image_url || null, is_active, is_touch_favorite]
+      [orgId, category_id || null, name, slug, description || null, image_url || null, is_active, is_touch_favorite]
     );
     await client.query('COMMIT');
-    invalidateProductsCache(ORG_ID);
+    invalidateProductsCache(orgId);
     return NextResponse.json(result.rows[0]);
   } catch (error) {
     await client.query('ROLLBACK');
@@ -261,7 +265,11 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
-  await requireAdminPermission('catalog.manage');
+  const ctx = await requireAdminPermission('catalog.manage');
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   const client = await pool.connect();
   try {
     const body = await request.json();
@@ -272,7 +280,7 @@ export async function PUT(request: NextRequest) {
     }
 
     await client.query('BEGIN');
-    await client.query(`SET LOCAL app.current_org_id = '${ORG_ID}'`);
+    await client.query(`SET LOCAL app.current_org_id = '${orgId}'`);
 
     // Handle product update
     if (updates.name || updates.slug || updates.description !== undefined || updates.image_url !== undefined || updates.is_active !== undefined || updates.is_touch_favorite !== undefined) {
@@ -324,7 +332,7 @@ export async function PUT(request: NextRequest) {
       );
 
       await client.query('COMMIT');
-      invalidateProductsCache(ORG_ID);
+      invalidateProductsCache(orgId);
       return NextResponse.json(result.rows[0]);
     }
 
@@ -353,12 +361,12 @@ export async function PUT(request: NextRequest) {
       );
 
       await client.query('COMMIT');
-      invalidateProductsCache(ORG_ID);
+      invalidateProductsCache(orgId);
       return NextResponse.json(result.rows[0]);
     }
 
     await client.query('COMMIT');
-    invalidateProductsCache(ORG_ID);
+    invalidateProductsCache(orgId);
     return NextResponse.json({ message: 'No updates made' });
   } catch (error) {
     await client.query('ROLLBACK');
@@ -373,7 +381,11 @@ export async function PUT(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
-  await requireAdminPermission('catalog.manage');
+  const ctx = await requireAdminPermission('catalog.manage');
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   const client = await pool.connect();
   try {
     const body = await request.json();
@@ -384,7 +396,7 @@ export async function DELETE(request: NextRequest) {
     }
 
     await client.query('BEGIN');
-    await client.query(`SET LOCAL app.current_org_id = '${ORG_ID}'`);
+    await client.query(`SET LOCAL app.current_org_id = '${orgId}'`);
 
     // Soft delete: set is_active to false
     const result = await client.query(
@@ -393,7 +405,7 @@ export async function DELETE(request: NextRequest) {
     );
 
     await client.query('COMMIT');
-    invalidateProductsCache(ORG_ID);
+    invalidateProductsCache(orgId);
     return NextResponse.json({ message: 'Product deleted', id: result.rows[0].id });
   } catch (error) {
     await client.query('ROLLBACK');
@@ -408,6 +420,11 @@ export async function DELETE(request: NextRequest) {
 }
 
 export async function PATCH(request: NextRequest) {
+  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
+  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   const client = await pool.connect();
   try {
     const body = await request.json();
@@ -424,24 +441,24 @@ export async function PATCH(request: NextRequest) {
       let skipped = 0;
 
       await client.query('BEGIN');
-      await client.query(`SET LOCAL app.current_org_id = '${ORG_ID}'`);
+      await client.query(`SET LOCAL app.current_org_id = '${orgId}'`);
 
       // Build lookup maps
       const catsResult = await client.query(
         `SELECT id, name FROM categories WHERE organization_id = $1`,
-        [ORG_ID]
+        [orgId]
       );
       const catMap = new Map(catsResult.rows.map((r: any) => [r.name.toLowerCase(), r.id]));
 
       const existingResult = await client.query(
         `SELECT id, name, category_id FROM products WHERE organization_id = $1`,
-        [ORG_ID]
+        [orgId]
       );
       const productsByName = new Map(existingResult.rows.map((r: any) => [r.name.toLowerCase(), { id: r.id, categoryId: r.category_id }]));
 
       const variantResult = await client.query(
         `SELECT id, sku FROM product_variants WHERE organization_id = $1 AND sku IS NOT NULL AND sku != ''`,
-        [ORG_ID]
+        [orgId]
       );
       const skuMap = new Map(variantResult.rows.map((r: any) => [r.sku.toLowerCase(), r.id]));
 
@@ -568,12 +585,12 @@ export async function PATCH(request: NextRequest) {
         }
         await client.query(
           `INSERT INTO categories (id, organization_id, name, slug, created_at, updated_at) VALUES ${catValues.join(', ')}`,
-          [ORG_ID, ...catParams]
+          [orgId, ...catParams]
         );
         // Refresh catMap with newly inserted categories
         const newCatResult = await client.query(
           `SELECT id, name FROM categories WHERE organization_id = $1 AND name = ANY($2)`,
-          [ORG_ID, newCategories.map(c => c.displayName)]
+          [orgId, newCategories.map(c => c.displayName)]
         );
         for (const r of newCatResult.rows) catMap.set(r.name.toLowerCase(), r.id);
       }
@@ -596,12 +613,12 @@ export async function PATCH(request: NextRequest) {
         }
         await client.query(
           `INSERT INTO products (id, organization_id, category_id, name, slug, description, image_url, is_active, is_touch_favorite, created_at, updated_at) VALUES ${prodValues.join(', ')}`,
-          [ORG_ID, ...prodParams]
+          [orgId, ...prodParams]
         );
         // Refresh product map with newly inserted products
         const newProdResult = await client.query(
           `SELECT id, name FROM products WHERE organization_id = $1 AND name = ANY($2)`,
-          [ORG_ID, newProducts.map(p => p.name)]
+          [orgId, newProducts.map(p => p.name)]
         );
         for (const r of newProdResult.rows) {
           const key = r.name.toLowerCase();
@@ -636,12 +653,12 @@ export async function PATCH(request: NextRequest) {
         }
         await client.query(
           `INSERT INTO product_variants (id, organization_id, product_id, sku, barcode, name, size_label, color_label, price, cost, is_active, created_at, updated_at) VALUES ${varValues.join(', ')}`,
-          [ORG_ID, ...varParams]
+          [orgId, ...varParams]
         );
       }
 
       await client.query('COMMIT');
-      invalidateProductsCache(ORG_ID);
+      invalidateProductsCache(orgId);
       return NextResponse.json({ created, skipped, total: rows.length, results });
     }
 

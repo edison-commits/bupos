@@ -3,7 +3,6 @@ import { orgQuery, pool } from '@/lib/db';
 import { requireAdminPermission } from '@/lib/authz';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
 
-const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
 const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
 
 /**
@@ -17,7 +16,10 @@ const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
 
 export async function GET(request: NextRequest) {
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  if (!adminCtx && !registerCtx) {
+  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }  if (!adminCtx && !registerCtx) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -27,7 +29,7 @@ export async function GET(request: NextRequest) {
     if (type === 'open_pos') {
       // List open purchase orders
       const { rows } = await orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT
           po.*,
           s.name as supplier_name,
@@ -44,7 +46,7 @@ export async function GET(request: NextRequest) {
           AND po.location_id = $2
         GROUP BY po.id, s.name, l.name
         ORDER BY po.created_at DESC`,
-        [ORG_ID, LOCATION_ID]
+        [orgId, LOCATION_ID]
       );
 
       return NextResponse.json({ orders: rows });
@@ -57,7 +59,7 @@ export async function GET(request: NextRequest) {
       }
 
       const { rows: lines } = await orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT
           pol.*,
           pv.sku,
@@ -82,7 +84,7 @@ export async function GET(request: NextRequest) {
 
       const searchTerm = `%${q.toUpperCase()}%`;
       const { rows } = await orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT
           pv.id,
           pv.sku,
@@ -98,7 +100,7 @@ export async function GET(request: NextRequest) {
           AND (UPPER(pv.sku) LIKE $3 OR UPPER(p.name) LIKE $3 OR UPPER(pv.name) LIKE $3)
           AND pv.is_active = true
         LIMIT 20`,
-        [ORG_ID, LOCATION_ID, searchTerm]
+        [orgId, LOCATION_ID, searchTerm]
       );
 
       return NextResponse.json({ variants: rows });
@@ -115,7 +117,11 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const { employee } = await requireAdminPermission('catalog.manage');
+  const ctx = await requireAdminPermission('catalog.manage');
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const { items, mode, po_id } = await request.json();
 
@@ -126,14 +132,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const employeeId = employee.id;
+    const employeeId = ctx.employee.id;
 
     // Process receiving in transaction
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
       await client.query(
-        `SET LOCAL app.current_org_id = '${ORG_ID}'`
+        `SET LOCAL app.current_org_id = '${orgId}'`
       );
 
       for (const item of items) {
@@ -141,7 +147,7 @@ export async function POST(request: NextRequest) {
         const levelRes = await client.query(
           `SELECT id, on_hand FROM inventory_levels
            WHERE product_variant_id = $1 AND location_id = $2 AND organization_id = $3`,
-          [item.variant_id, LOCATION_ID, ORG_ID]
+          [item.variant_id, LOCATION_ID, orgId]
         );
 
         let inventoryLevelId: string;
@@ -157,7 +163,7 @@ export async function POST(request: NextRequest) {
               (organization_id, location_id, product_variant_id, on_hand, reserved, reorder_point)
              VALUES ($1, $2, $3, 0, 0, 0)
              RETURNING id`,
-            [ORG_ID, LOCATION_ID, item.variant_id]
+            [orgId, LOCATION_ID, item.variant_id]
           );
           inventoryLevelId = createRes.rows[0].id;
           currentOnHand = 0;

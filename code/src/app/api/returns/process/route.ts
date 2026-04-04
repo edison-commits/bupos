@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { orgTx } from '@/lib/db';
 import { requireRegisterPermission } from '@/lib/authz';
+import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
 
-const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
 const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
 
 interface ReturnLineItem {
@@ -34,12 +34,15 @@ interface ProcessReturnRequest {
  * 4. Record refund tender/transaction
  */
 export async function POST(request: NextRequest) {
-  // Acquire a transaction-scoped client with org context set
-  const client = await orgTx(ORG_ID);
+  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
+  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  const authCtx = await requireRegisterPermission('register.open');
+  const client = await orgTx(orgId);
 
   try {
-    // Auth guard — require an active register session with register.open permission
-    const authCtx = await requireRegisterPermission('register.open');
     const employeeId = authCtx.employee.id;
     const body: ProcessReturnRequest = await request.json();
 
@@ -109,7 +112,7 @@ export async function POST(request: NextRequest) {
 
     const countResult = await client.query(
       `SELECT COUNT(*)::int as cnt FROM returns WHERE organization_id = $1 AND return_number LIKE $2`,
-      [ORG_ID, `RET-${locCode}-${dateStr}-%`]
+      [orgId, `RET-${locCode}-${dateStr}-%`]
     );
     const seq = (countResult.rows[0]?.cnt || 0) + 1;
     const returnNumber = `RET-${locCode}-${dateStr}-${String(seq).padStart(3, '0')}`;
@@ -122,7 +125,7 @@ export async function POST(request: NextRequest) {
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING id`,
       [
-        ORG_ID,
+        orgId,
         LOCATION_ID,
         transaction_id,
         returnNumber,
@@ -183,7 +186,7 @@ export async function POST(request: NextRequest) {
         await client.query(
           `INSERT INTO inventory_levels (organization_id, product_variant_id, location_id, on_hand, received_at, updated_at)
            VALUES ($1, $2, $3, $4, NOW(), NOW())`,
-          [ORG_ID, variantId, LOCATION_ID, item.quantity]
+          [orgId, variantId, LOCATION_ID, item.quantity]
         );
       }
     }
@@ -200,7 +203,7 @@ export async function POST(request: NextRequest) {
       // Look up customer by name
       const custResult = await client.query(
         `SELECT id, store_credit_balance FROM customers WHERE first_name || ' ' || last_name = $1 AND organization_id = $2 LIMIT 1`,
-        [customer_name || '', ORG_ID]
+        [customer_name || '', orgId]
       );
       if (custResult.rows.length > 0) {
         const customer = custResult.rows[0];

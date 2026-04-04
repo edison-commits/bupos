@@ -4,8 +4,6 @@ import { randomUUID } from "node:crypto";
 import { requireAdminPermission } from "@/lib/authz";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 
-const ORG_ID = process.env.BUPOS_ORG_ID || "33262270-7100-4b46-b2fb-8b50ad872bbb";
-
 /**
  * GET /api/gift-cards
  *
@@ -18,8 +16,9 @@ const ORG_ID = process.env.BUPOS_ORG_ID || "33262270-7100-4b46-b2fb-8b50ad872bbb
  */
 export async function GET(req: NextRequest) {
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  if (!adminCtx && !registerCtx) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   try {
@@ -29,7 +28,7 @@ export async function GET(req: NextRequest) {
     const code = sp.get("code");
     if (code) {
       const result = await orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT gc.*, c.first_name || ' ' || c.last_name AS customer_name
          FROM gift_cards gc
          LEFT JOIN customers c ON c.id = gc.customer_id
@@ -46,7 +45,7 @@ export async function GET(req: NextRequest) {
     const id = sp.get("id");
     if (id) {
       const card = await orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT gc.*, c.first_name || ' ' || c.last_name AS customer_name,
                 e.display_name AS activated_by_name
          FROM gift_cards gc
@@ -60,7 +59,7 @@ export async function GET(req: NextRequest) {
       }
 
       const history = await orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT gct.*, e.display_name AS employee_name
          FROM gift_card_transactions gct
          LEFT JOIN employees e ON e.id = gct.employee_id
@@ -78,7 +77,7 @@ export async function GET(req: NextRequest) {
     const params = status ? [status] : [];
 
     const cards = await orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT gc.*, c.first_name || ' ' || c.last_name AS customer_name,
               e.display_name AS activated_by_name
        FROM gift_cards gc
@@ -91,7 +90,7 @@ export async function GET(req: NextRequest) {
 
     // Summary stats
     const stats = await orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT
          COUNT(*)::int AS total_cards,
          COUNT(*) FILTER (WHERE status = 'active')::int AS active_count,
@@ -120,8 +119,11 @@ export async function GET(req: NextRequest) {
  *   action: "disable"  — { giftCardId }
  */
 export async function POST(req: NextRequest) {
-  await requireAdminPermission('catalog.manage');
-
+  const ctx = await requireAdminPermission('catalog.manage');
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const body = await req.json();
     const { action } = body;
@@ -133,18 +135,18 @@ export async function POST(req: NextRequest) {
       }
 
       // Check for duplicate code
-      const existing = await orgQuery(ORG_ID, `SELECT id FROM gift_cards WHERE LOWER(code) = LOWER($1)`, [code]);
+      const existing = await orgQuery(orgId, `SELECT id FROM gift_cards WHERE LOWER(code) = LOWER($1)`, [code]);
       if (existing.rows.length > 0) {
         return NextResponse.json({ error: `Gift card code "${code}" already exists` }, { status: 409 });
       }
 
-      const client = await orgTx(ORG_ID);
+      const client = await orgTx(orgId);
       try {
         const gcId = randomUUID();
         await client.query(
           `INSERT INTO gift_cards (id, organization_id, code, balance, initial_balance, status, customer_id, activated_by, activated_at, created_at, updated_at)
            VALUES ($1, $2, $3, $4, $4, 'active', $5, $6, now(), now(), now())`,
-          [gcId, ORG_ID, code, amount, customerId || null, employeeId || null],
+          [gcId, orgId, code, amount, customerId || null, employeeId || null],
         );
 
         await client.query(
@@ -169,7 +171,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Gift card ID and positive amount required" }, { status: 400 });
       }
 
-      const client = await orgTx(ORG_ID);
+      const client = await orgTx(orgId);
       try {
         const gc = await client.query(`SELECT * FROM gift_cards WHERE id = $1 FOR UPDATE`, [giftCardId]);
         if (gc.rows.length === 0) {
@@ -211,7 +213,7 @@ export async function POST(req: NextRequest) {
       }
 
       await orgQuery(
-        ORG_ID,
+        orgId,
         `UPDATE gift_cards SET status = 'disabled', updated_at = now() WHERE id = $1`,
         [giftCardId],
       );

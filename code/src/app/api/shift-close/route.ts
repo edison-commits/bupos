@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
 import { requireAdminPermission } from "@/lib/authz";
+import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 import { pgCloseShift } from "@/lib/persistence/postgres-store";
 
-const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
 const LOCATION_ID = "c57268b3-cb14-4c1a-bda6-55e49ddc6313";
 
 /**
@@ -12,12 +12,17 @@ const LOCATION_ID = "c57268b3-cb14-4c1a-bda6-55e49ddc6313";
  * If no shift param, fetches the most recent open shift.
  */
 export async function GET(req: NextRequest) {
+  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
+  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     let shiftId = req.nextUrl.searchParams.get("shift");
 
     if (!shiftId) {
       const openShifts = await orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT s.id FROM shifts s
          WHERE s.location_id = $1 AND s.status = 'open'
          ORDER BY s.opened_at DESC LIMIT 1`,
@@ -33,14 +38,14 @@ export async function GET(req: NextRequest) {
     // Fetch shift + employee name, and build Z-report in parallel
     const [shiftResult, report] = await Promise.all([
       orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT s.*, e.display_name AS employee_name
          FROM shifts s
          LEFT JOIN employees e ON e.id = s.employee_id
          WHERE s.id = $1`,
         [shiftId],
       ),
-      buildZReport(shiftId!),
+      buildZReport(orgId, shiftId!),
     ]);
 
     if (shiftResult.rows.length === 0) {
@@ -72,7 +77,11 @@ export async function GET(req: NextRequest) {
  * Body: { shiftId, declaredCash, notes? }
  */
 export async function POST(req: NextRequest) {
-  await requireAdminPermission('register.open');
+  const ctx = await requireAdminPermission('register.open');
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
 
   try {
     const { shiftId, declaredCash, notes } = await req.json();
@@ -86,7 +95,7 @@ export async function POST(req: NextRequest) {
 
     // Get shift to find registerSessionId
     const shiftRes = await orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT register_session_id FROM shifts WHERE id = $1`,
       [shiftId],
     );
@@ -95,7 +104,7 @@ export async function POST(req: NextRequest) {
     }
     const registerSessionId = shiftRes.rows[0].register_session_id;
 
-    const report = await buildZReport(shiftId);
+    const report = await buildZReport(orgId, shiftId);
     const expectedCash = report.expectedCash;
 
     // Use pgCloseShift if register session exists, otherwise do inline close
@@ -110,7 +119,7 @@ export async function POST(req: NextRequest) {
       const ts = new Date().toISOString();
       const variance = Number((Number(declaredCash) - expectedCash).toFixed(2));
       await orgQuery(
-        ORG_ID,
+        orgId,
         `UPDATE shifts SET status = 'closed', closed_at = $1, closing_expected_cash = $2,
          closing_declared_cash = $3, closing_variance = $4, closed_note = $5
          WHERE id = $6`,
@@ -145,12 +154,12 @@ interface ZReportData {
   openingFloat: number;
 }
 
-async function buildZReport(shiftId: string): Promise<ZReportData> {
+async function buildZReport(orgId: string, shiftId: string): Promise<ZReportData> {
   // 1) Get shift info + transactions + pay in/outs in parallel
   const [shiftRes, txnsRes, payRes] = await Promise.all([
-    orgQuery(ORG_ID, `SELECT opening_float, register_session_id FROM shifts WHERE id = $1`, [shiftId]),
+    orgQuery(orgId, `SELECT opening_float, register_session_id FROM shifts WHERE id = $1`, [shiftId]),
     orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT t.id, t.status, t.grand_total
        FROM transactions t
        JOIN shifts s ON t.register_session_id = s.register_session_id
@@ -158,7 +167,7 @@ async function buildZReport(shiftId: string): Promise<ZReportData> {
       [shiftId],
     ),
     orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT direction, SUM(amount)::numeric AS total
        FROM pay_in_outs
        WHERE shift_id = $1
@@ -178,7 +187,7 @@ async function buildZReport(shiftId: string): Promise<ZReportData> {
 
   if (txnIds.length > 0) {
     const tenderRes = await orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT tender_type, SUM(amount)::numeric AS amount, COUNT(*)::int AS count
        FROM transaction_tenders
        WHERE transaction_id = ANY($1)

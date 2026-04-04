@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 
-const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
 
 /**
  * GET /api/export
@@ -17,7 +16,10 @@ const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
  */
 export async function GET(req: NextRequest) {
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  if (!adminCtx && !registerCtx) {
+  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }  if (!adminCtx && !registerCtx) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -37,7 +39,7 @@ export async function GET(req: NextRequest) {
         const from = sp.get("from") || "2020-01-01";
         const to = sp.get("to") || new Date().toISOString().slice(0, 10);
         const rows = await orgQuery(
-          ORG_ID,
+          orgId,
           `SELECT t.id, t.status, t.tender_type, t.subtotal, t.discount_total, t.tax_total,
                   t.grand_total, t.amount_tendered, t.change_due, t.created_at,
                   e.display_name AS employee,
@@ -60,7 +62,7 @@ export async function GET(req: NextRequest) {
       case "inventory": {
         const locationId = sp.get("location") || "c57268b3-cb14-4c1a-bda6-55e49ddc6313";
         const rows = await orgQuery(
-          ORG_ID,
+          orgId,
           `SELECT p.name AS product, pv.sku, pv.barcode, pv.size_label AS size, pv.color_label AS color, pv.price AS retail_price, pv.cost AS cost_price,
                   il.on_hand, il.reserved, il.reorder_point,
                   l.name AS location,
@@ -83,7 +85,7 @@ export async function GET(req: NextRequest) {
 
       case "products": {
         const rows = await orgQuery(
-          ORG_ID,
+          orgId,
           `SELECT p.name, p.description, c.name AS category,
                   pv.sku, pv.barcode, pv.size_label AS size, pv.color_label AS color,
                   pv.price AS retail_price, pv.cost AS cost_price, pv.is_active
@@ -103,7 +105,7 @@ export async function GET(req: NextRequest) {
 
       case "customers": {
         const rows = await orgQuery(
-          ORG_ID,
+          orgId,
           `SELECT first_name, last_name, email, phone, address,
                   loyalty_points, total_spend, visit_count, store_credit_balance,
                   tax_exempt, is_active, created_at
@@ -122,7 +124,7 @@ export async function GET(req: NextRequest) {
 
       case "gift-cards": {
         const rows = await orgQuery(
-          ORG_ID,
+          orgId,
           `SELECT gc.code, gc.balance, gc.initial_balance, gc.status,
                   c.first_name || ' ' || c.last_name AS customer,
                   e.display_name AS activated_by,
@@ -145,7 +147,7 @@ export async function GET(req: NextRequest) {
         const from = sp.get("from") || "2020-01-01";
         const to = sp.get("to") || new Date().toISOString().slice(0, 10);
         const rows = await orgQuery(
-          ORG_ID,
+          orgId,
           `SELECT category, description, amount, notes,
                   is_recurring, recurrence_period, expense_date, created_at
            FROM expenses

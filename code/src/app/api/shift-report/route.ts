@@ -4,7 +4,6 @@ import { randomUUID } from "node:crypto";
 import { requireAdminPermission } from "@/lib/authz";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 
-const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
 
 /**
  * GET /api/shift-report
@@ -16,8 +15,9 @@ const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
  */
 export async function GET(req: NextRequest) {
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  if (!adminCtx && !registerCtx) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   try {
@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
     // ── Single shift report ──
     if (shiftId) {
       const shift = await orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT s.*, e.display_name AS employee_name, l.name AS location_name
          FROM shifts s
          LEFT JOIN employees e ON e.id = s.employee_id
@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: "Shift not found" }, { status: 404 });
       }
       const s = shift.rows[0];
-      const report = await buildShiftReport(shiftId, s.location_id, s.opened_at, s.closed_at || new Date().toISOString());
+      const report = await buildShiftReport(orgId, shiftId, s.location_id, s.opened_at, s.closed_at || new Date().toISOString());
       return NextResponse.json({ shift: s, report });
     }
 
@@ -51,7 +51,7 @@ export async function GET(req: NextRequest) {
 
     // Get all shifts for this location on this date
     const shifts = await orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT s.*, e.display_name AS employee_name
        FROM shifts s
        LEFT JOIN employees e ON e.id = s.employee_id
@@ -62,7 +62,7 @@ export async function GET(req: NextRequest) {
 
     // Transactions for the whole day at this location
     const txns = await orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT t.id, t.status, t.subtotal, t.discount_total, t.tax_total, t.grand_total,
               t.tender_type, t.amount_tendered, t.change_due, t.employee_id, t.customer_id,
               t.created_at, t.cart_snapshot
@@ -81,7 +81,7 @@ export async function GET(req: NextRequest) {
     let tenderBreakdown: Record<string, unknown>[] = [];
     if (txnIds.length > 0) {
       const tenders = await orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT tender_type, SUM(amount)::numeric AS total, COUNT(*)::int AS count
          FROM transaction_tenders
          WHERE transaction_id = ANY($1)
@@ -94,7 +94,7 @@ export async function GET(req: NextRequest) {
 
     // Pay ins/outs for the day
     const payInOuts = await orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT direction, SUM(amount)::numeric AS total, COUNT(*)::int AS count
        FROM pay_in_outs
        WHERE location_id = $1 AND created_at >= $2 AND created_at <= $3
@@ -164,7 +164,7 @@ export async function GET(req: NextRequest) {
     let employeeBreakdown: Record<string, unknown>[] = [];
     if (employeeMap.size > 0) {
       const empIds = Array.from(employeeMap.keys());
-      const emps = await orgQuery(ORG_ID, `SELECT id, display_name FROM employees WHERE id = ANY($1)`, [empIds]);
+      const emps = await orgQuery(orgId, `SELECT id, display_name FROM employees WHERE id = ANY($1)`, [empIds]);
       const empNames = new Map(emps.rows.map((e: Record<string, unknown>) => [e.id, e.display_name]));
       employeeBreakdown = Array.from(employeeMap.values()).map((e) => ({
         ...e,
@@ -189,7 +189,7 @@ export async function GET(req: NextRequest) {
       .filter((s: Record<string, unknown>) => s.status === "closed")
       .reduce((sum: number, s: Record<string, unknown>) => sum + Number(s.closing_variance ?? 0), 0);
 
-    const location = await orgQuery(ORG_ID, `SELECT name FROM locations WHERE id = $1`, [locationId]);
+    const location = await orgQuery(orgId, `SELECT name FROM locations WHERE id = $1`, [locationId]);
 
     return NextResponse.json({
       date,
@@ -234,8 +234,11 @@ export async function GET(req: NextRequest) {
  * Body: { action: "close_shift", shiftId, declaredCash, note?, blindClose? }
  */
 export async function POST(req: NextRequest) {
-  await requireAdminPermission('register.open');
-
+  const ctx = await requireAdminPermission('register.open');
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const body = await req.json();
     const { action } = body;
@@ -244,7 +247,7 @@ export async function POST(req: NextRequest) {
       const { shiftId, declaredCash, note, blindClose, employeeId } = body;
       if (!shiftId) return NextResponse.json({ error: "shiftId required" }, { status: 400 });
 
-      const client = await orgTx(ORG_ID);
+      const client = await orgTx(orgId);
       let auditPayload: { expected: number; declared: number; variance: number; blind: boolean; location_id: string; employee_id: string };
       try {
         const shift = await client.query(
@@ -318,7 +321,7 @@ export async function POST(req: NextRequest) {
           `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
            VALUES ($1, $2, $3, $4, 'shift', $5, 'shift_closed', $6, now())`,
           [
-            randomUUID(), ORG_ID, auditPayload.location_id, auditPayload.employee_id, shiftId,
+            randomUUID(), orgId, auditPayload.location_id, auditPayload.employee_id, shiftId,
             JSON.stringify({ expected: auditPayload.expected, declared: auditPayload.declared, variance: auditPayload.variance, blind: auditPayload.blind }),
           ],
         );
@@ -343,9 +346,9 @@ export async function POST(req: NextRequest) {
 }
 
 /** Helper: build report data for a single shift */
-async function buildShiftReport(shiftId: string, locationId: string, openedAt: string, closedAt: string) {
+async function buildShiftReport(orgId: string, shiftId: string, locationId: string, openedAt: string, closedAt: string) {
   const txns = await orgQuery(
-    ORG_ID,
+    orgId,
     `SELECT t.*, (SELECT json_agg(json_build_object('type', tt.tender_type, 'amount', tt.amount))
        FROM transaction_tenders tt WHERE tt.transaction_id = t.id) AS tenders
      FROM transactions t

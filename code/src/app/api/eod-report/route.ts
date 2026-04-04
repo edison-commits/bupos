@@ -3,7 +3,6 @@ import { orgQuery } from "@/lib/db";
 import { requireAdminPermission } from "@/lib/authz";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 
-const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
 const LOCATION_ID = "c57268b3-cb14-4c1a-bda6-55e49ddc6313";
 const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
 
@@ -13,12 +12,13 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
  */
 export async function GET(req: NextRequest) {
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  if (!adminCtx && !registerCtx) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   try {
-    const reportData = await generateReportData();
+    const reportData = await generateReportData(orgId);
     return NextResponse.json(reportData);
   } catch (error) {
     console.error("EOD Report GET error:", error);
@@ -34,10 +34,13 @@ export async function GET(req: NextRequest) {
  * Generate and send the daily email report
  */
 export async function POST(req: NextRequest) {
+  const ctx = await requireAdminPermission('audit.view');
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  const reportData = await generateReportData(orgId);
   try {
-    await requireAdminPermission('audit.view');
-    const reportData = await generateReportData();
-
     // Send email if Resend API key is available
     if (RESEND_API_KEY) {
       await sendEmailReport(reportData);
@@ -62,13 +65,13 @@ export async function POST(req: NextRequest) {
   }
 }
 
-async function generateReportData() {
+async function generateReportData(orgId: string) {
   const today = new Date().toISOString().split("T")[0];
   const startOfDay = `${today}T00:00:00Z`;
   const endOfDay = `${today}T23:59:59Z`;
 
   const result = await orgQuery(
-    ORG_ID,
+    orgId,
     `WITH daily_sales AS (
        SELECT
          COUNT(*) FILTER (WHERE status = 'completed')::int AS total_sales_count,

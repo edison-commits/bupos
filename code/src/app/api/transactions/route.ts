@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
-const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
 
 /**
  * GET /api/transactions
@@ -19,7 +18,10 @@ const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
  */
 export async function GET(req: NextRequest) {
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  if (!adminCtx && !registerCtx) {
+  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }  if (!adminCtx && !registerCtx) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -30,7 +32,7 @@ export async function GET(req: NextRequest) {
     const id = sp.get("id");
     if (id) {
       const txn = await orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT t.*,
                 e.display_name AS employee_name,
                 c.first_name || ' ' || c.last_name AS customer_name,
@@ -48,13 +50,13 @@ export async function GET(req: NextRequest) {
       }
 
       const tenders = await orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT * FROM transaction_tenders WHERE transaction_id = $1 ORDER BY created_at`,
         [id],
       );
 
       const events = await orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT te.*, e.display_name AS actor_name
          FROM transaction_events te
          LEFT JOIN employees e ON e.id = te.actor_employee_id
@@ -64,7 +66,7 @@ export async function GET(req: NextRequest) {
       );
 
       const exceptions = await orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT tex.*, e.display_name AS approver_name
          FROM transaction_exceptions tex
          LEFT JOIN employees e ON e.id = tex.approved_by
@@ -135,14 +137,14 @@ export async function GET(req: NextRequest) {
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
     const countResult = await orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT COUNT(*)::int AS total FROM transactions t LEFT JOIN employees e ON e.id = t.employee_id ${whereClause}`,
       values,
     );
     const total = countResult.rows[0]?.total ?? 0;
 
     const rows = await orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT t.id, t.status, t.tender_type, t.subtotal, t.discount_total, t.tax_total,
               t.grand_total, t.amount_tendered, t.change_due, t.created_at,
               t.customer_id,

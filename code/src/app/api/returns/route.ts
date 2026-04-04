@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import { orgQuery } from '@/lib/db';
 import { requireAdminPermission } from '@/lib/authz';
+import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
 
-const ORG_ID = process.env.BUPOS_ORG_ID || '33262270-7100-4b46-b2fb-8b50ad872bbb';
 const LOCATION_ID = process.env.BUPOS_LOCATION_ID || 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
 
 /**
@@ -13,9 +13,14 @@ const LOCATION_ID = process.env.BUPOS_LOCATION_ID || 'c57268b3-cb14-4c1a-bda6-55
  * PUT  - Update status (approve/complete/reject). On complete with restock, updates inventory.
  */
 export async function GET() {
+  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
+  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const { rows } = await orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT r.*,
         l.name as location_name,
         COUNT(rl.id)::int as line_count,
@@ -36,7 +41,11 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  await requireAdminPermission('employee.manage');
+  const ctx = await requireAdminPermission('employee.manage');
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const { customer_name, reason, notes, refund_method, lines } = await request.json();
 
@@ -45,12 +54,12 @@ export async function POST(request: NextRequest) {
     }
 
     // Generate return number: RET-BEL-YYMMDD-NNN
-    const { rows: locRows } = await orgQuery(ORG_ID, 'SELECT name FROM locations WHERE id = $1', [LOCATION_ID]);
+    const { rows: locRows } = await orgQuery(orgId, 'SELECT name FROM locations WHERE id = $1', [LOCATION_ID]);
     const locCode = (locRows[0]?.name || 'STR').slice(0, 3).toUpperCase();
     const now = new Date();
     const dateStr = `${String(now.getFullYear()).slice(-2)}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
     const { rows: countRows } = await orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT COUNT(*)::int as cnt FROM returns WHERE organization_id = $1 AND return_number LIKE $2`,
       [`RET-${locCode}-${dateStr}-%`],
     );
@@ -64,16 +73,16 @@ export async function POST(request: NextRequest) {
     const returnId = randomUUID();
 
     const { rows: retRows } = await orgQuery(
-      ORG_ID,
+      orgId,
       `INSERT INTO returns (id, organization_id, location_id, return_number, customer_name, reason, notes, refund_method, refund_amount, status)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')
        RETURNING *`,
-      [returnId, ORG_ID, LOCATION_ID, returnNumber, customer_name || null, reason || 'other', notes || null, refund_method || 'store_credit', refundAmount],
+      [returnId, orgId, LOCATION_ID, returnNumber, customer_name || null, reason || 'other', notes || null, refund_method || 'store_credit', refundAmount],
     );
 
     for (const line of lines) {
       await orgQuery(
-        ORG_ID,
+        orgId,
         `INSERT INTO return_lines (return_id, product_variant_id, quantity, unit_price, restock)
          VALUES ($1, $2, $3, $4, $5)`,
         [returnId, line.product_variant_id, line.quantity || 1, line.unit_price || 0, line.restock !== false],
@@ -88,7 +97,11 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
-  await requireAdminPermission('employee.manage');
+  const ctx = await requireAdminPermission('employee.manage');
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const { id, status, processed_by } = await request.json();
     if (!id || !status) return NextResponse.json({ error: 'ID and status required' }, { status: 400 });
@@ -96,7 +109,7 @@ export async function PUT(request: NextRequest) {
     // If completing, restock items marked for restock
     if (status === 'completed') {
       const { rows: lines } = await orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT rl.* FROM return_lines rl
          JOIN returns r ON rl.return_id = r.id
          WHERE r.id = $1 AND rl.restock = true`,
@@ -105,7 +118,7 @@ export async function PUT(request: NextRequest) {
 
       for (const line of lines) {
         await orgQuery(
-          ORG_ID,
+          orgId,
           `UPDATE inventory_levels SET on_hand = on_hand + $1, received_at = NOW(), updated_at = NOW()
            WHERE product_variant_id = $2 AND location_id = (SELECT location_id FROM returns WHERE id = $3)`,
           [line.quantity, line.product_variant_id, id],
@@ -114,7 +127,7 @@ export async function PUT(request: NextRequest) {
     }
 
     const { rows } = await orgQuery(
-      ORG_ID,
+      orgId,
       `UPDATE returns SET status = $1, processed_by = $2 WHERE id = $3 RETURNING *`,
       [status, processed_by || null, id],
     );

@@ -3,7 +3,6 @@ import pool from '@/lib/db';
 import { requireAdminPermission } from '@/lib/authz';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
 
-const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
 
 /**
  * GET /api/suppliers - List all suppliers
@@ -12,14 +11,15 @@ const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
  */
 export async function GET() {
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  if (!adminCtx && !registerCtx) {
+  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
+  if (!orgId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   try {
     const { rows } = await pool.query(
       `SELECT * FROM suppliers WHERE organization_id = $1 ORDER BY name ASC`,
-      [ORG_ID],
+      [orgId],
     );
     return NextResponse.json({ suppliers: rows });
   } catch (error) {
@@ -29,7 +29,11 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  await requireAdminPermission('catalog.manage');
+  const ctx = await requireAdminPermission('catalog.manage');
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const { name, contact_name, email, phone, address, notes } = await request.json();
 
@@ -41,7 +45,7 @@ export async function POST(request: NextRequest) {
       `INSERT INTO suppliers (organization_id, name, contact_name, email, phone, address, notes)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [ORG_ID, name.trim(), contact_name || null, email || null, phone || null, address || null, notes || null],
+      [orgId, name.trim(), contact_name || null, email || null, phone || null, address || null, notes || null],
     );
 
     return NextResponse.json({ supplier: rows[0] });
@@ -52,7 +56,11 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
-  await requireAdminPermission('catalog.manage');
+  const ctx = await requireAdminPermission('catalog.manage');
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const { id, name, contact_name, email, phone, address, notes, is_active } = await request.json();
 
@@ -64,7 +72,7 @@ export async function PUT(request: NextRequest) {
        SET name = $2, contact_name = $3, email = $4, phone = $5, address = $6, notes = $7, is_active = $8, updated_at = NOW()
        WHERE id = $1 AND organization_id = $9
        RETURNING *`,
-      [id, name.trim(), contact_name || null, email || null, phone || null, address || null, notes || null, is_active ?? true, ORG_ID],
+      [id, name.trim(), contact_name || null, email || null, phone || null, address || null, notes || null, is_active ?? true, orgId],
     );
 
     if (rows.length === 0) return NextResponse.json({ error: 'Supplier not found' }, { status: 404 });

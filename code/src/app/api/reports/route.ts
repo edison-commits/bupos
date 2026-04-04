@@ -1,14 +1,15 @@
 import { pool } from "@/lib/db";
 import type { QueryResult } from "pg";
+import { NextResponse } from "next/server";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 
-const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
 const LOCATION_ID = "c57268b3-cb14-4c1a-bda6-55e49ddc6313";
 
 export async function GET(request: Request) {
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  if (!adminCtx && !registerCtx) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const url = new URL(request.url);
@@ -25,25 +26,25 @@ export async function GET(request: Request) {
 
     switch (type) {
       case "summary":
-        data = await getSalesSummary(from, to);
+        data = await getSalesSummary(orgId, from, to);
         break;
       case "category":
-        data = await getSalesByCategory(from, to);
+        data = await getSalesByCategory(orgId, from, to);
         break;
       case "employee":
-        data = await getSalesByEmployee(from, to);
+        data = await getSalesByEmployee(orgId, from, to);
         break;
       case "hourly":
-        data = await getSalesByHour(from, to);
+        data = await getSalesByHour(orgId, from, to);
         break;
       case "tender":
-        data = await getTenderAnalysis(from, to);
+        data = await getTenderAnalysis(orgId, from, to);
         break;
       case "products":
-        data = await getTopProducts(from, to);
+        data = await getTopProducts(orgId, from, to);
         break;
       case "shifts":
-        data = await getShiftSummary(from, to);
+        data = await getShiftSummary(orgId, from, to);
         break;
       default:
         return Response.json({ error: `Unknown report type: ${type}` }, { status: 400 });
@@ -56,7 +57,7 @@ export async function GET(request: Request) {
   }
 }
 
-async function getSalesSummary(from: string, to: string) {
+async function getSalesSummary(orgId: string, from: string, to: string) {
   const fromDate = `${from}T00:00:00Z`;
   const toDate = `${to}T23:59:59Z`;
 
@@ -84,7 +85,7 @@ async function getSalesSummary(from: string, to: string) {
         COALESCE(SUM(jsonb_array_length(COALESCE(cart_snapshot::jsonb -> 'items', '[]'::jsonb))), 0) as item_count
       FROM transactions
       WHERE organization_id = $1 AND location_id = $2 AND created_at >= $3 AND created_at <= $4`,
-      [ORG_ID, LOCATION_ID, fromDate, toDate]
+      [orgId, LOCATION_ID, fromDate, toDate]
     ),
     // Previous period
     pool.query(
@@ -96,7 +97,7 @@ async function getSalesSummary(from: string, to: string) {
         SUM(discount_total) as discount_total
       FROM transactions
       WHERE organization_id = $1 AND location_id = $2 AND created_at >= $3 AND created_at <= $4`,
-      [ORG_ID, LOCATION_ID, prevFromDate, prevToDate]
+      [orgId, LOCATION_ID, prevFromDate, prevToDate]
     ),
   ]);
 
@@ -128,7 +129,7 @@ async function getSalesSummary(from: string, to: string) {
   return { current, previous };
 }
 
-async function getSalesByCategory(from: string, to: string) {
+async function getSalesByCategory(orgId: string, from: string, to: string) {
   const fromDate = `${from}T00:00:00Z`;
   const toDate = `${to}T23:59:59Z`;
 
@@ -151,7 +152,7 @@ async function getSalesByCategory(from: string, to: string) {
     WHERE t.organization_id = $1 AND t.location_id = $2 AND t.created_at >= $3 AND t.created_at <= $4
     GROUP BY c.id, c.name
     ORDER BY revenue DESC`,
-    [ORG_ID, LOCATION_ID, fromDate, toDate]
+    [orgId, LOCATION_ID, fromDate, toDate]
   );
 
   const categories = result.rows.map((row: any) => ({
@@ -167,7 +168,7 @@ async function getSalesByCategory(from: string, to: string) {
   return { categories, totalRevenue };
 }
 
-async function getSalesByEmployee(from: string, to: string) {
+async function getSalesByEmployee(orgId: string, from: string, to: string) {
   const fromDate = `${from}T00:00:00Z`;
   const toDate = `${to}T23:59:59Z`;
 
@@ -183,7 +184,7 @@ async function getSalesByEmployee(from: string, to: string) {
     WHERE t.organization_id = $1 AND t.location_id = $2 AND t.created_at >= $3 AND t.created_at <= $4
     GROUP BY e.id, e.display_name, e.first_name, e.last_name
     ORDER BY total_sales DESC`,
-    [ORG_ID, LOCATION_ID, fromDate, toDate]
+    [orgId, LOCATION_ID, fromDate, toDate]
   );
 
   const employees = result.rows.map((row: any) => ({
@@ -198,7 +199,7 @@ async function getSalesByEmployee(from: string, to: string) {
   return { employees };
 }
 
-async function getSalesByHour(from: string, to: string) {
+async function getSalesByHour(orgId: string, from: string, to: string) {
   const fromDate = `${from}T00:00:00Z`;
   const toDate = `${to}T23:59:59Z`;
 
@@ -211,7 +212,7 @@ async function getSalesByHour(from: string, to: string) {
     WHERE organization_id = $1 AND location_id = $2 AND created_at >= $3 AND created_at <= $4
     GROUP BY EXTRACT(HOUR FROM created_at AT TIME ZONE 'UTC')
     ORDER BY hour ASC`,
-    [ORG_ID, LOCATION_ID, fromDate, toDate]
+    [orgId, LOCATION_ID, fromDate, toDate]
   );
 
   const hours = result.rows.map((row: any) => ({
@@ -230,7 +231,7 @@ async function getSalesByHour(from: string, to: string) {
   return { hours: allHours };
 }
 
-async function getTenderAnalysis(from: string, to: string) {
+async function getTenderAnalysis(orgId: string, from: string, to: string) {
   const fromDate = `${from}T00:00:00Z`;
   const toDate = `${to}T23:59:59Z`;
 
@@ -255,7 +256,7 @@ async function getTenderAnalysis(from: string, to: string) {
   return { tenders };
 }
 
-async function getTopProducts(from: string, to: string) {
+async function getTopProducts(orgId: string, from: string, to: string) {
   const fromDate = `${from}T00:00:00Z`;
   const toDate = `${to}T23:59:59Z`;
 
@@ -278,7 +279,7 @@ async function getTopProducts(from: string, to: string) {
     GROUP BY pv.id, pv.name, p.name
     ORDER BY revenue DESC
     LIMIT 20`,
-    [ORG_ID, LOCATION_ID, fromDate, toDate]
+    [orgId, LOCATION_ID, fromDate, toDate]
   );
 
   const byRevenue = result.rows.slice(0, 10).map((row: any) => ({
@@ -301,7 +302,7 @@ async function getTopProducts(from: string, to: string) {
   return { byRevenue, byQuantity };
 }
 
-async function getShiftSummary(from: string, to: string) {
+async function getShiftSummary(orgId: string, from: string, to: string) {
   const fromDate = `${from}T00:00:00Z`;
   const toDate = `${to}T23:59:59Z`;
 

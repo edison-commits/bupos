@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/db';
 import { requireRegisterPermission, requireAdminPermission } from '@/lib/authz';
+import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
 
-const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
 
 /**
  * GET /api/returns/search
@@ -12,6 +12,11 @@ const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
  *   dateRange — 'today', 'week', 'month', 'all'
  */
 export async function GET(req: NextRequest) {
+  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
+  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   await requireAdminPermission('employee.manage');
   await requireRegisterPermission('register.open');
 
@@ -27,7 +32,7 @@ export async function GET(req: NextRequest) {
     // Build date filter
     let dateCondition = '';
     const now = new Date();
-    const dateParams: unknown[] = [searchQuery, ORG_ID];
+    const dateParams: unknown[] = [searchQuery, orgId];
 
     if (dateRange === 'today') {
       const startOfDay = new Date(now);
@@ -48,7 +53,7 @@ export async function GET(req: NextRequest) {
 
     // Find transaction by ID or customer name
     const txnResult = await orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT t.*,
               e.display_name AS employee_name,
               c.first_name || ' ' || c.last_name AS customer_name
@@ -72,7 +77,7 @@ export async function GET(req: NextRequest) {
 
     // Get tenders
     const tendersResult = await orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT * FROM transaction_tenders WHERE transaction_id = $1 ORDER BY created_at`,
       [transactionId]
     );

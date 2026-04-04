@@ -3,7 +3,6 @@ import { orgQuery } from "@/lib/db";
 import { requireAdminPermission } from "@/lib/authz";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 
-const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
 
 /**
  * GET /api/tax-config
@@ -14,7 +13,10 @@ const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
  */
 export async function GET(req: NextRequest) {
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  if (!adminCtx && !registerCtx) {
+  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }  if (!adminCtx && !registerCtx) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -23,7 +25,7 @@ export async function GET(req: NextRequest) {
 
     if (locationId) {
       const result = await orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT id, name, city, region, postal_code, tax_rate FROM locations WHERE id = $1`,
         [locationId],
       );
@@ -38,7 +40,7 @@ export async function GET(req: NextRequest) {
     }
 
     const locations = await orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT id, name, city, region, postal_code, tax_rate FROM locations ORDER BY name`,
       [],
     );
@@ -62,8 +64,11 @@ export async function GET(req: NextRequest) {
  * Body: { locationId, taxRate } — taxRate as decimal (e.g., 0.1025 for 10.25%)
  */
 export async function PUT(req: NextRequest) {
-  await requireAdminPermission('catalog.manage');
-
+  const ctx = await requireAdminPermission('catalog.manage');
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const { locationId, taxRate } = await req.json();
 
@@ -76,7 +81,7 @@ export async function PUT(req: NextRequest) {
     }
 
     const result = await orgQuery(
-      ORG_ID,
+      orgId,
       `UPDATE locations SET tax_rate = $1, updated_at = now() WHERE id = $2 RETURNING id, name, tax_rate`,
       [taxRate, locationId],
     );

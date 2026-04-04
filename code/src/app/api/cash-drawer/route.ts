@@ -3,7 +3,6 @@ import { requireAdminPermission } from '@/lib/authz';
 import pool, { orgQuery, orgTx } from '@/lib/db';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
 
-const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
 const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
 
 /**
@@ -14,7 +13,8 @@ const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
  */
 export async function GET(req: NextRequest) {
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  if (!adminCtx && !registerCtx) {
+  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
+  if (!orgId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -22,9 +22,9 @@ export async function GET(req: NextRequest) {
     const action = req.nextUrl.searchParams.get('action') || 'status';
 
     if (action === 'status') {
-      return handleGetStatus();
+      return handleGetStatus(orgId);
     } else if (action === 'history') {
-      return handleGetHistory();
+      return handleGetHistory(orgId);
     } else {
       return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
     }
@@ -42,20 +42,24 @@ export async function GET(req: NextRequest) {
  * Body: { action: 'open_shift' | 'close_shift' | 'pay_in' | 'pay_out', ... }
  */
 export async function POST(req: NextRequest) {
+  const ctx = await requireAdminPermission('register.open');
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
-    await requireAdminPermission('register.open');
 
     const body = await req.json();
     const { action } = body;
 
     if (action === 'open_shift') {
-      return handleOpenShift(body);
+      return handleOpenShift(orgId, body);
     } else if (action === 'close_shift') {
-      return handleCloseShift(body);
+      return handleCloseShift(orgId, body);
     } else if (action === 'pay_in') {
-      return handlePayIn(body);
+      return handlePayIn(orgId, body);
     } else if (action === 'pay_out') {
-      return handlePayOut(body);
+      return handlePayOut(orgId, body);
     } else {
       return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
     }
@@ -72,10 +76,10 @@ export async function POST(req: NextRequest) {
 // GET Handlers
 // ────────────────────────────────────────────────────────────────────────────
 
-async function handleGetStatus() {
+async function handleGetStatus(orgId: string) {
   // Single query: fetch open shift with pay_in_outs totals via subqueries
   const shiftRes = await orgQuery(
-    ORG_ID,
+    orgId,
     `SELECT s.id, s.employee_id, s.opened_at, s.opening_float, s.status,
             e.display_name AS employee_name,
             COALESCE((SELECT SUM(amount) FROM pay_in_outs WHERE shift_id = s.id AND direction = 'pay_in'), 0)::numeric AS pay_ins,
@@ -106,10 +110,10 @@ async function handleGetStatus() {
   });
 }
 
-async function handleGetHistory() {
+async function handleGetHistory(orgId: string) {
   // Fetch last 10 closed shifts with summary
   const shiftsRes = await orgQuery(
-    ORG_ID,
+    orgId,
     `SELECT s.id, s.employee_id, e.display_name AS employee_name,
             s.opened_at, s.closed_at, s.opening_float,
             s.closing_expected_cash, s.closing_declared_cash,
@@ -140,7 +144,7 @@ async function handleGetHistory() {
 // POST Handlers
 // ────────────────────────────────────────────────────────────────────────────
 
-async function handleOpenShift(body: any) {
+async function handleOpenShift(orgId: string, body: any) {
   const { opening_float, note } = body;
 
   if (opening_float === undefined) {
@@ -152,7 +156,7 @@ async function handleOpenShift(body: any) {
 
   // Get or create register session
   const regSessionRes = await orgQuery(
-    ORG_ID,
+    orgId,
     `SELECT id FROM register_sessions
      WHERE location_id = $1 AND status = 'active'
      ORDER BY started_at DESC LIMIT 1`,
@@ -164,7 +168,7 @@ async function handleOpenShift(body: any) {
   if (!registerSessionId) {
     // Create new register session
     const newRegSessionRes = await orgQuery(
-      ORG_ID,
+      orgId,
       `INSERT INTO register_sessions
        (auth_session_id, employee_id, location_id, status, started_at)
        VALUES (gen_random_uuid(), $1, $2, 'active', NOW())
@@ -176,7 +180,7 @@ async function handleOpenShift(body: any) {
 
   // Create shift
   const shiftRes = await orgQuery(
-    ORG_ID,
+    orgId,
     `INSERT INTO shifts
      (location_id, employee_id, register_session_id, opening_float, opened_note, status)
      VALUES ($1, $2, $3, $4, $5, 'open')
@@ -205,7 +209,7 @@ async function handleOpenShift(body: any) {
   );
 }
 
-async function handleCloseShift(body: any) {
+async function handleCloseShift(orgId: string, body: any) {
   const { shift_id, declared_cash, note, blind_close } = body;
 
   if (!shift_id || declared_cash === undefined) {
@@ -217,7 +221,7 @@ async function handleCloseShift(body: any) {
 
   // Fetch shift and build expected cash
   const shiftRes = await orgQuery(
-    ORG_ID,
+    orgId,
     `SELECT s.id, s.opening_float, s.register_session_id
      FROM shifts s
      WHERE s.id = $1 AND s.location_id = $2`,
@@ -229,11 +233,11 @@ async function handleCloseShift(body: any) {
   }
 
   const shift = shiftRes.rows[0];
-  const expectedCash = await calculateExpectedCash(shift_id);
+  const expectedCash = await calculateExpectedCash(orgId, shift_id);
   const variance = Number(declared_cash) - expectedCash;
 
   // Update shift with closure details
-  const client = await orgTx(ORG_ID);
+  const client = await orgTx(orgId);
   try {
     await client.query(
       `UPDATE shifts
@@ -267,7 +271,7 @@ async function handleCloseShift(body: any) {
   });
 }
 
-async function handlePayIn(body: any) {
+async function handlePayIn(orgId: string, body: any) {
   const { shift_id, amount, reason, note } = body;
 
   if (!shift_id || !amount || !reason) {
@@ -278,7 +282,7 @@ async function handlePayIn(body: any) {
   }
 
   const payRes = await orgQuery(
-    ORG_ID,
+    orgId,
     `INSERT INTO pay_in_outs
      (shift_id, location_id, employee_id, direction, amount, reason, note, organization_id)
      VALUES ($1, $2, $3, 'pay_in', $4, $5, $6, $7)
@@ -290,7 +294,7 @@ async function handlePayIn(body: any) {
       amount,
       reason,
       note || null,
-      ORG_ID,
+      orgId,
     ]
   );
 
@@ -311,7 +315,7 @@ async function handlePayIn(body: any) {
   );
 }
 
-async function handlePayOut(body: any) {
+async function handlePayOut(orgId: string, body: any) {
   const { shift_id, amount, reason, note } = body;
 
   if (!shift_id || !amount || !reason) {
@@ -322,7 +326,7 @@ async function handlePayOut(body: any) {
   }
 
   const payRes = await orgQuery(
-    ORG_ID,
+    orgId,
     `INSERT INTO pay_in_outs
      (shift_id, location_id, employee_id, direction, amount, reason, note, organization_id)
      VALUES ($1, $2, $3, 'pay_out', $4, $5, $6, $7)
@@ -334,7 +338,7 @@ async function handlePayOut(body: any) {
       amount,
       reason,
       note || null,
-      ORG_ID,
+      orgId,
     ]
   );
 
@@ -363,10 +367,10 @@ async function handlePayOut(body: any) {
  * Calculate expected cash for a shift:
  * opening_float + cash_sales + pay_ins - pay_outs
  */
-async function calculateExpectedCash(shiftId: string): Promise<number> {
+async function calculateExpectedCash(orgId: string, shiftId: string): Promise<number> {
   // Single query with subqueries to avoid multiple connections
   const res = await orgQuery(
-    ORG_ID,
+    orgId,
     `SELECT
        s.opening_float,
        COALESCE((SELECT SUM(p.amount) FROM pay_in_outs p WHERE p.shift_id = s.id AND p.direction = 'pay_in'), 0)::numeric AS pay_ins,

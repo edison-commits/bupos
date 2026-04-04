@@ -3,9 +3,9 @@ import { randomUUID } from "node:crypto";
 import { cookies } from "next/headers";
 import pool, { orgTx, orgQuery } from "@/lib/db";
 import { requireRegisterPermission } from "@/lib/authz";
+import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 import { registerConfiguration } from "@/lib/data/mock-data";
 
-const ORG_ID = process.env.BUPOS_ORG_ID || "33262270-7100-4b46-b2fb-8b50ad872bbb";
 const LOCATION_ID = process.env.BUPOS_LOCATION_ID || "c57268b3-cb14-4c1a-bda6-55e49ddc6313";
 
 /**
@@ -16,8 +16,11 @@ const LOCATION_ID = process.env.BUPOS_LOCATION_ID || "c57268b3-cb14-4c1a-bda6-55
  * rather than requiring a live session.
  */
 export async function POST(request: NextRequest) {
-  // Auth: require a real session cookie before accepting any offline-sync payload.
-  await requireRegisterPermission("register.open");
+  const authCtx = await requireRegisterPermission("register.open");
+  const orgId = authCtx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
 
   try {
     const body = await request.json();
@@ -38,7 +41,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "registerSessionId is required" }, { status: 401 });
     }
 
-    const client = await orgTx(ORG_ID);
+    const client = await orgTx(orgId);
     try {
       const { rows: sessionRows } = await client.query(
         `SELECT rs.id FROM register_sessions rs
@@ -62,7 +65,7 @@ export async function POST(request: NextRequest) {
     let taxRate = 0.1025; // default fallback
     try {
       const { rows: locRows } = await orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT tax_rate FROM locations WHERE id = $1`,
         [LOCATION_ID],
       );
@@ -134,7 +137,7 @@ export async function POST(request: NextRequest) {
 
     const transactionId = id || randomUUID();
 
-    const syncClient = await orgTx(ORG_ID);
+    const syncClient = await orgTx(orgId);
     let inserted = true;
     try {
       // 1. Transaction record — upsert so retried syncs are idempotent
@@ -154,7 +157,7 @@ export async function POST(request: NextRequest) {
            created_at = EXCLUDED.created_at
          RETURNING id`,
         [
-          transactionId, ORG_ID, LOCATION_ID, sessionId, employeeId,
+          transactionId, orgId, LOCATION_ID, sessionId, employeeId,
           JSON.stringify(cart), subtotal, discountTotal, taxTotal, grandTotal,
           primaryTenderType, totalTendered, changeDue,
           timestamp || new Date().toISOString(),
@@ -266,7 +269,7 @@ export async function POST(request: NextRequest) {
         await syncClient.query(
           `INSERT INTO store_credit_ledger (id, organization_id, customer_id, transaction_type, amount, balance_after, employee_id, transaction_id, reason, created_at)
            VALUES ($1, $2, $3, 'redemption', $4, $5, $6, $7, 'Offline sync redemption', now())`,
-          [randomUUID(), ORG_ID, cart.customerId, -storeCreditTendered, balRows[0]?.store_credit_balance ?? 0, employeeId, transactionId],
+          [randomUUID(), orgId, cart.customerId, -storeCreditTendered, balRows[0]?.store_credit_balance ?? 0, employeeId, transactionId],
         );
       }
 

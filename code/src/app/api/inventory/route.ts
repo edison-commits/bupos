@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/db';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
 
-const ORG_ID = process.env.BUPOS_ORG_ID || '33262270-7100-4b46-b2fb-8b50ad872bbb';
 const LOCATION_ID = process.env.BUPOS_LOCATION_ID || 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
 
 // 30-second response cache — keyed by URL so search params are included
@@ -16,7 +15,10 @@ export async function GET(request: NextRequest) {
   const cached = _inventoryCache.get(cacheKey);
   // Require any valid session (admin or register) before serving inventory data
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  if (!adminCtx && !registerCtx) {
+  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }  if (!adminCtx && !registerCtx) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -64,7 +66,7 @@ export async function GET(request: NextRequest) {
     const [productsResult, categoriesResult, typesResult, brandsResult, summaryResult] = await Promise.all([
       // Get products with variants and inventory
       orgQuery(
-        ORG_ID,
+        orgId,
         `
         SELECT
           p.id as product_id,
@@ -91,7 +93,7 @@ export async function GET(request: NextRequest) {
 
       // Get all categories
       orgQuery(
-        ORG_ID,
+        orgId,
         `
         SELECT DISTINCT c.id, c.name
         FROM categories c
@@ -103,7 +105,7 @@ export async function GET(request: NextRequest) {
 
       // Get all distinct product types
       orgQuery(
-        ORG_ID,
+        orgId,
         `
         SELECT DISTINCT LOWER(product_type) as value
         FROM products
@@ -115,7 +117,7 @@ export async function GET(request: NextRequest) {
 
       // Get all distinct brands
       orgQuery(
-        ORG_ID,
+        orgId,
         `
         SELECT DISTINCT LOWER(product_brand) as value
         FROM products
@@ -127,7 +129,7 @@ export async function GET(request: NextRequest) {
 
       // Get summary statistics
       orgQuery(
-        ORG_ID,
+        orgId,
         `
         SELECT
           COUNT(DISTINCT p.id) as total_products,

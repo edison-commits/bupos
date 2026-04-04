@@ -4,7 +4,6 @@ import { randomUUID } from "node:crypto";
 import { requireAdminPermission } from "@/lib/authz";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 
-const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
 
 /**
  * GET /api/store-credit
@@ -18,7 +17,10 @@ const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
  */
 export async function GET(req: NextRequest) {
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  if (!adminCtx && !registerCtx) {
+  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }  if (!adminCtx && !registerCtx) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -29,7 +31,7 @@ export async function GET(req: NextRequest) {
     if (customerId) {
       // Single customer balance + ledger
       const customer = await orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT id, first_name, last_name, email, phone, store_credit_balance
          FROM customers WHERE id = $1`,
         [customerId],
@@ -39,13 +41,13 @@ export async function GET(req: NextRequest) {
       }
 
       const ledger = await orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT scl.*, e.display_name AS employee_name
          FROM store_credit_ledger scl
          LEFT JOIN employees e ON e.id = scl.employee_id
          WHERE scl.organization_id = $2 AND scl.customer_id = $1
          ORDER BY scl.created_at DESC`,
-        [customerId, ORG_ID],
+        [customerId, orgId],
       );
 
       return NextResponse.json({
@@ -56,7 +58,7 @@ export async function GET(req: NextRequest) {
 
     // All customers with store credit
     const customers = await orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT id, first_name, last_name, email, phone, store_credit_balance
        FROM customers
        WHERE store_credit_balance > 0
@@ -65,7 +67,7 @@ export async function GET(req: NextRequest) {
     );
 
     const summary = await orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT
          COALESCE(SUM(store_credit_balance), 0)::numeric AS total_outstanding,
          COUNT(*) FILTER (WHERE store_credit_balance > 0)::int AS customers_with_credit,
@@ -78,7 +80,7 @@ export async function GET(req: NextRequest) {
     );
 
     const recentLedger = await orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT scl.*, e.display_name AS employee_name,
               c.first_name || ' ' || c.last_name AS customer_name
        FROM store_credit_ledger scl
@@ -109,7 +111,11 @@ export async function GET(req: NextRequest) {
  * Issues store credit to a customer. Amount must be positive.
  */
 export async function POST(req: NextRequest) {
-  await requireAdminPermission('approval.store_credit');
+  const ctx = await requireAdminPermission('approval.store_credit');
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const { customerId, amount, reason, employeeId, approvedBy } = await req.json();
 
@@ -117,7 +123,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Customer ID, positive amount, and reason required" }, { status: 400 });
     }
 
-    const client = await orgTx(ORG_ID);
+    const client = await orgTx(orgId);
     try {
       // Update customer balance
       const updated = await client.query(
@@ -138,7 +144,7 @@ export async function POST(req: NextRequest) {
       await client.query(
         `INSERT INTO store_credit_ledger (id, organization_id, customer_id, transaction_type, amount, balance_after, employee_id, reason, approved_by, created_at)
          VALUES ($1, $2, $3, 'issuance', $4, $5, $6, $7, $8, now())`,
-        [entryId, ORG_ID, customerId, amount, newBalance, employeeId || null, reason, approvedBy || null],
+        [entryId, orgId, customerId, amount, newBalance, employeeId || null, reason, approvedBy || null],
       );
 
       await client.query("COMMIT");

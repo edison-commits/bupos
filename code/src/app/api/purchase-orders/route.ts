@@ -3,7 +3,6 @@ import { orgQuery, pool } from '@/lib/db';
 import { requireAdminPermission } from '@/lib/authz';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
 
-const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
 const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
 
 /**
@@ -18,7 +17,10 @@ const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
 
 export async function GET(request: NextRequest) {
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  if (!adminCtx && !registerCtx) {
+  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }  if (!adminCtx && !registerCtx) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -28,7 +30,7 @@ export async function GET(request: NextRequest) {
     // Single PO detail with line items
     if (poId) {
       const { rows: poRows } = await orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT po.*, s.name as supplier_name, s.contact_name as supplier_contact, s.email as supplier_email, l.name as location_name
          FROM purchase_orders po
          JOIN suppliers s ON po.supplier_id = s.id
@@ -42,7 +44,7 @@ export async function GET(request: NextRequest) {
       }
 
       const { rows: lines } = await orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT pol.*, pv.name as variant_name, pv.sku, pv.size_label, pv.color_label, p.name as product_name
          FROM purchase_order_lines pol
          JOIN product_variants pv ON pol.product_variant_id = pv.id
@@ -57,7 +59,7 @@ export async function GET(request: NextRequest) {
 
     // List all POs with summary
     const { rows } = await orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT
         po.*,
         s.name as supplier_name,
@@ -83,7 +85,11 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  await requireAdminPermission('catalog.manage');
+  const ctx = await requireAdminPermission('catalog.manage');
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const { supplier_id, notes, expected_at, lines } = await request.json();
 
@@ -93,7 +99,7 @@ export async function POST(request: NextRequest) {
     // Generate PO number: BEL-PO-YYMMDD-NNN
     // Get location short code from location name
     const { rows: locRows } = await orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT name FROM locations WHERE id = $1`,
       [LOCATION_ID],
     );
@@ -105,7 +111,7 @@ export async function POST(request: NextRequest) {
     const dd = String(now.getDate()).padStart(2, '0');
     const dateStr = `${yy}${mm}${dd}`;
     const { rows: countRows } = await orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT COUNT(*)::int as cnt FROM purchase_orders WHERE po_number LIKE $1`,
       [`${locCode}-PO-${dateStr}-%`],
     );
@@ -116,14 +122,14 @@ export async function POST(request: NextRequest) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query(`SET LOCAL app.current_org_id = '${ORG_ID}'`);
+      await client.query(`SET LOCAL app.current_org_id = '${orgId}'`);
 
       // Insert PO
       const poResult = await client.query(
         `INSERT INTO purchase_orders (organization_id, supplier_id, location_id, po_number, status, notes, expected_at)
          VALUES ($1, $2, $3, $4, 'draft', $5, $6)
          RETURNING *`,
-        [ORG_ID, supplier_id, LOCATION_ID, poNumber, notes || null, expected_at || null],
+        [orgId, supplier_id, LOCATION_ID, poNumber, notes || null, expected_at || null],
       );
       const poId = poResult.rows[0].id;
 
@@ -151,7 +157,11 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
-  await requireAdminPermission('catalog.manage');
+  const ctx = await requireAdminPermission('catalog.manage');
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const { id, status, notes, expected_at, ordered_at } = await request.json();
 
@@ -177,7 +187,7 @@ export async function PUT(request: NextRequest) {
     values.push(id);
 
     const { rows } = await orgQuery(
-      ORG_ID,
+      orgId,
       `UPDATE purchase_orders SET ${sets.join(', ')} WHERE id = $${idx} RETURNING *`,
       values,
     );
@@ -201,7 +211,11 @@ export async function PUT(request: NextRequest) {
  * If some lines are partially received, sets status to 'partial'.
  */
 export async function PATCH(request: NextRequest) {
-  await requireAdminPermission('catalog.manage');
+  const ctx = await requireAdminPermission('catalog.manage');
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const { id, receives } = await request.json();
 
@@ -210,7 +224,7 @@ export async function PATCH(request: NextRequest) {
 
     // Verify PO exists and is receivable
     const { rows: poRows } = await orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT * FROM purchase_orders WHERE id = $1`,
       [id],
     );
@@ -223,7 +237,7 @@ export async function PATCH(request: NextRequest) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query(`SET LOCAL app.current_org_id = '${ORG_ID}'`);
+      await client.query(`SET LOCAL app.current_org_id = '${orgId}'`);
 
       // Process each receive
       for (const recv of receives) {
@@ -261,7 +275,7 @@ export async function PATCH(request: NextRequest) {
           `INSERT INTO inventory_levels (organization_id, location_id, product_variant_id, on_hand, reserved, reorder_point, received_at)
            VALUES ($1, $2, $3, $4, 0, 5, NOW())
            ON CONFLICT DO NOTHING`,
-          [ORG_ID, po.location_id, line.variant_id, quantity_received],
+          [orgId, po.location_id, line.variant_id, quantity_received],
         );
       }
 

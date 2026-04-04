@@ -3,7 +3,6 @@ import { orgQuery, orgTx } from "@/lib/db";
 import { requireAdminPermission } from "@/lib/authz";
 import { randomUUID } from "node:crypto";
 
-const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
 
 /**
  * GET /api/promo-codes
@@ -23,8 +22,9 @@ export async function GET(req: NextRequest) {
       (await import("@/lib/auth/session")).getAdminSession(),
       (await import("@/lib/auth/session")).getRegisterSession(),
     ]);
-    if (!adminCtx && !registerCtx) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
+    if (!orgId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const sp = req.nextUrl.searchParams;
@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
     const code = sp.get("code");
     if (code) {
       const result = await orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT * FROM promo_codes WHERE LOWER(code) = LOWER($1)`,
         [code],
       );
@@ -86,13 +86,13 @@ export async function GET(req: NextRequest) {
     // ── Lookup by ID with redemptions ──
     const id = sp.get("id");
     if (id) {
-      const promo = await orgQuery(ORG_ID, `SELECT * FROM promo_codes WHERE id = $1`, [id]);
+      const promo = await orgQuery(orgId, `SELECT * FROM promo_codes WHERE id = $1`, [id]);
       if (promo.rows.length === 0) {
         return NextResponse.json({ error: "Promo code not found" }, { status: 404 });
       }
 
       const redemptions = await orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT pr.*, e.display_name AS employee_name
          FROM promo_redemptions pr
          LEFT JOIN employees e ON e.id = pr.employee_id
@@ -110,7 +110,7 @@ export async function GET(req: NextRequest) {
     const params = status ? [status] : [];
 
     const codes = await orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT * FROM promo_codes ${where} ORDER BY created_at DESC`,
       params,
     );
@@ -131,7 +131,11 @@ export async function GET(req: NextRequest) {
  *   action: "disable" — { promoCodeId }
  */
 export async function POST(req: NextRequest) {
-  await requireAdminPermission("catalog.manage");
+  const ctx = await requireAdminPermission("catalog.manage");
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const body = await req.json();
     const { action } = body;
@@ -148,17 +152,17 @@ export async function POST(req: NextRequest) {
       }
 
       // Check for duplicate
-      const existing = await orgQuery(ORG_ID, `SELECT id FROM promo_codes WHERE LOWER(code) = LOWER($1)`, [code]);
+      const existing = await orgQuery(orgId, `SELECT id FROM promo_codes WHERE LOWER(code) = LOWER($1)`, [code]);
       if (existing.rows.length > 0) {
         return NextResponse.json({ error: `Promo code "${code}" already exists` }, { status: 409 });
       }
 
       const promoId = randomUUID();
       await orgQuery(
-        ORG_ID,
+        orgId,
         `INSERT INTO promo_codes (id, organization_id, code, description, type, value, minimum_purchase, max_redemptions, current_redemptions, status, starts_at, expires_at, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, 'active', $9, $10, now(), now())`,
-        [promoId, ORG_ID, code.toUpperCase(), description || null, type, value, minimumPurchase || 0, maxRedemptions, startsAt, expiresAt || null],
+        [promoId, orgId, code.toUpperCase(), description || null, type, value, minimumPurchase || 0, maxRedemptions, startsAt, expiresAt || null],
       );
 
       return NextResponse.json({ id: promoId, code: code.toUpperCase(), status: "active" }, { status: 201 });
@@ -170,7 +174,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "promoCodeId, transactionId, and discountAmount required" }, { status: 400 });
       }
 
-      const client = await orgTx(ORG_ID);
+      const client = await orgTx(orgId);
       try {
         // Lock and increment
         const pc = await client.query(
@@ -215,7 +219,7 @@ export async function POST(req: NextRequest) {
       }
 
       await orgQuery(
-        ORG_ID,
+        orgId,
         `UPDATE promo_codes SET status = 'disabled', updated_at = now() WHERE id = $1`,
         [promoCodeId],
       );

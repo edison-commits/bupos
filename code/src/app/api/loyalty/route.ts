@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
 import { requireAdminPermission } from "@/lib/authz";
 
-const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
 
 /**
  * GET /api/loyalty
@@ -20,8 +19,9 @@ export async function GET(req: NextRequest) {
     (await import("@/lib/auth/session")).getAdminSession(),
     (await import("@/lib/auth/session")).getRegisterSession(),
   ]);
-  if (!adminCtx && !registerCtx) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   try {
@@ -31,12 +31,12 @@ export async function GET(req: NextRequest) {
     const customerId = sp.get("customer_id");
     if (customerId) {
       const customerResult = await orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT id, first_name, last_name, email, phone, loyalty_points,
                 total_spend, visit_count, store_credit_balance
          FROM customers
          WHERE id = $1 AND organization_id = $2`,
-        [customerId, ORG_ID],
+        [customerId, orgId],
       );
 
       if (customerResult.rows.length === 0) {
@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
 
       // Get recent transactions for this customer
       const transactionResult = await orgQuery(
-        ORG_ID,
+        orgId,
         `SELECT id, created_at, grand_total AS total_due, grand_total AS total_paid, status
          FROM transactions
          WHERE customer_id = $1
@@ -64,7 +64,7 @@ export async function GET(req: NextRequest) {
 
     // Get comprehensive loyalty overview using single consolidated query
     const overviewResult = await orgQuery(
-      ORG_ID,
+      orgId,
       `WITH loyalty_stats AS (
          SELECT
            COUNT(*)::int AS total_customers_enrolled,
@@ -168,7 +168,11 @@ export async function GET(req: NextRequest) {
  * body: { customer_id, adjustment (positive or negative int), reason }
  */
 export async function POST(req: NextRequest) {
-  await requireAdminPermission("employee.manage");
+  const ctx = await requireAdminPermission("employee.manage");
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const body = await req.json();
     const { customer_id, adjustment, reason } = body;
@@ -189,9 +193,9 @@ export async function POST(req: NextRequest) {
 
     // Check if customer exists
     const checkResult = await orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT id, loyalty_points FROM customers WHERE id = $1 AND organization_id = $2`,
-      [customer_id, ORG_ID],
+      [customer_id, orgId],
     );
 
     if (checkResult.rows.length === 0) {
@@ -203,7 +207,7 @@ export async function POST(req: NextRequest) {
 
     // Update customer loyalty points
     const updateResult = await orgQuery(
-      ORG_ID,
+      orgId,
       `UPDATE customers
        SET loyalty_points = $1, updated_at = NOW()
        WHERE id = $2

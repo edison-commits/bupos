@@ -1,12 +1,14 @@
 import { orgQuery } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
-const ORG_ID = process.env.BUPOS_ORG_ID || '33262270-7100-4b46-b2fb-8b50ad872bbb';
 const LOCATION_ID = process.env.BUPOS_LOCATION_ID || 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
 
 export async function GET(request: NextRequest) {
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  if (!adminCtx && !registerCtx) {
+  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }  if (!adminCtx && !registerCtx) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -24,14 +26,14 @@ export async function GET(request: NextRequest) {
   try {
     // SKU lives on product_variants, not products — search variants joined with products
     const { rows } = await orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT pv.id as variant_id, pv.sku, pv.size_label, pv.color_label, pv.price, pv.cost,
               p.id as product_id, p.name as product_name, p.slug as product_slug, p.category_id
        FROM product_variants pv
        JOIN products p ON pv.product_id = p.id
        WHERE p.organization_id = $1 AND LOWER(pv.sku) = $2
        LIMIT 1`,
-      [ORG_ID, normalizedCode]
+      [orgId, normalizedCode]
     )
 
     if (rows.length === 0) {
@@ -45,7 +47,7 @@ export async function GET(request: NextRequest) {
 
     // Get inventory for this variant + location
     const invRes = await orgQuery(
-      ORG_ID,
+      orgId,
       `SELECT on_hand FROM inventory_levels
        WHERE product_variant_id = $1 AND location_id = $2
        LIMIT 1`,

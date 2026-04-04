@@ -2,12 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/db';
 import { requireAdminPermission } from '@/lib/authz';
 
-const ORG_ID = process.env.BUPOS_ORG_ID || '33262270-7100-4b46-b2fb-8b50ad872bbb';
 
 export async function GET(request: NextRequest) {
   // Require a valid admin session
   const ctx = await (await import('@/lib/auth/session')).getAdminSession();
   if (!ctx || !ctx.session || !ctx.employee) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -21,26 +24,26 @@ export async function GET(request: NextRequest) {
     if (id) {
       const [customerRes, transactionsRes, statsRes] = await Promise.all([
         orgQuery(
-          ORG_ID,
+          orgId,
           `SELECT * FROM customers WHERE id = $1 AND organization_id = $2`,
-          [id, ORG_ID]
+          [id, orgId]
         ),
         orgQuery(
-          ORG_ID,
+          orgId,
           `SELECT id, created_at, grand_total, customer_id, employee_id
            FROM transactions
            WHERE customer_id = $1 AND organization_id = $2
            ORDER BY created_at DESC LIMIT 20`,
-          [id, ORG_ID]
+          [id, orgId]
         ),
         orgQuery(
-          ORG_ID,
+          orgId,
           `SELECT
              COUNT(*)::int as visit_count,
              COALESCE(SUM(grand_total), 0)::numeric as total_spend
            FROM transactions
            WHERE customer_id = $1 AND organization_id = $2`,
-          [id, ORG_ID]
+          [id, orgId]
         ),
       ]);
 
@@ -79,8 +82,8 @@ export async function GET(request: NextRequest) {
     values.push(pageSize, (page - 1) * pageSize);
 
     const [countRes, dataRes] = await Promise.all([
-      orgQuery(ORG_ID, countQ, values.slice(0, idx - 1)),
-      orgQuery(ORG_ID, dataQ, values),
+      orgQuery(orgId, countQ, values.slice(0, idx - 1)),
+      orgQuery(orgId, dataQ, values),
     ]);
 
     return NextResponse.json({
@@ -94,7 +97,11 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  await requireAdminPermission('employee.manage');
+  const ctx = await requireAdminPermission('employee.manage');
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const { first_name, last_name, email, phone, address, notes } = await request.json();
     if (!first_name?.trim() || !last_name?.trim()) {
@@ -102,7 +109,7 @@ export async function POST(request: NextRequest) {
     }
 
     const { rows } = await orgQuery(
-      ORG_ID,
+      orgId,
       `INSERT INTO customers (first_name, last_name, email, phone, address, notes, loyalty_points, total_spend, visit_count, store_credit_balance)
        VALUES ($1, $2, $3, $4, $5, $6, $7, 0, 0, 0)
        RETURNING *`,
@@ -116,18 +123,22 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
-  await requireAdminPermission('employee.manage');
+  const ctx = await requireAdminPermission('employee.manage');
+  const orgId = ctx.employee.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const { id, first_name, last_name, email, phone, address, notes, is_active } = await request.json();
     if (!id) return NextResponse.json({ error: 'Customer ID required' }, { status: 400 });
 
     const { rows } = await orgQuery(
-      ORG_ID,
+      orgId,
       `UPDATE customers
        SET first_name = $1, last_name = $2, email = $3, phone = $4, address = $5, notes = $6, is_active = $7, updated_at = NOW()
        WHERE id = $8 AND organization_id = $9
        RETURNING *`,
-      [first_name?.trim() || null, last_name?.trim() || null, email?.trim() || null, phone?.trim() || null, address?.trim() || null, notes?.trim() || null, is_active ?? true, id, ORG_ID],
+      [first_name?.trim() || null, last_name?.trim() || null, email?.trim() || null, phone?.trim() || null, address?.trim() || null, notes?.trim() || null, is_active ?? true, id, orgId],
     );
     if (rows.length === 0) return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
     return NextResponse.json({ customer: rows[0] });

@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server';
 import pool from '@/lib/db';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
 
-const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
 
 /**
  * GET /api/reorder-suggestions
@@ -15,7 +14,10 @@ const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
  */
 export async function GET() {
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  if (!adminCtx && !registerCtx) {
+  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }  if (!adminCtx && !registerCtx) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   try {
@@ -45,7 +47,7 @@ export async function GET() {
       WHERE il.organization_id = $1
         AND il.on_hand <= il.reorder_point
       ORDER BY s.name NULLS LAST, p.name, pv.name`,
-      [ORG_ID],
+      [orgId],
     );
 
     // Group by supplier
