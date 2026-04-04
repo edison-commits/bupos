@@ -108,19 +108,21 @@ export function SalesReports({ store }: { store: LocalStoreData }) {
     };
   }, [filteredTransactions]);
 
+  // Memoize tenderMap so it's not rebuilt on every render
+  const tenderMap = useMemo(() => {
+    const m = new Map<string, string[]>();
+    store.transactionTenderPlaceholders.forEach((tender) => {
+      if (transactionIds.has(tender.transactionId)) {
+        if (!m.has(tender.transactionId)) m.set(tender.transactionId, []);
+        m.get(tender.transactionId)!.push(tender.tenderType);
+      }
+    });
+    return m;
+  }, [store.transactionTenderPlaceholders, transactionIds]);
+
   const handleExportCSV = () => {
     const rows: string[] = [];
     rows.push("Date,Time,Transaction ID,Employee,Total,Tax,Tender Type,Is Return");
-
-    const tenderMap = new Map<string, string[]>();
-    store.transactionTenderPlaceholders.forEach((tender) => {
-      if (transactionIds.has(tender.transactionId)) {
-        if (!tenderMap.has(tender.transactionId)) {
-          tenderMap.set(tender.transactionId, []);
-        }
-        tenderMap.get(tender.transactionId)!.push(tender.tenderType);
-      }
-    });
 
     filteredTransactions.forEach((event) => {
       const date = new Date(event.createdAt);

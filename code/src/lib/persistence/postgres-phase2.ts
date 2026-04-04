@@ -594,17 +594,19 @@ export async function pgCreateStocktake(data: {
 }
 
 export async function pgAddStocktakeLines(stocktakeId: string, lines: { productVariantId: string; expectedQty: number }[]): Promise<StocktakeLine[]> {
+  if (lines.length === 0) return [];
   const ts = new Date().toISOString();
-  const results: StocktakeLine[] = [];
-  for (const line of lines) {
-    const { rows } = await pool.query(
-      `INSERT INTO stocktake_lines (stocktake_id, product_variant_id, expected_qty, created_at)
-       VALUES ($1, $2, $3, $4) RETURNING *`,
-      [stocktakeId, line.productVariantId, line.expectedQty, ts],
-    );
-    results.push(toStocktakeLine(rows[0]));
-  }
-  return results;
+  // Batch insert — single round-trip instead of one query per line
+  const variantIds = lines.map((l) => l.productVariantId);
+  const expectedQtys = lines.map((l) => l.expectedQty);
+  const { rows } = await pool.query(
+    `INSERT INTO stocktake_lines (stocktake_id, product_variant_id, expected_qty, created_at)
+     SELECT $1, variant_id, expected_qty, $2
+     FROM unnest($3::uuid[], $4::int[]) AS t(variant_id, expected_qty)
+     RETURNING *`,
+    [stocktakeId, ts, variantIds, expectedQtys],
+  );
+  return rows.map(toStocktakeLine);
 }
 
 export async function pgRecordStocktakeCount(lineId: string, countedQty: number, countedBy: string): Promise<StocktakeLine | null> {
@@ -699,15 +701,17 @@ export async function pgCreateTransfer(data: {
        VALUES ($1, $2, $3, $4, 'requested', $5, $6, $7, $7) RETURNING *`,
       [data.id, data.organizationId, data.sourceLocationId, data.destinationLocationId, data.requestedBy, data.notes ?? null, ts],
     );
-    const lineResults: TransferLine[] = [];
-    for (const line of data.lines) {
-      const { rows: lRows } = await client.query(
-        `INSERT INTO transfer_lines (transfer_id, product_variant_id, quantity_requested, created_at)
-         VALUES ($1, $2, $3, $4) RETURNING *`,
-        [data.id, line.productVariantId, line.quantityRequested, ts],
-      );
-      lineResults.push(toTransferLine(lRows[0]));
-    }
+    // Batch insert transfer lines — single round-trip instead of one per line
+    const variantIds = data.lines.map((l) => l.productVariantId);
+    const qtys = data.lines.map((l) => l.quantityRequested);
+    const { rows: lineRows } = await client.query(
+      `INSERT INTO transfer_lines (transfer_id, product_variant_id, quantity_requested, created_at)
+       SELECT $1, variant_id, qty, $2
+       FROM unnest($3::uuid[], $4::int[]) AS t(variant_id, qty)
+       RETURNING *`,
+      [data.id, ts, variantIds, qtys],
+    );
+    const lineResults = lineRows.map(toTransferLine);
     await client.query('COMMIT');
     return { transfer: toTransfer(tRows[0]), lines: lineResults };
   } catch (e) {
@@ -730,26 +734,33 @@ export async function pgShipTransfer(transferId: string, shippedBy: string, ship
   const client = await orgTx(organizationId);
   try {
     const ts = new Date().toISOString();
-    // Update each line with shipped quantity
-    for (const s of shipments) {
-      await client.query(
-        'UPDATE transfer_lines SET quantity_shipped = $1 WHERE id = $2',
-        [s.quantityShipped, s.lineId],
-      );
-    }
-    // Deduct inventory from source location
-    const { rows: lines } = await client.query(
-      'SELECT tl.*, t.source_location_id FROM transfer_lines tl JOIN transfers t ON tl.transfer_id = t.id WHERE tl.transfer_id = $1',
-      [transferId],
+    // Batch update shipped quantities — single query instead of one per line
+    const lineIds = shipments.map((s) => s.lineId);
+    const shippedQtys = shipments.map((s) => s.quantityShipped);
+    await client.query(
+      `UPDATE transfer_lines tl
+       SET quantity_shipped = u.qty, id = tl.id
+       FROM unnest($1::uuid[], $2::int[]) AS u(line_id, qty)
+       WHERE tl.id = u.line_id`,
+      [lineIds, shippedQtys],
     );
-    for (const line of lines) {
-      const qty = Number(line.quantity_shipped ?? line.quantity_requested);
-      await client.query(
-        `UPDATE inventory_levels SET on_hand = GREATEST(0, on_hand - $1), updated_at = $2
-         WHERE product_variant_id = $3 AND location_id = $4`,
-        [qty, ts, line.product_variant_id, line.source_location_id],
-      );
-    }
+    // Batch deduct inventory — single UPDATE with JOIN instead of per-line queries
+    const { rows: lines } = await client.query(
+      `UPDATE inventory_levels il
+       SET on_hand = GREATEST(0, il.on_hand - delta.qty), updated_at = $1
+       FROM (
+         SELECT tl.product_variant_id, t.source_location_id,
+                COALESCE(
+                  (SELECT u.qty FROM unnest($2::uuid[], $3::int[]) AS u(line_id, qty) WHERE u.line_id = tl.id),
+                  tl.quantity_requested
+                ) AS qty
+         FROM transfer_lines tl
+         JOIN transfers t ON tl.transfer_id = t.id
+         WHERE tl.transfer_id = $4
+       ) AS delta(variant_id, location_id, qty)
+       WHERE il.product_variant_id = delta.variant_id AND il.location_id = delta.location_id`,
+      [ts, lineIds, shippedQtys, transferId],
+    );
     // Update transfer status
     const { rows: tRows } = await client.query(
       `UPDATE transfers SET status = 'in_transit', shipped_by = $1, shipped_at = $2, updated_at = $2
@@ -779,27 +790,33 @@ export async function pgReceiveTransfer(transferId: string, receivedBy: string, 
   const client = await orgTx(organizationId);
   try {
     const ts = new Date().toISOString();
-    // Update each line with received quantity
-    for (const r of receipts) {
-      await client.query(
-        'UPDATE transfer_lines SET quantity_received = $1 WHERE id = $2',
-        [r.quantityReceived, r.lineId],
-      );
-    }
-    // Add inventory to destination location
-    const { rows: lines } = await client.query(
-      'SELECT tl.*, t.destination_location_id FROM transfer_lines tl JOIN transfers t ON tl.transfer_id = t.id WHERE tl.transfer_id = $1',
-      [transferId],
+    // Batch update received quantities
+    const receiptLineIds = receipts.map((r) => r.lineId);
+    const receivedQtys = receipts.map((r) => r.quantityReceived);
+    await client.query(
+      `UPDATE transfer_lines tl
+       SET quantity_received = u.qty
+       FROM unnest($1::uuid[], $2::int[]) AS u(line_id, qty)
+       WHERE tl.id = u.line_id`,
+      [receiptLineIds, receivedQtys],
     );
-    for (const line of lines) {
-      const receipt = receipts.find(r => r.lineId === line.id);
-      const qty = receipt ? receipt.quantityReceived : Number(line.quantity_shipped ?? line.quantity_requested);
-      await client.query(
-        `UPDATE inventory_levels SET on_hand = on_hand + $1, updated_at = $2
-         WHERE product_variant_id = $3 AND location_id = $4`,
-        [qty, ts, line.product_variant_id, line.destination_location_id],
-      );
-    }
+    // Batch add inventory to destination — single query
+    await client.query(
+      `UPDATE inventory_levels il
+       SET on_hand = il.on_hand + delta.qty, updated_at = $1
+       FROM (
+         SELECT tl.product_variant_id, t.destination_location_id,
+                COALESCE(
+                  (SELECT u.qty FROM unnest($2::uuid[], $3::int[]) AS u(line_id, qty) WHERE u.line_id = tl.id),
+                  COALESCE(tl.quantity_shipped, tl.quantity_requested)
+                ) AS qty
+         FROM transfer_lines tl
+         JOIN transfers t ON tl.transfer_id = t.id
+         WHERE tl.transfer_id = $4
+       ) AS delta(variant_id, location_id, qty)
+       WHERE il.product_variant_id = delta.variant_id AND il.location_id = delta.location_id`,
+      [ts, receiptLineIds, receivedQtys, transferId],
+    );
     // Update transfer status
     const { rows: tRows } = await client.query(
       `UPDATE transfers SET status = 'received', received_by = $1, received_at = $2, updated_at = $2

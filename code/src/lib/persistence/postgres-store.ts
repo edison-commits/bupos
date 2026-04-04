@@ -108,7 +108,10 @@ function toEmployee(row: Record<string, unknown>): Employee {
 
 export async function pgReadCategories(): Promise<Category[]> {
   if (_categoriesCache && Date.now() < _categoriesCache.expiresAt) return _categoriesCache.data;
-  const { rows } = await pool.query('SELECT * FROM categories ORDER BY sort_order');
+  const { rows } = await pool.query(
+    `SELECT id, organization_id, name, slug, parent_category_id, sort_order, image_url, created_at, updated_at
+     FROM categories ORDER BY sort_order`,
+  );
   const data = rows.map(toCategory);
   _categoriesCache = { data, expiresAt: Date.now() + PG_READ_TTL_MS };
   return data;
@@ -158,7 +161,9 @@ export async function pgReadProducts(organizationId: string): Promise<Product[]>
   const cached = _productsCache.get(organizationId);
   if (cached && Date.now() < cached.expiresAt) return cached.data;
   const { rows } = await pool.query(
-    `SELECT p.*, COALESCE(array_agg(pmg.modifier_group_id) FILTER (WHERE pmg.modifier_group_id IS NOT NULL), '{}') AS modifier_group_ids
+    `SELECT p.id, p.organization_id, p.category_id, p.name, p.slug, p.description, p.image_url,
+            p.is_active, p.is_touch_favorite, p.default_variant_id, p.created_at, p.updated_at,
+            COALESCE(array_agg(pmg.modifier_group_id) FILTER (WHERE pmg.modifier_group_id IS NOT NULL), '{}') AS modifier_group_ids
      FROM products p LEFT JOIN product_modifier_groups pmg ON p.id = pmg.product_id
      WHERE p.organization_id = $1
      GROUP BY p.id ORDER BY p.name`,
@@ -238,7 +243,9 @@ export async function pgReadVariants(organizationId: string): Promise<ProductVar
   const cached = _variantsCache.get(organizationId);
   if (cached && Date.now() < cached.expiresAt) return cached.data;
   const { rows } = await pool.query(
-    'SELECT * FROM product_variants WHERE organization_id = $1 ORDER BY name',
+    `SELECT id, organization_id, product_id, sku, barcode, name, size_label, color_label,
+            price, compare_at_price, cost, is_active, created_at, updated_at
+     FROM product_variants WHERE organization_id = $1 ORDER BY name`,
     [organizationId],
   );
   const data = rows.map(toVariant);
@@ -299,15 +306,25 @@ export async function pgDeleteVariant(id: string): Promise<boolean> {
 
 // NOTE: callers should be updated to pass ORG_ID (organizationId) from their request context.
 
-export async function pgReadInventory(organizationId: string): Promise<InventoryLevel[]> {
-  const cached = _inventoryCache.get(organizationId);
+export async function pgReadInventory(organizationId: string, locationId?: string): Promise<InventoryLevel[]> {
+  // When locationId is provided (e.g. POS terminal), only load that location's inventory
+  // to avoid fetching and transmitting inventory for all locations.
+  const cacheKey = locationId ? `${organizationId}:${locationId}` : organizationId;
+  const cached = _inventoryCache.get(cacheKey);
   if (cached && Date.now() < cached.expiresAt) return cached.data;
-  const { rows } = await pool.query(
-    'SELECT * FROM inventory_levels WHERE organization_id = $1',
-    [organizationId],
-  );
+  const { rows } = locationId
+    ? await pool.query(
+        `SELECT id, organization_id, location_id, product_variant_id, on_hand, reserved, reorder_point, created_at, updated_at
+         FROM inventory_levels WHERE organization_id = $1 AND location_id = $2`,
+        [organizationId, locationId],
+      )
+    : await pool.query(
+        `SELECT id, organization_id, location_id, product_variant_id, on_hand, reserved, reorder_point, created_at, updated_at
+         FROM inventory_levels WHERE organization_id = $1`,
+        [organizationId],
+      );
   const data = rows.map(toInventory);
-  _inventoryCache.set(organizationId, { data, expiresAt: Date.now() + PG_READ_TTL_MS });
+  _inventoryCache.set(cacheKey, { data, expiresAt: Date.now() + PG_READ_TTL_MS });
   return data;
 }
 
@@ -375,7 +392,9 @@ export async function pgReadEmployees(organizationId: string): Promise<Employee[
   const cached = _employeesCache.get(organizationId);
   if (cached && Date.now() < cached.expiresAt) return cached.data;
   const { rows } = await pool.query(
-    `SELECT * FROM employees WHERE organization_id = $1 ORDER BY last_name`,
+    `SELECT id, organization_id, role_key, first_name, last_name, display_name, email,
+            pin_hint, is_active, location_ids, created_at, updated_at
+     FROM employees WHERE organization_id = $1 ORDER BY last_name`,
     [organizationId],
   );
   const data = rows.map(toEmployee);
@@ -567,7 +586,11 @@ export async function pgInsertAuditEvent(
 // ── Organization ──────────────────────────────────────────────────────
 
 export async function pgReadOrganization() {
-  const { rows } = await pool.query('SELECT * FROM organizations LIMIT 1');
+  const { rows } = await pool.query(
+    `SELECT id, name, slug, legal_name, timezone, currency_code, phone, email, website,
+            receipt_header, receipt_footer, created_at, updated_at
+     FROM organizations LIMIT 1`,
+  );
   if (!rows[0]) return null;
   const r = rows[0] as Record<string, unknown>;
   return {
@@ -605,7 +628,11 @@ export async function pgUpdateOrganization(id: string, data: Partial<{
 
 export async function pgReadLocations() {
   if (_locationsCache && Date.now() < _locationsCache.expiresAt) return _locationsCache.data;
-  const { rows } = await pool.query('SELECT * FROM locations WHERE is_active = true ORDER BY name');
+  const { rows } = await pool.query(
+    `SELECT id, organization_id, name, code, address_1, city, region, postal_code, phone,
+            tax_rate, is_active, created_at, updated_at
+     FROM locations WHERE is_active = true ORDER BY name`,
+  );
   const data = rows.map((r: Record<string, unknown>) => ({
     id: r.id as string, organizationId: r.organization_id as string,
     name: r.name as string, code: r.code as string,
@@ -693,7 +720,11 @@ export async function pgCreateRegisterSession(data: {
 
 export async function pgFindActiveRegisterSession(authSessionId: string): Promise<RegisterSessionRecord | null> {
   const { rows } = await pool.query(
-    `SELECT * FROM register_sessions WHERE auth_session_id = $1 AND status = 'active' LIMIT 1`,
+    `SELECT id, auth_session_id, employee_id, location_id, status, started_at, ended_at,
+            active_shift_id, last_cart_id, last_transaction_id, pending_exception_ids,
+            created_at, updated_at
+     FROM register_sessions
+     WHERE auth_session_id = $1 AND status = 'active' LIMIT 1`,
     [authSessionId],
   );
   return rows[0] ? toRegisterSession(rows[0]) : null;

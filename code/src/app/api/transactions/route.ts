@@ -142,8 +142,7 @@ export async function GET(req: NextRequest) {
               t.customer_id,
               e.display_name AS employee_name,
               c.first_name || ' ' || c.last_name AS customer_name,
-              (SELECT COUNT(*)::int FROM transaction_tenders tt WHERE tt.transaction_id = t.id) AS tender_count,
-              (SELECT json_agg(json_build_object('items', cs.value)) FROM jsonb_each(t.cart_snapshot) cs WHERE cs.key = 'items') AS item_count_raw
+              (SELECT COUNT(*)::int FROM transaction_tenders tt WHERE tt.transaction_id = t.id) AS tender_count
        FROM transactions t
        LEFT JOIN employees e ON e.id = t.employee_id
        LEFT JOIN customers c ON c.id = t.customer_id
@@ -153,11 +152,7 @@ export async function GET(req: NextRequest) {
       [...values, limit, offset],
     );
 
-    const transactions = rows.rows.map((r: Record<string, unknown>) => {
-      const raw = r.item_count_raw as Array<{ items?: unknown[] }> | undefined;
-      const itemCount = raw?.[0]?.items ? (raw[0].items as unknown[]).length : 0;
-      return { ...r, item_count: itemCount, item_count_raw: undefined };
-    });
+    const transactions = rows.rows;
 
     return NextResponse.json({
       transactions,
