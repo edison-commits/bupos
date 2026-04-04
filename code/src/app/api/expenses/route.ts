@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import pool from '@/lib/db';
+import { requireAdminPermission } from '@/lib/authz';
 
 const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
 const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
 
 export async function GET(request: NextRequest) {
+  await requireAdminPermission('audit.view');
   const month = request.nextUrl.searchParams.get('month') || ''; // YYYY-MM
   const category = request.nextUrl.searchParams.get('category') || '';
 
@@ -48,6 +50,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  await requireAdminPermission('catalog.manage');
   try {
     const { category, description, amount, expense_date, is_recurring, recurrence_period, notes } = await request.json();
     if (!category || !description || !amount) {
@@ -67,6 +70,7 @@ export async function POST(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
+  await requireAdminPermission('catalog.manage');
   try {
     const { id } = await request.json();
     if (!id) return NextResponse.json({ error: 'Expense ID required' }, { status: 400 });
