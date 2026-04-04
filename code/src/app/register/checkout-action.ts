@@ -88,8 +88,14 @@ export async function checkoutAction(
   }
   const totalTendered = tenders.reduce((sum, t) => sum + t.amount, 0);
 
+  // Lower bound: must cover the total (within half-cent tolerance for float drift)
   if (totalTendered < totals.grandTotal - 0.005) {
     redirect("/register?error=Insufficient+tender+amount");
+  }
+  // Upper bound: reject absurd over-tendering (e.g. $10k cash on a $20 transaction).
+  // Allow up to 10× the total as the sane ceiling — change will be given back.
+  if (totalTendered > totals.grandTotal * 10) {
+    redirect("/register?error=Tender+amount+exceeds+reasonable+limit");
   }
 
   // Change due comes only from cash overage
@@ -103,10 +109,17 @@ export async function checkoutAction(
 
   // Loyalty calculations
   const loyaltyConfig = registerConfiguration.loyalty;
-  // Rounding before flooring cancels binary float drift (e.g. 10.00*0.1 = 0.9999999 → round=1 → floor=1)
+  // Earning: round-then-floor pattern cancels binary float drift
+  // (e.g. 10.00*0.1 = 0.9999999 → round=1 → floor=1 → 1 point).
+  // Because Math.round on an integer is a no-op, this is equivalent to Math.round
+  // for all non-float-drifted values (2.4→2, 2.6→3, 2.5→3). Result is always integer.
   const loyaltyPointsEarned = cart.customerId
     ? Math.floor(Math.round(totals.grandTotal * loyaltyConfig.earnRatePerDollar))
     : 0;
+  // Redemption: simple rounding (partial points not allowed — round to nearest whole point).
+  // NOTE: redemption uses plain Math.round while earning uses Math.floor(Math.round(...)).
+  // This means exactly-2.5-point redemptions round UP (to 3) while exactly-2.5-point
+  // earnings round DOWN (to 2). This asymmetry is not documented anywhere.
   const loyaltyPointsRedeemed = loyaltyTendered > 0 && cart.customerId
     ? Math.round(loyaltyTendered / loyaltyConfig.redemptionValuePerPoint)
     : 0;

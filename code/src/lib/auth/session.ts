@@ -125,8 +125,16 @@ async function resolveSession(scope: SessionRecord["scope"], cookieName: string)
   if (isPg()) {
     // Query register_sessions and shifts directly from PG
     const pgPool = await pgGetPool();
+
+    // Abandoned session guard: if the auth session hasn't been seen in > 8 hours,
+    // treat the register session as abandoned and close it automatically.
+    const STALE_HOURS = 8;
     const { rows: rsRows } = await pgPool.query(
-      `SELECT * FROM register_sessions WHERE auth_session_id = $1 AND status = 'active' LIMIT 1`,
+      `SELECT rs.* FROM register_sessions rs
+       JOIN sessions s ON s.id = rs.auth_session_id
+       WHERE rs.auth_session_id = $1 AND rs.status = 'active'
+         AND (s.last_seen_at IS NULL OR s.last_seen_at > NOW() - INTERVAL '${STALE_HOURS} hours')
+       LIMIT 1`,
       [session.id],
     );
     if (!rsRows[0]) return null;
@@ -171,8 +179,14 @@ async function resolveSession(scope: SessionRecord["scope"], cookieName: string)
       }
     }
   } else {
+    // Abandoned session guard for JSON (non-PG) mode
+    const STALE_HOURS = 8;
+    const staleCutoff = new Date(Date.now() - STALE_HOURS * 3600 * 1000).toISOString();
     registerSession = store.registerSessions.find(
-      (entry) => entry.authSessionId === session.id && entry.status === "active",
+      (entry) =>
+        entry.authSessionId === session.id &&
+        entry.status === "active" &&
+        session.lastSeenAt >= staleCutoff,
     );
     if (!registerSession) {
       return null;

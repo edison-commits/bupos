@@ -5,6 +5,13 @@ import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 
 const LOCATION_ID = "c57268b3-cb14-4c1a-bda6-55e49ddc6313";
 
+const REPORT_TYPES = new Set(["summary", "category", "employee", "hourly", "tender", "products", "shifts"]);
+
+function isValidDate(str: string): boolean {
+  const d = new Date(str);
+  return !isNaN(d.getTime());
+}
+
 export async function GET(request: Request) {
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
   const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
@@ -19,6 +26,20 @@ export async function GET(request: Request) {
 
   if (!type || !from || !to) {
     return Response.json({ error: "Missing required parameters: type, from, to" }, { status: 400 });
+  }
+
+  // Defensive: enforce allowlist on type to prevent any future switch-case injection
+  if (!REPORT_TYPES.has(type)) {
+    return Response.json({ error: `Unknown report type: ${type}` }, { status: 400 });
+  }
+
+  // Validate date formats before use
+  if (!isValidDate(from) || !isValidDate(to)) {
+    return Response.json({ error: "Invalid date format. Use YYYY-MM-DD." }, { status: 400 });
+  }
+
+  if (from > to) {
+    return Response.json({ error: "'from' must be before or equal to 'to'." }, { status: 400 });
   }
 
   try {
@@ -46,8 +67,6 @@ export async function GET(request: Request) {
       case "shifts":
         data = await getShiftSummary(orgId, from, to);
         break;
-      default:
-        return Response.json({ error: `Unknown report type: ${type}` }, { status: 400 });
     }
 
     return Response.json(data);

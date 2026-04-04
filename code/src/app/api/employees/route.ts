@@ -7,6 +7,18 @@ import { requireAdminPermission } from '@/lib/authz';
 import { getAdminSession } from '@/lib/auth/session';
 import { invalidateEmployeesCache } from '@/lib/persistence/postgres-store';
 
+/**
+ * Invalidate all active sessions for an employee — both admin and register scopes.
+ * Call this when the employee's role changes or they are deactivated so that
+ * permission changes take effect immediately rather than waiting for session expiry.
+ */
+async function invalidateEmployeeSessions(employeeId: string): Promise<void> {
+  await pool.query(
+    `DELETE FROM sessions WHERE employee_id = $1`,
+    [employeeId],
+  );
+}
+
 const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
 
 // GET: List all employees with their roles and location info
@@ -294,6 +306,12 @@ export async function PUT(request: NextRequest) {
       updatedAt: rows[0].updated_at,
     };
 
+    // If role changed, invalidate all of the target employee's sessions immediately
+    // so that the new (possibly lower) permissions take effect without waiting for expiry.
+    if (roleKey !== undefined) {
+      await invalidateEmployeeSessions(id);
+    }
+
     invalidateEmployeesCache(orgId);
     return NextResponse.json({ employee });
   } catch (error) {
@@ -342,6 +360,12 @@ export async function PATCH(request: NextRequest) {
         createdAt: rows[0].created_at,
         updatedAt: rows[0].updated_at,
       };
+
+      // If the employee was just deactivated, kill all their sessions immediately
+      // so they cannot continue to act with their old permissions.
+      if (!rows[0].is_active) {
+        await invalidateEmployeeSessions(id);
+      }
 
       invalidateEmployeesCache(orgId);
       return NextResponse.json({ employee });
