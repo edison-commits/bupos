@@ -5,7 +5,6 @@ import { requireAdminPermission } from '@/lib/authz';
 const ORG_ID = process.env.BUPOS_ORG_ID || '33262270-7100-4b46-b2fb-8b50ad872bbb';
 
 export async function GET(request: NextRequest) {
-  await requireAdminPermission('audit.view');
   const search = request.nextUrl.searchParams.get('search')?.trim() || '';
   const id = request.nextUrl.searchParams.get('id')?.trim() || '';
   const page = Math.max(1, parseInt(request.nextUrl.searchParams.get('page') || '1'));

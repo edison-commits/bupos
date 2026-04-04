@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAdminPermission } from '@/lib/authz';
-
 import { orgQuery } from '@/lib/db';
 
 const ORG_ID = process.env.BUPOS_ORG_ID || '33262270-7100-4b46-b2fb-8b50ad872bbb';
@@ -9,6 +7,7 @@ const LOCATION_ID = process.env.BUPOS_LOCATION_ID || 'c57268b3-cb14-4c1a-bda6-55
 // 30-second response cache — keyed by URL so search params are included
 const _inventoryCache = new Map<string, { data: unknown; expiresAt: number }>();
 const INV_CACHE_TTL = 30_000;
+const MAX_CACHE_SIZE = 50;
 
 export async function GET(request: NextRequest) {
   // Auth required only for write operations; GET is a read-only view
@@ -222,6 +221,10 @@ export async function GET(request: NextRequest) {
       },
     };
     _inventoryCache.set(cacheKey, { data: response, expiresAt: Date.now() + INV_CACHE_TTL });
+    if (_inventoryCache.size > MAX_CACHE_SIZE) {
+      const firstKey = _inventoryCache.keys().next().value;
+      if (firstKey) _inventoryCache.delete(firstKey);
+    }
     return NextResponse.json(response);
   } catch (error) {
     console.error('Inventory API error:', error);

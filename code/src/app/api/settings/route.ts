@@ -6,7 +6,6 @@ const ORG_ID = process.env.BUPOS_ORG_ID || '33262270-7100-4b46-b2fb-8b50ad872bbb
 const LOCATION_ID = process.env.BUPOS_LOCATION_ID || 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
 
 export async function GET() {
-  await requireAdminPermission('catalog.manage');
   try {
     const [orgResult, locationResult] = await Promise.all([
       orgQuery(

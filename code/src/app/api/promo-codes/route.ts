@@ -17,7 +17,6 @@ const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
  * Without params returns all promo codes.
  */
 export async function GET(req: NextRequest) {
-  await requireAdminPermission("audit.view");
   try {
     const sp = req.nextUrl.searchParams;
 

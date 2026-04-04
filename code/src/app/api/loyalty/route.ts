@@ -15,7 +15,6 @@ const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
  * - Points distribution histogram
  */
 export async function GET(req: NextRequest) {
-  await requireAdminPermission("audit.view");
   try {
     const sp = req.nextUrl.searchParams;
 

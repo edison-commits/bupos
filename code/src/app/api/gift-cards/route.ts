@@ -16,8 +16,6 @@ const ORG_ID = process.env.BUPOS_ORG_ID || "33262270-7100-4b46-b2fb-8b50ad872bbb
  * Without params returns all gift cards with summary stats.
  */
 export async function GET(req: NextRequest) {
-  await requireAdminPermission('catalog.manage');
-
   try {
     const sp = req.nextUrl.searchParams;
 

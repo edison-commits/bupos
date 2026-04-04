@@ -10,7 +10,6 @@ const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
  * PUT /api/suppliers - Update an existing supplier
  */
 export async function GET() {
-  await requireAdminPermission('audit.view');
   try {
     const { rows } = await pool.query(
       `SELECT * FROM suppliers WHERE organization_id = $1 ORDER BY name ASC`,

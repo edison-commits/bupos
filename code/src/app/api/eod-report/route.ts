@@ -12,7 +12,6 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
  */
 export async function GET(req: NextRequest) {
   try {
-    await requireAdminPermission('audit.view');
     const reportData = await generateReportData();
     return NextResponse.json(reportData);
   } catch (error) {

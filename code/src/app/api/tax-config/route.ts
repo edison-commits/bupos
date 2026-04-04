@@ -12,8 +12,6 @@ const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
  *   location — specific location ID
  */
 export async function GET(req: NextRequest) {
-  await requireAdminPermission('catalog.manage');
-
   try {
     const locationId = req.nextUrl.searchParams.get("location");
 

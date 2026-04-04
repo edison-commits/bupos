@@ -14,8 +14,6 @@ const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
  *   date     — specific date YYYY-MM-DD (defaults to today)
  */
 export async function GET(req: NextRequest) {
-  await requireAdminPermission('register.open');
-
   try {
     const sp = req.nextUrl.searchParams;
     const locationId = sp.get("location") || "c57268b3-cb14-4c1a-bda6-55e49ddc6313";

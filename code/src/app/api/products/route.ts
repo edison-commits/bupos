@@ -9,6 +9,7 @@ const LOCATION_ID = process.env.BUPOS_LOCATION_ID || 'c57268b3-cb14-4c1a-bda6-55
 // 30-second response cache
 const _productsCache = new Map<string, { data: unknown; expiresAt: number }>();
 const PROD_CACHE_TTL = 30_000;
+const MAX_CACHE_SIZE = 50;
 
 export async function GET(request: NextRequest) {
   const cacheKey = request.nextUrl.toString();
@@ -178,6 +179,10 @@ export async function GET(request: NextRequest) {
       summary,
     };
     _productsCache.set(cacheKey, { data: response, expiresAt: Date.now() + PROD_CACHE_TTL });
+    if (_productsCache.size > MAX_CACHE_SIZE) {
+      const firstKey = _productsCache.keys().next().value;
+      if (firstKey) _productsCache.delete(firstKey);
+    }
     return NextResponse.json(response);
   } catch (error) {
     console.error('Products GET error:', error);

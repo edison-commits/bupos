@@ -12,8 +12,6 @@ const LOCATION_ID = "c57268b3-cb14-4c1a-bda6-55e49ddc6313";
  * If no shift param, fetches the most recent open shift.
  */
 export async function GET(req: NextRequest) {
-  await requireAdminPermission('register.open');
-
   try {
     let shiftId = req.nextUrl.searchParams.get("shift");
 

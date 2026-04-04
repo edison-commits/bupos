@@ -13,7 +13,6 @@ const LOCATION_ID = process.env.BUPOS_LOCATION_ID || 'c57268b3-cb14-4c1a-bda6-55
  * PUT  - Update status (approve/complete/reject). On complete with restock, updates inventory.
  */
 export async function GET() {
-  await requireAdminPermission('audit.view');
   try {
     const { rows } = await orgQuery(
       ORG_ID,

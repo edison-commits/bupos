@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
-import { requireAdminPermission } from "@/lib/authz";
-
 const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
 
 /**
@@ -19,7 +17,6 @@ const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
  *   id       — fetch single transaction by ID (returns full detail with tenders/events)
  */
 export async function GET(req: NextRequest) {
-  await requireAdminPermission('audit.view');
   try {
     const sp = req.nextUrl.searchParams;
 

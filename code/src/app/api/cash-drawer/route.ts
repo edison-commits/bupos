@@ -13,8 +13,6 @@ const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
  */
 export async function GET(req: NextRequest) {
   try {
-    await requireAdminPermission('register.open');
-
     const action = req.nextUrl.searchParams.get('action') || 'status';
 
     if (action === 'status') {
