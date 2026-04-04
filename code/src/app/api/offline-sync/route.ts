@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
-import { cookies } from "next/headers";
-import pool, { orgTx, orgQuery } from "@/lib/db";
+import { orgTx, orgQuery } from "@/lib/db";
 import { requireRegisterPermission } from "@/lib/authz";
-import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 import { registerConfiguration } from "@/lib/data/mock-data";
 
 import { BUPOS_LOCATION_ID } from '@/lib/env';
