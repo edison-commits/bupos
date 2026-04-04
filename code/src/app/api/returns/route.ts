@@ -36,6 +36,7 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  await requireAdminPermission('employee.manage');
   try {
     const { customer_name, reason, notes, refund_method, lines } = await request.json();
 
