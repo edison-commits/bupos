@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery, pool } from '@/lib/db';
+import { requireAdminPermission } from '@/lib/authz';
 
 const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
 const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
@@ -76,6 +77,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  await requireAdminPermission('catalog.manage');
   try {
     const { supplier_id, notes, expected_at, lines } = await request.json();
 
@@ -143,6 +145,7 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
+  await requireAdminPermission('catalog.manage');
   try {
     const { id, status, notes, expected_at, ordered_at } = await request.json();
 
@@ -192,6 +195,7 @@ export async function PUT(request: NextRequest) {
  * If some lines are partially received, sets status to 'partial'.
  */
 export async function PATCH(request: NextRequest) {
+  await requireAdminPermission('catalog.manage');
   try {
     const { id, receives } = await request.json();
 

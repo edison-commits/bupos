@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery, pool } from '@/lib/db';
+import { requireAdminPermission } from '@/lib/authz';
 
 const ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
 const LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
@@ -108,6 +109,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const { employee } = await requireAdminPermission('catalog.manage');
   try {
     const { items, mode, po_id } = await request.json();
 
@@ -118,8 +120,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get employee ID (placeholder - would come from auth in production)
-    const employeeId = 'dummy-employee-id';
+    const employeeId = employee.id;
 
     // Process receiving in transaction
     const client = await pool.connect();

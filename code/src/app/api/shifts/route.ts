@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
-import { requireAdminPermission } from "@/lib/authz";
 import { pgOpenShift } from "@/lib/persistence/postgres-store";
 import { randomUUID } from "node:crypto";
+import { requireAdminPermission } from "@/lib/authz";
 
 const ORG_ID = "33262270-7100-4b46-b2fb-8b50ad872bbb";
 const LOCATION_ID = "c57268b3-cb14-4c1a-bda6-55e49ddc6313";
 
 export async function GET(req: NextRequest) {
-  await requireAdminPermission('register.open');
   try {
     const sp = req.nextUrl.searchParams;
     const page = Math.max(1, parseInt(sp.get("page") ?? "1", 10));
@@ -92,6 +91,7 @@ export async function GET(req: NextRequest) {
 
 // POST /api/shifts — open a new shift (admin-initiated, no register session required)
 export async function POST(req: NextRequest) {
+  await requireAdminPermission('register.open');
   try {
     const { employeeId, locationId, openingFloat, openedNote } = await req.json();
 
