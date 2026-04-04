@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/db';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
-
-const LOCATION_ID = process.env.BUPOS_LOCATION_ID || 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
+import { BUPOS_LOCATION_ID } from '@/lib/env';
 
 // 30-second response cache — keyed by URL so search params are included
 const _inventoryCache = new Map<string, { data: unknown; expiresAt: number }>();
@@ -88,7 +87,7 @@ export async function GET(request: NextRequest) {
         ${whereClause}
         ORDER BY p.name, pv.sku
         `,
-        [LOCATION_ID, ...params]
+        [BUPOS_LOCATION_ID, ...params]
       ),
 
       // Get all categories
@@ -141,7 +140,7 @@ export async function GET(request: NextRequest) {
         LEFT JOIN inventory_levels i ON pv.id = i.product_variant_id AND i.location_id = $1
         ${whereClause}
         `,
-        [LOCATION_ID, ...params]
+        [BUPOS_LOCATION_ID, ...params]
       ),
     ]);
 

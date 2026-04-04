@@ -3,8 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminPermission } from '@/lib/authz';
 import { invalidateProductsCache } from '@/lib/persistence/postgres-store';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
-
-const LOCATION_ID = process.env.BUPOS_LOCATION_ID || 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
+import { BUPOS_LOCATION_ID } from '@/lib/env';
 
 // 30-second response cache
 const _productsCache = new Map<string, { data: unknown; expiresAt: number }>();
@@ -90,7 +89,7 @@ export async function GET(request: NextRequest) {
         ${whereClause}
         ORDER BY p.name, pv.sku
         `,
-        [LOCATION_ID, ...params]
+        [BUPOS_LOCATION_ID, ...params]
       ),
 
       // Get all categories

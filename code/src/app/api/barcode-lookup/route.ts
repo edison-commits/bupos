@@ -1,7 +1,7 @@
 import { orgQuery } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
-const LOCATION_ID = process.env.BUPOS_LOCATION_ID || 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
+import { BUPOS_LOCATION_ID } from '@/lib/env';
 
 export async function GET(request: NextRequest) {
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
@@ -51,7 +51,7 @@ export async function GET(request: NextRequest) {
       `SELECT on_hand FROM inventory_levels
        WHERE product_variant_id = $1 AND location_id = $2
        LIMIT 1`,
-      [r.variant_id, LOCATION_ID]
+      [r.variant_id, BUPOS_LOCATION_ID]
     )
 
     const quantity = invRes.rows[0]?.on_hand ?? 0

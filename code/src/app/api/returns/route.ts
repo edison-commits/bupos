@@ -3,8 +3,7 @@ import { randomUUID } from 'crypto';
 import { orgQuery } from '@/lib/db';
 import { requireAdminPermission } from '@/lib/authz';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
-
-const LOCATION_ID = process.env.BUPOS_LOCATION_ID || 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
+import { BUPOS_LOCATION_ID } from '@/lib/env';
 
 /**
  * Returns API
@@ -54,7 +53,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Generate return number: RET-BEL-YYMMDD-NNN
-    const { rows: locRows } = await orgQuery(orgId, 'SELECT name FROM locations WHERE id = $1', [LOCATION_ID]);
+    const { rows: locRows } = await orgQuery(orgId, 'SELECT name FROM locations WHERE id = $1', [BUPOS_LOCATION_ID]);
     const locCode = (locRows[0]?.name || 'STR').slice(0, 3).toUpperCase();
     const now = new Date();
     const dateStr = `${String(now.getFullYear()).slice(-2)}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
@@ -77,7 +76,7 @@ export async function POST(request: NextRequest) {
       `INSERT INTO returns (id, organization_id, location_id, return_number, customer_name, reason, notes, refund_method, refund_amount, status)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')
        RETURNING *`,
-      [returnId, orgId, LOCATION_ID, returnNumber, customer_name || null, reason || 'other', notes || null, refund_method || 'store_credit', refundAmount],
+      [returnId, orgId, BUPOS_LOCATION_ID, returnNumber, customer_name || null, reason || 'other', notes || null, refund_method || 'store_credit', refundAmount],
     );
 
     for (const line of lines) {

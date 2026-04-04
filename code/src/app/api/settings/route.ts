@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/db';
 import { requireAdminPermission } from '@/lib/authz';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
-
-const LOCATION_ID = process.env.BUPOS_LOCATION_ID || 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
+import { BUPOS_LOCATION_ID } from '@/lib/env';
 
 export async function GET() {
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
@@ -29,7 +28,7 @@ export async function GET() {
         orgId,
         `SELECT id, name, code, address1, city, region, postal_code, phone, tax_rate, is_active
          FROM locations WHERE id = $1 AND organization_id = $2`,
-        [LOCATION_ID, orgId]
+        [BUPOS_LOCATION_ID, orgId]
       ),
     ]);
 
@@ -115,7 +114,7 @@ export async function PUT(request: NextRequest) {
                postal_code = $6, phone = $7, tax_rate = $8, updated_at = NOW()
            WHERE id = $9 AND organization_id = $10`,
           [data.name, data.code, data.address1, data.city, data.region,
-           data.postalCode, data.phone, data.taxRate, LOCATION_ID, orgId]
+           data.postalCode, data.phone, data.taxRate, BUPOS_LOCATION_ID, orgId]
         );
         // Return full settings after update so client state stays valid
         const [updatedOrg, updatedLocation] = await Promise.all([
@@ -132,7 +131,7 @@ export async function PUT(request: NextRequest) {
             orgId,
             `SELECT id, name, code, address1, city, region, postal_code, phone, tax_rate, is_active
              FROM locations WHERE id = $1 AND organization_id = $2`,
-            [LOCATION_ID, orgId]
+            [BUPOS_LOCATION_ID, orgId]
           ),
         ]);
         const org = updatedOrg.rows[0];

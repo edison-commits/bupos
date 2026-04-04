@@ -6,7 +6,7 @@ import { requireRegisterPermission } from "@/lib/authz";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 import { registerConfiguration } from "@/lib/data/mock-data";
 
-const LOCATION_ID = process.env.BUPOS_LOCATION_ID || "c57268b3-cb14-4c1a-bda6-55e49ddc6313";
+import { BUPOS_LOCATION_ID } from '@/lib/env';
 
 /**
  * POST /api/offline-sync
@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
       const { rows: locRows } = await orgQuery(
         orgId,
         `SELECT tax_rate FROM locations WHERE id = $1`,
-        [LOCATION_ID],
+        [BUPOS_LOCATION_ID],
       );
       if (locRows[0]?.tax_rate != null) {
         taxRate = Number(locRows[0].tax_rate);
@@ -157,7 +157,7 @@ export async function POST(request: NextRequest) {
            created_at = EXCLUDED.created_at
          RETURNING id`,
         [
-          transactionId, orgId, LOCATION_ID, sessionId, employeeId,
+          transactionId, orgId, BUPOS_LOCATION_ID, sessionId, employeeId,
           JSON.stringify(cart), subtotal, discountTotal, taxTotal, grandTotal,
           primaryTenderType, totalTendered, changeDue,
           timestamp || new Date().toISOString(),
@@ -188,7 +188,7 @@ export async function POST(request: NextRequest) {
           randomUUID(), transactionId, employeeId,
           `Offline checkout synced`,
           JSON.stringify({
-            location_id: LOCATION_ID,
+            location_id: BUPOS_LOCATION_ID,
             register_session_id: sessionId,
             item_count: items.length,
             grand_total: grandTotal.toFixed(2),
@@ -210,7 +210,7 @@ export async function POST(request: NextRequest) {
            WHERE il.product_variant_id = ANY($1::uuid[]) AND il.location_id = $2
            ORDER BY il.product_variant_id
            FOR UPDATE`,
-          [variantIds, LOCATION_ID],
+          [variantIds, BUPOS_LOCATION_ID],
         );
 
         const onHandByVariant: Record<string, number> = {};
@@ -240,7 +240,7 @@ export async function POST(request: NextRequest) {
            SET on_hand = GREATEST(0, il.on_hand + delta.qty), updated_at = now()
            FROM (SELECT unnest($1::uuid[]) as variant_id, unnest($2::int[]) as qty) AS delta
            WHERE il.product_variant_id = delta.variant_id AND il.location_id = $3`,
-          [variantIds, quantities, LOCATION_ID],
+          [variantIds, quantities, BUPOS_LOCATION_ID],
         );
       }
 
