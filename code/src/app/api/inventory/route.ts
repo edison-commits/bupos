@@ -3,6 +3,29 @@ import { orgQuery } from '@/lib/db';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
 import { BUPOS_LOCATION_ID } from '@/lib/env';
 
+interface ProductRow {
+  product_id: string;
+  name: string;
+  product_slug: string;
+  category_id: string | null;
+  product_brand: string | null;
+  product_type: string | null;
+  variant_id: string | null;
+  sku: string | null;
+  size_label: string | null;
+  color_label: string | null;
+  price: string | null;
+  cost: string | null;
+  quantity: number;
+}
+
+interface SummaryRow {
+  total_products: string;
+  total_variants: string;
+  low_stock_count: string;
+  out_of_stock_count: string;
+}
+
 // 30-second response cache — keyed by URL so search params are included
 const _inventoryCache = new Map<string, { data: unknown; expiresAt: number }>();
 const INV_CACHE_TTL = 30_000;
@@ -167,7 +190,7 @@ export async function GET(request: NextRequest) {
 
     const productsMap = new Map<string, ProcessedProduct>();
 
-    for (const row of productsResult.rows as any[]) {
+    for (const row of productsResult.rows as ProductRow[]) {
       if (!productsMap.has(row.product_id)) {
         productsMap.set(row.product_id, {
           id: row.product_id,
@@ -212,7 +235,7 @@ export async function GET(request: NextRequest) {
         .filter((p) => p.variants.length > 0);
     }
 
-    const summary = summaryResult.rows[0] as any;
+    const summary = summaryResult.rows[0] as SummaryRow;
     const types = typesResult.rows.map((r: any) => r.value).filter(Boolean);
     const brands = brandsResult.rows.map((r: any) => r.value).filter(Boolean);
 
