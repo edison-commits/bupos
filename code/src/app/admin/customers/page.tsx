@@ -55,6 +55,7 @@ export default function CustomerManagement() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [stats, setStats] = useState({ totalCustomers: 0, newThisMonth: 0, avgSpend: 0, totalPointsOutstanding: 0 });
+  const [submitting, setSubmitting] = useState(false);
 
   const [formData, setFormData] = useState({
     first_name: '',
@@ -164,6 +165,8 @@ export default function CustomerManagement() {
 
   const handleCreateOrUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
+    setSubmitting(true);
     setError(null);
     setSuccess(null);
 
@@ -191,6 +194,8 @@ export default function CustomerManagement() {
       loadStats();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -482,9 +487,10 @@ export default function CustomerManagement() {
               <div className="flex gap-3 pt-4">
                 <button
                   type="submit"
-                  className="flex-1 rounded-lg bg-emerald-600 px-5 py-4 text-white font-medium hover:bg-emerald-700 transition-colors"
+                  disabled={submitting}
+                  className="flex-1 rounded-lg bg-emerald-600 px-5 py-4 text-white font-medium hover:bg-emerald-700 transition-colors disabled:opacity-50"
                 >
-                  {modalMode === 'create' ? 'Create' : 'Update'}
+                  {submitting ? 'Saving...' : modalMode === 'create' ? 'Create' : 'Update'}
                 </button>
                 <button
                   type="button"

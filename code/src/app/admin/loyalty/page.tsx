@@ -131,6 +131,7 @@ export default function LoyaltyDashboard() {
   };
 
   const handleAdjustment = async () => {
+    if (adjustmentLoading) return;
     setAdjustmentError(null);
     
     if (!adjustmentCustomerId || !adjustmentAmount || !adjustmentReason) {

@@ -52,6 +52,7 @@ export default function EmployeeManagement() {
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [showPinModal, setShowPinModal] = useState(false);
   const [showPin, setShowPin] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -120,6 +121,8 @@ export default function EmployeeManagement() {
   };
 
   const handleCreateEmployee = async () => {
+    if (submitting) return;
+    setSubmitting(true);
     setError(null);
     try {
       const response = await fetch('/api/employees', {
@@ -139,11 +142,15 @@ export default function EmployeeManagement() {
       await loadEmployees();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create employee');
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const handleUpdateEmployee = async () => {
     if (!selectedEmployee) return;
+    if (submitting) return;
+    setSubmitting(true);
     setError(null);
 
     try {
@@ -168,6 +175,8 @@ export default function EmployeeManagement() {
       await loadEmployees();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update employee');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -554,9 +563,10 @@ export default function EmployeeManagement() {
               </button>
               <button
                 onClick={modalMode === 'create' ? handleCreateEmployee : handleUpdateEmployee}
-                className="flex-1 rounded bg-emerald-600 px-5 py-4 text-white hover:bg-emerald-700"
+                disabled={submitting}
+                className="flex-1 rounded bg-emerald-600 px-5 py-4 text-white hover:bg-emerald-700 disabled:opacity-50"
               >
-                {modalMode === 'create' ? 'Create' : 'Update'}
+                {submitting ? 'Saving...' : modalMode === 'create' ? 'Create' : 'Update'}
               </button>
             </div>
           </div>

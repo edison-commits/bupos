@@ -253,6 +253,7 @@ export default function PurchaseOrdersPage() {
   };
 
   const handleCreatePO = async () => {
+    if (creating) return;
     if (!createForm.supplier_id || createForm.lines.length === 0) {
       setError('Please select a supplier and add at least one line item');
       return;
@@ -294,6 +295,7 @@ export default function PurchaseOrdersPage() {
   };
 
   const handleUpdateStatus = async (poId: string, newStatus: string) => {
+    if (updating) return;
     setUpdating(true);
     setError(null);
     try {
