@@ -195,10 +195,43 @@ export async function POST(request: NextRequest) {
         ],
       );
 
-      // 4. Decrement inventory (batched)
+      // 4. Decrement inventory (batched) — lock rows + check stock before applying to prevent oversell
       if (items.length > 0) {
         const variantIds = items.map((i: { productVariantId: string }) => i.productVariantId);
         const quantities = items.map((i: { quantity: number }) => -i.quantity);
+
+        // Lock rows in deterministic order to avoid deadlocks, then verify stock
+        const { rows: locked } = await syncClient.query(
+          `SELECT il.product_variant_id, il.on_hand
+           FROM inventory_levels il
+           WHERE il.product_variant_id = ANY($1::uuid[]) AND il.location_id = $2
+           ORDER BY il.product_variant_id
+           FOR UPDATE`,
+          [variantIds, LOCATION_ID],
+        );
+
+        const onHandByVariant: Record<string, number> = {};
+        for (const row of locked) {
+          onHandByVariant[row.product_variant_id] = Number(row.on_hand);
+        }
+
+        // Check each line before applying any inventory changes — fail specifically per SKU
+        for (const item of items) {
+          const onHand = onHandByVariant[item.productVariantId] ?? 0;
+          if (onHand < item.quantity) {
+            const { rows: skuRows } = await syncClient.query(
+              `SELECT sku FROM product_variants WHERE id = $1`,
+              [item.productVariantId],
+            );
+            const sku = skuRows[0]?.sku ?? item.productVariantId;
+            await syncClient.query("ROLLBACK");
+            return NextResponse.json(
+              { error: `Insufficient inventory for SKU ${sku}`, insufficientSku: sku },
+              { status: 409 },
+            );
+          }
+        }
+
         await syncClient.query(
           `UPDATE inventory_levels il
            SET on_hand = GREATEST(0, il.on_hand + delta.qty), updated_at = now()

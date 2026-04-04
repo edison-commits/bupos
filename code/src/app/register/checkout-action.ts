@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireRegisterPermission } from "@/lib/authz";
 import { mutateStore } from "@/lib/persistence/store";
-import pool, { orgTx } from "@/lib/db";
+import pool, { orgTx, orgQuery } from "@/lib/db";
 import type { Cart, CheckoutResult, TenderLine } from "@/lib/cart/types";
 import { computeTotals, checkOutCart } from "@/lib/cart/cart";
 import { registerConfiguration } from "@/lib/data/mock-data";
@@ -26,26 +26,64 @@ export async function checkoutAction(
 ): Promise<CheckoutResult> {
   const context = await requireRegisterPermission("register.open");
 
-  if (cart.status !== "open" || cart.items.length === 0) {
-    redirect("/register?error=Cart+is+empty+or+already+checked+out");
+  if (cart.items.length === 0) {
+    redirect("/register?error=Cart+is+empty");
   }
 
   if (tenders.length === 0) {
     redirect("/register?error=No+payment+method+provided");
   }
 
+  // ── Bug 1 fix: lock register session row before checking status to prevent
+  //    double-submit race. Two concurrent checkout calls must not both succeed.
+  if (isPg()) {
+    const lockClient = await orgTx(context.employee.organizationId);
+    try {
+      const { rows: locked } = await lockClient.query(
+        `SELECT id, status FROM register_sessions WHERE id = $1 FOR UPDATE`,
+        [context.registerSession.id],
+      );
+      if (locked.length === 0 || locked[0].status !== "active") {
+        await lockClient.query("ROLLBACK");
+        redirect("/register?error=Cart+already+checked+out");
+      }
+      await lockClient.query("COMMIT");
+    } finally {
+      lockClient.release();
+    }
+  } else {
+    // JSON fallback: coarse check only (no row lock available)
+    if (cart.status !== "open") {
+      redirect("/register?error=Cart+already+checked+out");
+    }
+  }
+
   const totals = computeTotals(cart);
   const thresholds = registerConfiguration.approvalThresholds;
+
+  // ── Bug 1 fix (continued): look up actual pending exceptions from DB instead of
+  //    trusting the client-supplied approvedExceptions array.
+  let pendingExceptions: string[] = [];
+  if (isPg()) {
+    const { rows: excRows } = await orgQuery(
+      context.employee.organizationId,
+      `SELECT exception_code FROM register_session_exceptions
+       WHERE register_session_id = $1 AND status = 'pending'
+       AND (expires_at IS NULL OR expires_at > now())`,
+      [context.registerSession.id],
+    );
+    pendingExceptions = excRows.map((r: { exception_code: string }) => r.exception_code);
+  }
 
   // Server-side approval enforcement — compute effective cart discount for threshold check
   const cartDiscountEffective = cart.discountMode === 'percent'
     ? Number((totals.subtotal * Math.min(100, cart.discountAmount) / 100).toFixed(2))
     : cart.discountAmount;
-  if (cartDiscountEffective > thresholds.discountOver && !approvedExceptions.includes("discount_threshold")) {
+  if (cartDiscountEffective > thresholds.discountOver && !pendingExceptions.includes("discount_threshold")) {
     redirect("/register?error=Discount+exceeds+threshold+without+manager+approval");
   }
   const storeCreditTendered = tenders.filter((t) => t.type === "store_credit").reduce((s, t) => s + t.amount, 0);
-  if (storeCreditTendered > thresholds.storeCreditIssuanceOver && !approvedExceptions.includes("store_credit_threshold")) {
+  if (storeCreditTendered > thresholds.storeCreditIssuanceOver && !pendingExceptions.includes("store_credit_threshold")) {
     redirect("/register?error=Store+credit+exceeds+threshold+without+manager+approval");
   }
   const totalTendered = tenders.reduce((sum, t) => sum + t.amount, 0);
@@ -124,10 +162,41 @@ export async function checkoutAction(
         ],
       );
 
-      // 4. Decrement inventory (batched)
+      // 4. Decrement inventory (batched) — with row lock + stock check to prevent oversell
       if (cart.items.length > 0) {
         const variantIds = cart.items.map((i) => i.productVariantId);
         const quantities = cart.items.map((i) => -i.quantity);
+
+        // Lock rows in product_variant order to avoid deadlocks
+        const { rows: locked } = await client.query(
+          `SELECT il.product_variant_id, il.on_hand
+           FROM inventory_levels il
+           WHERE il.product_variant_id = ANY($1::uuid[]) AND il.location_id = $2
+           ORDER BY il.product_variant_id
+           FOR UPDATE`,
+          [variantIds, context.location.id],
+        );
+
+        const onHandByVariant: Record<string, number> = {};
+        for (const row of locked) {
+          onHandByVariant[row.product_variant_id] = Number(row.on_hand);
+        }
+
+        // Check stock before applying any deltas — fail fast with a clear message
+        for (const item of cart.items) {
+          const onHand = onHandByVariant[item.productVariantId] ?? 0;
+          if (onHand < item.quantity) {
+            // Fetch SKU for the error message
+            const { rows: skuRows } = await client.query(
+              `SELECT sku FROM product_variants WHERE id = $1`,
+              [item.productVariantId],
+            );
+            const sku = skuRows[0]?.sku ?? item.productVariantId;
+            await client.query("ROLLBACK");
+            redirect(`/register?error=Insufficient+inventory+for+SKU+${sku}`);
+          }
+        }
+
         await client.query(
           `UPDATE inventory_levels il
            SET on_hand = GREATEST(0, il.on_hand + delta.qty), updated_at = now()
