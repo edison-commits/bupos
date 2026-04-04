@@ -1,0 +1,30 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  migrate:
+    name: Run DB migrations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Supabase migrations
+        run: |
+          for f in $(ls supabase/migrations/*.sql | sort); do
+            echo "Applying migration: $f"
+            psql "$DATABASE_URL" -f "$f" || { echo "Migration failed: $f"; exit 1; }
+          done
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+  deploy:
+    name: Deploy app
+    runs-on: ubuntu-latest
+    needs: migrate
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/deploy

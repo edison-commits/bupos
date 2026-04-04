@@ -26,7 +26,13 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { id, cart, tenders, timestamp, registerSessionId, approvedExceptions = [] } = body;
 
-    if (!cart || !tenders || !Array.isArray(tenders) || tenders.length === 0) {
+    if (!Array.isArray(cart)) {
+      return NextResponse.json({ error: 'Invalid sync payload: cart must be an array' }, { status: 400 });
+    }
+    if (!Array.isArray(tenders)) {
+      return NextResponse.json({ error: 'Invalid sync payload: tenders must be an array' }, { status: 400 });
+    }
+    if (tenders.length === 0) {
       return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
     }
 
