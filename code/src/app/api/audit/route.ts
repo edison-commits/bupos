@@ -13,7 +13,7 @@ const LOCATION_ID = BUPOS_LOCATION_ID;
  *   to          — end date (ISO)
  *   employee_id — filter by actor_employee_id
  *   event_kind  — filter by specific event kind
- *   page        — page number (default 1)
+ *   cursor      — base64(JSON.stringify({ id, created_at })) for cursor-based pagination
  *   pageSize    — results per page (default 50, max 200)
  *
  * Returns paginated transaction events with employee display names.
@@ -30,9 +30,19 @@ export async function GET(req: NextRequest) {
   try {
     const sp = req.nextUrl.searchParams;
 
-    const page = Math.max(1, Number(sp.get("page")) || 1);
     const pageSize = Math.min(200, Math.max(1, Number(sp.get("pageSize")) || 50));
-    const offset = (page - 1) * pageSize;
+    const cursorParam = sp.get("cursor");
+    let cursorId: string | null = null;
+    let cursorCreatedAt: string | null = null;
+    if (cursorParam) {
+      try {
+        const decoded = JSON.parse(Buffer.from(cursorParam, "base64").toString("utf-8"));
+        cursorId = decoded.id ?? null;
+        cursorCreatedAt = decoded.created_at ?? null;
+      } catch {
+        // Invalid cursor — ignore
+      }
+    }
 
     const conditions: string[] = [];
     const values: unknown[] = [];
@@ -66,22 +76,19 @@ export async function GET(req: NextRequest) {
       values.push(eventKind);
     }
 
+    // Cursor: (created_at, id) < (cursor_created_at, cursor_id) for descending order
+    if (cursorCreatedAt !== null && cursorId !== null) {
+      conditions.push(`(te.created_at, te.id) < ($${idx + 1}, $${idx + 2})`);
+      values.push(cursorCreatedAt, cursorId);
+      idx += 2;
+    }
+
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
-    // Count total records
-    const countResult = await orgQuery(
-      orgId,
-      `SELECT COUNT(*)::int AS total FROM transaction_events te ${where}`,
-      values
-    );
-    const total = countResult.rows[0]?.total ?? 0;
-
-    // Fetch paginated results with employee display name
-    const resultIdx1 = idx + 1;
-    const resultIdx2 = idx + 2;
+    // Fetch pageSize + 1 to determine if there's a next page
     const rows = await orgQuery(
       orgId,
-      `SELECT 
+      `SELECT
          te.id,
          te.transaction_id,
          te.actor_employee_id,
@@ -94,19 +101,24 @@ export async function GET(req: NextRequest) {
        FROM transaction_events te
        LEFT JOIN employees e ON e.id = te.actor_employee_id
        ${where}
-       ORDER BY te.created_at DESC
-       LIMIT $${resultIdx1} OFFSET $${resultIdx2}`,
-      [...values, pageSize, offset]
+       ORDER BY te.created_at DESC, te.id DESC
+       LIMIT $${idx}`,
+      [...values, pageSize + 1],
     );
 
+    const hasMore = rows.rows.length > pageSize;
+    const events = hasMore ? rows.rows.slice(0, pageSize) : rows.rows;
+
+    let nextCursor: string | null = null;
+    if (hasMore && events.length > 0) {
+      const last = events[events.length - 1];
+      nextCursor = Buffer.from(JSON.stringify({ id: last.id, created_at: last.created_at })).toString("base64");
+    }
+
     return NextResponse.json({
-      events: rows.rows,
-      pagination: { 
-        page, 
-        pageSize, 
-        total, 
-        totalPages: Math.ceil(total / pageSize) 
-      },
+      events,
+      nextCursor,
+      hasMore,
     });
   } catch (err) {
     console.error("GET /api/audit error:", err);

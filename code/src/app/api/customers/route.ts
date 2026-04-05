@@ -16,10 +16,20 @@ export async function GET(request: NextRequest) {
   const search = rawSearch.replace(/[%_\\]/g, '\\$&');
   const id = request.nextUrl.searchParams.get('id')?.trim() || '';
   const statsOnly = request.nextUrl.searchParams.get('stats')?.trim() === 'true';
-  const pageRaw = parseInt(request.nextUrl.searchParams.get('page') || '1', 10);
   const pageSizeRaw = parseInt(request.nextUrl.searchParams.get('pageSize') || '50', 10);
-  const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
   const pageSize = Number.isFinite(pageSizeRaw) && pageSizeRaw > 0 ? Math.min(100, pageSizeRaw) : 50;
+  const cursorParam = request.nextUrl.searchParams.get('cursor')?.trim() || null;
+  let cursorUpdatedAt: string | null = null;
+  let cursorId: string | null = null;
+  if (cursorParam) {
+    try {
+      const decoded = JSON.parse(Buffer.from(cursorParam, 'base64').toString('utf-8'));
+      cursorUpdatedAt = decoded.updated_at ?? null;
+      cursorId = decoded.id ?? null;
+    } catch {
+      // Invalid cursor — ignore
+    }
+  }
 
   // Stats-only mode: return aggregate stats without fetching customer rows
   if (statsOnly) {
@@ -102,34 +112,52 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // List customers with pagination
-    let whereExtra = '';
+    // List customers with cursor-based pagination
+    const conditions: string[] = [];
     const values: unknown[] = [];
     let idx = 1;
 
     if (search) {
-      whereExtra = ` AND (c.first_name ILIKE $${idx} OR c.last_name ILIKE $${idx} OR c.email ILIKE $${idx} OR c.phone ILIKE $${idx})`;
+      conditions.push(`(c.first_name ILIKE $${idx} OR c.last_name ILIKE $${idx} OR c.email ILIKE $${idx} OR c.phone ILIKE $${idx})`);
       values.push(`%${search}%`);
       idx++;
     }
 
-    const countQ = `SELECT COUNT(*)::int as total FROM customers c WHERE 1=1${whereExtra}`;
-    const dataQ = `SELECT c.id, c.first_name, c.last_name, c.email, c.phone, c.address,
-      c.loyalty_points, c.total_spend, c.visit_count, c.store_credit_balance,
-      c.is_active, c.created_at, c.updated_at
-      FROM customers c WHERE 1=1${whereExtra}
-      ORDER BY c.updated_at DESC LIMIT $${idx} OFFSET $${idx + 1}`;
+    // Cursor: (updated_at, id) < (cursor_updated_at, cursor_id) for descending order
+    if (cursorUpdatedAt !== null && cursorId !== null) {
+      conditions.push(`(c.updated_at, c.id) < ($${idx}, $${idx + 1})`);
+      values.push(cursorUpdatedAt, cursorId);
+      idx += 2;
+    }
 
-    values.push(pageSize, (page - 1) * pageSize);
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
-    const [countRes, dataRes] = await Promise.all([
-      orgQuery(orgId, countQ, values.slice(0, idx - 1)),
-      orgQuery(orgId, dataQ, values),
-    ]);
+    // Fetch pageSize + 1 to determine if there's a next page
+    const dataRes = await orgQuery(
+      orgId,
+      `SELECT c.id, c.first_name, c.last_name, c.email, c.phone, c.address,
+        c.loyalty_points, c.total_spend, c.visit_count, c.store_credit_balance,
+        c.is_active, c.created_at, c.updated_at
+        FROM customers c
+        ${whereClause}
+        ORDER BY c.updated_at DESC, c.id DESC
+        LIMIT $${idx}`,
+      [...values, pageSize + 1],
+    );
+
+    const hasMore = dataRes.rows.length > pageSize;
+    const customers = hasMore ? dataRes.rows.slice(0, pageSize) : dataRes.rows;
+
+    let nextCursor: string | null = null;
+    if (hasMore && customers.length > 0) {
+      const last = customers[customers.length - 1];
+      nextCursor = Buffer.from(JSON.stringify({ id: last.id, updated_at: last.updated_at })).toString("base64");
+    }
 
     return NextResponse.json({
-      customers: dataRes.rows,
-      pagination: { page, pageSize, total: countRes.rows[0].total, totalPages: Math.ceil(countRes.rows[0].total / pageSize) },
+      customers,
+      nextCursor,
+      hasMore,
     });
   } catch (error) {
     console.error('Customers GET error:', error);

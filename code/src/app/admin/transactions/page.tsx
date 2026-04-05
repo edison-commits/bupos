@@ -46,14 +46,10 @@ interface Event {
   created_at: string;
 }
 
-interface ApiResponse {
+interface CursorResponse {
   transactions: Transaction[];
-  pagination: {
-    page: number;
-    limit: number;
-    total: number;
-    totalPages: number;
-  };
+  nextCursor: string | null;
+  hasMore: boolean;
 }
 
 interface DetailResponse {
@@ -263,32 +259,33 @@ export default function TransactionsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [dateRange, setDateRange] = useState('all');
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pagination, setPagination] = useState({ page: 1, limit: 10, total: 0, totalPages: 1 });
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<{ transaction: TransactionDetail; tenders: Tender[]; events: Event[] } | null>(null);
 
-  const fetchTransactions = useCallback(async () => {
+  const fetchTransactions = useCallback(async (cursor: string | null = null) => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
       if (searchQuery) params.append('search', searchQuery);
       if (statusFilter !== 'all') params.append('status', statusFilter);
       if (dateRange !== 'all') params.append('from', dateRange);
-      params.append('page', currentPage.toString());
+      if (cursor) params.append('cursor', cursor);
       params.append('limit', '10');
 
       const response = await authFetch(`/api/transactions?${params.toString()}`);
       if (!response.ok) throw new Error('Failed to fetch transactions');
-      const data: ApiResponse = await response.json();
+      const data: CursorResponse = await response.json();
       setTransactions(data.transactions);
-      setPagination(data.pagination);
+      setNextCursor(data.nextCursor);
+      setHasMore(data.hasMore);
     } catch (error) {
       console.error('Failed to fetch transactions:', error);
     } finally {
       setLoading(false);
     }
-  }, [searchQuery, statusFilter, dateRange, currentPage]);
+  }, [searchQuery, statusFilter, dateRange]);
 
   const fetchDetail = useCallback(async (id: string) => {
     try {
@@ -316,17 +313,20 @@ export default function TransactionsPage() {
 
   const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSearchQuery(e.target.value);
-    setCurrentPage(1);
+    setNextCursor(null);
+    setHasMore(true);
   };
 
   const handleStatusChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setStatusFilter(e.target.value);
-    setCurrentPage(1);
+    setNextCursor(null);
+    setHasMore(true);
   };
 
   const handleDateRangeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setDateRange(e.target.value);
-    setCurrentPage(1);
+    setNextCursor(null);
+    setHasMore(true);
   };
 
   return (
@@ -466,47 +466,19 @@ export default function TransactionsPage() {
           )}
         </div>
 
-        {/* Pagination */}
+        {/* Load More */}
         {!loading && transactions.length > 0 && (
-          <div className="mt-6 flex items-center justify-between">
-            <p className="text-sm text-gray-700">
-              Showing <span className="font-semibold">{(currentPage - 1) * pagination.limit + 1}</span> to{' '}
-              <span className="font-semibold">
-                {Math.min(currentPage * pagination.limit, pagination.total)}
-              </span>{' '}
-              of <span className="font-semibold">{pagination.total}</span> transactions
-            </p>
-            <div className="flex gap-2">
+          <div className="mt-6 flex items-center justify-center">
+            {hasMore ? (
               <button
-                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                disabled={currentPage === 1}
-                className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                onClick={() => fetchTransactions(nextCursor)}
+                className="px-6 py-2 border border-gray-300 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
               >
-                Previous
+                Load More
               </button>
-              <div className="flex items-center gap-1">
-                {Array.from({ length: pagination.totalPages }, (_, i) => i + 1).map((page) => (
-                  <button
-                    key={page}
-                    onClick={() => setCurrentPage(page)}
-                    className={`px-3 py-2 rounded-lg text-sm font-semibold transition-colors ${
-                      currentPage === page
-                        ? 'bg-emerald-500 text-white'
-                        : 'border border-gray-300 text-gray-700 hover:bg-gray-50'
-                    }`}
-                  >
-                    {page}
-                  </button>
-                ))}
-              </div>
-              <button
-                onClick={() => setCurrentPage((p) => Math.min(pagination.totalPages, p + 1))}
-                disabled={currentPage === pagination.totalPages}
-                className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                Next
-              </button>
-            </div>
+            ) : (
+              <p className="text-sm text-gray-500">No more transactions</p>
+            )}
           </div>
         )}
       </div>

@@ -20,10 +20,9 @@ interface AuditEvent {
 }
 
 interface PaginationState {
-  page: number;
   pageSize: number;
-  total: number;
-  totalPages: number;
+  nextCursor: string | null;
+  hasMore: boolean;
 }
 
 const EVENT_KIND_COLORS: Record<string, string> = {
@@ -80,10 +79,9 @@ export default function AuditPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [pagination, setPagination] = useState<PaginationState>({
-    page: 1,
     pageSize: 50,
-    total: 0,
-    totalPages: 0,
+    nextCursor: null,
+    hasMore: true,
   });
 
   const [filters, setFilters] = useState({
@@ -104,7 +102,6 @@ export default function AuditPage() {
   useEffect(() => {
     loadAuditEvents();
   }, [
-    pagination.page,
     filters.fromDate,
     filters.toDate,
     filters.employeeId,
@@ -145,7 +142,6 @@ export default function AuditPage() {
 
     try {
       const params = new URLSearchParams({
-        page: pagination.page.toString(),
         pageSize: pagination.pageSize.toString(),
         ...(filters.fromDate && { from: filters.fromDate }),
         ...(filters.toDate && { to: filters.toDate }),
@@ -160,7 +156,7 @@ export default function AuditPage() {
 
       const data = await response.json();
       setEvents(data.events || []);
-      setPagination(data.pagination);
+      setPagination({ pageSize: pagination.pageSize, nextCursor: data.nextCursor, hasMore: data.hasMore });
     } catch (err) {
       setError(
         err instanceof Error ? err.message : 'Failed to load audit events'
@@ -170,9 +166,41 @@ export default function AuditPage() {
     }
   };
 
+  const loadMoreAuditEvents = async () => {
+    if (!pagination.nextCursor) return;
+    setLoading(true);
+    setError(null);
+
+    try {
+      const params = new URLSearchParams({
+        pageSize: pagination.pageSize.toString(),
+        cursor: pagination.nextCursor,
+        ...(filters.fromDate && { from: filters.fromDate }),
+        ...(filters.toDate && { to: filters.toDate }),
+        ...(filters.employeeId && { employee_id: filters.employeeId }),
+        ...(filters.eventKind && { event_kind: filters.eventKind }),
+      });
+
+      const response = await authFetch(`/api/audit?${params}`);
+      if (!response.ok) {
+        throw new Error('Failed to load more audit events');
+      }
+
+      const data = await response.json();
+      setEvents((prev) => [...prev, ...(data.events || [])]);
+      setPagination({ pageSize: pagination.pageSize, nextCursor: data.nextCursor, hasMore: data.hasMore });
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : 'Failed to load more audit events'
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleFilterChange = (key: string, value: string) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
-    setPagination((prev) => ({ ...prev, page: 1 }));
+    setPagination((prev) => ({ ...prev, nextCursor: null, hasMore: true }));
   };
 
   const clearFilters = () => {
@@ -415,49 +443,18 @@ export default function AuditPage() {
             </table>
           </div>
 
-          {/* Pagination */}
-          <div className="bg-slate-50 border-t border-slate-200 px-4 py-4 flex items-center justify-between">
-            <div className="text-sm text-slate-600">
-              Showing {events.length > 0 ? (pagination.page - 1) * pagination.pageSize + 1 : 0}{' '}
-              to{' '}
-              {Math.min(
-                pagination.page * pagination.pageSize,
-                pagination.total
-              )}{' '}
-              of {pagination.total} events
-            </div>
-
-            <div className="flex items-center gap-2">
+          {/* Load More */}
+          <div className="bg-slate-50 border-t border-slate-200 px-4 py-4 flex items-center justify-center">
+            {pagination.hasMore ? (
               <button
-                onClick={() =>
-                  setPagination((prev) => ({
-                    ...prev,
-                    page: Math.max(1, prev.page - 1),
-                  }))
-                }
-                disabled={pagination.page === 1}
-                className="p-2 text-slate-700 hover:bg-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed border border-slate-300"
+                onClick={loadMoreAuditEvents}
+                className="px-6 py-2 text-sm font-medium text-slate-700 border border-slate-300 rounded-lg hover:bg-white transition-colors"
               >
-                <ChevronLeft className="w-4 h-4" />
+                Load More
               </button>
-
-              <div className="text-sm text-slate-700 px-3">
-                Page {pagination.page} of {pagination.totalPages}
-              </div>
-
-              <button
-                onClick={() =>
-                  setPagination((prev) => ({
-                    ...prev,
-                    page: Math.min(prev.totalPages, prev.page + 1),
-                  }))
-                }
-                disabled={pagination.page === pagination.totalPages}
-                className="p-2 text-slate-700 hover:bg-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed border border-slate-300"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
+            ) : (
+              <p className="text-sm text-slate-500">No more events</p>
+            )}
           </div>
         </div>
       </div>

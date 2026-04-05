@@ -15,7 +15,7 @@ import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
  *   from     — start date (ISO)
  *   to       — end date (ISO)
  *   customer — customer ID
- *   page     — page number (default 1)
+ *   cursor   — base64(JSON.stringify({ id, created_at })) for cursor-based pagination
  *   limit    — results per page (default 50, max 200)
  *   id       — fetch single transaction by ID (returns full detail with tenders/events)
  */
@@ -86,10 +86,21 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // ── Transaction list / search ──
-    const page = Math.max(1, Number(sp.get("page")) || 1);
+    // ── Transaction list / search with cursor-based pagination ──
     const limit = Math.min(200, Math.max(1, Number(sp.get("limit")) || 50));
-    const offset = (page - 1) * limit;
+    const cursorParam = sp.get("cursor");
+    let cursorId: string | null = null;
+    let cursorCreatedAt: string | null = null;
+
+    if (cursorParam) {
+      try {
+        const decoded = JSON.parse(Buffer.from(cursorParam, "base64").toString("utf-8"));
+        cursorId = decoded.id ?? null;
+        cursorCreatedAt = decoded.created_at ?? null;
+      } catch {
+        // Invalid cursor — ignore and start from beginning
+      }
+    }
 
     const conditions: string[] = [];
     const values: unknown[] = [];
@@ -137,15 +148,17 @@ export async function GET(req: NextRequest) {
       values.push(customer);
     }
 
+    // Cursor-based pagination: (created_at, id) < (cursor_created_at, cursor_id)
+    // to get rows "before" the cursor in descending order
+    if (cursorCreatedAt !== null && cursorId !== null) {
+      idx++;
+      conditions.push(`(t.created_at, t.id) < ($${idx}, $${idx + 1})`);
+      values.push(cursorCreatedAt, cursorId);
+    }
+
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
-    const countResult = await orgQuery(
-      orgId,
-      `SELECT COUNT(*)::int AS total FROM transactions t LEFT JOIN employees e ON e.id = t.employee_id ${whereClause}`,
-      values,
-    );
-    const total = countResult.rows[0]?.total ?? 0;
-
+    // Fetch limit + 1 to determine if there's a next page
     const rows = await orgQuery(
       orgId,
       `SELECT t.id, t.status, t.tender_type, t.subtotal, t.discount_total, t.tax_total,
@@ -158,21 +171,24 @@ export async function GET(req: NextRequest) {
        LEFT JOIN employees e ON e.id = t.employee_id
        LEFT JOIN customers c ON c.id = t.customer_id
        ${whereClause}
-       ORDER BY t.created_at DESC
-       LIMIT $${idx + 1} OFFSET $${idx + 2}`,
-      [...values, limit, offset],
+       ORDER BY t.created_at DESC, t.id DESC
+       LIMIT $${idx + 1}`,
+      [...values, limit + 1],
     );
 
-    const transactions = rows.rows;
+    const hasMore = rows.rows.length > limit;
+    const transactions = hasMore ? rows.rows.slice(0, limit) : rows.rows;
+
+    let nextCursor: string | null = null;
+    if (hasMore && transactions.length > 0) {
+      const last = transactions[transactions.length - 1];
+      nextCursor = Buffer.from(JSON.stringify({ id: last.id, created_at: last.created_at })).toString("base64");
+    }
 
     return NextResponse.json({
       transactions,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-      },
+      nextCursor,
+      hasMore,
     });
   } catch (err) {
     console.error("GET /api/transactions error:", err);

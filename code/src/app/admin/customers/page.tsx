@@ -31,10 +31,9 @@ interface Transaction {
 }
 
 interface PaginationState {
-  page: number;
   pageSize: number;
-  total: number;
-  totalPages: number;
+  nextCursor: string | null;
+  hasMore: boolean;
 }
 
 type ModalMode = 'create' | 'edit' | 'detail' | null;
@@ -44,10 +43,9 @@ export default function CustomerManagement() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [pagination, setPagination] = useState<PaginationState>({
-    page: 1,
     pageSize: 50,
-    total: 0,
-    totalPages: 0,
+    nextCursor: null,
+    hasMore: true,
   });
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -70,14 +68,13 @@ export default function CustomerManagement() {
   useEffect(() => {
     loadCustomers();
     loadStats();
-  }, [pagination.page, search]);
+  }, [pagination.pageSize, search]);
 
   const loadCustomers = async () => {
     setLoading(true);
     setError(null);
     try {
       const params = new URLSearchParams({
-        page: pagination.page.toString(),
         pageSize: pagination.pageSize.toString(),
         ...(search && { search }),
       });
@@ -89,9 +86,35 @@ export default function CustomerManagement() {
 
       const data = await response.json();
       setCustomers(data.customers);
-      setPagination(data.pagination);
+      setPagination({ pageSize: pagination.pageSize, nextCursor: data.nextCursor, hasMore: data.hasMore });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load customers');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadMoreCustomers = async () => {
+    if (!pagination.nextCursor) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({
+        pageSize: pagination.pageSize.toString(),
+        cursor: pagination.nextCursor,
+        ...(search && { search }),
+      });
+
+      const response = await authFetch(`/api/customers?${params}`);
+      if (!response.ok) {
+        throw new Error('Failed to load more customers');
+      }
+
+      const data = await response.json();
+      setCustomers((prev) => [...prev, ...data.customers]);
+      setPagination({ pageSize: pagination.pageSize, nextCursor: data.nextCursor, hasMore: data.hasMore });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load more customers');
     } finally {
       setLoading(false);
     }
@@ -288,7 +311,7 @@ export default function CustomerManagement() {
               value={search}
               onChange={(e) => {
                 setSearch(e.target.value);
-                setPagination({ ...pagination, page: 1 });
+                setPagination({ ...pagination, nextCursor: null, hasMore: true });
               }}
               className="w-full rounded-lg border border-gray-300 pl-10 pr-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500"
             />
@@ -373,40 +396,19 @@ export default function CustomerManagement() {
               {/* Pagination */}
               <div className="flex items-center justify-between border-t border-gray-200 bg-gray-50 px-6 py-4">
                 <p className="text-sm text-gray-600">
-                  Showing {((pagination.page - 1) * pagination.pageSize) + 1} to {Math.min(pagination.page * pagination.pageSize, pagination.total)} of {pagination.total} customers
+                  {customers.length} customers loaded
                 </p>
                 <div className="flex gap-2">
-                  <button
-                    disabled={pagination.page === 1}
-                    onClick={() => setPagination({ ...pagination, page: pagination.page - 1 })}
-                    className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  >
-                    Previous
-                  </button>
-                  {Array.from({ length: Math.min(5, pagination.totalPages) }, (_, i) => {
-                    const pageNum = Math.max(1, pagination.page - 2) + i;
-                    if (pageNum > pagination.totalPages) return null;
-                    return (
-                      <button
-                        key={pageNum}
-                        onClick={() => setPagination({ ...pagination, page: pageNum })}
-                        className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${
-                          pagination.page === pageNum
-                            ? 'bg-emerald-600 text-white'
-                            : 'border border-gray-300 text-gray-700 hover:bg-gray-100'
-                        }`}
-                      >
-                        {pageNum}
-                      </button>
-                    );
-                  })}
-                  <button
-                    disabled={pagination.page === pagination.totalPages}
-                    onClick={() => setPagination({ ...pagination, page: pagination.page + 1 })}
-                    className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  >
-                    Next
-                  </button>
+                  {pagination.hasMore ? (
+                    <button
+                      onClick={loadMoreCustomers}
+                      className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 transition-colors"
+                    >
+                      Load More
+                    </button>
+                  ) : (
+                    <span className="text-sm text-gray-500 px-4 py-2">No more customers</span>
+                  )}
                 </div>
               </div>
             </>
