@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { verifyManagerApproval, type ApprovalRequest, type ApprovalResult } from "@/app/register/approval-action";
 
 interface ApprovalModalProps {
@@ -32,6 +32,15 @@ export function ApprovalModal({ request, onApproved, onDenied }: ApprovalModalPr
   const [reasonCode, setReasonCode] = useState("customer_request");
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Escape key + backdrop click to dismiss
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onDenied();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onDenied]);
 
   async function handleSubmit() {
     if (pin.length !== 4) {
@@ -74,8 +83,9 @@ export function ApprovalModal({ request, onApproved, onDenied }: ApprovalModalPr
   }
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4">
-      <div className="w-full max-w-sm rounded-2xl bg-white shadow-2xl">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4" onClick={onDenied}>
+      <div className="w-full max-w-sm rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+
         {/* Header — amber warning style */}
         <div className="rounded-t-2xl bg-amber-600 px-5 py-4 text-white">
           <h2 className="text-lg font-bold">Manager approval required</h2>

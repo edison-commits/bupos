@@ -81,7 +81,7 @@ export function CustomerDatabase() {
 
       <div className="text-sm text-zinc-600">{pagination.total} customer{pagination.total !== 1 ? 's' : ''}{debouncedSearch && ` matching "${debouncedSearch}"`}</div>
 
-      {message && <div className={`rounded-xl border p-3 text-sm ${message.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700'}`}>{message.text}</div>}
+      {message && <div role="alert" className={`rounded-xl border p-3 text-sm ${message.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700'}`}>{message.text}</div>}
 
       {showForm && (
         <div className="rounded-xl bg-white border-2 border-teal-300 p-5 shadow-sm">

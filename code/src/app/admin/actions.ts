@@ -18,6 +18,7 @@ import {
   pgCreateEmployee,
   pgToggleEmployee,
   pgReadEmployeeById,
+  pgFindCredentialByEmail,
   pgInsertAuditEvent,
   pgUpdateOrganization,
   pgUpdateLocation,
@@ -47,7 +48,29 @@ export async function adminLoginAction(formData: FormData) {
 
   try {
     await signInAdmin(email, String(formData.get("password") ?? ""));
-  } catch {
+  } catch (err) {
+    // Audit: log failed admin login attempt (non-fatal — redirect still proceeds)
+    if (isPg()) {
+      try {
+        const cred = await pgFindCredentialByEmail(email);
+        let orgId: string | null = null;
+        if (cred) {
+          const { pool } = await import("@/lib/db");
+          const { rows } = await pool.query(
+            `SELECT organization_id FROM employees WHERE id = $1 LIMIT 1`,
+            [cred.employeeId],
+          );
+          orgId = (rows[0]?.organization_id as string) ?? null;
+        }
+        pgInsertAuditEvent(
+          orgId, null, cred?.employeeId ?? null,
+          "session", null, "admin_login_failed",
+          { email, reason: err instanceof Error ? err.message : "unknown" },
+        ).catch(() => {});
+      } catch {
+        // audit lookup failed — skip audit, still redirect
+      }
+    }
     redirect("/?error=Invalid+admin+credentials");
   }
 

@@ -132,7 +132,7 @@ export function ReturnsManager() {
         <button onClick={() => setView('list')} className="text-sm text-teal-700 hover:text-teal-900 font-medium">&larr; Back</button>
         <h3 className="text-lg font-bold text-zinc-900">Process Return</h3>
 
-        {message && <div className={`rounded-xl border p-3 text-sm ${message.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700'}`}>{message.text}</div>}
+        {message && <div role="alert" className={`rounded-xl border p-3 text-sm ${message.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700'}`}>{message.text}</div>}
 
         <div className="rounded-xl bg-white border border-zinc-200 p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
@@ -240,7 +240,7 @@ export function ReturnsManager() {
         <button onClick={() => { setView('create'); setLines([]); setCustomerName(''); setNotes(''); setMessage(null); setSearchResults([]); }}
           className="touch-button px-4 py-2 rounded-lg bg-teal-700 text-white font-semibold text-sm hover:bg-teal-800">+ Process Return</button>
       </div>
-      {message && <div className={`rounded-xl border p-3 text-sm ${message.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700'}`}>{message.text}</div>}
+      {message && <div role="alert" className={`rounded-xl border p-3 text-sm ${message.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700'}`}>{message.text}</div>}
       {loading ? <div className="text-center py-8 text-zinc-400">Loading...</div> : returns.length === 0 ? (
         <div className="text-center py-8 text-zinc-400">No returns yet.</div>
       ) : (

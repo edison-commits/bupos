@@ -5,6 +5,7 @@ import { signInAdmin, getAdminSession } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { hashSecret, verifySecret } from "@/lib/auth/crypto";
 import { randomUUID } from "node:crypto";
+import { pgFindCredentialByEmail, pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 
 // ── Login action (used by useActionState) ─────────────────────────────
 export async function loginAction(_prev: { error: string } | null, formData: FormData) {
@@ -22,8 +23,29 @@ export async function loginAction(_prev: { error: string } | null, formData: For
 
   try {
     await signInAdmin(email, password);
-  } catch {
-    // signInAdmin redirects on failure — if we catch, it's an unexpected error
+  } catch (err) {
+    // Audit: log failed admin login attempt (non-fatal — still return error)
+    if (process.env.USE_POSTGRES) {
+      try {
+        const cred = await pgFindCredentialByEmail(email);
+        let orgId: string | null = null;
+        if (cred) {
+          const { pool } = await import("@/lib/db");
+          const { rows } = await pool.query(
+            `SELECT organization_id FROM employees WHERE id = $1 LIMIT 1`,
+            [cred.employeeId],
+          );
+          orgId = (rows[0]?.organization_id as string) ?? null;
+        }
+        pgInsertAuditEvent(
+          orgId, null, cred?.employeeId ?? null,
+          "session", null, "admin_login_failed",
+          { email, reason: err instanceof Error ? err.message : "unknown" },
+        ).catch(() => {});
+      } catch {
+        // audit lookup failed — skip audit, still return error
+      }
+    }
     return { error: "Invalid email or password." };
   }
 
