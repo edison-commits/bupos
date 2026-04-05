@@ -73,6 +73,7 @@ export async function GET(request: NextRequest) {
           p.is_touch_favorite,
           p.supplier_id,
           s.name as supplier_name,
+          p.updated_at as product_updated_at,
           pv.id as variant_id,
           pv.sku,
           pv.barcode,
@@ -83,6 +84,7 @@ export async function GET(request: NextRequest) {
           pv.compare_at_price,
           pv.cost,
           pv.is_active as variant_is_active,
+          pv.updated_at as variant_updated_at,
           COALESCE(i.on_hand, 0) as stock
         FROM products p
         LEFT JOIN categories c ON p.category_id = c.id
@@ -141,6 +143,7 @@ export async function GET(request: NextRequest) {
           is_touch_favorite: row.is_touch_favorite,
           supplier_id: row.supplier_id,
           supplier_name: row.supplier_name,
+          updatedAt: row.product_updated_at,
           variants: [],
         });
         priceRanges.set(row.id, []);
@@ -159,6 +162,7 @@ export async function GET(request: NextRequest) {
           cost: parseFloat(row.cost),
           is_active: row.variant_is_active,
           stock: row.stock,
+          updatedAt: row.variant_updated_at,
         });
         priceRanges.get(row.id).push(parseFloat(row.price));
       }
@@ -345,10 +349,27 @@ export async function PUT(request: NextRequest) {
 
       fields.push('updated_at = NOW()');
 
+      // Optimistic locking: check updated_at if expectedUpdatedAt is provided
+      let whereClause = `WHERE id = $${paramIndex}`;
+      const whereValues: any[] = [...values, id];
+      if (updates.expectedUpdatedAt) {
+        paramIndex++;
+        whereClause += ` AND updated_at = $${paramIndex}`;
+        whereValues.push(updates.expectedUpdatedAt);
+      }
+
       const result = await client.query(
-        `UPDATE products SET ${fields.join(', ')} WHERE id = $${paramIndex} RETURNING id, name, slug, category_id, description, image_url, is_active, is_touch_favorite, updated_at`,
-        [...values, id]
+        `UPDATE products SET ${fields.join(', ')} ${whereClause} RETURNING id, name, slug, category_id, description, image_url, is_active, is_touch_favorite, updated_at`,
+        whereValues
       );
+
+      if (result.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return NextResponse.json(
+          { error: 'Product was modified by another user. Please refresh and try again.' },
+          { status: 409 }
+        );
+      }
 
       await client.query('COMMIT');
       invalidateProductsCache(orgId);
@@ -380,10 +401,27 @@ export async function PUT(request: NextRequest) {
 
       fields.push('updated_at = NOW()');
 
+      // Optimistic locking: check updated_at if expectedUpdatedAt is provided
+      let whereClause = `WHERE id = $${paramIndex}`;
+      const whereValues: any[] = [...values, updates.variant_id];
+      if (updates.expectedUpdatedAt) {
+        paramIndex++;
+        whereClause += ` AND updated_at = $${paramIndex}`;
+        whereValues.push(updates.expectedUpdatedAt);
+      }
+
       const result = await client.query(
-        `UPDATE product_variants SET ${fields.join(', ')} WHERE id = $${paramIndex} RETURNING id, sku, price, cost, updated_at`,
-        [...values, updates.variant_id]
+        `UPDATE product_variants SET ${fields.join(', ')} ${whereClause} RETURNING id, sku, price, cost, updated_at`,
+        whereValues
       );
+
+      if (result.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return NextResponse.json(
+          { error: 'Product was modified by another user. Please refresh and try again.' },
+          { status: 409 }
+        );
+      }
 
       await client.query('COMMIT');
       invalidateProductsCache(orgId);

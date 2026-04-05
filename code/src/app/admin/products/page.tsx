@@ -17,6 +17,7 @@ interface ProductVariant {
   cost: number;
   is_active: boolean;
   stock: number;
+  updatedAt?: string;
 }
 
 interface Product {
@@ -34,6 +35,7 @@ interface Product {
   variant_count: number;
   price_range: { min: number; max: number } | null;
   total_stock: number;
+  updatedAt?: string;
   variants: ProductVariant[];
 }
 
@@ -133,13 +135,41 @@ export default function ProductsPage() {
       const response = await authFetch(`/api/products`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: productId, ...formData }),
+        body: JSON.stringify({ id: productId, expectedUpdatedAt: formData.updatedAt, ...formData }),
       });
+      if (response.status === 409) {
+        window.alert('Product was modified by another user. Please refresh and try again.');
+        fetchProducts();
+        return;
+      }
       if (!response.ok) throw new Error('Failed to update product');
       setModal({ type: null });
       fetchProducts();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to update product');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleEditVariant = async (variantId: string, formData: Partial<ProductVariant>) => {
+    setSaving(true);
+    try {
+      const response = await authFetch(`/api/products`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ variant_id: variantId, expectedUpdatedAt: formData.updatedAt, ...formData }),
+      });
+      if (response.status === 409) {
+        window.alert('Product was modified by another user. Please refresh and try again.');
+        fetchProducts();
+        return;
+      }
+      if (!response.ok) throw new Error('Failed to update variant');
+      setModal({ type: null });
+      fetchProducts();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to update variant');
     } finally {
       setSaving(false);
     }
@@ -447,7 +477,7 @@ export default function ProductsPage() {
       {modal.type === 'edit-variant' && modal.variantId && (
         <EditVariantModal
           variant={modal.data as ProductVariant}
-          onSave={() => {}}
+          onSave={(formData) => handleEditVariant(modal.variantId!, formData)}
           onClose={() => setModal({ type: null })}
           saving={saving}
         />
