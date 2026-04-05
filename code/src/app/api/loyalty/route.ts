@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
 import { requireAdminPermission } from "@/lib/authz";
+import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 
 
 /**
@@ -214,6 +215,12 @@ export async function POST(req: NextRequest) {
        RETURNING id, loyalty_points, first_name, last_name`,
       [newPoints, customer_id],
     );
+
+    pgInsertAuditEvent(
+      orgId, null, ctx.employee.id,
+      "customer", customer_id, "loyalty_adjusted",
+      { id: customer_id, adjustment, previous_points: currentPoints, new_points: newPoints, reason },
+    ).catch(() => {});
 
     return NextResponse.json({
       success: true,

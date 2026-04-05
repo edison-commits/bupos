@@ -3,6 +3,7 @@ import { orgQuery, orgTx } from "@/lib/db";
 import { randomUUID } from "node:crypto";
 import { requireAdminPermission } from "@/lib/authz";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
+import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 
 /**
@@ -164,6 +165,11 @@ export async function POST(req: NextRequest) {
         );
 
         await client.query("COMMIT");
+        pgInsertAuditEvent(
+          orgId, null, employeeId,
+          "gift_card", gcId, "gift_card_created",
+          { id: gcId, code: `****${code.slice(-4)}`, amount },
+        ).catch(() => {});
         return NextResponse.json({ id: gcId, code, balance: amount, status: "active" }, { status: 201 });
       } catch (e) {
         await client.query("ROLLBACK");

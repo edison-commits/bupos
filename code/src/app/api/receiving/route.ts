@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery, pool } from '@/lib/db';
 import { requireAdminPermission } from '@/lib/authz';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
+import { pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
 
 const LOCATION_ID = BUPOS_LOCATION_ID;
 
@@ -235,6 +236,11 @@ export async function POST(request: NextRequest) {
       }
 
       await client.query('COMMIT');
+      pgInsertAuditEvent(
+        orgId, null, employeeId,
+        "inventory", null, "inventory_received",
+        { items_count: items.length, mode, po_id: po_id || null, description: `Received ${items.length} item(s)` },
+      ).catch(() => {});
       return NextResponse.json({
         success: true,
         message: `Successfully received ${items.length} item(s)`,

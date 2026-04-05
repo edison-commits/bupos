@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery, pool } from '@/lib/db';
 import { requireAdminPermission } from '@/lib/authz';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
+import { pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
 
 const LOCATION_ID = BUPOS_LOCATION_ID;
 
@@ -144,7 +145,13 @@ export async function POST(request: NextRequest) {
       }
 
       await client.query('COMMIT');
-      return NextResponse.json({ order: poResult.rows[0], po_number: poNumber });
+      const newOrder = poResult.rows[0];
+      pgInsertAuditEvent(
+        orgId, null, ctx.employee.id,
+        "purchase_order", newOrder.id, "purchase_order_created",
+        { id: newOrder.id, po_number: poNumber, supplier_id, line_count: lines.length },
+      ).catch(() => {});
+      return NextResponse.json({ order: newOrder, po_number: poNumber });
     } catch (e) {
       await client.query('ROLLBACK');
       throw e;

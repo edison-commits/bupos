@@ -10,7 +10,7 @@ import { hashSecret, verifySecret } from '@/lib/auth/crypto';
 import { randomUUID } from 'crypto';
 import { requireAdminPermission } from '@/lib/authz';
 import { getAdminSession } from '@/lib/auth/session';
-import { invalidateEmployeesCache } from '@/lib/persistence/postgres-store';
+import { invalidateEmployeesCache, pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
 
 /**
  * Invalidate all active sessions for an employee — both admin and register scopes.
@@ -210,6 +210,11 @@ export async function POST(request: NextRequest) {
     };
 
     invalidateEmployeesCache(orgId);
+    pgInsertAuditEvent(
+      orgId, null, ctx.employee.id,
+      "employee", employee.id, "employee_created",
+      { id: employee.id, display_name: employee.displayName, role_key: employee.roleKey },
+    ).catch(() => {});
     return NextResponse.json({ employee }, { status: 201 });
   } catch (error) {
     console.error('Employees POST error:', error);
@@ -320,6 +325,11 @@ export async function PUT(request: NextRequest) {
     }
 
     invalidateEmployeesCache(orgId);
+    pgInsertAuditEvent(
+      orgId, null, ctx.employee.id,
+      "employee", id, "employee_updated",
+      { id, display_name: employee.displayName, role_key: employee.roleKey },
+    ).catch(() => {});
     return NextResponse.json({ employee });
   } catch (error) {
     console.error('Employees PUT error:', error);

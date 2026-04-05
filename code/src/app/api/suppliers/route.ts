@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import pool from '@/lib/db';
 import { requireAdminPermission } from '@/lib/authz';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
+import { pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
 
 
 /**
@@ -48,7 +49,14 @@ export async function POST(request: NextRequest) {
       [orgId, name.trim(), contact_name || null, email || null, phone || null, address || null, notes || null],
     );
 
-    return NextResponse.json({ supplier: rows[0] }, { status: 201 });
+    const supplier = rows[0];
+    pgInsertAuditEvent(
+      orgId, null, ctx.employee.id,
+      "supplier", supplier.id, "supplier_created",
+      { id: supplier.id, name: supplier.name },
+    ).catch(() => {});
+
+    return NextResponse.json({ supplier }, { status: 201 });
   } catch (error) {
     console.error('Suppliers POST error:', error);
     return NextResponse.json({ error: 'Failed to create supplier' }, { status: 500 });

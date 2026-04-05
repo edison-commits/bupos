@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { requireAdminPermission } from "@/lib/authz";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
+import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 
 
 /**
@@ -156,6 +157,11 @@ export async function POST(req: NextRequest) {
       );
 
       await client.query("COMMIT");
+      pgInsertAuditEvent(
+        orgId, null, employeeId,
+        "customer", customerId, "store_credit_issued",
+        { id: entryId, amount, new_balance: newBalance, reason },
+      ).catch(() => {});
       return NextResponse.json({ id: entryId, customerId, newBalance, amount }, { status: 201 });
     } catch (e) {
       await client.query("ROLLBACK");

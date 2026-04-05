@@ -5,7 +5,7 @@
 import { orgQuery, pool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminPermission } from '@/lib/authz';
-import { invalidateProductsCache, invalidateVariantsCache } from '@/lib/persistence/postgres-store';
+import { invalidateProductsCache, invalidateVariantsCache, pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
 import { BUPOS_LOCATION_ID, BUPOS_ORG_ID } from '@/lib/env';
 
@@ -273,8 +273,14 @@ export async function POST(request: NextRequest) {
       [orgId, category_id || null, name, slug, description || null, image_url || null, is_active, is_touch_favorite]
     );
     await client.query('COMMIT');
+    const newProduct = result.rows[0];
+    pgInsertAuditEvent(
+      orgId, null, ctx.employee.id,
+      "product", newProduct.id, "product_created",
+      { id: newProduct.id, name: newProduct.name, slug: newProduct.slug },
+    ).catch(() => {});
     invalidateProductsCache(orgId);
-    return NextResponse.json(result.rows[0], { status: 201 });
+    return NextResponse.json(newProduct, { status: 201 });
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Products POST error:', error);
@@ -372,8 +378,14 @@ export async function PUT(request: NextRequest) {
       }
 
       await client.query('COMMIT');
+      const updatedProduct = result.rows[0];
+      pgInsertAuditEvent(
+        orgId, null, ctx.employee.id,
+        "product", id, "product_updated",
+        { id, name: updatedProduct.name, slug: updatedProduct.slug },
+      ).catch(() => {});
       invalidateProductsCache(orgId);
-      return NextResponse.json(result.rows[0]);
+      return NextResponse.json(updatedProduct);
     }
 
     // Handle variant update
@@ -424,9 +436,15 @@ export async function PUT(request: NextRequest) {
       }
 
       await client.query('COMMIT');
+      const updatedVariant = result.rows[0];
+      pgInsertAuditEvent(
+        orgId, null, ctx.employee.id,
+        "product_variant", updates.variant_id, "variant_updated",
+        { id: updates.variant_id, sku: updatedVariant.sku },
+      ).catch(() => {});
       invalidateProductsCache(orgId);
       invalidateVariantsCache(orgId);
-      return NextResponse.json(result.rows[0]);
+      return NextResponse.json(updatedVariant);
     }
 
     await client.query('COMMIT');

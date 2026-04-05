@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/db';
 import { requireAdminPermission } from '@/lib/authz';
 import { BUPOS_ORG_ID } from '@/lib/env';
+import { pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
 
 export async function GET(request: NextRequest) {
   const ctx = await (await import('@/lib/auth/session')).getAdminSession();
@@ -210,7 +211,13 @@ export async function PUT(request: NextRequest) {
       [first_name?.trim() || null, last_name?.trim() || null, email?.trim() || null, phone?.trim() || null, address?.trim() || null, notes?.trim() || null, is_active ?? true, id, orgId],
     );
     if (rows.length === 0) return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
-    return NextResponse.json({ customer: rows[0] }, { status: 200 });
+    const customer = rows[0];
+    pgInsertAuditEvent(
+      orgId, null, ctx.employee.id,
+      "customer", id, "customer_updated",
+      { id, first_name: customer.first_name, last_name: customer.last_name },
+    ).catch(() => {});
+    return NextResponse.json({ customer }, { status: 200 });
   } catch (error) {
     console.error('Customers PUT error:', error);
     return NextResponse.json({ error: 'Failed to update customer' }, { status: 500 });
