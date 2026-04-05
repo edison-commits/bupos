@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import type { Cart, CartTotals } from "@/lib/cart/types";
-import { formatCurrency } from "@/lib/formatting";
+import { formatCurrency } from "@/lib/format";
 
 interface CustomerDisplayProps {
   cart: Cart;

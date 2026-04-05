@@ -21,6 +21,7 @@ export function createCart(registerSessionId: EntityId, employeeId: EntityId, lo
 }
 
 export function addItem(cart: Cart, item: Omit<CartLineItem, 'id'>): Cart {
+  if (item.quantity <= 0) return cart; // reject zero/negative quantities — no-op
   const existing = cart.items.find(
     (i) => i.productVariantId === item.productVariantId
       && JSON.stringify(i.modifierIds) === JSON.stringify(item.modifierIds),
@@ -116,8 +117,10 @@ export function computeTotals(cart: Cart): CartTotals {
     cartDiscount = Math.min(cart.discountAmount, afterLineDiscounts);
   }
 
-  const discountTotal = Number((lineDiscountsTotal + cartDiscount).toFixed(2));
-  const taxableAmount = subtotal + modifiersTotal - discountTotal;
+  // Clamp discountTotal to prevent float rounding from pushing grandTotal negative
+  const rawDiscountTotal = lineDiscountsTotal + cartDiscount;
+  const discountTotal = Number(Math.min(rawDiscountTotal, subtotal + modifiersTotal).toFixed(2));
+  const taxableAmount = Math.max(0, subtotal + modifiersTotal - discountTotal);
   const taxTotal = Number((taxableAmount * cart.taxRate).toFixed(2));
   const grandTotal = Number((taxableAmount + taxTotal).toFixed(2));
 
