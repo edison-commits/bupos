@@ -313,6 +313,7 @@ export default function EmployeeManagement() {
           <input
             type="text"
             placeholder="Search employees..."
+            aria-label="Search employees"
             value={search}
             onChange={(e) => {
               setSearch(e.target.value);

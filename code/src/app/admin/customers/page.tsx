@@ -284,6 +284,7 @@ export default function CustomerManagement() {
             <input
               type="text"
               placeholder="Search by name, email, or phone..."
+              aria-label="Search customers"
               value={search}
               onChange={(e) => {
                 setSearch(e.target.value);
@@ -426,6 +427,7 @@ export default function CustomerManagement() {
                 <input
                   type="text"
                   placeholder="First Name"
+                  aria-label="First Name"
                   required
                   value={formData.first_name}
                   onChange={(e) => setFormData({ ...formData, first_name: e.target.value })}
@@ -434,6 +436,7 @@ export default function CustomerManagement() {
                 <input
                   type="text"
                   placeholder="Last Name"
+                  aria-label="Last Name"
                   required
                   value={formData.last_name}
                   onChange={(e) => setFormData({ ...formData, last_name: e.target.value })}
@@ -444,6 +447,7 @@ export default function CustomerManagement() {
               <input
                 type="email"
                 placeholder="Email"
+                aria-label="Email"
                 value={formData.email}
                 onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
@@ -452,6 +456,7 @@ export default function CustomerManagement() {
               <input
                 type="tel"
                 placeholder="Phone"
+                aria-label="Phone"
                 value={formData.phone}
                 onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
@@ -460,6 +465,7 @@ export default function CustomerManagement() {
               <input
                 type="text"
                 placeholder="Address"
+                aria-label="Address"
                 value={formData.address}
                 onChange={(e) => setFormData({ ...formData, address: e.target.value })}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
@@ -467,6 +473,7 @@ export default function CustomerManagement() {
 
               <textarea
                 placeholder="Notes"
+                aria-label="Notes"
                 value={formData.notes}
                 onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                 rows={3}

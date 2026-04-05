@@ -302,6 +302,7 @@ export default function ProductsPage() {
           <input
             type="text"
             placeholder="Search by product name or SKU..."
+            aria-label="Search products"
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
@@ -309,6 +310,7 @@ export default function ProductsPage() {
           <select
             value={selectedCategory}
             onChange={e => setSelectedCategory(e.target.value)}
+            aria-label="Filter by category"
             className="rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
           >
             <option value="">All Categories</option>
@@ -319,6 +321,7 @@ export default function ProductsPage() {
           <select
             value={activeFilter}
             onChange={e => setActiveFilter(e.target.value as any)}
+            aria-label="Filter by status"
             className="rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
           >
             <option value="all">All Status</option>
@@ -378,6 +381,7 @@ export default function ProductsPage() {
             <input
               type="text"
               placeholder="Category name..."
+              aria-label="New category name"
               value={newCategory}
               onChange={e => setNewCategory(e.target.value)}
               className="flex-1 rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"

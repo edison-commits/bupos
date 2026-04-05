@@ -16,7 +16,6 @@ interface DisplayMessage {
 export default function CustomerDisplayPage() {
   const [cart, setCart] = useState<Cart | null>(null);
   const [totals, setTotals] = useState<CartTotals | null>(null);
-  const [paymentStarted, setPaymentStarted] = useState(false);
   const [appliedPromo, setAppliedPromo] = useState<string | null>(null);
   const [exchangeCredit, setExchangeCredit] = useState<number | null>(null);
 
@@ -34,12 +33,11 @@ export default function CustomerDisplayPage() {
             setTotals(newTotals);
             setAppliedPromo(message.appliedPromo ?? null);
             setExchangeCredit(message.exchangeCredit ?? null);
-            setPaymentStarted(false);
           }
           break;
 
         case "payment_started":
-          setPaymentStarted(true);
+          // Payment started on POS — nothing to update on the display
           break;
 
         case "receipt":
@@ -53,7 +51,6 @@ export default function CustomerDisplayPage() {
           setTotals(null);
           setAppliedPromo(null);
           setExchangeCredit(null);
-          setPaymentStarted(false);
           break;
         default:
           // Unknown message type — ignore silently to avoid noise from future protocol extensions
@@ -86,6 +83,7 @@ export default function CustomerDisplayPage() {
       cart={cart}
       totals={totals}
       storeName="Basic Uniform"
+      customerName={cart.customerName}
       appliedPromo={appliedPromo}
       exchangeCredit={exchangeCredit}
     />
