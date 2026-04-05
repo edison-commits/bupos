@@ -80,6 +80,12 @@ jobs:
             -c "CREATE TABLE IF NOT EXISTS time_off_requests (id UUID DEFAULT gen_random_uuid() PRIMARY KEY, organization_id UUID NOT NULL, employee_id UUID NOT NULL, request_type TEXT NOT NULL CHECK (request_type IN ('vacation','sick','personal','bereavement','jury_duty','other')), start_date DATE NOT NULL, end_date DATE NOT NULL, status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected')), notes TEXT DEFAULT '', requested_at TIMESTAMPTZ DEFAULT NOW(), reviewed_by UUID, reviewed_at TIMESTAMPTZ);"
           psql "${{ secrets.DATABASE_URL }}" \
             -c "CREATE INDEX IF NOT EXISTS idx_time_off_requests_org_employee ON time_off_requests(organization_id, employee_id);"
+
+          # Optimistic locking: add updated_at to products and product_variants
+          psql "${{ secrets.DATABASE_URL }}" \
+            -c "ALTER TABLE products ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();"
+          psql "${{ secrets.DATABASE_URL }}" \
+            -c "ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();"
         if: github.ref == 'refs/heads/master' && github.event_name == 'push'
 
       - name: Build & Deploy
