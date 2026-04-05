@@ -126,12 +126,26 @@ export async function POST(req: NextRequest) {
   if (!orgId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  const idempotencyKey = req.headers.get('Idempotency-Key');
+
   try {
 
     const body = await req.json();
     const { action } = body;
 
     if (action === "create") {
+      // Idempotency: if key provided, look for an already-succeeded transfer
+      if (idempotencyKey) {
+        const existing = await orgQuery(
+          orgId,
+          `SELECT id, status FROM transfers WHERE organization_id = $1 AND idempotency_key = $2 LIMIT 1`,
+          [orgId, idempotencyKey],
+        );
+        if (existing.rows.length > 0) {
+          return NextResponse.json({ id: existing.rows[0].id, status: existing.rows[0].status, _idempotent: true });
+        }
+      }
+
       const { sourceLocationId, destinationLocationId, notes, lines, employeeId } = body;
 
       if (!sourceLocationId || !destinationLocationId) {
@@ -148,9 +162,9 @@ export async function POST(req: NextRequest) {
       const client = await orgTx(orgId);
       try {
         await client.query(
-          `INSERT INTO transfers (id, organization_id, source_location_id, destination_location_id, status, requested_by, notes, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, 'requested', $5, $6, now(), now())`,
-          [transferId, orgId, sourceLocationId, destinationLocationId, employeeId, notes || null],
+          `INSERT INTO transfers (id, organization_id, source_location_id, destination_location_id, status, requested_by, notes, idempotency_key, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, 'requested', $5, $6, $7, now(), now())`,
+          [transferId, orgId, sourceLocationId, destinationLocationId, employeeId, notes || null, idempotencyKey || null],
         );
 
         for (const line of lines) {
@@ -186,6 +200,18 @@ export async function POST(req: NextRequest) {
     if (action === "ship") {
       const { transferId, employeeId } = body;
       if (!transferId) return NextResponse.json({ error: "transferId required" }, { status: 400 });
+
+      // Idempotency: if key provided and already shipped, return current state without re-executing
+      if (idempotencyKey) {
+        const existing = await orgQuery(
+          orgId,
+          `SELECT id, status FROM transfers WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+          [transferId, orgId],
+        );
+        if (existing.rows.length > 0 && existing.rows[0].status !== 'requested') {
+          return NextResponse.json({ id: transferId, status: existing.rows[0].status, _idempotent: true });
+        }
+      }
 
       const client = await orgTx(orgId);
       try {
@@ -236,6 +262,18 @@ export async function POST(req: NextRequest) {
     if (action === "receive") {
       const { transferId, employeeId } = body;
       if (!transferId) return NextResponse.json({ error: "transferId required" }, { status: 400 });
+
+      // Idempotency: if key provided and already received, return current state without re-executing
+      if (idempotencyKey) {
+        const existing = await orgQuery(
+          orgId,
+          `SELECT id, status FROM transfers WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+          [transferId, orgId],
+        );
+        if (existing.rows.length > 0 && existing.rows[0].status === 'received') {
+          return NextResponse.json({ id: transferId, status: 'received', _idempotent: true });
+        }
+      }
 
       const client = await orgTx(orgId);
       try {

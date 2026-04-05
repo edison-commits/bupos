@@ -153,7 +153,10 @@ export default function ReturnsPage() {
     try {
       const response = await authFetch('/api/returns/process', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': crypto.randomUUID(),
+        },
         body: JSON.stringify({
           transaction_id: searchResults.transaction.id,
           customer_name: searchResults.transaction.customer_name,

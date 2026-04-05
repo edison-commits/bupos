@@ -762,7 +762,7 @@ export async function pgEndRegisterSession(id: string): Promise<void> {
 
 export async function pgOpenShift(data: {
   id: string; locationId: string; employeeId: string; registerSessionId: string | null;
-  openingFloat: number; openedNote?: string;
+  openingFloat: number; openedNote?: string; idempotencyKey?: string | null;
 }): Promise<ShiftRecord> {
   // Get organizationId from location
   const { rows: locRows } = await pool.query(
@@ -776,9 +776,9 @@ export async function pgOpenShift(data: {
   try {
     const ts = new Date().toISOString();
     const { rows } = await client.query(
-      `INSERT INTO shifts (id, location_id, employee_id, register_session_id, status, opened_at, opening_float, opened_note)
-       VALUES ($1, $2, $3, $4, 'open', $5, $6, $7) RETURNING *`,
-      [data.id, data.locationId, data.employeeId, data.registerSessionId, ts, data.openingFloat, data.openedNote ?? null],
+      `INSERT INTO shifts (id, location_id, employee_id, register_session_id, status, opened_at, opening_float, opened_note, idempotency_key)
+       VALUES ($1, $2, $3, $4, 'open', $5, $6, $7, $8) RETURNING *`,
+      [data.id, data.locationId, data.employeeId, data.registerSessionId, ts, data.openingFloat, data.openedNote ?? null, data.idempotencyKey ?? null],
     );
     // Only update register_sessions if a register session is provided (admin-initiated shifts have none)
     if (data.registerSessionId) {

@@ -107,6 +107,8 @@ export async function POST(req: NextRequest) {
   if (!orgId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  const idempotencyKey = req.headers.get('Idempotency-Key');
+
   try {
     const { employeeId, locationId, openingFloat, openedNote } = await req.json();
 
@@ -117,13 +119,25 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Opening float must be 0 or greater" }, { status: 400 });
     }
 
+    // Idempotency: if key provided, look for an already-succeeded shift
+    if (idempotencyKey) {
+      const existing = await orgQuery(
+        orgId,
+        `SELECT id, employee_id, location_id, status, opened_at FROM shifts WHERE organization_id = $1 AND idempotency_key = $2 LIMIT 1`,
+        [orgId, idempotencyKey],
+      );
+      if (existing.rows.length > 0) {
+        return NextResponse.json({ shift: existing.rows[0], success: true, _idempotent: true });
+      }
+    }
+
     // Check for existing open shift
-    const existing = await orgQuery(
+    const existingShift = await orgQuery(
       orgId,
       `SELECT id FROM shifts WHERE employee_id = $1 AND location_id = $2 AND status = 'open' LIMIT 1`,
       [employeeId, locationId],
     );
-    if (existing.rows.length > 0) {
+    if (existingShift.rows.length > 0) {
       return NextResponse.json({ error: "Employee already has an open shift" }, { status: 409 });
     }
 
@@ -135,6 +149,7 @@ export async function POST(req: NextRequest) {
       registerSessionId: null, // admin-initiated
       openingFloat,
       openedNote: openedNote || undefined,
+      idempotencyKey: idempotencyKey || undefined,
     });
 
     return NextResponse.json({ shift, success: true }, { status: 201 });

@@ -34,6 +34,8 @@ interface ProcessReturnRequest {
  * 4. Record refund tender/transaction
  */
 export async function POST(request: NextRequest) {
+  const idempotencyKey = request.headers.get('Idempotency-Key');
+
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
   const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
   if (!orgId) {
@@ -48,6 +50,27 @@ export async function POST(request: NextRequest) {
   }
 
   const client = await orgTx(orgId);
+
+  // Idempotency check: if key provided, look for an already-succeeded return
+  if (idempotencyKey) {
+    const existing = await client.query(
+      `SELECT id, return_number, refund_amount FROM returns
+       WHERE organization_id = $1 AND idempotency_key = $2
+       LIMIT 1`,
+      [orgId, idempotencyKey],
+    );
+    if (existing.rows.length > 0) {
+      await client.query('ROLLBACK');
+      const row = existing.rows[0];
+      return NextResponse.json({
+        return_id: row.id,
+        return_number: row.return_number,
+        refund_amount: Number(row.refund_amount),
+        success: true,
+        _idempotent: true,
+      });
+    }
+  }
 
   try {
     const body: ProcessReturnRequest = await request.json();
@@ -161,8 +184,9 @@ export async function POST(request: NextRequest) {
         const retResult = await client.query(
           `INSERT INTO returns (
             organization_id, location_id, transaction_id, return_number,
-            customer_name, reason, notes, refund_method, refund_amount, status
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            customer_name, reason, notes, refund_method, refund_amount, status,
+            idempotency_key
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
            RETURNING id`,
           [
             orgId,
@@ -175,6 +199,7 @@ export async function POST(request: NextRequest) {
             refund_method || 'store_credit',
             refund_amount,
             'completed',
+            idempotencyKey || null,
           ],
         );
         returnId = retResult.rows[0]?.id ?? null;
