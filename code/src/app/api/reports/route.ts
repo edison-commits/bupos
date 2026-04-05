@@ -68,6 +68,8 @@ export async function GET(request: Request) {
       case "shifts":
         data = await getShiftSummary(orgId, from, to);
         break;
+      default:
+        return Response.json({ error: `Unknown report type: ${type}` }, { status: 400 });
     }
 
     return Response.json(data);

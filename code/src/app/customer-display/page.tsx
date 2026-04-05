@@ -55,6 +55,9 @@ export default function CustomerDisplayPage() {
           setExchangeCredit(null);
           setPaymentStarted(false);
           break;
+        default:
+          // Unknown message type — ignore silently to avoid noise from future protocol extensions
+          break;
       }
     };
 
