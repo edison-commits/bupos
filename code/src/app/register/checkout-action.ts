@@ -146,17 +146,12 @@ export async function checkoutAction(
 
   // Loyalty calculations
   const loyaltyConfig = registerConfiguration.loyalty;
-  // Earning: round-then-floor pattern cancels binary float drift
-  // (e.g. 10.00*0.1 = 0.9999999 → round=1 → floor=1 → 1 point).
-  // Because Math.round on an integer is a no-op, this is equivalent to Math.round
-  // for all non-float-drifted values (2.4→2, 2.6→3, 2.5→3). Result is always integer.
+  // Round earned points to nearest integer (standard loyalty rounding — no floor/ceil bias)
+  // Policy: partial points are rounded to nearest; redemption rounds to nearest as well
   const loyaltyPointsEarned = cart.customerId
-    ? Math.floor(Math.round(totals.grandTotal * loyaltyConfig.earnRatePerDollar))
+    ? Math.round(totals.grandTotal * loyaltyConfig.earnRatePerDollar)
     : 0;
-  // Redemption: simple rounding (partial points not allowed — round to nearest whole point).
-  // NOTE: redemption uses plain Math.round while earning uses Math.floor(Math.round(...)).
-  // This means exactly-2.5-point redemptions round UP (to 3) while exactly-2.5-point
-  // earnings round DOWN (to 2). This asymmetry is not documented anywhere.
+  // Redemption: round redemption to nearest whole point
   const loyaltyPointsRedeemed = loyaltyTendered > 0 && cart.customerId
     ? Math.round(loyaltyTendered / loyaltyConfig.redemptionValuePerPoint)
     : 0;
