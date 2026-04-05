@@ -1,6 +1,15 @@
 import { NextResponse } from "next/server";
 import { pool } from "@/lib/db";
 
+/**
+ * GET /api/health
+ * Lightweight liveness probe — verifies the DB can execute a query under load.
+ * Used by load balancers, uptime monitors, and the client-side connectivity checker.
+ * No authentication required.
+ *
+ * @tags system
+ * @description Health check endpoint
+ */
 export async function GET() {
   try {
     // pg_stat_activity is a heavier but more realistic probe than SELECT 1 —

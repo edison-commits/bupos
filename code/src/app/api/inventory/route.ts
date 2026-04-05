@@ -1,3 +1,7 @@
+/**
+ * BuPOS Inventory API
+ * @tags inventory
+ */
 import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/db';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';

@@ -6,6 +6,7 @@ import { useState, useEffect } from 'react';
 import { AlertCircle, Check, X } from 'lucide-react';
 import { getTaxRate, getCitiesForState, US_STATES } from '@/lib/tax-rates';
 import { authFetch } from '@/lib/api/client';
+import { FETCH_TIMEOUT_MS } from '@/lib/config/timing';
 
 interface StoreSettings {
   store: {
@@ -950,7 +951,7 @@ export default function SettingsPage() {
       setLoading(true);
       setGlobalError(null);
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
+      const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
       let response: Response;
       try {
         response = await authFetch('/api/settings', { signal: controller.signal, cache: 'no-store' });
@@ -1007,7 +1008,7 @@ export default function SettingsPage() {
       setSectionErrors((prev) => ({ ...prev, location: null }));
 
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
+      const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
       let updated: StoreSettings;
       try {
         const response = await authFetch('/api/settings', {

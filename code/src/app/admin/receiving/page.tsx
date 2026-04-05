@@ -5,6 +5,7 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { authFetch } from '@/lib/api/client';
+import { SUCCESS_TOAST_MS } from '@/lib/config/timing';
 
 interface Product {
   id: string;
@@ -222,7 +223,7 @@ export default function ReceivingPage() {
       setReceivingItems([]);
       setSelectedPO(null);
       setMode('quick');
-      setTimeout(() => setSubmitSuccess(false), 5000);
+      setTimeout(() => setSubmitSuccess(false), SUCCESS_TOAST_MS);
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : 'An error occurred');
     } finally {

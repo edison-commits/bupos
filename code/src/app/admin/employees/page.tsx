@@ -5,6 +5,7 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 import { useState, useEffect } from 'react';
 import { Plus, Search, Edit2, Lock, Eye, EyeOff } from 'lucide-react';
 import { authFetch } from '@/lib/api/client';
+import { FETCH_TIMEOUT_MS } from '@/lib/config/timing';
 
 const ROLES: Record<string, { label: string; color: string }> = {
   owner: { label: 'Owner', color: 'bg-red-100 text-red-800' },
@@ -83,7 +84,7 @@ export default function EmployeeManagement() {
       });
 
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
+      const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
       let data;
       try {
         const response = await authFetch(`/api/employees?${params}`, { cache: 'no-store', signal: controller.signal });

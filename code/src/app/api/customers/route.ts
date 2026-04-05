@@ -1,3 +1,7 @@
+/**
+ * BuPOS Customer Management API
+ * @tags customers
+ */
 import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/db';
 import { requireAdminPermission } from '@/lib/authz';

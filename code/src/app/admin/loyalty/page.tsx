@@ -5,6 +5,7 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 import { useState, useEffect } from 'react';
 import { AlertCircle, Award, DollarSign, Loader2, Search, TrendingUp, Users, X } from 'lucide-react';
 import { authFetch } from '@/lib/api/client';
+import { FETCH_TIMEOUT_MS } from '@/lib/config/timing';
 import { formatCurrency } from '@/lib/format';
 interface LoyaltyOverview {
   total_customers_enrolled: number;
@@ -97,7 +98,7 @@ export default function LoyaltyDashboard() {
     setError(null);
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
+      const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
       let data;
       try {
         const response = await authFetch('/api/loyalty', { cache: 'no-store', signal: controller.signal });

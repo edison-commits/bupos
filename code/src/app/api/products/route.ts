@@ -1,3 +1,7 @@
+/**
+ * BuPOS Product Catalog API
+ * @tags products
+ */
 import { orgQuery, pool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminPermission } from '@/lib/authz';

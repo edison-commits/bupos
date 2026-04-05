@@ -1,3 +1,7 @@
+/**
+ * BuPOS Employee Management API
+ * @tags employees
+ */
 import { BUPOS_LOCATION_ID } from '@/lib/env';
 import { NextRequest, NextResponse } from 'next/server';
 import { redirect } from 'next/navigation';

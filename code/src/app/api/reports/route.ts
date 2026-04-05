@@ -1,3 +1,7 @@
+/**
+ * BuPOS Reports API
+ * @tags reports
+ */
 import { BUPOS_LOCATION_ID } from "@/lib/env";
 import { pool } from "@/lib/db";
 import type { QueryResult } from "pg";

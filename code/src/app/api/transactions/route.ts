@@ -3,6 +3,9 @@ import { orgQuery } from "@/lib/db";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 
 /**
+ * BuPOS Transaction History API
+ * @tags transactions
+ *
  * GET /api/transactions
  *
  * Query params:

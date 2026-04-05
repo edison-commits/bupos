@@ -5,6 +5,7 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 import { useState, useEffect, useCallback } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { authFetch } from '@/lib/api/client';
+import { DASHBOARD_POLL_INTERVAL_MS } from '@/lib/config/timing';
 import { formatCurrency } from '@/lib/format';
 interface Metrics {
   grossSales: number;
@@ -85,7 +86,7 @@ export default function DashboardPage() {
   }, [fetchData]);
 
   useEffect(() => {
-    const interval = setInterval(fetchData, 60000);
+    const interval = setInterval(fetchData, DASHBOARD_POLL_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [fetchData]);
 
