@@ -16,7 +16,13 @@ interface RoleGateProps {
  * If the user doesn't have access, displays an access denied message.
  * If no role is stored, displays a sign-in prompt.
  *
- * The role is stored in localStorage under the key 'bupos_employee_role' during login.
+ * NOTE: This is purely a UI convenience layer. Server-side authorization
+ * is enforced by requireAdminPermission() in API routes. The localStorage
+ * role can be manipulated by the client and must never be trusted for
+ * security decisions. This component is for UI show/hide only.
+ *
+ * The role is expected to be written to localStorage under the key
+ * 'bupos_employee_role' by the login flow (check auth actions).
  */
 export function RoleGate({ allowedRoles, children, fallback }: RoleGateProps) {
   const [mounted, setMounted] = useState(false);

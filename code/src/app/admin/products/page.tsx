@@ -264,8 +264,14 @@ export default function ProductsPage() {
 
   if (error) {
     return (
-      <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">
-        Error loading products: {error}
+      <div className="rounded-lg border border-red-200 bg-red-50 p-6">
+        <p className="mb-3 font-medium text-red-700">Error loading products: {error}</p>
+        <button
+          onClick={fetchProducts}
+          className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
+        >
+          Try again
+        </button>
       </div>
     );
   }

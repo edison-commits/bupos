@@ -40,7 +40,9 @@ export async function GET(request: NextRequest) {
   const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId ?? BUPOS_ORG_ID;
 
   if (cached && Date.now() < cached.expiresAt) {
-    return NextResponse.json(cached.data);
+    const hit = NextResponse.json(cached.data);
+    hit.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    return hit;
   }
   try {
     const searchParams = request.nextUrl.searchParams;
@@ -251,7 +253,9 @@ export async function GET(request: NextRequest) {
       const firstKey = _inventoryCache.keys().next().value;
       if (firstKey) _inventoryCache.delete(firstKey);
     }
-    return NextResponse.json(response);
+    const resp = NextResponse.json(response);
+    resp.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    return resp;
   } catch (error) {
     console.error('Inventory API error:', error);
     return NextResponse.json(

@@ -17,7 +17,9 @@ export async function GET(request: NextRequest) {
   const cacheKey = request.nextUrl.toString();
   const cached = _productsCache.get(cacheKey);
   if (cached && Date.now() < cached.expiresAt) {
-    return NextResponse.json(cached.data);
+    const hit = NextResponse.json(cached.data);
+    hit.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    return hit;
   }
 
   try {
@@ -185,12 +187,14 @@ export async function GET(request: NextRequest) {
       const firstKey = _productsCache.keys().next().value;
       if (firstKey) _productsCache.delete(firstKey);
     }
-    return NextResponse.json(response);
+    const resp = NextResponse.json(response);
+    resp.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    return resp;
   } catch (error) {
     console.error('Products GET error:', error);
     return NextResponse.json(
       { error: 'Failed to fetch products' },
-      { status: 500 }
+      { status: 500, headers: { 'Cache-Control': 'no-store' } }
     );
   }
 }
