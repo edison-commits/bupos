@@ -339,7 +339,7 @@ export async function POST(req: NextRequest) {
         expectedCash: Number(auditPayload.expected.toFixed(2)),
         declaredCash: Number(auditPayload.declared.toFixed(2)),
         variance: auditPayload.variance,
-      });
+      }, { status: 200 });
     }
 
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });

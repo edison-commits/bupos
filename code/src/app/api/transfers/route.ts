@@ -224,7 +224,7 @@ export async function POST(req: NextRequest) {
         }
 
         await client.query("COMMIT");
-        return NextResponse.json({ id: transferId, status: "in_transit" });
+        return NextResponse.json({ id: transferId, status: "in_transit" }, { status: 200 });
       } catch (e) {
         await client.query("ROLLBACK");
         throw e;
@@ -277,7 +277,7 @@ export async function POST(req: NextRequest) {
         }
 
         await client.query("COMMIT");
-        return NextResponse.json({ id: transferId, status: "received" });
+        return NextResponse.json({ id: transferId, status: "received" }, { status: 200 });
       } catch (e) {
         await client.query("ROLLBACK");
         throw e;
@@ -300,7 +300,7 @@ export async function POST(req: NextRequest) {
       if (result.rows.length === 0) {
         return NextResponse.json({ error: "Transfer not found or not in requested status" }, { status: 400 });
       }
-      return NextResponse.json({ id: transferId, status: "cancelled" });
+      return NextResponse.json({ id: transferId, status: "cancelled" }, { status: 200 });
     }
 
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });

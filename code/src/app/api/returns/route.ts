@@ -160,7 +160,7 @@ export async function PUT(request: NextRequest) {
     );
 
     if (rows.length === 0) return NextResponse.json({ error: 'Return not found' }, { status: 404 });
-    return NextResponse.json({ return: rows[0] });
+    return NextResponse.json({ return: rows[0] }, { status: 200 });
   } catch (error) {
     console.error('Returns PUT error:', error);
     return NextResponse.json({ error: 'Failed to update return' }, { status: 500 });
