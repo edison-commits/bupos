@@ -38,7 +38,7 @@ export async function loginAction(_prev: { error: string } | null, formData: For
           orgId = (rows[0]?.organization_id as string) ?? null;
         }
         pgInsertAuditEvent(
-          orgId, null, cred?.employeeId ?? null,
+          orgId ?? 'unknown', null, cred?.employeeId ?? null,
           "session", null, "admin_login_failed",
           { email, reason: err instanceof Error ? err.message : "unknown" },
         ).catch(() => {});
