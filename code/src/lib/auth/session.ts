@@ -80,7 +80,7 @@ async function pgFindSession(sessionId: string, scope: string): Promise<SessionR
 }
 
 // ── Resolve session (works for both JSON and PG) ────────────────────
-async function resolveSession(scope: SessionRecord["scope"], cookieName: string) {
+async function resolveSession(scope: SessionRecord["scope"], cookieName: string, deviceId?: string) {
   const jar = await cookieStore();
   const sessionId = jar.get(cookieName)?.value;
 
@@ -139,6 +139,20 @@ async function resolveSession(scope: SessionRecord["scope"], cookieName: string)
     );
     if (!rsRows[0]) return null;
     const rs = rsRows[0] as Record<string, unknown>;
+
+    // Device ID verification: if a deviceId was provided and it doesn't match,
+    // treat this session as invalid (closed) — another device took over.
+    const sessionDeviceId = (rs.device_id as string) ?? undefined;
+    if (deviceId && sessionDeviceId && sessionDeviceId !== deviceId) {
+      // Close the stale session and return null
+      await pgPool.query(
+        `UPDATE register_sessions SET status = 'ended', ended_at = NOW()
+         WHERE id = $1`,
+        [rs.id],
+      );
+      return null;
+    }
+
     registerSession = {
       id: rs.id as string,
       authSessionId: rs.auth_session_id as string,
@@ -151,6 +165,7 @@ async function resolveSession(scope: SessionRecord["scope"], cookieName: string)
       lastCartId: (rs.last_cart_id as string) ?? undefined,
       lastTransactionId: (rs.last_transaction_id as string) ?? undefined,
       pendingExceptionIds: (rs.pending_exception_ids as string[]) ?? [],
+      deviceId: sessionDeviceId,
     };
 
     if (registerSession.activeShiftId) {
@@ -205,8 +220,8 @@ export async function getAdminSession() {
   return resolveSession("admin", ADMIN_COOKIE) as Promise<AdminSessionContext | null>;
 }
 
-export async function getRegisterSession() {
-  return resolveSession("register", REGISTER_COOKIE) as Promise<RegisterSessionContext | null>;
+export async function getRegisterSession(deviceId?: string) {
+  return resolveSession("register", REGISTER_COOKIE, deviceId) as Promise<RegisterSessionContext | null>;
 }
 
 export async function signInAdmin(email: string, password: string) {
@@ -288,7 +303,7 @@ export async function signInAdmin(email: string, password: string) {
   });
 }
 
-export async function signInRegister(pin: string, locationId: string) {
+export async function signInRegister(pin: string, locationId: string, deviceId?: string) {
   const cleanPin = pin.trim();
 
   // Rate-limit PIN attempts per location to prevent brute-force
@@ -352,10 +367,10 @@ export async function signInRegister(pin: string, locationId: string) {
     const employeeId = credential.employeeId;
     const organizationId = emp.organization_id as string;
 
-    // Run cleanup + session creation in parallel
     const nextSession = buildSession("register", employeeId, organizationId, locationId);
     const registerSessionId = randomUUID();
 
+    // Close stale sessions for the same employee (existing behavior)
     await Promise.all([
       pgDeleteSessionsByEmployee("register", employeeId),
       pool.query(
@@ -365,12 +380,21 @@ export async function signInRegister(pin: string, locationId: string) {
       ),
     ]);
 
+    // Close stale sessions for the same device (distributed register locking)
+    if (deviceId) {
+      await pool.query(
+        `UPDATE register_sessions SET status = 'ended', ended_at = $1
+         WHERE organization_id = $2 AND device_id = $3 AND status = 'active'`,
+        [timestamp, organizationId, deviceId],
+      );
+    }
+
     await Promise.all([
       pgInsertSession(nextSession),
       pool.query(
-        `INSERT INTO register_sessions (id, auth_session_id, employee_id, location_id, status, started_at)
-         VALUES ($1, $2, $3, $4, 'active', $5)`,
-        [registerSessionId, nextSession.id, employeeId, locationId, timestamp],
+        `INSERT INTO register_sessions (id, auth_session_id, employee_id, location_id, organization_id, device_id, status, started_at)
+         VALUES ($1, $2, $3, $4, $5, $6, 'active', $7)`,
+        [registerSessionId, nextSession.id, employeeId, locationId, organizationId, deviceId ?? null, timestamp],
       ),
     ]);
 
@@ -386,9 +410,10 @@ export async function signInRegister(pin: string, locationId: string) {
     return {
       employee: { id: employeeId, organizationId, roleKey },
       location: { id: locationId, organizationId },
-      registerSession: { id: registerSessionId },
+      registerSession: { id: registerSessionId, deviceId },
       authSessionId: nextSession.id,
       authSessionExpiresAt: nextSession.expiresAt,
+      deviceId,
     };
   }
 
@@ -414,6 +439,12 @@ export async function signInRegister(pin: string, locationId: string) {
     store.registerSessions = store.registerSessions.filter(
       (entry) => !(entry.employeeId === employee.id && entry.locationId === locationId && entry.status === "active"),
     );
+    // Close stale sessions for the same device (distributed register locking)
+    if (deviceId) {
+      store.registerSessions = store.registerSessions.filter(
+        (entry) => !(entry.deviceId === deviceId && entry.status === "active"),
+      );
+    }
 
     const nextSession = buildSession("register", employee.id, employee.organizationId, locationId);
     const registerSessionId = randomUUID();
@@ -427,6 +458,7 @@ export async function signInRegister(pin: string, locationId: string) {
       status: "active",
       startedAt: timestamp,
       pendingExceptionIds: [],
+      deviceId,
     });
     store.transactionEventPlaceholders.unshift({
       id: randomUUID(),
@@ -449,9 +481,10 @@ export async function signInRegister(pin: string, locationId: string) {
     return {
       employee: { id: employee.id, organizationId: employee.organizationId },
       location: { id: location.id, organizationId: location.organizationId },
-      registerSession: { id: registerSessionId },
+      registerSession: { id: registerSessionId, deviceId },
       authSessionId: nextSession.id,
       authSessionExpiresAt: nextSession.expiresAt,
+      deviceId,
     };
   });
 

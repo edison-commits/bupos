@@ -96,6 +96,21 @@ export function POSTerminal({
   receiptHeader,
   receiptFooter,
 }: POSTerminalProps) {
+  // Stable device ID for distributed register locking.
+  // Prefer the ID stored in the register session (set at login), otherwise
+  // read from localStorage or generate a fresh one and persist it.
+  const [deviceId] = useState<string>(() => {
+    if (registerSession.deviceId) return registerSession.deviceId;
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("pos_device_id");
+      if (stored) return stored;
+      const generated = crypto.randomUUID();
+      localStorage.setItem("pos_device_id", generated);
+      return generated;
+    }
+    return "";
+  });
+
   const [cart, setCart] = useState<Cart>(() => {
     const c = createCart(registerSession.id, employee.id, location.id);
     return { ...c, taxRate: location.taxRate ?? 0.1025 };

@@ -19,6 +19,7 @@ const isPg = () => !!process.env.USE_POSTGRES;
 
 export async function registerLoginAction(formData: FormData) {
   const locationId = String(formData.get("locationId") ?? "");
+  const deviceId = String(formData.get("deviceId") ?? "") || undefined;
 
   // Rate-limit by location to prevent PIN brute-force (5 attempts/min)
   const rl = checkRateLimit(`pin:${locationId}`);
@@ -30,6 +31,7 @@ export async function registerLoginAction(formData: FormData) {
   const loginResult = await signInRegister(
     String(formData.get("pin") ?? ""),
     locationId,
+    deviceId,
   );
   if (!loginResult) redirect("/register?error=PIN+login+failed");
   const { employee, location, registerSession } = loginResult;

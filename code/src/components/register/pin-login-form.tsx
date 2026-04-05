@@ -1,15 +1,30 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 const pad = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "CLR", "0", "OK"];
 
+function getDeviceId(): string {
+  if (typeof window === "undefined") return "";
+  const stored = localStorage.getItem("pos_device_id");
+  if (stored) return stored;
+  const generated = crypto.randomUUID();
+  localStorage.setItem("pos_device_id", generated);
+  return generated;
+}
+
 export function PinLoginForm({ locationId }: { locationId: string }) {
   const [pin, setPin] = useState("");
+  const [deviceId, setDeviceId] = useState<string>("");
+
+  useEffect(() => {
+    setDeviceId(getDeviceId());
+  }, []);
 
   return (
     <div className="grid gap-4">
       <input type="hidden" name="locationId" value={locationId} />
+      {deviceId ? <input type="hidden" name="deviceId" value={deviceId} /> : null}
       <label className="grid gap-1 text-sm font-medium text-zinc-700">
         <span>4-digit PIN</span>
         <input

@@ -530,6 +530,7 @@ export interface RegisterSessionRecord {
   lastCartId?: EntityId;
   lastTransactionId?: EntityId;
   pendingExceptionIds: EntityId[];
+  deviceId?: string;
 }
 
 // ── Recount Schedule ──────────────────────────────────────────────
