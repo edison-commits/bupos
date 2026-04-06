@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { Cart, CartTotals } from "@/lib/cart/types";
+import { getRegisterSession } from "@/lib/auth/session";
+import { hasPermission } from "@/lib/authz";
 
 /**
  * In-memory store for customer display state
@@ -17,6 +19,20 @@ const displayStateStore = new Map<
     updatedAt: number;
   }
 >();
+
+async function authorizeRegisterSession(registerSessionId: string) {
+  const ctx = await getRegisterSession();
+  if (!ctx?.employee || !ctx.registerSession) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (!hasPermission(ctx.employee.roleKey, "register.open")) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  if (ctx.registerSession.id !== registerSessionId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  return null;
+}
 
 /**
  * POST /api/customer-display
@@ -49,6 +65,10 @@ export async function POST(req: NextRequest) {
         { error: "registerSessionId is required" },
         { status: 400 }
       );
+    }
+    const authError = await authorizeRegisterSession(registerSessionId);
+    if (authError) {
+      return authError;
     }
 
     if (!cart || !totals) {
@@ -98,6 +118,10 @@ export async function GET(req: NextRequest) {
       { status: 400 }
     );
   }
+  const authError = await authorizeRegisterSession(registerSessionId);
+  if (authError) {
+    return authError;
+  }
 
   const state = displayStateStore.get(registerSessionId);
 
@@ -141,6 +165,10 @@ export async function DELETE(req: NextRequest) {
       { error: "registerSessionId query param is required" },
       { status: 400 }
     );
+  }
+  const authError = await authorizeRegisterSession(registerSessionId);
+  if (authError) {
+    return authError;
   }
 
   displayStateStore.delete(registerSessionId);
