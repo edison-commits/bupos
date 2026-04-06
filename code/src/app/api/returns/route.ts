@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
       orgQuery(
         orgId,
         `SELECT COUNT(*)::int as total FROM returns WHERE organization_id = $1`,
-        [],
+        [orgId],
       ),
       orgQuery(
         orgId,
@@ -85,7 +85,7 @@ export async function POST(request: NextRequest) {
       const { rows: countRows } = await orgQuery(
         orgId,
         `SELECT COUNT(*)::int as cnt FROM returns WHERE organization_id = $1 AND return_number LIKE $2`,
-        [`RET-${locCode}-${dateStr}-%`],
+        [orgId, `RET-${locCode}-${dateStr}-%`],
       );
       const seq = (countRows[0].cnt || 0) + 1;
       returnNumber = `RET-${locCode}-${dateStr}-${String(seq).padStart(3, '0')}`;
