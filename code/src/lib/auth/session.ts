@@ -259,12 +259,13 @@ export async function signInAdmin(email: string, password: string) {
     }
 
     const organizationId = emp.organization_id as string;
-    await pool.query("BEGIN");
+    const client = await pool.connect();
     let nextSession: SessionRecord | null = null;
     try {
-      await pool.query(`DELETE FROM sessions WHERE scope = $1 AND employee_id = $2`, ["admin", credential.employeeId]);
+      await client.query("BEGIN");
+      await client.query(`DELETE FROM sessions WHERE scope = $1 AND employee_id = $2`, ["admin", credential.employeeId]);
       nextSession = buildSession("admin", credential.employeeId, organizationId);
-      await pool.query(
+      await client.query(
         `INSERT INTO sessions (id, employee_id, organization_id, scope, location_id, created_at, last_seen_at, expires_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
@@ -278,10 +279,12 @@ export async function signInAdmin(email: string, password: string) {
           nextSession.expiresAt,
         ],
       );
-      await pool.query("COMMIT");
+      await client.query("COMMIT");
     } catch (err) {
-      await pool.query("ROLLBACK");
+      await client.query("ROLLBACK");
       throw err;
+    } finally {
+      client.release();
     }
     if (!nextSession) {
       throw new Error("Failed to create admin session");
