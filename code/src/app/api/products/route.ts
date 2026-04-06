@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminPermission } from '@/lib/authz';
 import { invalidateProductsCache, invalidateVariantsCache, pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
-import { BUPOS_LOCATION_ID, BUPOS_ORG_ID } from '@/lib/env';
+import { BUPOS_LOCATION_ID } from '@/lib/env';
 
 // 30-second response cache
 const _productsCache = new Map<string, { data: unknown; expiresAt: number }>();
@@ -15,8 +15,11 @@ const PROD_CACHE_TTL = 30_000;
 const MAX_CACHE_SIZE = 50;
 
 export async function GET(request: NextRequest) {
-  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId ?? BUPOS_ORG_ID;
+  const adminCtx = await getAdminSession();
+  const orgId = adminCtx?.employee?.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
 
   const cacheKey = request.nextUrl.toString();
   const cached = _productsCache.get(cacheKey);

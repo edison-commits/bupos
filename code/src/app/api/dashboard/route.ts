@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
-import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
-import { BUPOS_LOCATION_ID, BUPOS_ORG_ID } from "@/lib/env";
+import { getAdminSession } from "@/lib/auth/session";
+import { BUPOS_LOCATION_ID } from "@/lib/env";
 
 
 /**
@@ -15,8 +15,11 @@ import { BUPOS_LOCATION_ID, BUPOS_ORG_ID } from "@/lib/env";
  *   range    — "today" | "week" | "month" (defaults to today)
  */
 export async function GET(req: NextRequest) {
-  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId ?? BUPOS_ORG_ID;
+  const adminCtx = await getAdminSession();
+  const orgId = adminCtx?.employee?.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   try {
     const sp = req.nextUrl.searchParams;
     const locationId = sp.get("location") || BUPOS_LOCATION_ID;

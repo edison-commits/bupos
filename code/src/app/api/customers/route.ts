@@ -5,12 +5,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/db';
 import { requireAdminPermission } from '@/lib/authz';
-import { BUPOS_ORG_ID } from '@/lib/env';
 import { pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
 
 export async function GET(request: NextRequest) {
   const ctx = await (await import('@/lib/auth/session')).getAdminSession();
-  const orgId = ctx?.employee?.organizationId ?? BUPOS_ORG_ID;
+  const orgId = ctx?.employee?.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
 
   // Escape SQL LIKE wildcards in search so % and _ are treated as literal characters
   const rawSearch = request.nextUrl.searchParams.get('search')?.trim() || '';
