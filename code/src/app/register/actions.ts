@@ -48,6 +48,7 @@ export async function registerLoginAction(formData: FormData) {
     const shiftId = randomUUID();
     await pgOpenShift({
       id: shiftId,
+      organizationId: employee.organizationId,
       locationId: location.id,
       employeeId: employee.id,
       registerSessionId: registerSession.id,
@@ -79,7 +80,7 @@ export async function openShiftAction(formData: FormData) {
     }
     const shiftId = randomUUID();
     await pgOpenShift({
-      id: shiftId, locationId: context.location.id,
+      id: shiftId, organizationId: context.employee.organizationId, locationId: context.location.id,
       employeeId: context.employee.id,
       registerSessionId: context.registerSession.id,
       openingFloat, openedNote: openedNote || undefined,
@@ -159,7 +160,7 @@ export async function adminOpenShiftAction(formData: FormData) {
     }
     const shiftId = randomUUID();
     await (await import("@/lib/persistence/postgres-store")).pgOpenShift({
-      id: shiftId, locationId, employeeId, registerSessionId: null,
+      id: shiftId, organizationId: ctx.employee.organizationId, locationId, employeeId, registerSessionId: null,
       openingFloat, openedNote: openedNote || undefined,
     });
     await (await import("@/lib/persistence/postgres-store")).pgInsertAuditEvent(

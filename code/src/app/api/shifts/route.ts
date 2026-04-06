@@ -131,19 +131,10 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Check for existing open shift
-    const existingShift = await orgQuery(
-      orgId,
-      `SELECT id FROM shifts WHERE employee_id = $1 AND location_id = $2 AND status = 'open' LIMIT 1`,
-      [employeeId, locationId],
-    );
-    if (existingShift.rows.length > 0) {
-      return NextResponse.json({ error: "Employee already has an open shift" }, { status: 409 });
-    }
-
     const shiftId = randomUUID();
     const shift = await pgOpenShift({
       id: shiftId,
+      organizationId: ctx.employee.organizationId,
       locationId,
       employeeId,
       registerSessionId: null, // admin-initiated

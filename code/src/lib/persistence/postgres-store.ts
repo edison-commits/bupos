@@ -776,27 +776,31 @@ export async function pgEndRegisterSession(id: string): Promise<void> {
 }
 
 export async function pgOpenShift(data: {
-  id: string; locationId: string; employeeId: string; registerSessionId: string | null;
+  id: string; organizationId: string; locationId: string; employeeId: string; registerSessionId: string | null;
   openingFloat: number; openedNote?: string; idempotencyKey?: string | null;
 }): Promise<ShiftRecord> {
-  // Get organizationId from location
-  const { rows: locRows } = await pool.query(
-    'SELECT organization_id FROM locations WHERE id = $1',
-    [data.locationId],
-  );
-  if (!locRows[0]) throw new Error('Location not found');
-  const organizationId = locRows[0].organization_id as string;
-
-  const client = await orgTx(organizationId);
+  const client = await orgTx(data.organizationId);
   try {
     const ts = new Date().toISOString();
+    const { rows: existingShiftRows } = await client.query(
+      `SELECT id
+       FROM shifts
+       WHERE organization_id = $1 AND employee_id = $2 AND status = 'open'
+       FOR UPDATE`,
+      [data.organizationId, data.employeeId],
+    );
+    if (existingShiftRows.length > 0) {
+      throw new Error('Employee already has an open shift');
+    }
+
     const { rows } = await client.query(
-      `INSERT INTO shifts (id, location_id, employee_id, register_session_id, status, opened_at, opening_float, opened_note, idempotency_key)
-       VALUES ($1, $2, $3, $4, 'open', $5, $6, $7, $8) RETURNING *`,
-      [data.id, data.locationId, data.employeeId, data.registerSessionId, ts, data.openingFloat, data.openedNote ?? null, data.idempotencyKey ?? null],
+      `INSERT INTO shifts (id, organization_id, location_id, employee_id, register_session_id, status, opened_at, opening_float, opened_note, idempotency_key)
+       VALUES ($1, $2, $3, $4, $5, 'open', $6, $7, $8, $9) RETURNING *`,
+      [data.id, data.organizationId, data.locationId, data.employeeId, data.registerSessionId, ts, data.openingFloat, data.openedNote ?? null, data.idempotencyKey ?? null],
     );
     // Only update register_sessions if a register session is provided (admin-initiated shifts have none)
     if (data.registerSessionId) {
+      await client.query(`SELECT id FROM register_sessions WHERE id = $1 FOR UPDATE`, [data.registerSessionId]);
       await client.query(
         `UPDATE register_sessions SET active_shift_id = $1 WHERE id = $2`,
         [data.id, data.registerSessionId],
