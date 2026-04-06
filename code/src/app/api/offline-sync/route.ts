@@ -174,10 +174,14 @@ export async function POST(request: NextRequest) {
 
     const totalTendered = tenders.reduce((sum: number, t: { amount: number }) => sum + t.amount, 0);
     const cashTendered = tenders.filter((t: { type: string }) => t.type === "cash").reduce((sum: number, t: { amount: number }) => sum + t.amount, 0);
+    const loyaltyTendered = tenders.filter((t: { type: string }) => t.type === "loyalty").reduce((sum: number, t: { amount: number }) => sum + t.amount, 0);
     const nonCashTendered = tenders.filter((t: { type: string }) => t.type !== "cash" && t.type !== "loyalty").reduce((sum: number, t: { amount: number }) => sum + t.amount, 0);
     const cashPortion = Math.max(0, grandTotal - nonCashTendered);
     const changeDue = cashTendered > cashPortion ? Number((cashTendered - cashPortion).toFixed(2)) : 0;
     const primaryTenderType = tenders.length === 1 ? tenders[0].type : "split";
+    const loyaltyPointsRedeemed = loyaltyTendered > 0 && cart.customerId
+      ? Math.round(loyaltyTendered / registerConfiguration.loyalty.redemptionValuePerPoint)
+      : 0;
 
     const transactionId = id || randomUUID();
 
@@ -298,15 +302,24 @@ export async function POST(request: NextRequest) {
         const loyaltyPointsEarned = cart.customerId
           ? (cart.loyaltyPointsEarned ?? Math.floor(grandTotal))
           : 0;
-        if (loyaltyPointsEarned > 0 && cart.customerId) {
+        if ((loyaltyPointsEarned > 0 || loyaltyPointsRedeemed > 0) && cart.customerId) {
+          const { rows: customerRows } = await syncClient.query(
+            `SELECT loyalty_points FROM customers WHERE id = $1 FOR UPDATE`,
+            [cart.customerId],
+          );
+          const currentPoints = Number(customerRows[0]?.loyalty_points ?? 0);
+          if (loyaltyPointsRedeemed > currentPoints) {
+            await syncClient.query("ROLLBACK");
+            return NextResponse.json({ error: "Insufficient loyalty points" }, { status: 409 });
+          }
           await syncClient.query(
             `UPDATE customers SET
-              loyalty_points = loyalty_points + $1,
-              total_spend = total_spend + $2,
+              loyalty_points = loyalty_points - $1 + $2,
+              total_spend = total_spend + $3,
               visit_count = visit_count + 1,
               updated_at = now()
-            WHERE id = $3`,
-            [loyaltyPointsEarned, grandTotal, cart.customerId],
+            WHERE id = $4`,
+            [loyaltyPointsRedeemed, loyaltyPointsEarned, grandTotal, cart.customerId],
           );
         }
 

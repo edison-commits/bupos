@@ -276,13 +276,19 @@ export async function checkoutAction(
       // offline+online txn syncing, or a retry). Step 7b (store credit) also locks this
       // row; Postgres queues the locks so both updates are serialised correctly.
       if (cart.customerId) {
-        await client.query(
-          `SELECT id FROM customers WHERE id = $1 FOR UPDATE`,
+        const { rows: customerRows } = await client.query(
+          `SELECT loyalty_points, store_credit_balance FROM customers WHERE id = $1 FOR UPDATE`,
           [cart.customerId],
         );
+        const currentCustomer = customerRows[0];
+        const currentPoints = Number(currentCustomer?.loyalty_points ?? 0);
+        if (loyaltyPointsRedeemed > currentPoints) {
+          await client.query("ROLLBACK");
+          redirect(`/register?error=Insufficient+loyalty+points`);
+        }
         await client.query(
           `UPDATE customers SET
-            loyalty_points = GREATEST(0, loyalty_points - $1 + $2),
+            loyalty_points = loyalty_points - $1 + $2,
             total_spend = total_spend + $3,
             visit_count = visit_count + 1,
             updated_at = now()
@@ -292,11 +298,7 @@ export async function checkoutAction(
 
         // 7b. Deduct store credit if used — verify sufficient balance before deducting
         if (storeCreditTenderedTotal > 0) {
-          const { rows: balRows } = await client.query(
-            `SELECT store_credit_balance FROM customers WHERE id = $1 FOR UPDATE`,
-            [cart.customerId],
-          );
-          const currentBalance = Number(balRows[0]?.store_credit_balance ?? 0);
+          const currentBalance = Number(currentCustomer?.store_credit_balance ?? 0);
           if (currentBalance < storeCreditTenderedTotal) {
             await client.query('ROLLBACK');
             redirect(`/register?error=Insufficient+store+credit+balance`);
@@ -412,6 +414,9 @@ export async function checkoutAction(
       if (cart.customerId) {
         const customer = store.customers.find((c) => c.id === cart.customerId);
         if (customer) {
+          if (loyaltyPointsRedeemed > customer.loyaltyPoints) {
+            redirect("/register?error=Insufficient+loyalty+points");
+          }
           customer.loyaltyPoints = customer.loyaltyPoints - loyaltyPointsRedeemed + loyaltyPointsEarned;
           customer.totalSpend += totals.grandTotal;
           customer.visitCount += 1;
