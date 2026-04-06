@@ -120,7 +120,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   try {
-    const { customerId, amount, reason, employeeId, approvedBy } = await req.json();
+    const { customerId, amount, reason, approvedBy } = await req.json();
 
     if (!customerId || !amount || amount <= 0 || !reason) {
       return NextResponse.json({ error: "Customer ID, positive amount, and reason required" }, { status: 400 });
@@ -147,7 +147,7 @@ export async function POST(req: NextRequest) {
       await client.query(
         `INSERT INTO store_credit_ledger (id, organization_id, customer_id, transaction_type, amount, balance_after, employee_id, reason, approved_by, created_at)
          VALUES ($1, $2, $3, 'issuance', $4, $5, $6, $7, $8, now())`,
-        [entryId, orgId, customerId, amount, newBalance, employeeId || null, reason, approvedBy || null],
+        [entryId, orgId, customerId, amount, newBalance, employeeId, reason, approvedBy || null],
       );
 
       await client.query("COMMIT");

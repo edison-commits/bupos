@@ -248,7 +248,7 @@ export async function POST(req: NextRequest) {
     const { action } = body;
 
     if (action === "close_shift") {
-      const { shiftId, declaredCash, note, blindClose, employeeId } = body;
+      const { shiftId, declaredCash, note, blindClose } = body;
       if (!shiftId) return NextResponse.json({ error: "shiftId required" }, { status: 400 });
 
       const client = await orgTx(orgId);
@@ -308,7 +308,7 @@ export async function POST(req: NextRequest) {
           variance,
           blind: blindClose || false,
           location_id: s.location_id,
-          employee_id: employeeId || s.employee_id,
+          employee_id: ctx.employee.id,
         };
 
         await client.query("COMMIT");

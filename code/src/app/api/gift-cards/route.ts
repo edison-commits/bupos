@@ -134,7 +134,7 @@ export async function POST(req: NextRequest) {
     const { action } = body;
 
     if (action === "activate") {
-      const { code, amount, customerId, employeeId } = body;
+      const { code, amount, customerId } = body;
       if (!code || !amount || amount <= 0) {
         return NextResponse.json({ error: "Code and positive amount required" }, { status: 400 });
       }
@@ -151,13 +151,13 @@ export async function POST(req: NextRequest) {
         await client.query(
           `INSERT INTO gift_cards (id, organization_id, code, balance, initial_balance, status, customer_id, activated_by, activated_at, created_at, updated_at)
            VALUES ($1, $2, $3, $4, $4, 'active', $5, $6, now(), now(), now())`,
-          [gcId, orgId, code, amount, customerId || null, employeeId || null],
+          [gcId, orgId, code, amount, customerId || null, employeeId],
         );
 
         await client.query(
           `INSERT INTO gift_card_transactions (id, gift_card_id, transaction_type, amount, balance_after, employee_id, reason, created_at)
            VALUES ($1, $2, 'activation', $3, $3, $4, 'New gift card activated', now())`,
-          [randomUUID(), gcId, amount, employeeId || null],
+          [randomUUID(), gcId, amount, employeeId],
         );
 
         await client.query("COMMIT");
@@ -176,7 +176,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "reload") {
-      const { giftCardId, amount, employeeId } = body;
+      const { giftCardId, amount } = body;
       if (!giftCardId || !amount || amount <= 0) {
         return NextResponse.json({ error: "Gift card ID and positive amount required" }, { status: 400 });
       }
@@ -203,7 +203,7 @@ export async function POST(req: NextRequest) {
         await client.query(
           `INSERT INTO gift_card_transactions (id, gift_card_id, transaction_type, amount, balance_after, employee_id, reason, created_at)
            VALUES ($1, $2, 'reload', $3, $4, $5, 'Gift card reloaded', now())`,
-          [randomUUID(), giftCardId, amount, newBalance, employeeId || null],
+          [randomUUID(), giftCardId, amount, newBalance, employeeId],
         );
 
         await client.query("COMMIT");

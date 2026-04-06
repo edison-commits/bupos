@@ -169,7 +169,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "redeem") {
-      const { promoCodeId, transactionId, employeeId, discountAmount } = body;
+      const { promoCodeId, transactionId, discountAmount } = body;
       if (!promoCodeId || !transactionId || !discountAmount) {
         return NextResponse.json({ error: "promoCodeId, transactionId, and discountAmount required" }, { status: 400 });
       }
@@ -191,7 +191,7 @@ export async function POST(req: NextRequest) {
         await client.query(
           `INSERT INTO promo_redemptions (id, promo_code_id, transaction_id, employee_id, discount_amount, created_at)
            VALUES ($1, $2, $3, $4, $5, now())`,
-          [randomUUID(), promoCodeId, transactionId, employeeId || null, discountAmount],
+          [randomUUID(), promoCodeId, transactionId, ctx.employee.id, discountAmount],
         );
 
         // Auto-disable if maxed out
