@@ -1,7 +1,7 @@
 import { BUPOS_LOCATION_ID } from "@/lib/env";
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
-import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
+import { requireAdminPermission } from "@/lib/authz";
 
 
 /**
@@ -16,13 +16,8 @@ import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
  *   location — location ID for inventory
  */
 export async function GET(req: NextRequest) {
-  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }  if (!adminCtx && !registerCtx) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const ctx = await requireAdminPermission("audit.view");
+  const orgId = ctx.employee.organizationId;
 
   try {
     const sp = req.nextUrl.searchParams;

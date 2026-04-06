@@ -15,15 +15,8 @@ import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
  * - Points distribution histogram
  */
 export async function GET(req: NextRequest) {
-  // Require a valid session (admin or register)
-  const [adminCtx, registerCtx] = await Promise.all([
-    (await import("@/lib/auth/session")).getAdminSession(),
-    (await import("@/lib/auth/session")).getRegisterSession(),
-  ]);
-  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const ctx = await requireAdminPermission("audit.view");
+  const orgId = ctx.employee.organizationId;
 
   try {
     const sp = req.nextUrl.searchParams;

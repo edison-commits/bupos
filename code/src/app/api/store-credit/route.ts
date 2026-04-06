@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { orgQuery, orgTx } from "@/lib/db";
 import { randomUUID } from "node:crypto";
 import { requireAdminPermission } from "@/lib/authz";
-import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 
@@ -18,13 +17,8 @@ import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
  * Without customer param returns all customers with credit + summary.
  */
 export async function GET(req: NextRequest) {
-  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }  if (!adminCtx && !registerCtx) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const ctx = await requireAdminPermission("audit.view");
+  const orgId = ctx.employee.organizationId;
 
   try {
     const sp = req.nextUrl.searchParams;

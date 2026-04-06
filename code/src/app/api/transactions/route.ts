@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
-import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
+import { requireAdminPermission } from "@/lib/authz";
 
 /**
  * BuPOS Transaction History API
@@ -20,13 +20,8 @@ import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
  *   id       — fetch single transaction by ID (returns full detail with tenders/events)
  */
 export async function GET(req: NextRequest) {
-  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }  if (!adminCtx && !registerCtx) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const ctx = await requireAdminPermission("audit.view");
+  const orgId = ctx.employee.organizationId;
 
   try {
     const sp = req.nextUrl.searchParams;

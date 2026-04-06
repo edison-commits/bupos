@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { orgQuery, orgTx } from "@/lib/db";
 import { randomUUID } from "node:crypto";
 import { requireAdminPermission } from "@/lib/authz";
-import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 
@@ -17,11 +16,8 @@ import { checkRateLimit } from "@/lib/auth/rate-limit";
  * Without params returns all gift cards with summary stats.
  */
 export async function GET(req: NextRequest) {
-  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const ctx = await requireAdminPermission("audit.view");
+  const orgId = ctx.employee.organizationId;
 
   try {
     const sp = req.nextUrl.searchParams;
