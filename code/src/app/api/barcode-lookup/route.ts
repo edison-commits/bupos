@@ -1,11 +1,14 @@
 import { orgQuery } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
-import { BUPOS_LOCATION_ID, BUPOS_ORG_ID } from '@/lib/env';
+import { BUPOS_LOCATION_ID } from '@/lib/env';
 
 export async function GET(request: NextRequest) {
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId ?? BUPOS_ORG_ID;
+  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
+  if (!orgId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
 
   const code = request.nextUrl.searchParams.get('code')
 
@@ -22,7 +25,7 @@ export async function GET(request: NextRequest) {
     // SKU lives on product_variants, not products — search variants joined with products
     const { rows } = await orgQuery(
       orgId,
-      `SELECT pv.id as variant_id, pv.sku, pv.size_label, pv.color_label, pv.price, pv.cost,
+      `SELECT pv.id as variant_id, pv.sku, pv.size_label, pv.color_label, pv.price,
               p.id as product_id, p.name as product_name, p.slug as product_slug, p.category_id
        FROM product_variants pv
        JOIN products p ON pv.product_id = p.id
@@ -64,7 +67,6 @@ export async function GET(request: NextRequest) {
         sizeLabel: r.size_label,
         colorLabel: r.color_label,
         price: Number(r.price),
-        cost: Number(r.cost),
       },
       inventory: { quantity: Number(quantity) },
     })
