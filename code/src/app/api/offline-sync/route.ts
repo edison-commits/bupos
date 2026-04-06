@@ -76,24 +76,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "registerSessionId is required" }, { status: 401 });
     }
 
+    const cookieSessionId = authCtx.session.id;
     let sessionEmployeeId: string;
     const client = await orgTx(orgId);
     try {
       const { rows: sessionRows } = await client.query(
-        `SELECT rs.id FROM register_sessions rs
+        `SELECT rs.employee_id, rs.auth_session_id
+         FROM register_sessions rs
          JOIN sessions s ON s.id = rs.auth_session_id
          WHERE rs.id = $1 AND rs.status = 'active' AND s.expires_at > NOW()`,
         [sessionId],
       );
-      if (sessionRows.length === 0) {
+      if (sessionRows.length === 0 || sessionRows[0].auth_session_id !== cookieSessionId) {
         await client.query("ROLLBACK");
-        return NextResponse.json({ error: "Invalid or expired register session" }, { status: 401 });
+        return NextResponse.json({ error: "Register session mismatch" }, { status: 403 });
       }
-      const { rows: sessRows } = await client.query(
-        `SELECT rs.employee_id FROM register_sessions rs WHERE rs.id = $1 LIMIT 1`,
-        [sessionId],
-      );
-      const sessionEmployeeIdValue = sessRows[0]?.employee_id as string | undefined;
+      const sessionEmployeeIdValue = sessionRows[0].employee_id as string | undefined;
       if (!sessionEmployeeIdValue) {
         await client.query("ROLLBACK");
         return NextResponse.json({ error: "Invalid session" }, { status: 401 });
