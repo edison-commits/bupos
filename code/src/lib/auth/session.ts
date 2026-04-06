@@ -561,11 +561,47 @@ export async function signOutRegister() {
       const timestamp = new Date().toISOString();
 
       // Close active register session + auto-close shift
-      await pool.query(
+      const { rows: endedRows } = await pool.query(
         `UPDATE register_sessions SET status = 'ended', ended_at = $1
-         WHERE auth_session_id = $2 AND status = 'active'`,
+         WHERE auth_session_id = $2 AND status = 'active'
+         RETURNING id, employee_id, active_shift_id`,
         [timestamp, sessionId],
       );
+
+      const registerSession = endedRows[0] as
+        | { id: string; employee_id: string; active_shift_id: string | null }
+        | undefined;
+
+      if (registerSession?.active_shift_id) {
+        await pool.query(
+          `UPDATE shifts
+           SET status = 'closed',
+               closed_at = $1,
+               closing_expected_cash = opening_float,
+               closing_declared_cash = opening_float,
+               closing_variance = 0,
+               closed_note = $2
+           WHERE id = $3 AND status = 'open'`,
+          [
+            timestamp,
+            "Auto-closed because register session ended without manual shift close.",
+            registerSession.active_shift_id,
+          ],
+        );
+        await pool.query(
+          `INSERT INTO transaction_events (id, transaction_id, actor_employee_id, event_kind, notes, payload, created_at)
+           VALUES ($1, $2, $3, 'shift_closed', 'Shift auto-closed during register logout', $4, $5)`,
+          [
+            randomUUID(),
+            `txn_${registerSession.active_shift_id}`,
+            registerSession.employee_id,
+            JSON.stringify({ register_session_id: registerSession.id, auto_closed: "true" }),
+            timestamp,
+          ],
+        );
+        await pool.query(`UPDATE register_sessions SET active_shift_id = NULL WHERE id = $1`, [registerSession.id]);
+      }
+
       await pgDeleteSession(sessionId);
     } else {
       await mutateStore((store) => {
