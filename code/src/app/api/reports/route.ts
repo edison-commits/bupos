@@ -6,7 +6,8 @@ import { BUPOS_LOCATION_ID } from "@/lib/env";
 import { pool } from "@/lib/db";
 import type { QueryResult } from "pg";
 import { NextResponse } from "next/server";
-import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
+import { getAdminSession } from "@/lib/auth/session";
+import { hasPermission } from "@/lib/authz";
 
 const LOCATION_ID = BUPOS_LOCATION_ID;
 
@@ -18,10 +19,13 @@ function isValidDate(str: string): boolean {
 }
 
 export async function GET(request: Request) {
-  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
-  if (!orgId) {
+  const adminCtx = await getAdminSession();
+  const orgId = adminCtx?.employee?.organizationId;
+  if (!adminCtx?.session || !adminCtx.employee || !orgId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  if (!hasPermission(adminCtx.employee.roleKey, "audit.view")) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const url = new URL(request.url);
@@ -267,10 +271,10 @@ async function getTenderAnalysis(orgId: string, from: string, to: string) {
       SUM(amount) as amount,
       COUNT(*) as count
     FROM transaction_tenders
-    WHERE created_at >= $1 AND created_at <= $2
+    WHERE organization_id = $3 AND created_at >= $1 AND created_at <= $2
     GROUP BY tender_type
     ORDER BY amount DESC`,
-    [fromDate, toDate]
+    [fromDate, toDate, orgId]
   );
 
   const tenders = result.rows.map((row: any) => ({
@@ -348,10 +352,10 @@ async function getShiftSummary(orgId: string, from: string, to: string) {
     FROM shifts s
     LEFT JOIN employees e ON e.id = s.employee_id
     LEFT JOIN transactions t ON t.register_session_id = s.register_session_id AND t.created_at >= s.opened_at AND t.created_at <= COALESCE(s.closed_at, NOW())
-    WHERE s.location_id = $1 AND s.opened_at >= $2 AND s.opened_at <= $3
+    WHERE s.organization_id = $4 AND s.location_id = $1 AND s.opened_at >= $2 AND s.opened_at <= $3
     GROUP BY s.id, e.display_name, e.first_name, e.last_name, s.opened_at, s.status, s.opening_float, s.closed_at, s.closing_expected_cash, s.closing_declared_cash, s.closing_variance
     ORDER BY s.opened_at DESC`,
-    [LOCATION_ID, fromDate, toDate]
+    [LOCATION_ID, fromDate, toDate, orgId]
   );
 
   const shifts = result.rows.map((row: any) => ({
