@@ -40,23 +40,9 @@ async function pgGetPool() {
   return pool;
 }
 
-async function pgInsertSession(s: SessionRecord) {
-  const pool = await pgGetPool();
-  await pool.query(
-    `INSERT INTO sessions (id, employee_id, organization_id, scope, location_id, created_at, last_seen_at, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-    [s.id, s.employeeId, s.organizationId, s.scope, s.locationId ?? null, s.createdAt, s.lastSeenAt, s.expiresAt],
-  );
-}
-
 async function pgUpdateSessionLastSeen(sessionId: string) {
   const pool = await pgGetPool();
   await pool.query(`UPDATE sessions SET last_seen_at = NOW() WHERE id = $1`, [sessionId]);
-}
-
-async function pgDeleteSessionsByEmployee(scope: string, employeeId: string) {
-  const pool = await pgGetPool();
-  await pool.query(`DELETE FROM sessions WHERE scope = $1 AND employee_id = $2`, [scope, employeeId]);
 }
 
 async function pgDeleteSession(sessionId: string) {
@@ -406,33 +392,50 @@ export async function signInRegister(pin: string, locationId: string, deviceId?:
     const nextSession = buildSession("register", employeeId, organizationId, locationId);
     const registerSessionId = randomUUID();
 
-    // Close stale sessions for the same employee (existing behavior)
-    await Promise.all([
-      pgDeleteSessionsByEmployee("register", employeeId),
-      pool.query(
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(`DELETE FROM sessions WHERE scope = $1 AND employee_id = $2`, ["register", employeeId]);
+      await client.query(
         `UPDATE register_sessions SET status = 'ended', ended_at = $1
          WHERE employee_id = $2 AND location_id = $3 AND status = 'active'`,
         [timestamp, employeeId, locationId],
-      ),
-    ]);
-
-    // Close stale sessions for the same device (distributed register locking)
-    if (deviceId) {
-      await pool.query(
-        `UPDATE register_sessions SET status = 'ended', ended_at = $1
-         WHERE organization_id = $2 AND device_id = $3 AND status = 'active'`,
-        [timestamp, organizationId, deviceId],
       );
-    }
 
-    await Promise.all([
-      pgInsertSession(nextSession),
-      pool.query(
+      if (deviceId) {
+        await client.query(
+          `UPDATE register_sessions SET status = 'ended', ended_at = $1
+           WHERE organization_id = $2 AND device_id = $3 AND status = 'active'`,
+          [timestamp, organizationId, deviceId],
+        );
+      }
+
+      await client.query(
+        `INSERT INTO sessions (id, employee_id, organization_id, scope, location_id, created_at, last_seen_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          nextSession.id,
+          nextSession.employeeId,
+          nextSession.organizationId,
+          nextSession.scope,
+          nextSession.locationId ?? null,
+          nextSession.createdAt,
+          nextSession.lastSeenAt,
+          nextSession.expiresAt,
+        ],
+      );
+      await client.query(
         `INSERT INTO register_sessions (id, auth_session_id, employee_id, location_id, organization_id, device_id, status, started_at)
          VALUES ($1, $2, $3, $4, $5, $6, 'active', $7)`,
         [registerSessionId, nextSession.id, employeeId, locationId, organizationId, deviceId ?? null, timestamp],
-      ),
-    ]);
+      );
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
 
     const jar = await cookieStore();
     jar.set(REGISTER_COOKIE, nextSession.id, {
