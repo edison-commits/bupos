@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireRegisterPermission } from "@/lib/authz";
 import { mutateStore } from "@/lib/persistence/store";
-import pool, { orgTx, orgQuery } from "@/lib/db";
+import { orgTx } from "@/lib/db";
 import type { Cart, CheckoutResult, TenderLine } from "@/lib/cart/types";
 import { computeTotals, checkOutCart } from "@/lib/cart/cart";
 import { registerConfiguration } from "@/lib/data/mock-data";
@@ -24,6 +24,7 @@ export async function checkoutAction(
   tenders: TenderLine[],
   approvedExceptions: string[] = [],
 ): Promise<CheckoutResult> {
+  void approvedExceptions;
   const context = await requireRegisterPermission("register.open");
 
   if (cart.items.length === 0) {
@@ -39,25 +40,73 @@ export async function checkoutAction(
   const totals = computeTotals(cart);
   const thresholds = registerConfiguration.approvalThresholds;
 
-  // ── Checkout transaction: lock + validate + insert all on ONE client to
-  //    prevent double-submit race. Two concurrent requests must not both
-  //    pass the FOR UPDATE check and both insert transactions.
+  if (!isPg()) {
+    // JSON fallback: coarse check only (no row lock available)
+    if (cart.status !== "open") {
+      redirect("/register?error=Cart+already+checked+out");
+    }
+  }
+
+  const baseCartDiscountEffective = cart.discountMode === 'percent'
+    ? Number((totals.subtotal * Math.min(100, cart.discountAmount) / 100).toFixed(2))
+    : cart.discountAmount;
+  const baseStoreCreditTendered = tenders.filter((t) => t.type === "store_credit").reduce((s, t) => s + t.amount, 0);
+  const totalTendered = tenders.reduce((sum, t) => sum + t.amount, 0);
+
+  if (!isPg()) {
+    // JSON path: no exception approvals possible, so threshold checks always apply
+    if (baseCartDiscountEffective > thresholds.discountOver) {
+      redirect("/register?error=Discount+exceeds+threshold+without+manager+approval");
+    }
+    if (baseStoreCreditTendered > thresholds.storeCreditIssuanceOver) {
+      redirect("/register?error=Store+credit+exceeds+threshold+without+manager+approval");
+    }
+    if (totalTendered < totals.grandTotal - 0.005) {
+      redirect("/register?error=Insufficient+tender+amount");
+    }
+    // Upper bound: reject absurd over-tendering (e.g. $10k cash on a $20 transaction).
+    // Allow up to 10× the total as the sane ceiling — change will be given back.
+    if (totalTendered > totals.grandTotal * 10) {
+      redirect("/register?error=Tender+amount+exceeds+reasonable+limit");
+    }
+  }
+
+  // Change due comes only from cash overage
+  const cashTendered = tenders.filter((t) => t.type === "cash").reduce((sum, t) => sum + t.amount, 0);
+  const nonCashTendered = tenders.filter((t) => t.type !== "cash" && t.type !== "loyalty").reduce((sum, t) => sum + t.amount, 0);
+  const loyaltyTendered = tenders.filter((t) => t.type === "loyalty").reduce((sum, t) => sum + t.amount, 0);
+  const giftCardTendered = tenders.filter((t) => t.type === "gift_card").reduce((sum, t) => sum + t.amount, 0);
+  const storeCreditTenderedTotal = baseStoreCreditTendered;
+  const cashPortion = Math.max(0, totals.grandTotal - nonCashTendered - loyaltyTendered);
+  const changeDue = cashTendered > cashPortion ? Number((cashTendered - cashPortion).toFixed(2)) : 0;
+
+  // Loyalty calculations
+  const loyaltyConfig = registerConfiguration.loyalty;
+  // Round earned points to nearest integer (standard loyalty rounding — no floor/ceil bias)
+  // Policy: partial points are rounded to nearest; redemption rounds to nearest as well
+  const loyaltyPointsEarned = cart.customerId
+    ? Math.round(totals.grandTotal * loyaltyConfig.earnRatePerDollar)
+    : 0;
+  // Redemption: round redemption to nearest whole point
+  const loyaltyPointsRedeemed = loyaltyTendered > 0 && cart.customerId
+    ? Math.round(loyaltyTendered / loyaltyConfig.redemptionValuePerPoint)
+    : 0;
+
+  const transactionId = randomUUID();
+  const primaryTenderType = tenders.length === 1 ? tenders[0].type : "split";
+
   if (isPg()) {
     const client = await orgTx(context.employee.organizationId);
     try {
-      // 1. Lock register session row and verify it is still active
       const { rows: locked } = await client.query(
         `SELECT id, status FROM register_sessions WHERE id = $1 FOR UPDATE`,
         [context.registerSession.id],
       );
       if (locked.length === 0 || locked[0].status !== "active") {
-        await client.query("ROLLBACK");
         redirect("/register?error=Cart+already+checked+out");
       }
 
-      // 2. Price-integrity: look up canonical DB prices and verify no tampering.
-      //    Done inside the locked transaction so prices can't change between check and insert.
-      const variantIds = cart.items.map((i: { productVariantId: string }) => i.productVariantId);
+      const variantIds = cart.items.map((i) => i.productVariantId);
       const [{ rows: variantRows }, { rows: excRows }] = await Promise.all([
         client.query(
           `SELECT id, price FROM product_variants WHERE id = ANY($1::uuid[])`,
@@ -80,112 +129,28 @@ export async function checkoutAction(
       for (const item of cart.items) {
         const dbPrice = dbPriceByVariant[item.productVariantId];
         if (dbPrice === undefined) {
-          await client.query("ROLLBACK");
           redirect(`/register?error=Unknown+product+variant`);
         }
         if (item.unitPrice !== dbPrice) {
-          await client.query("ROLLBACK");
           redirect(`/register?error=Price+tampering+detected`);
         }
-        if (item.overridePrice !== undefined && item.overridePrice !== dbPrice) {
-          if (!pendingExceptions.includes("price_override")) {
-            await client.query("ROLLBACK");
-            redirect(`/register?error=Price+override+requires+manager+approval`);
-          }
+        if (item.overridePrice !== undefined && item.overridePrice !== dbPrice && !pendingExceptions.includes("price_override")) {
+          redirect(`/register?error=Price+override+requires+manager+approval`);
         }
       }
 
-      // 3. Threshold checks — redirect if exceeds without approval
-      const cartDiscountEffective = cart.discountMode === 'percent'
-        ? Number((totals.subtotal * Math.min(100, cart.discountAmount) / 100).toFixed(2))
-        : cart.discountAmount;
-      if (cartDiscountEffective > thresholds.discountOver && !pendingExceptions.includes("discount_threshold")) {
-        await client.query("ROLLBACK");
+      if (baseCartDiscountEffective > thresholds.discountOver && !pendingExceptions.includes("discount_threshold")) {
         redirect("/register?error=Discount+exceeds+threshold+without+manager+approval");
       }
-      const storeCreditTendered = tenders
-        .filter((t: { type: string }) => t.type === "store_credit")
-        .reduce((s: number, t: { amount: number }) => s + t.amount, 0);
-      if (storeCreditTendered > thresholds.storeCreditIssuanceOver && !pendingExceptions.includes("store_credit_threshold")) {
-        await client.query("ROLLBACK");
+      if (baseStoreCreditTendered > thresholds.storeCreditIssuanceOver && !pendingExceptions.includes("store_credit_threshold")) {
         redirect("/register?error=Store+credit+exceeds+threshold+without+manager+approval");
       }
-
-      // 4. Tender total check
-      const totalTendered = tenders.reduce((sum: number, t: { amount: number }) => sum + t.amount, 0);
       if (totalTendered < totals.grandTotal - 0.005) {
-        await client.query("ROLLBACK");
         redirect("/register?error=Insufficient+tender+amount");
       }
-
-      // 5. All validations passed — COMMIT the lock+validation phase.
-      //    The actual transaction INSERT will happen in a separate orgTx block
-      //    below (after this function returns), so we release the lock here.
-      await client.query("COMMIT");
-      client.release();
-    } catch (err) {
-      await client.query("ROLLBACK");
-      client.release();
-      throw err;
-    }
-  } else {
-    // JSON fallback: coarse check only (no row lock available)
-    if (cart.status !== "open") {
-      redirect("/register?error=Cart+already+checked+out");
-    }
-  }
-
-  // Server-side approval enforcement — compute effective cart discount for threshold check
-  const cartDiscountEffective = cart.discountMode === 'percent'
-    ? Number((totals.subtotal * Math.min(100, cart.discountAmount) / 100).toFixed(2))
-    : cart.discountAmount;
-  // JSON path: no exception approvals possible, so threshold checks always apply
-  if (cartDiscountEffective > thresholds.discountOver) {
-    redirect("/register?error=Discount+exceeds+threshold+without+manager+approval");
-  }
-  const storeCreditTendered = tenders.filter((t) => t.type === "store_credit").reduce((s, t) => s + t.amount, 0);
-  if (storeCreditTendered > thresholds.storeCreditIssuanceOver) {
-    redirect("/register?error=Store+credit+exceeds+threshold+without+manager+approval");
-  }
-  const totalTendered = tenders.reduce((sum, t) => sum + t.amount, 0);
-
-  // Lower bound: must cover the total (within half-cent tolerance for float drift)
-  if (totalTendered < totals.grandTotal - 0.005) {
-    redirect("/register?error=Insufficient+tender+amount");
-  }
-  // Upper bound: reject absurd over-tendering (e.g. $10k cash on a $20 transaction).
-  // Allow up to 10× the total as the sane ceiling — change will be given back.
-  if (totalTendered > totals.grandTotal * 10) {
-    redirect("/register?error=Tender+amount+exceeds+reasonable+limit");
-  }
-
-  // Change due comes only from cash overage
-  const cashTendered = tenders.filter((t) => t.type === "cash").reduce((sum, t) => sum + t.amount, 0);
-  const nonCashTendered = tenders.filter((t) => t.type !== "cash" && t.type !== "loyalty").reduce((sum, t) => sum + t.amount, 0);
-  const loyaltyTendered = tenders.filter((t) => t.type === "loyalty").reduce((sum, t) => sum + t.amount, 0);
-  const giftCardTendered = tenders.filter((t) => t.type === "gift_card").reduce((sum, t) => sum + t.amount, 0);
-  const storeCreditTenderedTotal = tenders.filter((t) => t.type === "store_credit").reduce((sum, t) => sum + t.amount, 0);
-  const cashPortion = Math.max(0, totals.grandTotal - nonCashTendered - loyaltyTendered);
-  const changeDue = cashTendered > cashPortion ? Number((cashTendered - cashPortion).toFixed(2)) : 0;
-
-  // Loyalty calculations
-  const loyaltyConfig = registerConfiguration.loyalty;
-  // Round earned points to nearest integer (standard loyalty rounding — no floor/ceil bias)
-  // Policy: partial points are rounded to nearest; redemption rounds to nearest as well
-  const loyaltyPointsEarned = cart.customerId
-    ? Math.round(totals.grandTotal * loyaltyConfig.earnRatePerDollar)
-    : 0;
-  // Redemption: round redemption to nearest whole point
-  const loyaltyPointsRedeemed = loyaltyTendered > 0 && cart.customerId
-    ? Math.round(loyaltyTendered / loyaltyConfig.redemptionValuePerPoint)
-    : 0;
-
-  const transactionId = randomUUID();
-  const primaryTenderType = tenders.length === 1 ? tenders[0].type : "split";
-
-  if (isPg()) {
-    const client = await orgTx(context.employee.organizationId);
-    try {
+      if (totalTendered > totals.grandTotal * 10) {
+        redirect("/register?error=Tender+amount+exceeds+reasonable+limit");
+      }
 
       // 1. Transaction record
       await client.query(
