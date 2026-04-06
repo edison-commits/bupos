@@ -259,9 +259,33 @@ export async function signInAdmin(email: string, password: string) {
     }
 
     const organizationId = emp.organization_id as string;
-    await pgDeleteSessionsByEmployee("admin", credential.employeeId);
-    const nextSession = buildSession("admin", credential.employeeId, organizationId);
-    await pgInsertSession(nextSession);
+    await pool.query("BEGIN");
+    let nextSession: SessionRecord | null = null;
+    try {
+      await pool.query(`DELETE FROM sessions WHERE scope = $1 AND employee_id = $2`, ["admin", credential.employeeId]);
+      nextSession = buildSession("admin", credential.employeeId, organizationId);
+      await pool.query(
+        `INSERT INTO sessions (id, employee_id, organization_id, scope, location_id, created_at, last_seen_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          nextSession.id,
+          nextSession.employeeId,
+          nextSession.organizationId,
+          nextSession.scope,
+          nextSession.locationId ?? null,
+          nextSession.createdAt,
+          nextSession.lastSeenAt,
+          nextSession.expiresAt,
+        ],
+      );
+      await pool.query("COMMIT");
+    } catch (err) {
+      await pool.query("ROLLBACK");
+      throw err;
+    }
+    if (!nextSession) {
+      throw new Error("Failed to create admin session");
+    }
     invalidateStoreCache(); // ensure next readStore() call picks up fresh data including this session's employee
 
     const jar = await cookieStore();
