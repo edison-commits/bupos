@@ -1,5 +1,6 @@
 "use server";
 
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { signInAdmin, getAdminSession } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
@@ -19,6 +20,29 @@ export async function loginAction(_prev: { error: string } | null, formData: For
   const rl = checkRateLimit(email);
   if (!rl.allowed) {
     return { error: "Too many attempts. Try again shortly." };
+  }
+
+  const requestHeaders = await headers();
+  const origin = requestHeaders.get("origin");
+  const host = requestHeaders.get("host");
+  const referer = requestHeaders.get("referer");
+  const allowedOrigin = host ? new RegExp(`^https?://${host.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) : null;
+
+  if (!origin || !host || !allowedOrigin?.test(origin)) {
+    return { error: "Invalid request origin." };
+  }
+
+  if (referer) {
+    let refererOrigin: string | null = null;
+    try {
+      refererOrigin = new URL(referer).origin;
+    } catch {
+      return { error: "Invalid request origin." };
+    }
+
+    if (!allowedOrigin.test(refererOrigin)) {
+      return { error: "Invalid request origin." };
+    }
   }
 
   try {
