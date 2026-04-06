@@ -115,14 +115,15 @@ export async function GET(req: NextRequest) {
  * POST /api/transfers
  *
  * Body: { action, ... }
- *   action: "create"  — { sourceLocationId, destinationLocationId, notes?, lines: [{ productVariantId, quantity }], employeeId }
- *   action: "ship"    — { transferId, employeeId }
- *   action: "receive" — { transferId, employeeId }
- *   action: "cancel"  — { transferId, employeeId }
+ *   action: "create"  — { sourceLocationId, destinationLocationId, notes?, lines: [{ productVariantId, quantity }] }
+ *   action: "ship"    — { transferId }
+ *   action: "receive" — { transferId }
+ *   action: "cancel"  — { transferId }
  */
 export async function POST(req: NextRequest) {
   const ctx = await requireAdminPermission("catalog.manage");
   const orgId = ctx.employee.organizationId;
+  const employeeId = ctx.employee.id;
   if (!orgId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -146,7 +147,7 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      const { sourceLocationId, destinationLocationId, notes, lines, employeeId } = body;
+      const { sourceLocationId, destinationLocationId, notes, lines } = body;
 
       if (!sourceLocationId || !destinationLocationId) {
         return NextResponse.json({ error: "Source and destination locations required" }, { status: 400 });
@@ -198,7 +199,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "ship") {
-      const { transferId, employeeId } = body;
+      const { transferId } = body;
       if (!transferId) return NextResponse.json({ error: "transferId required" }, { status: 400 });
 
       // Idempotency: if key provided and already shipped, return current state without re-executing
@@ -260,7 +261,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "receive") {
-      const { transferId, employeeId } = body;
+      const { transferId } = body;
       if (!transferId) return NextResponse.json({ error: "transferId required" }, { status: 400 });
 
       // Idempotency: if key provided and already received, return current state without re-executing
@@ -325,7 +326,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "cancel") {
-      const { transferId, employeeId } = body;
+      const { transferId } = body;
       if (!transferId) return NextResponse.json({ error: "transferId required" }, { status: 400 });
 
       const result = await orgQuery(
