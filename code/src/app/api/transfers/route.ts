@@ -242,9 +242,35 @@ export async function POST(req: NextRequest) {
           `SELECT product_variant_id, quantity_requested FROM transfer_lines WHERE transfer_id = $1`,
           [transferId],
         );
+
+        const variantIds = lines.rows.map((line) => line.product_variant_id as string);
+        const { rows: lockedInventory } = await client.query(
+          `SELECT product_variant_id, on_hand
+           FROM inventory_levels
+           WHERE location_id = $1 AND product_variant_id = ANY($2::uuid[])
+           ORDER BY product_variant_id
+           FOR UPDATE`,
+          [transfer.source_location_id, variantIds],
+        );
+        const onHandByVariant = new Map(
+          lockedInventory.map((row) => [row.product_variant_id as string, Number(row.on_hand)]),
+        );
+
+        for (const line of lines.rows) {
+          const available = onHandByVariant.get(line.product_variant_id as string) ?? 0;
+          const requested = Number(line.quantity_requested);
+          if (available < requested) {
+            await client.query("ROLLBACK");
+            return NextResponse.json(
+              { error: `Insufficient stock for variant ${line.product_variant_id}` },
+              { status: 409 },
+            );
+          }
+        }
+
         for (const line of lines.rows) {
           await client.query(
-            `UPDATE inventory_levels SET on_hand = GREATEST(0, on_hand - $1), updated_at = now()
+            `UPDATE inventory_levels SET on_hand = on_hand - $1, updated_at = now()
              WHERE product_variant_id = $2 AND location_id = $3`,
             [line.quantity_requested, line.product_variant_id, transfer.source_location_id],
           );
