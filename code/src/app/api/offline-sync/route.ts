@@ -70,13 +70,13 @@ export async function POST(request: NextRequest) {
     // Offline sync can't use cookie auth since the request is made after the
     // register goes offline. Instead, we validate the registerSessionId exists
     // and is active for the given employee in the org.
-    const employeeId = cart.employeeId || null;
     const sessionId = registerSessionId || cart.registerSessionId || null;
 
     if (!sessionId) {
       return NextResponse.json({ error: "registerSessionId is required" }, { status: 401 });
     }
 
+    let sessionEmployeeId: string;
     const client = await orgTx(orgId);
     try {
       const { rows: sessionRows } = await client.query(
@@ -89,6 +89,16 @@ export async function POST(request: NextRequest) {
         await client.query("ROLLBACK");
         return NextResponse.json({ error: "Invalid or expired register session" }, { status: 401 });
       }
+      const { rows: sessRows } = await client.query(
+        `SELECT rs.employee_id FROM register_sessions rs WHERE rs.id = $1 LIMIT 1`,
+        [sessionId],
+      );
+      const sessionEmployeeIdValue = sessRows[0]?.employee_id as string | undefined;
+      if (!sessionEmployeeIdValue) {
+        await client.query("ROLLBACK");
+        return NextResponse.json({ error: "Invalid session" }, { status: 401 });
+      }
+      sessionEmployeeId = sessionEmployeeIdValue;
       await client.query("COMMIT");
     } catch (e) {
       await client.query("ROLLBACK");
@@ -176,144 +186,144 @@ export async function POST(request: NextRequest) {
     const syncClient = await orgTx(orgId);
     let inserted = true;
     try {
-      // 1. Transaction record — upsert so retried syncs are idempotent
-      const txnRes = await syncClient.query(
-        `INSERT INTO transactions (id, organization_id, location_id, register_session_id, employee_id, cart_snapshot, subtotal, discount_total, tax_total, grand_total, tender_type, amount_tendered, change_due, status, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'completed', $14)
-         ON CONFLICT (id) DO UPDATE SET
-           cart_snapshot = EXCLUDED.cart_snapshot,
-           subtotal = EXCLUDED.subtotal,
-           discount_total = EXCLUDED.discount_total,
-           tax_total = EXCLUDED.tax_total,
-           grand_total = EXCLUDED.grand_total,
-           tender_type = EXCLUDED.tender_type,
-           amount_tendered = EXCLUDED.amount_tendered,
-           change_due = EXCLUDED.change_due,
-           status = EXCLUDED.status,
-           created_at = EXCLUDED.created_at
-         RETURNING id`,
-        [
-          transactionId, orgId, BUPOS_LOCATION_ID, sessionId, employeeId,
-          JSON.stringify(cart), subtotal, discountTotal, taxTotal, grandTotal,
-          primaryTenderType, totalTendered, changeDue,
-          timestamp || new Date().toISOString(),
-        ],
-      );
-      if (!txnRes.rows[0]) {
-        inserted = false;
-      }
-
-      // 2. Tender lines
-      for (const tender of tenders) {
-        const isLastCash = tender.type === "cash" && tender === tenders.filter((t: { type: string }) => t.type === "cash").at(-1);
-        await syncClient.query(
-          `INSERT INTO transaction_tenders (id, transaction_id, tender_type, amount, metadata)
-           VALUES ($1, $2, $3, $4, $5)
-           ON CONFLICT DO NOTHING`,
-          [randomUUID(), transactionId, tender.type, tender.amount,
-           JSON.stringify(isLastCash ? { change_due: changeDue.toFixed(2) } : {})],
-        );
-      }
-
-      // 3. Completion event
-      await syncClient.query(
-        `INSERT INTO transaction_events (id, transaction_id, actor_employee_id, event_kind, notes, payload)
-         VALUES ($1, $2, $3, 'transaction_placeholder', $4, $5)
-         ON CONFLICT DO NOTHING`,
-        [
-          randomUUID(), transactionId, employeeId,
-          `Offline checkout synced`,
-          JSON.stringify({
-            location_id: BUPOS_LOCATION_ID,
-            register_session_id: sessionId,
-            item_count: items.length,
-            grand_total: grandTotal.toFixed(2),
-            offline_timestamp: timestamp,
-            synced_at: new Date().toISOString(),
-          }),
-        ],
-      );
-
-      // 4. Idempotency: skip inventory/loyalty if already synced (check transaction_events for a prior offline_sync)
+      // 1. Idempotency check first so retried syncs can safely no-op
       const { rows: existingEvents } = await syncClient.query(
         `SELECT id FROM transaction_events WHERE transaction_id = $1 AND payload->>'synced_at' IS NOT NULL LIMIT 1`,
         [transactionId],
       );
       const isAlreadySynced = existingEvents.length > 0;
 
-      // 5. Decrement inventory (batched) — lock rows + check stock before applying to prevent oversell
-      if (items.length > 0 && !isAlreadySynced) {
-        const variantIds = items.map((i: { productVariantId: string }) => i.productVariantId);
-        const quantities = items.map((i: { quantity: number }) => -i.quantity);
-
-        // Lock rows in deterministic order to avoid deadlocks, then verify stock
-        const { rows: locked } = await syncClient.query(
-          `SELECT il.product_variant_id, il.on_hand
-           FROM inventory_levels il
-           WHERE il.product_variant_id = ANY($1::uuid[]) AND il.location_id = $2
-           ORDER BY il.product_variant_id
-           FOR UPDATE`,
-          [variantIds, BUPOS_LOCATION_ID],
+      // 2. Transaction record and follow-on effects only run once per synced transaction
+      if (!isAlreadySynced) {
+        const txnRes = await syncClient.query(
+          `INSERT INTO transactions (id, organization_id, location_id, register_session_id, employee_id, cart_snapshot, subtotal, discount_total, tax_total, grand_total, tender_type, amount_tendered, change_due, status, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'completed', $14)
+           ON CONFLICT (id) DO UPDATE SET
+             cart_snapshot = EXCLUDED.cart_snapshot,
+             subtotal = EXCLUDED.subtotal,
+             discount_total = EXCLUDED.discount_total,
+             tax_total = EXCLUDED.tax_total,
+             grand_total = EXCLUDED.grand_total,
+             tender_type = EXCLUDED.tender_type,
+             amount_tendered = EXCLUDED.amount_tendered,
+             change_due = EXCLUDED.change_due,
+             status = EXCLUDED.status,
+             created_at = EXCLUDED.created_at
+           RETURNING id`,
+          [
+            transactionId, orgId, BUPOS_LOCATION_ID, sessionId, sessionEmployeeId,
+            JSON.stringify(cart), subtotal, discountTotal, taxTotal, grandTotal,
+            primaryTenderType, totalTendered, changeDue,
+            timestamp || new Date().toISOString(),
+          ],
         );
-
-        const onHandByVariant: Record<string, number> = {};
-        for (const row of locked) {
-          onHandByVariant[row.product_variant_id] = Number(row.on_hand);
+        if (!txnRes.rows[0]) {
+          inserted = false;
         }
 
-        // Check each line before applying any inventory changes — fail specifically per SKU
-        for (const item of items) {
-          const onHand = onHandByVariant[item.productVariantId] ?? 0;
-          if (onHand < item.quantity) {
-            const { rows: skuRows } = await syncClient.query(
-              `SELECT sku FROM product_variants WHERE id = $1`,
-              [item.productVariantId],
-            );
-            const sku = skuRows[0]?.sku ?? item.productVariantId;
-            await syncClient.query("ROLLBACK");
-            return NextResponse.json(
-              { error: `Insufficient inventory for SKU ${sku}`, insufficientSku: sku },
-              { status: 409 },
-            );
+        for (const tender of tenders) {
+          const isLastCash = tender.type === "cash" && tender === tenders.filter((t: { type: string }) => t.type === "cash").at(-1);
+          await syncClient.query(
+            `INSERT INTO transaction_tenders (id, transaction_id, tender_type, amount, metadata)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT DO NOTHING`,
+            [randomUUID(), transactionId, tender.type, tender.amount,
+             JSON.stringify(isLastCash ? { change_due: changeDue.toFixed(2) } : {})],
+          );
+        }
+
+        await syncClient.query(
+          `INSERT INTO transaction_events (id, transaction_id, actor_employee_id, event_kind, notes, payload)
+           VALUES ($1, $2, $3, 'transaction_placeholder', $4, $5)
+           ON CONFLICT DO NOTHING`,
+          [
+            randomUUID(), transactionId, sessionEmployeeId,
+            `Offline checkout synced`,
+            JSON.stringify({
+              location_id: BUPOS_LOCATION_ID,
+              register_session_id: sessionId,
+              item_count: items.length,
+              grand_total: grandTotal.toFixed(2),
+              offline_timestamp: timestamp,
+              synced_at: new Date().toISOString(),
+            }),
+          ],
+        );
+
+        // 3. Decrement inventory (batched) — lock rows + check stock before applying to prevent oversell
+        if (items.length > 0) {
+          const variantIds = items.map((i: { productVariantId: string }) => i.productVariantId);
+          const quantities = items.map((i: { quantity: number }) => -i.quantity);
+
+          // Lock rows in deterministic order to avoid deadlocks, then verify stock
+          const { rows: locked } = await syncClient.query(
+            `SELECT il.product_variant_id, il.on_hand
+             FROM inventory_levels il
+             WHERE il.product_variant_id = ANY($1::uuid[]) AND il.location_id = $2
+             ORDER BY il.product_variant_id
+             FOR UPDATE`,
+            [variantIds, BUPOS_LOCATION_ID],
+          );
+
+          const onHandByVariant: Record<string, number> = {};
+          for (const row of locked) {
+            onHandByVariant[row.product_variant_id] = Number(row.on_hand);
           }
+
+          // Check each line before applying any inventory changes — fail specifically per SKU
+          for (const item of items) {
+            const onHand = onHandByVariant[item.productVariantId] ?? 0;
+            if (onHand < item.quantity) {
+              const { rows: skuRows } = await syncClient.query(
+                `SELECT sku FROM product_variants WHERE id = $1`,
+                [item.productVariantId],
+              );
+              const sku = skuRows[0]?.sku ?? item.productVariantId;
+              await syncClient.query("ROLLBACK");
+              return NextResponse.json(
+                { error: `Insufficient inventory for SKU ${sku}`, insufficientSku: sku },
+                { status: 409 },
+              );
+            }
+          }
+
+          await syncClient.query(
+            `UPDATE inventory_levels il
+             SET on_hand = GREATEST(0, il.on_hand + delta.qty), updated_at = now()
+             FROM (SELECT unnest($1::uuid[]) as variant_id, unnest($2::int[]) as qty) AS delta
+             WHERE il.product_variant_id = delta.variant_id AND il.location_id = $3`,
+            [variantIds, quantities, BUPOS_LOCATION_ID],
+          );
         }
 
-        await syncClient.query(
-          `UPDATE inventory_levels il
-           SET on_hand = GREATEST(0, il.on_hand + delta.qty), updated_at = now()
-           FROM (SELECT unnest($1::uuid[]) as variant_id, unnest($2::int[]) as qty) AS delta
-           WHERE il.product_variant_id = delta.variant_id AND il.location_id = $3`,
-          [variantIds, quantities, BUPOS_LOCATION_ID],
-        );
-      }
+        // 4. Restore loyalty points earned — mirrors checkout-action.ts step 7
+        const loyaltyPointsEarned = cart.customerId
+          ? (cart.loyaltyPointsEarned ?? Math.floor(grandTotal))
+          : 0;
+        if (loyaltyPointsEarned > 0 && cart.customerId) {
+          await syncClient.query(
+            `UPDATE customers SET
+              loyalty_points = loyalty_points + $1,
+              total_spend = total_spend + $2,
+              visit_count = visit_count + 1,
+              updated_at = now()
+            WHERE id = $3`,
+            [loyaltyPointsEarned, grandTotal, cart.customerId],
+          );
+        }
 
-      // 6. Restore loyalty points earned — mirrors checkout-action.ts step 7
-      const loyaltyPointsEarned = cart.customerId
-        ? (cart.loyaltyPointsEarned ?? Math.floor(grandTotal))
-        : 0;
-      if (loyaltyPointsEarned > 0 && cart.customerId && !isAlreadySynced) {
-        await syncClient.query(
-          `UPDATE customers SET
-            loyalty_points = loyalty_points + $1,
-            total_spend = total_spend + $2,
-            visit_count = visit_count + 1,
-            updated_at = now()
-          WHERE id = $3`,
-          [loyaltyPointsEarned, grandTotal, cart.customerId],
-        );
-      }
-
-      // 6b. Deduct store credit balance if used — mirrors checkout-action.ts step 7b
-      if (storeCreditTendered > 0 && cart.customerId && !isAlreadySynced) {
-        const { rows: balRows } = await syncClient.query(
-          `UPDATE customers SET store_credit_balance = GREATEST(0, store_credit_balance - $1), updated_at = now() WHERE id = $2 RETURNING store_credit_balance`,
-          [storeCreditTendered, cart.customerId],
-        );
-        await syncClient.query(
-          `INSERT INTO store_credit_ledger (id, organization_id, customer_id, transaction_type, amount, balance_after, employee_id, transaction_id, reason, created_at)
-           VALUES ($1, $2, $3, 'redemption', $4, $5, $6, $7, 'Offline sync redemption', now())`,
-          [randomUUID(), orgId, cart.customerId, -storeCreditTendered, balRows[0]?.store_credit_balance ?? 0, employeeId, transactionId],
-        );
+        // 4b. Deduct store credit balance if used — mirrors checkout-action.ts step 7b
+        if (storeCreditTendered > 0 && cart.customerId) {
+          const { rows: balRows } = await syncClient.query(
+            `UPDATE customers SET store_credit_balance = GREATEST(0, store_credit_balance - $1), updated_at = now() WHERE id = $2 RETURNING store_credit_balance`,
+            [storeCreditTendered, cart.customerId],
+          );
+          await syncClient.query(
+            `INSERT INTO store_credit_ledger (id, organization_id, customer_id, transaction_type, amount, balance_after, employee_id, transaction_id, reason, created_at)
+             VALUES ($1, $2, $3, 'redemption', $4, $5, $6, $7, 'Offline sync redemption', now())`,
+            [randomUUID(), orgId, cart.customerId, -storeCreditTendered, balRows[0]?.store_credit_balance ?? 0, sessionEmployeeId, transactionId],
+          );
+        }
       }
 
       await syncClient.query("COMMIT");
