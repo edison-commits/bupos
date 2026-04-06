@@ -3,8 +3,8 @@
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { pool } from "@/lib/db";
-import { requireRegisterPermission, requireAdminPermission } from "@/lib/authz";
+import { pool, orgTx } from "@/lib/db";
+import { requireRegisterPermission, requireAdminPermission, hasPermission } from "@/lib/authz";
 import { getRegisterSession, getAdminSession, signInRegister, signOutRegister } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { mutateStore } from "@/lib/persistence/store";
@@ -268,6 +268,9 @@ export async function registerLogoutAction() {
 
 export async function quickSwitchAction(pin: string): Promise<{ success: boolean; error?: string; newEmployeeName?: string }> {
   const context = await requireRegisterPermission("register.open");
+  if (!hasPermission(context.employee.roleKey, "register.pin_login")) {
+    return { success: false, error: "Unauthorized" };
+  }
   const locationId = context.location.id;
 
   // Rate-limit by location
@@ -281,9 +284,6 @@ export async function quickSwitchAction(pin: string): Promise<{ success: boolean
 
   if (isPg()) {
     const { pgFindCredentialByPin } = await import("@/lib/persistence/postgres-store");
-    const { verifySecret } = await import("@/lib/auth/crypto");
-    const pool = (await import("@/lib/db")).default;
-
     const credential = await pgFindCredentialByPin(cleanPin);
     if (!credential) return { success: false, error: "Invalid PIN" };
 
@@ -299,22 +299,25 @@ export async function quickSwitchAction(pin: string): Promise<{ success: boolean
     }
 
     const timestamp = new Date().toISOString();
-
-    // Update auth session employee
-    await pool.query(`UPDATE sessions SET employee_id = $1 WHERE id = $2`, [newEmployee.id, context.session.id]);
-
-    // Update register session employee
-    await pool.query(
-      `UPDATE register_sessions SET employee_id = $1, updated_at = $2 WHERE id = $3`,
-      [newEmployee.id, timestamp, context.registerSession.id],
-    );
-
-    // Update shift employee (new person takes drawer responsibility)
-    if (context.registerSession.activeShiftId) {
-      await pool.query(
-        `UPDATE shifts SET employee_id = $1 WHERE id = $2`,
-        [newEmployee.id, context.registerSession.activeShiftId],
+    const client = await orgTx(context.employee.organizationId);
+    try {
+      await client.query(`UPDATE sessions SET employee_id = $1 WHERE id = $2`, [newEmployee.id, context.session.id]);
+      await client.query(
+        `UPDATE register_sessions SET employee_id = $1, updated_at = $2 WHERE id = $3`,
+        [newEmployee.id, timestamp, context.registerSession.id],
       );
+      if (context.registerSession.activeShiftId) {
+        await client.query(
+          `UPDATE shifts SET employee_id = $1 WHERE id = $2`,
+          [newEmployee.id, context.registerSession.activeShiftId],
+        );
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
     }
 
     // Audit event
