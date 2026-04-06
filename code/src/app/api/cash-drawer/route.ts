@@ -52,15 +52,16 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json();
     const { action } = body;
+    const actorEmployeeId = ctx.employee.id;
 
     if (action === 'open_shift') {
-      return handleOpenShift(orgId, body);
+      return handleOpenShift(orgId, actorEmployeeId, body);
     } else if (action === 'close_shift') {
       return handleCloseShift(orgId, body);
     } else if (action === 'pay_in') {
-      return handlePayIn(orgId, body);
+      return handlePayIn(orgId, actorEmployeeId, body);
     } else if (action === 'pay_out') {
-      return handlePayOut(orgId, body);
+      return handlePayOut(orgId, actorEmployeeId, body);
     } else {
       return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
     }
@@ -145,7 +146,7 @@ async function handleGetHistory(orgId: string) {
 // POST Handlers
 // ────────────────────────────────────────────────────────────────────────────
 
-async function handleOpenShift(orgId: string, body: any) {
+async function handleOpenShift(orgId: string, actorEmployeeId: string, body: any) {
   const { opening_float, note } = body;
 
   if (opening_float === undefined) {
@@ -174,7 +175,7 @@ async function handleOpenShift(orgId: string, body: any) {
        (auth_session_id, employee_id, location_id, status, started_at)
        VALUES (gen_random_uuid(), $1, $2, 'active', NOW())
        RETURNING id`,
-      ['00000000-0000-0000-0000-000000000000', LOCATION_ID]
+      [actorEmployeeId, LOCATION_ID]
     );
     registerSessionId = newRegSessionRes.rows[0].id;
   }
@@ -188,7 +189,7 @@ async function handleOpenShift(orgId: string, body: any) {
      RETURNING id, opened_at`,
     [
       LOCATION_ID,
-      '00000000-0000-0000-0000-000000000000',
+      actorEmployeeId,
       registerSessionId,
       opening_float,
       note || null,
@@ -272,7 +273,7 @@ async function handleCloseShift(orgId: string, body: any) {
   });
 }
 
-async function handlePayIn(orgId: string, body: any) {
+async function handlePayIn(orgId: string, actorEmployeeId: string, body: any) {
   const { shift_id, amount, reason, note } = body;
 
   if (!shift_id || !amount || !reason) {
@@ -291,7 +292,7 @@ async function handlePayIn(orgId: string, body: any) {
     [
       shift_id,
       LOCATION_ID,
-      '00000000-0000-0000-0000-000000000000',
+      actorEmployeeId,
       amount,
       reason,
       note || null,
@@ -316,7 +317,7 @@ async function handlePayIn(orgId: string, body: any) {
   );
 }
 
-async function handlePayOut(orgId: string, body: any) {
+async function handlePayOut(orgId: string, actorEmployeeId: string, body: any) {
   const { shift_id, amount, reason, note } = body;
 
   if (!shift_id || !amount || !reason) {
@@ -335,7 +336,7 @@ async function handlePayOut(orgId: string, body: any) {
     [
       shift_id,
       LOCATION_ID,
-      '00000000-0000-0000-0000-000000000000',
+      actorEmployeeId,
       amount,
       reason,
       note || null,
