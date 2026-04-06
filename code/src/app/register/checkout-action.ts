@@ -34,22 +34,99 @@ export async function checkoutAction(
     redirect("/register?error=No+payment+method+provided");
   }
 
-  // ── Bug 1 fix: lock register session row before checking status to prevent
-  //    double-submit race. Two concurrent checkout calls must not both succeed.
+  // Server-side totals — computed before entering any transaction so redirect
+  // (synchronous) works cleanly without holding a DB lock.
+  const totals = computeTotals(cart);
+  const thresholds = registerConfiguration.approvalThresholds;
+
+  // ── Checkout transaction: lock + validate + insert all on ONE client to
+  //    prevent double-submit race. Two concurrent requests must not both
+  //    pass the FOR UPDATE check and both insert transactions.
   if (isPg()) {
-    const lockClient = await orgTx(context.employee.organizationId);
+    const client = await orgTx(context.employee.organizationId);
     try {
-      const { rows: locked } = await lockClient.query(
+      // 1. Lock register session row and verify it is still active
+      const { rows: locked } = await client.query(
         `SELECT id, status FROM register_sessions WHERE id = $1 FOR UPDATE`,
         [context.registerSession.id],
       );
       if (locked.length === 0 || locked[0].status !== "active") {
-        await lockClient.query("ROLLBACK");
+        await client.query("ROLLBACK");
         redirect("/register?error=Cart+already+checked+out");
       }
-      await lockClient.query("COMMIT");
-    } finally {
-      lockClient.release();
+
+      // 2. Price-integrity: look up canonical DB prices and verify no tampering.
+      //    Done inside the locked transaction so prices can't change between check and insert.
+      const variantIds = cart.items.map((i: { productVariantId: string }) => i.productVariantId);
+      const [{ rows: variantRows }, { rows: excRows }] = await Promise.all([
+        client.query(
+          `SELECT id, price FROM product_variants WHERE id = ANY($1::uuid[])`,
+          [variantIds],
+        ),
+        client.query(
+          `SELECT exception_code FROM register_session_exceptions
+           WHERE register_session_id = $1 AND status = 'pending'
+           AND (expires_at IS NULL OR expires_at > now())`,
+          [context.registerSession.id],
+        ),
+      ]);
+
+      const pendingExceptions = excRows.map((r: { exception_code: string }) => r.exception_code);
+      const dbPriceByVariant: Record<string, number> = {};
+      for (const row of variantRows as { id: string; price: string }[]) {
+        dbPriceByVariant[row.id] = Number(row.price);
+      }
+
+      for (const item of cart.items) {
+        const dbPrice = dbPriceByVariant[item.productVariantId];
+        if (dbPrice === undefined) {
+          await client.query("ROLLBACK");
+          redirect(`/register?error=Unknown+product+variant`);
+        }
+        if (item.unitPrice !== dbPrice) {
+          await client.query("ROLLBACK");
+          redirect(`/register?error=Price+tampering+detected`);
+        }
+        if (item.overridePrice !== undefined && item.overridePrice !== dbPrice) {
+          if (!pendingExceptions.includes("price_override")) {
+            await client.query("ROLLBACK");
+            redirect(`/register?error=Price+override+requires+manager+approval`);
+          }
+        }
+      }
+
+      // 3. Threshold checks — redirect if exceeds without approval
+      const cartDiscountEffective = cart.discountMode === 'percent'
+        ? Number((totals.subtotal * Math.min(100, cart.discountAmount) / 100).toFixed(2))
+        : cart.discountAmount;
+      if (cartDiscountEffective > thresholds.discountOver && !pendingExceptions.includes("discount_threshold")) {
+        await client.query("ROLLBACK");
+        redirect("/register?error=Discount+exceeds+threshold+without+manager+approval");
+      }
+      const storeCreditTendered = tenders
+        .filter((t: { type: string }) => t.type === "store_credit")
+        .reduce((s: number, t: { amount: number }) => s + t.amount, 0);
+      if (storeCreditTendered > thresholds.storeCreditIssuanceOver && !pendingExceptions.includes("store_credit_threshold")) {
+        await client.query("ROLLBACK");
+        redirect("/register?error=Store+credit+exceeds+threshold+without+manager+approval");
+      }
+
+      // 4. Tender total check
+      const totalTendered = tenders.reduce((sum: number, t: { amount: number }) => sum + t.amount, 0);
+      if (totalTendered < totals.grandTotal - 0.005) {
+        await client.query("ROLLBACK");
+        redirect("/register?error=Insufficient+tender+amount");
+      }
+
+      // 5. All validations passed — COMMIT the lock+validation phase.
+      //    The actual transaction INSERT will happen in a separate orgTx block
+      //    below (after this function returns), so we release the lock here.
+      await client.query("COMMIT");
+      client.release();
+    } catch (err) {
+      await client.query("ROLLBACK");
+      client.release();
+      throw err;
     }
   } else {
     // JSON fallback: coarse check only (no row lock available)
@@ -58,69 +135,16 @@ export async function checkoutAction(
     }
   }
 
-  const totals = computeTotals(cart);
-  const thresholds = registerConfiguration.approvalThresholds;
-
-  // Look up pending exceptions for threshold enforcement (discount / store credit).
-  // Price-integrity verification (DB price vs cart unitPrice / overridePrice)
-  // is done inside the isPg() block below using the same exception query to avoid
-  // an extra round-trip.
-  let pendingExceptions: string[] = [];
-  if (isPg()) {
-    const variantIds = cart.items.map((i) => i.productVariantId);
-
-    // Fetch variant prices and pending exceptions in a single query batch
-    const [{ rows: variantRows }, { rows: excRows }] = await Promise.all([
-      orgQuery(
-        context.employee.organizationId,
-        `SELECT id, price FROM product_variants WHERE id = ANY($1::uuid[])`,
-        [variantIds],
-      ),
-      orgQuery(
-        context.employee.organizationId,
-        `SELECT exception_code FROM register_session_exceptions
-         WHERE register_session_id = $1 AND status = 'pending'
-         AND (expires_at IS NULL OR expires_at > now())`,
-        [context.registerSession.id],
-      ),
-    ]);
-
-    pendingExceptions = excRows.map((r: { exception_code: string }) => r.exception_code);
-
-    // ── Price-integrity: the server MUST NOT trust unitPrice or overridePrice
-    //    supplied by the client cart. Compare against DB canonical prices and require
-    //    a manager-approved price_override exception for any override that changes
-    //    the price. This closes the cart-price-manipulation attack surface.
-    const dbPriceByVariant: Record<string, number> = {};
-    for (const row of variantRows) {
-      dbPriceByVariant[row.id] = Number(row.price);
-    }
-
-    for (const item of cart.items) {
-      const dbPrice = dbPriceByVariant[item.productVariantId];
-      if (dbPrice === undefined) {
-        redirect(`/register?error=Unknown+product+variant`);
-      }
-      if (item.unitPrice !== dbPrice) {
-        redirect(`/register?error=Price+tampering+detected`);
-      }
-      if (item.overridePrice !== undefined && item.overridePrice !== dbPrice) {
-        if (!pendingExceptions.includes("price_override")) {
-          redirect(`/register?error=Price+override+requires+manager+approval`);
-        }
-      }
-    }
-  }
-
   // Server-side approval enforcement — compute effective cart discount for threshold check
   const cartDiscountEffective = cart.discountMode === 'percent'
     ? Number((totals.subtotal * Math.min(100, cart.discountAmount) / 100).toFixed(2))
     : cart.discountAmount;
-  if (cartDiscountEffective > thresholds.discountOver && !pendingExceptions.includes("discount_threshold")) {
+  // JSON path: no exception approvals possible, so threshold checks always apply
+  if (cartDiscountEffective > thresholds.discountOver) {
     redirect("/register?error=Discount+exceeds+threshold+without+manager+approval");
   }
   const storeCreditTendered = tenders.filter((t) => t.type === "store_credit").reduce((s, t) => s + t.amount, 0);
-  if (storeCreditTendered > thresholds.storeCreditIssuanceOver && !pendingExceptions.includes("store_credit_threshold")) {
+  if (storeCreditTendered > thresholds.storeCreditIssuanceOver) {
     redirect("/register?error=Store+credit+exceeds+threshold+without+manager+approval");
   }
   const totalTendered = tenders.reduce((sum, t) => sum + t.amount, 0);
