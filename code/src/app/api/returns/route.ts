@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
-import { orgQuery } from '@/lib/db';
+import { orgQuery, orgTx } from '@/lib/db';
 import { requireAdminPermission } from '@/lib/authz';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
 import { BUPOS_LOCATION_ID } from '@/lib/env';
@@ -133,43 +133,51 @@ export async function PUT(request: NextRequest) {
     const { id, status, processed_by } = await request.json();
     if (!id || !status) return NextResponse.json({ error: 'ID and status required' }, { status: 400 });
 
-    const existingReturnResult = await orgQuery(
-      orgId,
-      `SELECT id, status FROM returns WHERE id = $1`,
-      [id],
-    );
-    if (existingReturnResult.rows.length === 0) {
-      return NextResponse.json({ error: 'Return not found' }, { status: 404 });
-    }
-    const existingStatus = existingReturnResult.rows[0].status;
-
-    // If completing for the first time, restock items marked for restock
-    if (status === 'completed' && existingStatus !== 'completed') {
-      const { rows: lines } = await orgQuery(
-        orgId,
-        `SELECT rl.* FROM return_lines rl
-         JOIN returns r ON rl.return_id = r.id
-         WHERE r.id = $1 AND rl.restock = true`,
+    const client = await orgTx(orgId);
+    try {
+      const { rows: ret } = await client.query(
+        `SELECT id, status, location_id FROM returns WHERE id = $1 FOR UPDATE`,
         [id],
       );
-
-      for (const line of lines) {
-        await orgQuery(
-          orgId,
-          `UPDATE inventory_levels SET on_hand = on_hand + $1, received_at = NOW(), updated_at = NOW()
-           WHERE product_variant_id = $2 AND location_id = (SELECT location_id FROM returns WHERE id = $3)`,
-          [line.quantity, line.product_variant_id, id],
-        );
+      if (ret.length === 0) {
+        await client.query("ROLLBACK");
+        return NextResponse.json({ error: 'Return not found' }, { status: 404 });
       }
+      if (status === 'completed' && ret[0].status === 'completed') {
+        await client.query("ROLLBACK");
+        return NextResponse.json({ error: 'Return already completed' }, { status: 409 });
+      }
+
+      if (status === 'completed' && ret[0].status !== 'completed') {
+        const { rows: lines } = await client.query(
+          `SELECT product_variant_id, quantity
+           FROM return_lines
+           WHERE return_id = $1 AND restock = true`,
+          [id],
+        );
+
+        for (const line of lines) {
+          await client.query(
+            `UPDATE inventory_levels
+             SET on_hand = on_hand + $1, received_at = NOW(), updated_at = NOW()
+             WHERE product_variant_id = $2 AND location_id = $3`,
+            [line.quantity, line.product_variant_id, ret[0].location_id],
+          );
+        }
+      }
+
+      const { rows } = await client.query(
+        `UPDATE returns SET status = $1, processed_by = $2 WHERE id = $3 RETURNING *`,
+        [status, processed_by || null, id],
+      );
+      await client.query("COMMIT");
+      return NextResponse.json({ return: rows[0] }, { status: 200 });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
     }
-
-    const { rows } = await orgQuery(
-      orgId,
-      `UPDATE returns SET status = $1, processed_by = $2 WHERE id = $3 RETURNING *`,
-      [status, processed_by || null, id],
-    );
-
-    return NextResponse.json({ return: rows[0] }, { status: 200 });
   } catch (error) {
     console.error('Returns PUT error:', error);
     return NextResponse.json({ error: 'Failed to update return' }, { status: 500 });
