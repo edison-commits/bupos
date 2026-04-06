@@ -151,11 +151,23 @@ export async function readStoreFromPg(): Promise<LocalStoreData> {
     pgReadPromoCodes(orgId),
     pool.query('SELECT * FROM modifier_groups WHERE organization_id = $1 ORDER BY name', [orgId]),
     pool.query('SELECT * FROM modifiers WHERE organization_id = $1 ORDER BY sort_order', [orgId]),
-    pool.query('SELECT * FROM auth_credentials'),
-    pool.query('SELECT * FROM sessions ORDER BY created_at DESC LIMIT 100'),
-    pool.query('SELECT * FROM shifts ORDER BY opened_at DESC LIMIT 200'),
-    pool.query('SELECT * FROM register_sessions ORDER BY started_at DESC LIMIT 200'),
-    pool.query('SELECT * FROM pay_in_outs ORDER BY created_at DESC LIMIT 500'),
+    pool.query(
+      `SELECT ac.* FROM auth_credentials ac
+       JOIN employees e ON e.id = ac.employee_id
+       WHERE e.organization_id = $1`,
+      [orgId],
+    ),
+    pool.query('SELECT * FROM sessions WHERE organization_id = $1 ORDER BY created_at DESC LIMIT 100', [orgId]),
+    pool.query(
+      `SELECT s.* FROM shifts s
+       JOIN locations l ON l.id = s.location_id
+       WHERE l.organization_id = $1
+       ORDER BY s.opened_at DESC
+       LIMIT 200`,
+      [orgId],
+    ),
+    pool.query('SELECT * FROM register_sessions WHERE organization_id = $1 ORDER BY started_at DESC LIMIT 200', [orgId]),
+    pool.query('SELECT * FROM pay_in_outs WHERE organization_id = $1 ORDER BY created_at DESC LIMIT 500', [orgId]),
     // NOTE: transaction_tenders, transaction_events, and transaction_exceptions are
     // intentionally excluded from this initial load. They contain 1000–2500+ historical
     // rows that are not needed for register-terminal operation. Load them on demand via
