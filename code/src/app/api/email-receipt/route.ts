@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAdminSession } from "@/lib/auth/session";
+import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/authz";
 
 /**
@@ -24,11 +24,11 @@ import { hasPermission } from "@/lib/authz";
  */
 export async function POST(req: NextRequest) {
   try {
-    const session = await getAdminSession();
-    if (!session?.employee) {
+    const [adminSession, registerSession] = await Promise.all([getAdminSession(), getRegisterSession()]);
+    if (!adminSession?.employee && !registerSession?.employee) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    if (!hasPermission(session.employee.roleKey, "audit.view")) {
+    if (adminSession?.employee && !hasPermission(adminSession.employee.roleKey, "audit.view")) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
