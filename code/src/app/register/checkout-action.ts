@@ -97,7 +97,14 @@ export async function checkoutAction(
 
   if (isPg()) {
     const client = await orgTx(context.employee.organizationId);
+    let cartLockAcquired = false;
     try {
+      await client.query(
+        `SELECT pg_advisory_lock((('x' || substr(md5($1), 1, 16))::bit(64)::bigint))`,
+        [cart.id],
+      );
+      cartLockAcquired = true;
+
       const { rows: locked } = await client.query(
         `SELECT id, status FROM register_sessions WHERE id = $1 FOR UPDATE`,
         [context.registerSession.id],
@@ -339,6 +346,12 @@ export async function checkoutAction(
       await client.query("ROLLBACK");
       throw e;
     } finally {
+      if (cartLockAcquired) {
+        await client.query(
+          `SELECT pg_advisory_unlock((('x' || substr(md5($1), 1, 16))::bit(64)::bigint))`,
+          [cart.id],
+        ).catch((err) => console.error("[checkoutAction] failed to unlock cart advisory lock:", err));
+      }
       client.release();
     }
   } else {
