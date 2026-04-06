@@ -133,8 +133,18 @@ export async function PUT(request: NextRequest) {
     const { id, status, processed_by } = await request.json();
     if (!id || !status) return NextResponse.json({ error: 'ID and status required' }, { status: 400 });
 
-    // If completing, restock items marked for restock
-    if (status === 'completed') {
+    const existingReturnResult = await orgQuery(
+      orgId,
+      `SELECT id, status FROM returns WHERE id = $1`,
+      [id],
+    );
+    if (existingReturnResult.rows.length === 0) {
+      return NextResponse.json({ error: 'Return not found' }, { status: 404 });
+    }
+    const existingStatus = existingReturnResult.rows[0].status;
+
+    // If completing for the first time, restock items marked for restock
+    if (status === 'completed' && existingStatus !== 'completed') {
       const { rows: lines } = await orgQuery(
         orgId,
         `SELECT rl.* FROM return_lines rl
@@ -159,7 +169,6 @@ export async function PUT(request: NextRequest) {
       [status, processed_by || null, id],
     );
 
-    if (rows.length === 0) return NextResponse.json({ error: 'Return not found' }, { status: 404 });
     return NextResponse.json({ return: rows[0] }, { status: 200 });
   } catch (error) {
     console.error('Returns PUT error:', error);
