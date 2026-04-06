@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireRegisterPermission } from "@/lib/authz";
 import { mutateStore } from "@/lib/persistence/store";
-import { orgTx } from "@/lib/db";
+import pool, { orgTx } from "@/lib/db";
 import type { Cart, CheckoutResult, TenderLine } from "@/lib/cart/types";
 import { computeTotals, checkOutCart } from "@/lib/cart/cart";
 import { registerConfiguration } from "@/lib/data/mock-data";
@@ -254,8 +254,8 @@ export async function checkoutAction(
         [transactionId, cart.id, context.registerSession.id],
       );
 
-      // 6. Audit event — fire-and-forget (uses tx client, non-fatal)
-      client.query(
+      // 6. Audit event — fire-and-forget outside the sale transaction
+      pool.query(
         `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
          VALUES ($1, $2, $3, $4, 'transaction', $5, 'transaction_completed', $6, now())`,
         [
