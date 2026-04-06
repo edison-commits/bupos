@@ -159,12 +159,17 @@ export async function POST(request: NextRequest) {
     const pinHash = hashSecret(pin);
     const now = new Date().toISOString();
 
-    // Prevent PIN collision: reject if this exact hash already belongs to another employee
-    const pinCheck = await pool.query(
-      `SELECT employee_id FROM auth_credentials WHERE pin_hash = $1 LIMIT 1`,
-      [pinHash],
+    // Stored PIN hashes are salted, so detect collisions by verifying against each stored hash.
+    const { rows: allCreds } = await pool.query(
+      `SELECT employee_id, pin_hash FROM auth_credentials WHERE pin_hash IS NOT NULL`,
     );
-    if (pinCheck.rows.length > 0) {
+    const dup = await Promise.all(
+      allCreds.map(async (row) => {
+        const valid = await verifySecret(pin, row.pin_hash as string);
+        return valid ? row.employee_id : null;
+      }),
+    );
+    if (dup.some(Boolean)) {
       return NextResponse.json(
         { error: 'This PIN is already in use by another employee. Choose a different PIN.' },
         { status: 409 },
@@ -412,12 +417,20 @@ export async function PATCH(request: NextRequest) {
       const pinHash = hashSecret(pin);
       const now = new Date().toISOString();
 
-      // Prevent PIN collision with other employees
-      const pinCheck = await pool.query(
-        `SELECT employee_id FROM auth_credentials WHERE pin_hash = $1 AND employee_id != $2 LIMIT 1`,
-        [pinHash, id],
+      // Stored PIN hashes are salted, so detect collisions by verifying against each stored hash.
+      const { rows: allCreds } = await pool.query(
+        `SELECT employee_id, pin_hash
+         FROM auth_credentials
+         WHERE pin_hash IS NOT NULL AND employee_id != $1`,
+        [id],
       );
-      if (pinCheck.rows.length > 0) {
+      const dup = await Promise.all(
+        allCreds.map(async (row) => {
+          const valid = await verifySecret(pin, row.pin_hash as string);
+          return valid ? row.employee_id : null;
+        }),
+      );
+      if (dup.some(Boolean)) {
         return NextResponse.json(
           { error: 'This PIN is already in use by another employee. Choose a different PIN.' },
           { status: 409 },

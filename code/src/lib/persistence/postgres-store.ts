@@ -510,9 +510,8 @@ export async function pgFindCredentialByPin(pin: string): Promise<AuthCredential
   );
 
   // Verify all PINs in parallel — each scrypt call runs in the thread pool.
-  // Per-employee rate limiting: check BEFORE incrementing to avoid incrementing
-  // locked accounts. If a specific employee is already locked (>=5 attempts within
-  // 15 min), reject only that employee — other employees are unaffected.
+  // Per-employee rate limiting: check lock state before verification, then only
+  // increment the counter after a PIN has been confirmed invalid.
   const results = await Promise.all(
     rows.map(async (r) => {
       const row = r as Record<string, unknown>;
@@ -523,7 +522,6 @@ export async function pgFindCredentialByPin(pin: string): Promise<AuthCredential
       const lastAttempt = row.last_failed_pin_at as Date | null;
       const now = Date.now();
 
-      // Check per-employee rate limit BEFORE incrementing.
       // If this specific employee has >=5 failed attempts within the window,
       // reject only this employee (not all candidates).
       if (
@@ -533,15 +531,6 @@ export async function pgFindCredentialByPin(pin: string): Promise<AuthCredential
       ) {
         return null;
       }
-
-      // Not locked — increment the counter first (sets the provisional count).
-      await pool.query(
-        `UPDATE auth_credentials
-           SET failed_pin_attempts = failed_pin_attempts + 1,
-               last_failed_pin_at = NOW()
-           WHERE employee_id = $1`,
-        [employeeId],
-      );
 
       const valid = await verifySecretAsync(pin, row.pin_hash as string);
 
@@ -554,7 +543,17 @@ export async function pgFindCredentialByPin(pin: string): Promise<AuthCredential
         return row;
       }
 
-      // Failed: counter is already incremented above; leave it there.
+      // PIN wrong — increment after confirming the verification failed.
+      if (prevAttempts < RATE_LIMIT_MAX_ATTEMPTS) {
+        await pool.query(
+          `UPDATE auth_credentials
+             SET failed_pin_attempts = failed_pin_attempts + 1,
+                 last_failed_pin_at = NOW()
+           WHERE employee_id = $1`,
+          [employeeId],
+        );
+      }
+
       return null;
     }),
   );
