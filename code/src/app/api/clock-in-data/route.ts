@@ -13,8 +13,9 @@ export async function GET() {
   }
 
   const [locations, employees] = await Promise.all([
-    pgReadLocations(),
+    pgReadLocations(orgId),
     pgReadEmployees(orgId),
   ]);
-  return NextResponse.json({ locations, employees });
+  const safeEmployees = employees.map(({ pinHint: _pinHint, ...employee }) => employee);
+  return NextResponse.json({ locations, employees: safeEmployees });
 }
