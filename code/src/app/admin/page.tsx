@@ -23,7 +23,7 @@ export default async function AdminPage({
     redirect("/?error=Please+sign+in+to+continue");
   }
 
-  const store = await readStore();
+  const store = await readStore(session.employee.organizationId);
   const notice = typeof params.notice === "string" ? params.notice.replaceAll("+", " ") : undefined;
   const error = typeof params.error === "string" ? params.error.replaceAll("+", " ") : undefined;
 

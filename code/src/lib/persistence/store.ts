@@ -71,10 +71,10 @@ function normalizeStore(store: LocalStoreData): LocalStoreData {
 
 // cache() deduplicates calls within a single React server request,
 // so multiple readStore() calls in one page render only hit the DB once.
-export const readStore = cache(async function readStore(): Promise<LocalStoreData> {
+export const readStore = cache(async function readStore(orgId?: string): Promise<LocalStoreData> {
   if (isPg()) {
     const { readStoreFromPg } = await import("@/lib/persistence/postgres-read-store");
-    return readStoreFromPg();
+    return readStoreFromPg(orgId);
   }
   await ensureStoreFile();
   const { readFile } = await getFs();

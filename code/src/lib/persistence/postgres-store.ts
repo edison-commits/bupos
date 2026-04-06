@@ -15,7 +15,7 @@ const _employeesCache = new Map<string, CacheEntry<Employee[]>>();
 const _productsCache = new Map<string, CacheEntry<Product[]>>();
 const _variantsCache = new Map<string, CacheEntry<ProductVariant[]>>();
 const _inventoryCache = new Map<string, CacheEntry<InventoryLevel[]>>();
-let _locationsCache: CacheEntry<import('@/lib/domain/types').Location[]> | null = null;
+const _locationsCache = new Map<string, CacheEntry<import('@/lib/domain/types').Location[]>>();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _orgCache: CacheEntry<any> | null = null;
 let _categoriesCache: CacheEntry<Category[]> | null = null;
@@ -415,6 +415,7 @@ export async function pgReadEmployees(organizationId: string): Promise<Employee[
 export function invalidateEmployeesCache(orgId?: string): void {
   if (orgId) _employeesCache.delete(orgId);
   else _employeesCache.clear();
+  void import('@/lib/persistence/postgres-read-store').then(({ invalidateStoreCache }) => invalidateStoreCache(orgId));
 }
 
 export async function pgCreateEmployee(data: {
@@ -436,6 +437,7 @@ export async function pgCreateEmployee(data: {
       [data.id, data.email ?? null, data.passwordHash ?? null, data.pinHash, ts],
     );
     await client.query('COMMIT');
+    invalidateEmployeesCache(data.organizationId);
     return toEmployee(rows[0]);
   } catch (e) {
     await client.query('ROLLBACK');
@@ -450,12 +452,15 @@ export async function pgToggleEmployee(id: string): Promise<boolean> {
   try {
     await client.query('BEGIN');
     // Lock the row so concurrent toggle attempts are serialised.
-    await client.query(`SELECT id FROM employees WHERE id = $1 FOR UPDATE`, [id]);
+    const { rows: employeeRows } = await client.query(`SELECT id, organization_id FROM employees WHERE id = $1 FOR UPDATE`, [id]);
     const { rowCount } = await client.query(
       `UPDATE employees SET is_active = NOT is_active, updated_at = $1 WHERE id = $2`,
       [new Date().toISOString(), id],
     );
     await client.query('COMMIT');
+    if (employeeRows[0]?.organization_id) {
+      invalidateEmployeesCache(employeeRows[0].organization_id as string);
+    }
     return (rowCount ?? 0) > 0;
   } catch (e) {
     await client.query('ROLLBACK');
@@ -647,12 +652,17 @@ export async function pgUpdateOrganization(id: string, data: Partial<{
   await pool.query(`UPDATE organizations SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`, vals);
 }
 
-export async function pgReadLocations() {
-  if (_locationsCache && Date.now() < _locationsCache.expiresAt) return _locationsCache.data;
+export async function pgReadLocations(organizationId?: string) {
+  if (!organizationId) {
+    throw new Error("pgReadLocations requires explicit organizationId");
+  }
+  const cached = _locationsCache.get(organizationId);
+  if (cached && Date.now() < cached.expiresAt) return cached.data;
   const { rows } = await pool.query(
     `SELECT id, organization_id, name, code, address_1, city, region, postal_code, phone,
             tax_rate, is_active, created_at, updated_at
-     FROM locations WHERE is_active = true ORDER BY name`,
+     FROM locations WHERE organization_id = $1 AND is_active = true ORDER BY name`,
+    [organizationId],
   );
   const data = rows.map((r: Record<string, unknown>) => ({
     id: r.id as string, organizationId: r.organization_id as string,
@@ -664,11 +674,15 @@ export async function pgReadLocations() {
     isActive: r.is_active as boolean,
     createdAt: String(r.created_at), updatedAt: String(r.updated_at),
   }));
-  _locationsCache = { data, expiresAt: Date.now() + PG_READ_TTL_MS };
+  _locationsCache.set(organizationId, { data, expiresAt: Date.now() + PG_READ_TTL_MS });
   return data;
 }
 
-export function invalidateLocationsCache(): void { _locationsCache = null; }
+export function invalidateLocationsCache(orgId?: string): void {
+  if (orgId) _locationsCache.delete(orgId);
+  else _locationsCache.clear();
+  void import('@/lib/persistence/postgres-read-store').then(({ invalidateStoreCache }) => invalidateStoreCache(orgId));
+}
 
 export async function pgUpdateLocation(id: string, data: Partial<{
   name: string; address1: string; city: string; region: string;
@@ -689,6 +703,8 @@ export async function pgUpdateLocation(id: string, data: Partial<{
   sets.push(`updated_at = $${i++}`); vals.push(new Date().toISOString());
   vals.push(id);
   await pool.query(`UPDATE locations SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`, vals);
+  const [locationRow] = await pool.query<{ organization_id: string }>('SELECT organization_id FROM locations WHERE id = $1', [id]).then(r => r.rows);
+  if (locationRow) invalidateLocationsCache(locationRow.organization_id);
 }
 
 // ── Register Sessions ─────────────────────────────────────────────────

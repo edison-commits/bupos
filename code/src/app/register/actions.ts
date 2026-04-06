@@ -287,7 +287,7 @@ export async function quickSwitchAction(pin: string): Promise<{ success: boolean
     if (!credential) return { success: false, error: "Invalid PIN" };
 
     const { readStore } = await import("@/lib/persistence/store");
-    const store = await readStore();
+    const store = await readStore(context.employee.organizationId);
     const newEmployee = store.employees.find((e) => e.id === credential.employeeId && e.isActive);
     if (!newEmployee || !newEmployee.locationIds.includes(locationId)) {
       return { success: false, error: "Employee not found or not assigned to this location" };

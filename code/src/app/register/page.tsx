@@ -26,7 +26,7 @@ export default async function RegisterPage({
 
   // Lightweight: only load full store when logged in (RegisterConsole needs it).
   // Unauthenticated: just grab the active location name + id — single cheap query.
-  const store = session ? await readStore() : null;
+  const store = session ? await readStore(session.employee.organizationId) : null;
   const location = session
     ? store!.locations[0] ?? session.location
     : await getDefaultLocation();

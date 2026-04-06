@@ -27,21 +27,26 @@ import type { Organization, Location, ModifierGroup, Modifier, TenderType } from
 // TTL of 30s means the first request pays the ~600ms Postgres cost,
 // all subsequent requests for the next 30s are served from memory (~0ms).
 const STORE_CACHE_TTL_MS = 30_000;
-let _storeCache: { data: LocalStoreData; expiresAt: number } | null = null;
+const _storeCache = new Map<string, { data: LocalStoreData; expiresAt: number }>();
 
-function _getCachedStore(): LocalStoreData | null {
-  if (!_storeCache) return null;
-  if (Date.now() > _storeCache.expiresAt) {
-    _storeCache = null;
+function _getCachedStore(orgId: string): LocalStoreData | null {
+  const cached = _storeCache.get(orgId);
+  if (!cached) return null;
+  if (Date.now() > cached.expiresAt) {
+    _storeCache.delete(orgId);
     return null;
   }
-  return _storeCache.data;
+  return cached.data;
 }
 
 // Call this after any mutation that changes core store data
 // to ensure the next read gets fresh data.
-export function invalidateStoreCache(): void {
-  _storeCache = null;
+export function invalidateStoreCache(orgId?: string): void {
+  if (orgId) {
+    _storeCache.delete(orgId);
+    return;
+  }
+  _storeCache.clear();
 }
 
 function toOrg(r: Record<string, unknown>): Organization {
@@ -112,16 +117,18 @@ function toModifier(r: Record<string, unknown>): Modifier {
  * ~600ms Postgres round-trips on every API request.
  * Call invalidateStoreCache() after mutations to force a refresh.
  */
-export async function readStoreFromPg(): Promise<LocalStoreData> {
-  const cached = _getCachedStore();
+export async function readStoreFromPg(orgId?: string): Promise<LocalStoreData> {
+  if (!orgId) {
+    throw new Error("readStoreFromPg requires explicit orgId");
+  }
+  const cached = _getCachedStore(orgId);
   if (cached) return cached;
   // Read path uses pool.query directly — RLS fallback policy allows access
   // when no org context is set. Write paths use orgTx() for strict isolation.
   // CRITICAL: Run all queries in parallel to avoid Cloudflare Worker CPU timeouts.
 
-  const { rows: orgRows } = await pool.query('SELECT * FROM organizations LIMIT 1');
+  const { rows: orgRows } = await pool.query('SELECT * FROM organizations WHERE id = $1 LIMIT 1', [orgId]);
   const org = toOrg(orgRows[0]);
-  const orgId = org.id;
 
   // Run ALL remaining queries in parallel
   const [
@@ -303,6 +310,6 @@ export async function readStoreFromPg(): Promise<LocalStoreData> {
   };
 
   // Cache the result
-  _storeCache = { data: result, expiresAt: Date.now() + STORE_CACHE_TTL_MS };
+  _storeCache.set(orgId, { data: result, expiresAt: Date.now() + STORE_CACHE_TTL_MS });
   return result;
 }

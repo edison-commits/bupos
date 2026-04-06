@@ -93,13 +93,12 @@ async function resolveSession(scope: SessionRecord["scope"], cookieName: string,
     return null;
   }
 
-  const store = await readStore();
-
   // Find the session — PG mode reads sessions into store via readStoreFromPg
   let session: SessionRecord | null | undefined;
   if (isPg()) {
     session = await pgFindSession(sessionId, scope);
   } else {
+    const store = await readStore();
     session = store.sessions.find((entry) => entry.id === sessionId && entry.scope === scope);
     if (session && new Date(session.expiresAt) < new Date()) session = null;
   }
@@ -112,6 +111,8 @@ async function resolveSession(scope: SessionRecord["scope"], cookieName: string,
   if (isPg()) {
     await pgUpdateSessionLastSeen(session.id);
   }
+
+  const store = await readStore(isPg() ? session.organizationId : undefined);
 
   const employee = store.employees.find((entry) => entry.id === session.employeeId && entry.isActive);
   if (!employee) {

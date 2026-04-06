@@ -59,7 +59,7 @@ export async function verifyManagerApproval(pin: string, request: ApprovalReques
   }
 
   // 1. Resolve the PIN to an employee
-  const store = await readStore();
+  const store = await readStore(request.organizationId);
 
   // Find employee by PIN — resolve via the hashed PIN credentials in the authCredentials table.
   // No hardcoded dev PINs; every approver must use their real stored credential.
