@@ -8,7 +8,7 @@ import { redirect } from 'next/navigation';
 import pool, { orgQuery } from '@/lib/db';
 import { hashSecret, verifySecret } from '@/lib/auth/crypto';
 import { randomUUID } from 'crypto';
-import { requireAdminPermission } from '@/lib/authz';
+import { canManageEmployeeRole, requireAdminPermission } from '@/lib/authz';
 import { getAdminSession } from '@/lib/auth/session';
 import { invalidateEmployeesCache, pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
 
@@ -141,6 +141,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (!canManageEmployeeRole(ctx.employee.roleKey, roleKey)) {
+      return NextResponse.json(
+        { error: 'Forbidden: you cannot assign the requested role' },
+        { status: 403 }
+      );
+    }
+
     if (!Array.isArray(locationIds) || locationIds.length === 0) {
       return NextResponse.json(
         { error: 'At least one location must be assigned' },
@@ -244,6 +251,13 @@ export async function PUT(request: NextRequest) {
 
     if (!id) {
       return NextResponse.json({ error: 'Employee ID required' }, { status: 400 });
+    }
+
+    if (roleKey !== undefined && !canManageEmployeeRole(ctx.employee.roleKey, roleKey)) {
+      return NextResponse.json(
+        { error: 'Forbidden: you cannot assign the requested role' },
+        { status: 403 }
+      );
     }
 
     // Build dynamic update query
