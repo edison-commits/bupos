@@ -112,7 +112,7 @@ export async function POST(request: NextRequest) {
 
     // Validate transaction exists and get its grand_total
     const txnResult = await client.query(
-      `SELECT id, grand_total FROM transactions WHERE id = $1`,
+      `SELECT id, grand_total FROM transactions WHERE id = $1 FOR UPDATE`,
       [transaction_id]
     );
 
