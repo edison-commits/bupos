@@ -49,6 +49,11 @@ async function pgInsertSession(s: SessionRecord) {
   );
 }
 
+async function pgUpdateSessionLastSeen(sessionId: string) {
+  const pool = await pgGetPool();
+  await pool.query(`UPDATE sessions SET last_seen_at = NOW() WHERE id = $1`, [sessionId]);
+}
+
 async function pgDeleteSessionsByEmployee(scope: string, employeeId: string) {
   const pool = await pgGetPool();
   await pool.query(`DELETE FROM sessions WHERE scope = $1 AND employee_id = $2`, [scope, employeeId]);
@@ -104,6 +109,9 @@ async function resolveSession(scope: SessionRecord["scope"], cookieName: string,
   }
 
   session.lastSeenAt = new Date().toISOString();
+  if (isPg()) {
+    await pgUpdateSessionLastSeen(session.id);
+  }
 
   const employee = store.employees.find((entry) => entry.id === session.employeeId && entry.isActive);
   if (!employee) {
