@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/db';
 import { requireAdminPermission } from '@/lib/authz';
 import { pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
+import { validateBody, customerCreateSchema, customerUpdateSchema } from '@/lib/validation/schemas';
 
 export async function GET(request: NextRequest) {
   const ctx = await (await import('@/lib/auth/session')).getAdminSession();
@@ -175,10 +176,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   try {
-    const { first_name, last_name, email, phone, address, notes } = await request.json();
-    if (!first_name?.trim() || !last_name?.trim()) {
-      return NextResponse.json({ error: 'First and last name are required' }, { status: 400 });
-    }
+    const body = await request.json();
+    const v = validateBody(customerCreateSchema, body);
+    if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
+    const { first_name, last_name, email, phone, address, notes } = v.data;
 
     const { rows } = await orgQuery(
       orgId,
@@ -201,8 +202,10 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   try {
-    const { id, first_name, last_name, email, phone, address, notes, is_active } = await request.json();
-    if (!id) return NextResponse.json({ error: 'Customer ID required' }, { status: 400 });
+    const body = await request.json();
+    const v = validateBody(customerUpdateSchema, body);
+    if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
+    const { id, first_name, last_name, email, phone, address, notes, is_active } = v.data;
 
     const { rows } = await orgQuery(
       orgId,
@@ -218,7 +221,7 @@ export async function PUT(request: NextRequest) {
       orgId, null, ctx.employee.id,
       "customer", id, "customer_updated",
       { id, first_name: customer.first_name, last_name: customer.last_name },
-    ).catch(() => {});
+    ).catch((err) => console.error("[audit] Failed to insert audit event:", err));
     return NextResponse.json({ customer }, { status: 200 });
   } catch (error) {
     console.error('Customers PUT error:', error);

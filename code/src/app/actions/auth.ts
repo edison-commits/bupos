@@ -65,7 +65,7 @@ export async function loginAction(_prev: { error: string } | null, formData: For
           orgId ?? 'unknown', null, cred?.employeeId ?? null,
           "session", null, "admin_login_failed",
           { email, reason: err instanceof Error ? err.message : "unknown" },
-        ).catch(() => {});
+        ).catch((err) => console.error("[audit] Failed to insert audit event:", err));
       } catch {
         // audit lookup failed — skip audit, still return error
       }
@@ -165,7 +165,7 @@ export async function signupAction(_prev: { error: string } | null, formData: Fo
           JSON.stringify({ store_name: storeName, owner_email: email, plan: "free" }),
           now,
         ],
-      ).catch(() => {});
+      ).catch((err) => console.error("[audit] Failed to insert audit event:", err));
     }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Signup failed";

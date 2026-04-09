@@ -1,11 +1,9 @@
-import { BUPOS_LOCATION_ID } from '@/lib/env';
 import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery, pool } from '@/lib/db';
 import { requireAdminPermission } from '@/lib/authz';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
 import { pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
-
-const LOCATION_ID = BUPOS_LOCATION_ID;
+import { validateBody, receivingCreateSchema } from '@/lib/validation/schemas';
 
 /**
  * Receiving API
@@ -25,6 +23,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  const locationId = registerCtx?.location?.id ?? adminCtx?.employee?.locationIds?.[0];
   const type = request.nextUrl.searchParams.get('type');
 
   try {
@@ -48,7 +47,7 @@ export async function GET(request: NextRequest) {
           AND po.location_id = $2
         GROUP BY po.id, s.name, l.name
         ORDER BY po.created_at DESC`,
-        [orgId, LOCATION_ID]
+        [orgId, locationId]
       );
 
       return NextResponse.json({ orders: rows });
@@ -102,7 +101,7 @@ export async function GET(request: NextRequest) {
           AND (UPPER(pv.sku) LIKE $3 OR UPPER(p.name) LIKE $3 OR UPPER(pv.name) LIKE $3)
           AND pv.is_active = true
         LIMIT 20`,
-        [orgId, LOCATION_ID, searchTerm]
+        [orgId, locationId, searchTerm]
       );
 
       return NextResponse.json({ variants: rows });
@@ -125,15 +124,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   try {
-    const { items, mode, po_id } = await request.json();
+    const body = await request.json();
+    const v = validateBody(receivingCreateSchema, body);
+    if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
+    const { items: validatedItems, mode, po_id } = v.data;
+    const items = body.items as Array<{ product_variant_id: string; quantity: number; po_line_id?: string }>;
 
-    if (!items || items.length === 0) {
-      return NextResponse.json(
-        { error: 'No items to receive' },
-        { status: 400 }
-      );
-    }
-
+    const locationId = ctx.employee.locationIds[0];
     const employeeId = ctx.employee.id;
 
     // Process receiving in transaction
@@ -149,7 +146,7 @@ export async function POST(request: NextRequest) {
         const levelRes = await client.query(
           `SELECT id, on_hand FROM inventory_levels
            WHERE product_variant_id = $1 AND location_id = $2 AND organization_id = $3`,
-          [item.variant_id, LOCATION_ID, orgId]
+          [item.product_variant_id, locationId, orgId]
         );
 
         let inventoryLevelId: string;
@@ -165,7 +162,7 @@ export async function POST(request: NextRequest) {
               (organization_id, location_id, product_variant_id, on_hand, reserved, reorder_point)
              VALUES ($1, $2, $3, 0, 0, 0)
              RETURNING id`,
-            [orgId, LOCATION_ID, item.variant_id]
+            [orgId, locationId, item.product_variant_id]
           );
           inventoryLevelId = createRes.rows[0].id;
           currentOnHand = 0;
@@ -189,8 +186,8 @@ export async function POST(request: NextRequest) {
            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
           [
             inventoryLevelId,
-            item.variant_id,
-            LOCATION_ID,
+            item.product_variant_id,
+            locationId,
             employeeId,
             'received',
             item.quantity,
@@ -240,7 +237,7 @@ export async function POST(request: NextRequest) {
         orgId, null, employeeId,
         "inventory", null, "inventory_received",
         { items_count: items.length, mode, po_id: po_id || null, description: `Received ${items.length} item(s)` },
-      ).catch(() => {});
+      ).catch((err) => console.error("[audit] Failed to insert audit event:", err));
       return NextResponse.json({
         success: true,
         message: `Successfully received ${items.length} item(s)`,

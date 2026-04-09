@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
 import { requireAdminPermission } from "@/lib/authz";
 import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
+import { validateBody, loyaltyAdjustSchema } from "@/lib/validation/schemas";
 
 
 /**
@@ -169,21 +170,9 @@ export async function POST(req: NextRequest) {
   }
   try {
     const body = await req.json();
-    const { customer_id, adjustment, reason } = body;
-
-    if (!customer_id || adjustment === undefined || !reason) {
-      return NextResponse.json(
-        { error: "Missing required fields: customer_id, adjustment, reason" },
-        { status: 400 }
-      );
-    }
-
-    if (typeof adjustment !== "number" || !Number.isInteger(adjustment)) {
-      return NextResponse.json(
-        { error: "adjustment must be an integer" },
-        { status: 400 }
-      );
-    }
+    const v = validateBody(loyaltyAdjustSchema, body);
+    if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
+    const { customer_id, adjustment, reason } = v.data;
 
     // Check if customer exists
     const checkResult = await orgQuery(
@@ -213,7 +202,7 @@ export async function POST(req: NextRequest) {
       orgId, null, ctx.employee.id,
       "customer", customer_id, "loyalty_adjusted",
       { id: customer_id, adjustment, previous_points: currentPoints, new_points: newPoints, reason },
-    ).catch(() => {});
+    ).catch((err) => console.error("[audit] Failed to insert audit event:", err));
 
     return NextResponse.json({
       success: true,

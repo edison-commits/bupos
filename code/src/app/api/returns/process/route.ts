@@ -4,6 +4,7 @@ import { orgTx } from '@/lib/db';
 import { requireRegisterPermission } from '@/lib/authz';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
 import { checkRateLimit } from '@/lib/auth/rate-limit';
+import { validateBody, returnProcessSchema } from '@/lib/validation/schemas';
 
 interface ReturnLineItem {
   product_id: string;
@@ -73,8 +74,9 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const body: ProcessReturnRequest = await request.json();
-
+    const raw = await request.json();
+    const v = validateBody(returnProcessSchema, raw);
+    if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
     const {
       transaction_id,
       customer_name,
@@ -83,14 +85,7 @@ export async function POST(request: NextRequest) {
       refund_method,
       items,
       refund_amount,
-    } = body;
-
-    if (!transaction_id || !items || items.length === 0) {
-      return NextResponse.json(
-        { error: 'Transaction ID and items are required' },
-        { status: 400 }
-      );
-    }
+    } = v.data;
 
     if (refund_amount < 0) {
       await client.query('ROLLBACK');
@@ -101,7 +96,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Validate that at least one item has a valid quantity before creating the return record
-    const validItems = items.filter((item: ReturnLineItem) => item.quantity > 0);
+    const validItems = items.filter((item) => item.quantity > 0);
     if (validItems.length === 0) {
       await client.query('ROLLBACK');
       return NextResponse.json(
@@ -214,19 +209,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to generate unique return number' }, { status: 500 });
     }
     // Pre-resolve all variant IDs before mutating state
-    const variantIds = await Promise.all(
-      items.map(async (item) => {
-        if (!item.quantity || item.quantity <= 0) return null;
-        const variantResult = await client.query(
-          `SELECT pv.id FROM product_variants pv
-           JOIN products p ON p.id = pv.product_id
-           WHERE p.id = $1 OR pv.sku = $2
-           LIMIT 1`,
-          [item.product_id, item.sku]
-        );
-        return variantResult.rows[0]?.id || item.product_id;
-      })
-    );
+    const variantIds = items.map((item) => {
+      if (!item.quantity || item.quantity <= 0) return null;
+      return item.variantId;
+    });
 
     // Create return line items and handle inventory (sequential to respect FK ordering)
     for (let i = 0; i < items.length; i++) {
@@ -242,7 +228,7 @@ export async function POST(request: NextRequest) {
       await client.query(
         `INSERT INTO return_lines (return_id, product_variant_id, quantity, unit_price, restock)
          VALUES ($1, $2, $3, $4, true)`,
-        [returnId, variantId, item.quantity, item.unit_price]
+        [returnId, variantId, item.quantity, item.unitPrice]
       );
 
       // Adjust inventory (restock) — use upsert to handle missing row

@@ -16,7 +16,7 @@ export async function GET() {
     // it verifies the DB can actually process a query under load, not just that
     // the connection is alive.
     const { rows } = await pool.query(
-      `SELECT 1 AS check, now() AS ts, version()::text AS pg_version LIMIT 1`
+      `SELECT 1 AS check, now() AS ts LIMIT 1`
     );
     if (rows[0]?.check !== 1) {
       return NextResponse.json({ status: "degraded", error: "Database check failed" }, { status: 503 });
@@ -25,7 +25,6 @@ export async function GET() {
       status: "ok",
       timestamp: new Date().toISOString(),
       database: "connected",
-      pgVersion: rows[0]?.pg_version?.slice(0, 40) ?? "unknown",
     });
   } catch (err) {
     console.error("[health] DB check failed:", err);

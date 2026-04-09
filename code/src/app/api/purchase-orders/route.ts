@@ -1,11 +1,9 @@
-import { BUPOS_LOCATION_ID } from '@/lib/env';
 import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery, pool } from '@/lib/db';
 import { requireAdminPermission } from '@/lib/authz';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
 import { pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
-
-const LOCATION_ID = BUPOS_LOCATION_ID;
+import { validateBody, purchaseOrderCreateSchema, purchaseOrderUpdateSchema, purchaseOrderReceiveSchema } from '@/lib/validation/schemas';
 
 /**
  * Purchase Orders API
@@ -93,17 +91,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   try {
-    const { supplier_id, notes, expected_at, lines } = await request.json();
+    const body = await request.json();
+    const v = validateBody(purchaseOrderCreateSchema, body);
+    if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
+    const { supplier_id, notes, expected_at, lines } = v.data;
 
-    if (!supplier_id) return NextResponse.json({ error: 'Supplier is required' }, { status: 400 });
-    if (!lines || lines.length === 0) return NextResponse.json({ error: 'At least one line item is required' }, { status: 400 });
+    const locationId = ctx.employee.locationIds[0];
 
     // Generate PO number: BEL-PO-YYMMDD-NNN
     // Get location short code from location name
     const { rows: locRows } = await orgQuery(
       orgId,
       `SELECT name FROM locations WHERE id = $1`,
-      [LOCATION_ID],
+      [locationId],
     );
     const locName = locRows[0]?.name || 'STR';
     const locCode = locName.slice(0, 3).toUpperCase(); // e.g. "Bellflower" → "BEL"
@@ -131,7 +131,7 @@ export async function POST(request: NextRequest) {
         `INSERT INTO purchase_orders (organization_id, supplier_id, location_id, po_number, status, notes, expected_at)
          VALUES ($1, $2, $3, $4, 'draft', $5, $6)
          RETURNING *`,
-        [orgId, supplier_id, LOCATION_ID, poNumber, notes || null, expected_at || null],
+        [orgId, supplier_id, locationId, poNumber, notes || null, expected_at || null],
       );
       const poId = poResult.rows[0].id;
 
@@ -140,7 +140,7 @@ export async function POST(request: NextRequest) {
         await client.query(
           `INSERT INTO purchase_order_lines (purchase_order_id, product_variant_id, quantity_ordered, unit_cost)
            VALUES ($1, $2, $3, $4)`,
-          [poId, line.product_variant_id, line.quantity_ordered || 0, line.unit_cost || 0],
+          [poId, line.product_variant_id, line.quantity, line.unit_cost],
         );
       }
 
@@ -150,7 +150,7 @@ export async function POST(request: NextRequest) {
         orgId, null, ctx.employee.id,
         "purchase_order", newOrder.id, "purchase_order_created",
         { id: newOrder.id, po_number: poNumber, supplier_id, line_count: lines.length },
-      ).catch(() => {});
+      ).catch((err) => console.error("[audit] Failed to insert audit event:", err));
       return NextResponse.json({ order: newOrder, po_number: poNumber });
     } catch (e) {
       await client.query('ROLLBACK');
@@ -171,9 +171,10 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   try {
-    const { id, status, notes, expected_at, ordered_at } = await request.json();
-
-    if (!id) return NextResponse.json({ error: 'PO ID is required' }, { status: 400 });
+    const body = await request.json();
+    const v = validateBody(purchaseOrderUpdateSchema, body);
+    if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
+    const { id, status, notes, expected_at, ordered_at } = v.data;
 
     // Build dynamic update
     const sets: string[] = ['updated_at = NOW()'];
@@ -225,10 +226,10 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   try {
-    const { id, receives } = await request.json();
-
-    if (!id) return NextResponse.json({ error: 'PO ID is required' }, { status: 400 });
-    if (!receives || receives.length === 0) return NextResponse.json({ error: 'No items to receive' }, { status: 400 });
+    const body = await request.json();
+    const v = validateBody(purchaseOrderReceiveSchema, body);
+    if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
+    const { id, receives } = v.data;
 
     // Verify PO exists and is receivable
     const { rows: poRows } = await orgQuery(

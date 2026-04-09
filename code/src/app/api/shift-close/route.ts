@@ -1,12 +1,10 @@
-import { BUPOS_LOCATION_ID } from "@/lib/env";
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
 import { requireAdminPermission } from "@/lib/authz";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 import { pgCloseShift } from "@/lib/persistence/postgres-store";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
-
-const LOCATION_ID = BUPOS_LOCATION_ID;
+import { validateBody, shiftCloseSchema } from "@/lib/validation/schemas";
 
 /**
  * GET /api/shift-close?shift=<id>
@@ -19,6 +17,7 @@ export async function GET(req: NextRequest) {
   if (!orgId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  const locationId = registerCtx?.location?.id ?? adminCtx?.employee?.locationIds?.[0];
   try {
     let shiftId = req.nextUrl.searchParams.get("shift");
 
@@ -28,7 +27,7 @@ export async function GET(req: NextRequest) {
         `SELECT s.id FROM shifts s
          WHERE s.location_id = $1 AND s.status = 'open'
          ORDER BY s.opened_at DESC LIMIT 1`,
-        [LOCATION_ID],
+        [locationId],
       );
 
       if (openShifts.rows.length === 0) {
@@ -93,14 +92,10 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { shiftId, declaredCash, notes } = await req.json();
-
-    if (!shiftId || declaredCash === undefined) {
-      return NextResponse.json(
-        { error: "Missing required fields: shiftId, declaredCash" },
-        { status: 400 },
-      );
-    }
+    const body = await req.json();
+    const v = validateBody(shiftCloseSchema, body);
+    if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
+    const { shiftId, declaredCash, notes } = v.data;
 
     // Get shift to find registerSessionId
     const shiftRes = await orgQuery(

@@ -2,16 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
 import { requireAdminPermission } from "@/lib/authz";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
-import { BUPOS_LOCATION_ID } from "@/lib/env";
-
-const LOCATION_ID = BUPOS_LOCATION_ID;
+import { validateBody, eodReportSchema } from "@/lib/validation/schemas";
 const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
 
 /**
- * GET /api/eod-report  [DEPRECATED — no UI consumer; hardcoded LOCATION_ID]
+ * GET /api/eod-report  [DEPRECATED — no UI consumer; hardcoded locationId]
  *
  * Previously used by an EOD email cron. The email delivery now uses POST.
- * GET has no active consumer and relies on the hardcoded BUPOS_LOCATION_ID,
+ * GET has no active consumer and relies on the hardcoded BUPOS_locationId,
  * making it unreliable for multi-location deployments.
  */
 export async function GET(req: NextRequest) {
@@ -21,8 +19,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  const locationId = registerCtx?.location?.id ?? adminCtx?.employee?.locationIds?.[0];
   try {
-    const reportData = await generateReportData(orgId);
+    const reportData = await generateReportData(orgId, locationId);
     return NextResponse.json(reportData);
   } catch (error) {
     console.error("EOD Report GET error:", error);
@@ -43,9 +42,14 @@ export async function POST(req: NextRequest) {
   if (!orgId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  const body = await req.json().catch(() => ({}));
+  const v = validateBody(eodReportSchema, body);
+  if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
+
+  const locationId = ctx.employee.locationIds?.[0];
   let reportData: any;
   try {
-    reportData = await generateReportData(orgId);
+    reportData = await generateReportData(orgId, locationId);
   } catch (error) {
     console.error("EOD Report: data generation failed:", error);
     return NextResponse.json({ error: "Failed to generate report data" }, { status: 500 });
@@ -72,7 +76,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-async function generateReportData(orgId: string) {
+async function generateReportData(orgId: string, locationId?: string) {
   const today = new Date().toISOString().split("T")[0];
   const startOfDay = `${today}T00:00:00Z`;
   const endOfDay = `${today}T23:59:59Z`;
@@ -151,7 +155,7 @@ async function generateReportData(orgId: string) {
     [
       startOfDay,
       endOfDay,
-      LOCATION_ID,
+      locationId,
       today,
     ],
   );

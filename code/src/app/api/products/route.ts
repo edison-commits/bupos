@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminPermission } from '@/lib/authz';
 import { invalidateProductsCache, invalidateVariantsCache, pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
-import { BUPOS_LOCATION_ID } from '@/lib/env';
+import { validateBody, productCreateSchema, productUpdateSchema, productDeleteSchema, productImportSchema } from '@/lib/validation/schemas';
 
 // 30-second response cache
 const _productsCache = new Map<string, { data: unknown; expiresAt: number }>();
@@ -20,6 +20,7 @@ export async function GET(request: NextRequest) {
   if (!orgId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  const locationId = adminCtx?.employee?.locationIds?.[0];
 
   const cacheKey = request.nextUrl.toString();
   const cached = _productsCache.get(cacheKey);
@@ -97,7 +98,7 @@ export async function GET(request: NextRequest) {
         ${whereClause}
         ORDER BY p.name, pv.sku
         `,
-        [BUPOS_LOCATION_ID, ...params]
+        [locationId, ...params]
       ),
 
       // Get all categories
@@ -268,7 +269,10 @@ export async function POST(request: NextRequest) {
     }
 
     // Handle product creation
-    const { name, slug, category_id, description, image_url, is_active = true, is_touch_favorite = false } = body;
+    const pv = validateBody(productCreateSchema, body);
+    if (!pv.success) return NextResponse.json({ error: pv.error }, { status: 400 });
+    const { name, slug, category_id, description, image_url, is_active = true } = body;
+    const is_touch_favorite = body.is_touch_favorite ?? false;
     const result = await client.query(
       `INSERT INTO products (id, organization_id, category_id, name, slug, description, image_url, is_active, is_touch_favorite, created_at, updated_at)
        VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
@@ -281,7 +285,7 @@ export async function POST(request: NextRequest) {
       orgId, null, ctx.employee.id,
       "product", newProduct.id, "product_created",
       { id: newProduct.id, name: newProduct.name, slug: newProduct.slug },
-    ).catch(() => {});
+    ).catch((err) => console.error("[audit] Failed to insert audit event:", err));
     invalidateProductsCache(orgId);
     return NextResponse.json(newProduct, { status: 201 });
   } catch (error) {
@@ -305,11 +309,10 @@ export async function PUT(request: NextRequest) {
   const client = await pool.connect();
   try {
     const body = await request.json();
-    const { id, ...updates } = body;
-
-    if (!id) {
-      return NextResponse.json({ error: 'Product ID is required' }, { status: 400 });
-    }
+    const pv = validateBody(productUpdateSchema, body);
+    if (!pv.success) return NextResponse.json({ error: pv.error }, { status: 400 });
+    const id = pv.data.product_id;
+    const updates = body;
 
     await client.query('BEGIN');
     await client.query(`SET LOCAL app.current_org_id = '${orgId}'`);
@@ -386,7 +389,7 @@ export async function PUT(request: NextRequest) {
         orgId, null, ctx.employee.id,
         "product", id, "product_updated",
         { id, name: updatedProduct.name, slug: updatedProduct.slug },
-      ).catch(() => {});
+      ).catch((err) => console.error("[audit] Failed to insert audit event:", err));
       invalidateProductsCache(orgId);
       return NextResponse.json(updatedProduct);
     }
@@ -444,7 +447,7 @@ export async function PUT(request: NextRequest) {
         orgId, null, ctx.employee.id,
         "product_variant", updates.variant_id, "variant_updated",
         { id: updates.variant_id, sku: updatedVariant.sku },
-      ).catch(() => {});
+      ).catch((err) => console.error("[audit] Failed to insert audit event:", err));
       invalidateProductsCache(orgId);
       invalidateVariantsCache(orgId);
       return NextResponse.json(updatedVariant);
@@ -474,11 +477,9 @@ export async function DELETE(request: NextRequest) {
   const client = await pool.connect();
   try {
     const body = await request.json();
-    const { id } = body;
-
-    if (!id) {
-      return NextResponse.json({ error: 'Product ID is required' }, { status: 400 });
-    }
+    const dv = validateBody(productDeleteSchema, body);
+    if (!dv.success) return NextResponse.json({ error: dv.error }, { status: 400 });
+    const { product_id: id } = dv.data;
 
     await client.query('BEGIN');
     await client.query(`SET LOCAL app.current_org_id = '${orgId}'`);
@@ -516,10 +517,9 @@ export async function PATCH(request: NextRequest) {
     const { action } = body;
 
     if (action === 'import_csv') {
-      const { rows } = body;
-      if (!Array.isArray(rows)) {
-        return NextResponse.json({ error: 'Invalid CSV data' }, { status: 400 });
-      }
+      const iv = validateBody(productImportSchema, { action: 'import', rows: body.rows });
+      if (!iv.success) return NextResponse.json({ error: iv.error }, { status: 400 });
+      const rows = iv.data.rows as any[];
 
       const results: { row: number; status: 'created' | 'updated' | 'skipped'; name: string; message?: string }[] = [];
       let created = 0;

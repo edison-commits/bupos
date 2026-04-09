@@ -2,14 +2,10 @@
  * BuPOS Reports API
  * @tags reports
  */
-import { BUPOS_LOCATION_ID } from "@/lib/env";
-import { pool } from "@/lib/db";
-import type { QueryResult } from "pg";
+import { orgQuery } from "@/lib/db";
 import { NextResponse } from "next/server";
 import { getAdminSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/authz";
-
-const LOCATION_ID = BUPOS_LOCATION_ID;
 
 const REPORT_TYPES = new Set(["summary", "category", "employee", "hourly", "tender", "products", "shifts"]);
 
@@ -26,6 +22,11 @@ export async function GET(request: Request) {
   }
   if (!hasPermission(adminCtx.employee.roleKey, "audit.view")) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const locationId = adminCtx?.employee?.locationIds?.[0];
+  if (!locationId) {
+    return NextResponse.json({ error: 'No location context' }, { status: 400 });
   }
 
   const url = new URL(request.url);
@@ -56,25 +57,25 @@ export async function GET(request: Request) {
 
     switch (type) {
       case "summary":
-        data = await getSalesSummary(orgId, from, to);
+        data = await getSalesSummary(orgId, locationId, from, to);
         break;
       case "category":
-        data = await getSalesByCategory(orgId, from, to);
+        data = await getSalesByCategory(orgId, locationId, from, to);
         break;
       case "employee":
-        data = await getSalesByEmployee(orgId, from, to);
+        data = await getSalesByEmployee(orgId, locationId, from, to);
         break;
       case "hourly":
-        data = await getSalesByHour(orgId, from, to);
+        data = await getSalesByHour(orgId, locationId, from, to);
         break;
       case "tender":
         data = await getTenderAnalysis(orgId, from, to);
         break;
       case "products":
-        data = await getTopProducts(orgId, from, to);
+        data = await getTopProducts(orgId, locationId, from, to);
         break;
       case "shifts":
-        data = await getShiftSummary(orgId, from, to);
+        data = await getShiftSummary(orgId, locationId, from, to);
         break;
       default:
         return Response.json({ error: `Unknown report type: ${type}` }, { status: 400 });
@@ -87,7 +88,7 @@ export async function GET(request: Request) {
   }
 }
 
-async function getSalesSummary(orgId: string, from: string, to: string) {
+async function getSalesSummary(orgId: string, locationId: string, from: string, to: string) {
   const fromDate = `${from}T00:00:00Z`;
   const toDate = `${to}T23:59:59Z`;
 
@@ -104,7 +105,7 @@ async function getSalesSummary(orgId: string, from: string, to: string) {
 
   const queries = await Promise.all([
     // Current period
-    pool.query(
+    orgQuery(orgId,
       `SELECT 
         SUM(grand_total) as revenue,
         COUNT(*) as transaction_count,
@@ -115,10 +116,10 @@ async function getSalesSummary(orgId: string, from: string, to: string) {
         COALESCE(SUM(jsonb_array_length(COALESCE(cart_snapshot::jsonb -> 'items', '[]'::jsonb))), 0) as item_count
       FROM transactions
       WHERE organization_id = $1 AND location_id = $2 AND created_at >= $3 AND created_at <= $4`,
-      [orgId, LOCATION_ID, fromDate, toDate]
+      [orgId, locationId, fromDate, toDate]
     ),
     // Previous period
-    pool.query(
+    orgQuery(orgId,
       `SELECT 
         SUM(grand_total) as revenue,
         COUNT(*) as transaction_count,
@@ -127,7 +128,7 @@ async function getSalesSummary(orgId: string, from: string, to: string) {
         SUM(discount_total) as discount_total
       FROM transactions
       WHERE organization_id = $1 AND location_id = $2 AND created_at >= $3 AND created_at <= $4`,
-      [orgId, LOCATION_ID, prevFromDate, prevToDate]
+      [orgId, locationId, prevFromDate, prevToDate]
     ),
   ]);
 
@@ -159,11 +160,11 @@ async function getSalesSummary(orgId: string, from: string, to: string) {
   return { current, previous };
 }
 
-async function getSalesByCategory(orgId: string, from: string, to: string) {
+async function getSalesByCategory(orgId: string, locationId: string, from: string, to: string) {
   const fromDate = `${from}T00:00:00Z`;
   const toDate = `${to}T23:59:59Z`;
 
-  const result = await pool.query(
+  const result = await orgQuery(orgId,
     `SELECT 
       c.id,
       c.name,
@@ -182,7 +183,7 @@ async function getSalesByCategory(orgId: string, from: string, to: string) {
     WHERE t.organization_id = $1 AND t.location_id = $2 AND t.created_at >= $3 AND t.created_at <= $4
     GROUP BY c.id, c.name
     ORDER BY revenue DESC`,
-    [orgId, LOCATION_ID, fromDate, toDate]
+    [orgId, locationId, fromDate, toDate]
   );
 
   const categories = result.rows.map((row: any) => ({
@@ -198,11 +199,11 @@ async function getSalesByCategory(orgId: string, from: string, to: string) {
   return { categories, totalRevenue };
 }
 
-async function getSalesByEmployee(orgId: string, from: string, to: string) {
+async function getSalesByEmployee(orgId: string, locationId: string, from: string, to: string) {
   const fromDate = `${from}T00:00:00Z`;
   const toDate = `${to}T23:59:59Z`;
 
-  const result = await pool.query(
+  const result = await orgQuery(orgId,
     `SELECT 
       e.id,
       COALESCE(e.display_name, CONCAT(e.first_name, ' ', e.last_name)) as name,
@@ -214,7 +215,7 @@ async function getSalesByEmployee(orgId: string, from: string, to: string) {
     WHERE t.organization_id = $1 AND t.location_id = $2 AND t.created_at >= $3 AND t.created_at <= $4
     GROUP BY e.id, e.display_name, e.first_name, e.last_name
     ORDER BY total_sales DESC`,
-    [orgId, LOCATION_ID, fromDate, toDate]
+    [orgId, locationId, fromDate, toDate]
   );
 
   const employees = result.rows.map((row: any) => ({
@@ -229,11 +230,11 @@ async function getSalesByEmployee(orgId: string, from: string, to: string) {
   return { employees };
 }
 
-async function getSalesByHour(orgId: string, from: string, to: string) {
+async function getSalesByHour(orgId: string, locationId: string, from: string, to: string) {
   const fromDate = `${from}T00:00:00Z`;
   const toDate = `${to}T23:59:59Z`;
 
-  const result = await pool.query(
+  const result = await orgQuery(orgId,
     `SELECT 
       EXTRACT(HOUR FROM created_at AT TIME ZONE 'UTC') as hour,
       SUM(grand_total) as revenue,
@@ -242,7 +243,7 @@ async function getSalesByHour(orgId: string, from: string, to: string) {
     WHERE organization_id = $1 AND location_id = $2 AND created_at >= $3 AND created_at <= $4
     GROUP BY EXTRACT(HOUR FROM created_at AT TIME ZONE 'UTC')
     ORDER BY hour ASC`,
-    [orgId, LOCATION_ID, fromDate, toDate]
+    [orgId, locationId, fromDate, toDate]
   );
 
   const hours = result.rows.map((row: any) => ({
@@ -265,7 +266,7 @@ async function getTenderAnalysis(orgId: string, from: string, to: string) {
   const fromDate = `${from}T00:00:00Z`;
   const toDate = `${to}T23:59:59Z`;
 
-  const result = await pool.query(
+  const result = await orgQuery(orgId,
     `SELECT 
       tender_type,
       SUM(amount) as amount,
@@ -286,11 +287,11 @@ async function getTenderAnalysis(orgId: string, from: string, to: string) {
   return { tenders };
 }
 
-async function getTopProducts(orgId: string, from: string, to: string) {
+async function getTopProducts(orgId: string, locationId: string, from: string, to: string) {
   const fromDate = `${from}T00:00:00Z`;
   const toDate = `${to}T23:59:59Z`;
 
-  const result = await pool.query(
+  const result = await orgQuery(orgId,
     `SELECT 
       pv.id as variant_id,
       COALESCE(pv.name, p.name) as name,
@@ -309,7 +310,7 @@ async function getTopProducts(orgId: string, from: string, to: string) {
     GROUP BY pv.id, pv.name, p.name
     ORDER BY revenue DESC
     LIMIT 20`,
-    [orgId, LOCATION_ID, fromDate, toDate]
+    [orgId, locationId, fromDate, toDate]
   );
 
   const byRevenue = result.rows.slice(0, 10).map((row: any) => ({
@@ -332,11 +333,11 @@ async function getTopProducts(orgId: string, from: string, to: string) {
   return { byRevenue, byQuantity };
 }
 
-async function getShiftSummary(orgId: string, from: string, to: string) {
+async function getShiftSummary(orgId: string, locationId: string, from: string, to: string) {
   const fromDate = `${from}T00:00:00Z`;
   const toDate = `${to}T23:59:59Z`;
 
-  const result = await pool.query(
+  const result = await orgQuery(orgId,
     `SELECT 
       s.id,
       COALESCE(e.display_name, CONCAT(e.first_name, ' ', e.last_name)) as employee,
@@ -355,7 +356,7 @@ async function getShiftSummary(orgId: string, from: string, to: string) {
     WHERE s.organization_id = $4 AND s.location_id = $1 AND s.opened_at >= $2 AND s.opened_at <= $3
     GROUP BY s.id, e.display_name, e.first_name, e.last_name, s.opened_at, s.status, s.opening_float, s.closed_at, s.closing_expected_cash, s.closing_declared_cash, s.closing_variance
     ORDER BY s.opened_at DESC`,
-    [LOCATION_ID, fromDate, toDate, orgId]
+    [locationId, fromDate, toDate, orgId]
   );
 
   const shifts = result.rows.map((row: any) => ({

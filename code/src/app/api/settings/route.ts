@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/db';
 import { requireAdminPermission } from '@/lib/authz';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
-import { BUPOS_LOCATION_ID } from '@/lib/env';
+import { validateBody, settingsUpdateSchema } from '@/lib/validation/schemas';
 
 export async function GET() {
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
@@ -11,6 +11,11 @@ export async function GET() {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }  if (!adminCtx && !registerCtx) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const locationId = registerCtx?.location?.id ?? adminCtx?.employee?.locationIds?.[0];
+  if (!locationId) {
+    return NextResponse.json({ error: 'No location context' }, { status: 400 });
   }
 
   try {
@@ -28,7 +33,7 @@ export async function GET() {
         orgId,
         `SELECT id, name, code, address1, city, region, postal_code, phone, tax_rate, is_active
          FROM locations WHERE id = $1 AND organization_id = $2`,
-        [BUPOS_LOCATION_ID, orgId]
+        [locationId, orgId]
       ),
     ]);
 
@@ -86,12 +91,12 @@ export async function PUT(request: NextRequest) {
   if (!orgId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  const locationId = ctx.employee.locationIds[0];
   try {
-    const { section, data } = await request.json();
-
-    if (!section || !data) {
-      return NextResponse.json({ error: 'Missing section or data' }, { status: 400 });
-    }
+    const raw = await request.json();
+    const v = validateBody(settingsUpdateSchema, raw);
+    if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
+    const { section, data } = v.data;
 
     switch (section) {
       case 'store':
@@ -114,7 +119,7 @@ export async function PUT(request: NextRequest) {
                postal_code = $6, phone = $7, tax_rate = $8, updated_at = NOW()
            WHERE id = $9 AND organization_id = $10`,
           [data.name, data.code, data.address1, data.city, data.region,
-           data.postalCode, data.phone, data.taxRate, BUPOS_LOCATION_ID, orgId]
+           data.postalCode, data.phone, data.taxRate, locationId, orgId]
         );
         // Return full settings after update so client state stays valid
         const [updatedOrg, updatedLocation] = await Promise.all([
@@ -131,7 +136,7 @@ export async function PUT(request: NextRequest) {
             orgId,
             `SELECT id, name, code, address1, city, region, postal_code, phone, tax_rate, is_active
              FROM locations WHERE id = $1 AND organization_id = $2`,
-            [BUPOS_LOCATION_ID, orgId]
+            [locationId, orgId]
           ),
         ]);
         const org = updatedOrg.rows[0];

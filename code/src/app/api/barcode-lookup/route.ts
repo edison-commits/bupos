@@ -1,13 +1,17 @@
 import { orgQuery } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
-import { BUPOS_LOCATION_ID } from '@/lib/env';
 
 export async function GET(request: NextRequest) {
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
   const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
   if (!orgId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const locationId = registerCtx?.location?.id ?? adminCtx?.employee?.locationIds?.[0];
+  if (!locationId) {
+    return NextResponse.json({ error: 'No location context' }, { status: 400 });
   }
 
   const code = request.nextUrl.searchParams.get('code')
@@ -49,7 +53,7 @@ export async function GET(request: NextRequest) {
       `SELECT on_hand FROM inventory_levels
        WHERE product_variant_id = $1 AND location_id = $2
        LIMIT 1`,
-      [r.variant_id, BUPOS_LOCATION_ID]
+      [r.variant_id, locationId]
     )
 
     const quantity = invRes.rows[0]?.on_hand ?? 0

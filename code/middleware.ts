@@ -7,8 +7,8 @@ export function middleware(request: NextRequest) {
   // CORS — allow same-origin and known cross-origin API callers
   const origin = request.headers.get('origin') ?? '';
   const allowedOrigins = [
-    'http://localhost:3000',
     'https://bupos.basicuniform.com',
+    ...(process.env.NODE_ENV !== 'production' ? ['http://localhost:3000'] : []),
   ];
   const isCorsAllowed =
     origin === '' || // same-origin

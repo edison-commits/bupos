@@ -2,15 +2,16 @@
  * BuPOS Employee Management API
  * @tags employees
  */
-import { BUPOS_LOCATION_ID } from '@/lib/env';
 import { NextRequest, NextResponse } from 'next/server';
 import { redirect } from 'next/navigation';
 import pool, { orgQuery } from '@/lib/db';
 import { hashSecret, verifySecret } from '@/lib/auth/crypto';
 import { randomUUID } from 'crypto';
 import { canManageEmployeeRole, requireAdminPermission } from '@/lib/authz';
+import type { RoleKey } from '@/lib/domain/types';
 import { getAdminSession } from '@/lib/auth/session';
 import { invalidateEmployeesCache, pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
+import { validateBody, employeeCreateSchema, employeeUpdateSchema, employeePatchSchema } from '@/lib/validation/schemas';
 
 /**
  * Invalidate all active sessions for an employee — both admin and register scopes.
@@ -23,8 +24,6 @@ async function invalidateEmployeeSessions(employeeId: string): Promise<void> {
     [employeeId],
   );
 }
-
-const LOCATION_ID = BUPOS_LOCATION_ID;
 
 // GET: List all employees with their roles and location info
 export async function GET(request: NextRequest) {
@@ -107,6 +106,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   try {
+    const body = await request.json();
+    const v = validateBody(employeeCreateSchema, body);
+    if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
     const {
       firstName,
       lastName,
@@ -117,41 +119,12 @@ export async function POST(request: NextRequest) {
       pin,
       pinHint,
       locationIds,
-    } = await request.json();
+    } = v.data;
 
-    // Validation
-    if (!firstName?.trim() || !lastName?.trim() || !displayName?.trim()) {
-      return NextResponse.json(
-        { error: 'First name, last name, and display name are required' },
-        { status: 400 }
-      );
-    }
-
-    if (!pin || !/^\d{4,6}$/.test(pin)) {
-      return NextResponse.json(
-        { error: 'PIN must be 4-6 digits' },
-        { status: 400 }
-      );
-    }
-
-    if (!roleKey || !['owner', 'manager', 'cashier', 'inventory_clerk', 'support'].includes(roleKey)) {
-      return NextResponse.json(
-        { error: 'Invalid role' },
-        { status: 400 }
-      );
-    }
-
-    if (!canManageEmployeeRole(ctx.employee.roleKey, roleKey)) {
+    if (!canManageEmployeeRole(ctx.employee.roleKey, roleKey as RoleKey)) {
       return NextResponse.json(
         { error: 'Forbidden: you cannot assign the requested role' },
         { status: 403 }
-      );
-    }
-
-    if (!Array.isArray(locationIds) || locationIds.length === 0) {
-      return NextResponse.json(
-        { error: 'At least one location must be assigned' },
-        { status: 400 }
       );
     }
 
@@ -190,7 +163,7 @@ export async function POST(request: NextRequest) {
         roleKey,
         firstName.trim(),
         lastName.trim(),
-        displayName.trim(),
+        displayName?.trim() || `${firstName.trim()} ${lastName.trim()}`,
         email?.trim() || null,
         phone?.trim() || null,
         pinHint?.trim() || '',
@@ -226,7 +199,7 @@ export async function POST(request: NextRequest) {
       orgId, null, ctx.employee.id,
       "employee", employee.id, "employee_created",
       { id: employee.id, display_name: employee.displayName, role_key: employee.roleKey },
-    ).catch(() => {});
+    ).catch((err) => console.error("[audit] Failed to insert audit event:", err));
     return NextResponse.json({ employee }, { status: 201 });
   } catch (error) {
     console.error('Employees POST error:', error);
@@ -242,6 +215,9 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   try {
+    const body = await request.json();
+    const v = validateBody(employeeUpdateSchema, body);
+    if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
     const {
       id,
       firstName,
@@ -252,13 +228,9 @@ export async function PUT(request: NextRequest) {
       roleKey,
       pinHint,
       locationIds,
-    } = await request.json();
+    } = v.data;
 
-    if (!id) {
-      return NextResponse.json({ error: 'Employee ID required' }, { status: 400 });
-    }
-
-    if (roleKey !== undefined && !canManageEmployeeRole(ctx.employee.roleKey, roleKey)) {
+    if (roleKey !== undefined && !canManageEmployeeRole(ctx.employee.roleKey, roleKey as RoleKey)) {
       return NextResponse.json(
         { error: 'Forbidden: you cannot assign the requested role' },
         { status: 403 }
@@ -348,7 +320,7 @@ export async function PUT(request: NextRequest) {
       orgId, null, ctx.employee.id,
       "employee", id, "employee_updated",
       { id, display_name: employee.displayName, role_key: employee.roleKey },
-    ).catch(() => {});
+    ).catch((err) => console.error("[audit] Failed to insert audit event:", err));
     return NextResponse.json({ employee });
   } catch (error) {
     console.error('Employees PUT error:', error);
@@ -364,13 +336,12 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   try {
-    const { action, id, pin } = await request.json();
+    const body = await request.json();
+    const v = validateBody(employeePatchSchema, body);
+    if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
+    const { action, id, pin } = v.data;
 
-    if (!id) {
-      return NextResponse.json({ error: 'Employee ID required' }, { status: 400 });
-    }
-
-    if (action === 'toggle-status') {
+    if (action === 'deactivate') {
       // Toggle is_active status
       const { rows } = await pool.query(
         `UPDATE employees SET is_active = NOT is_active, updated_at = NOW()
@@ -405,7 +376,7 @@ export async function PATCH(request: NextRequest) {
 
       invalidateEmployeesCache(orgId);
       return NextResponse.json({ employee });
-    } else if (action === 'reset-pin') {
+    } else if (action === 'reset_pin') {
       // Reset PIN
       if (!pin || !/^\d{4,6}$/.test(pin)) {
         return NextResponse.json(

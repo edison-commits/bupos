@@ -1,10 +1,8 @@
-import { BUPOS_LOCATION_ID } from '@/lib/env';
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { orgQuery } from '@/lib/db';
 import { requireAdminPermission } from '@/lib/authz';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
-
-const LOCATION_ID = BUPOS_LOCATION_ID;
+import { validateBody, expenseCreateSchema, expenseDeleteSchema } from '@/lib/validation/schemas';
 
 export async function GET(request: NextRequest) {
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
@@ -17,6 +15,7 @@ export async function GET(request: NextRequest) {
 
   const month = request.nextUrl.searchParams.get('month') || ''; // YYYY-MM
   const category = request.nextUrl.searchParams.get('category') || '';
+  const pageSize = Math.min(Math.max(1, Number(request.nextUrl.searchParams.get('pageSize')) || 100), 500);
 
   try {
     let where = 'WHERE e.organization_id = $1';
@@ -34,15 +33,17 @@ export async function GET(request: NextRequest) {
       idx++;
     }
 
-    const { rows } = await pool.query(
-      `SELECT e.*, l.name as location_name FROM expenses e
+    const { rows } = await orgQuery(
+      orgId,
+      `SELECT e.id, e.category, e.description, e.amount, e.expense_date, e.is_recurring, e.recurrence_period, e.notes, e.location_id, e.created_at, e.updated_at, l.name as location_name FROM expenses e
        JOIN locations l ON e.location_id = l.id
-       ${where} ORDER BY e.expense_date DESC, e.created_at DESC`,
-      values,
+       ${where} ORDER BY e.expense_date DESC, e.created_at DESC LIMIT $${idx}`,
+      [...values, pageSize],
     );
 
-    // Summary by category
-    const { rows: summary } = await pool.query(
+    // Summary by category (unaffected by pagination — covers full filtered set)
+    const { rows: summary } = await orgQuery(
+      orgId,
       `SELECT e.category, SUM(e.amount)::numeric(12,2) as total, COUNT(*)::int as count
        FROM expenses e ${where} GROUP BY e.category ORDER BY total DESC`,
       values,
@@ -64,15 +65,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   try {
-    const { category, description, amount, expense_date, is_recurring, recurrence_period, notes } = await request.json();
-    if (!category || !description || !amount) {
-      return NextResponse.json({ error: 'Category, description, and amount are required' }, { status: 400 });
-    }
+    const body = await request.json();
+    const v = validateBody(expenseCreateSchema, body);
+    if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
+    const { category, description, amount, expense_date, is_recurring, recurrence_period, notes } = v.data;
 
-    const { rows } = await pool.query(
+    const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
+    const locationId = registerCtx?.location?.id ?? adminCtx?.employee?.locationIds?.[0];
+
+    const { rows } = await orgQuery(
+      orgId,
       `INSERT INTO expenses (organization_id, location_id, category, description, amount, expense_date, is_recurring, recurrence_period, notes)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-      [orgId, LOCATION_ID, category, description, amount, expense_date || new Date().toISOString().slice(0, 10), is_recurring || false, recurrence_period || null, notes || null],
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, category, description, amount, expense_date, is_recurring, recurrence_period, notes, location_id, created_at, updated_at`,
+      [orgId, locationId, category, description, amount, expense_date || new Date().toISOString().slice(0, 10), is_recurring || false, recurrence_period || null, notes || null],
     );
     return NextResponse.json({ expense: rows[0] });
   } catch (error) {
@@ -88,10 +93,12 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   try {
-    const { id } = await request.json();
-    if (!id) return NextResponse.json({ error: 'Expense ID required' }, { status: 400 });
+    const body = await request.json();
+    const v = validateBody(expenseDeleteSchema, body);
+    if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
+    const { id } = v.data;
 
-    await pool.query('DELETE FROM expenses WHERE id = $1 AND organization_id = $2', [id, orgId]);
+    await orgQuery(orgId, 'DELETE FROM expenses WHERE id = $1 AND organization_id = $2', [id, orgId]);
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Expenses DELETE error:', error);

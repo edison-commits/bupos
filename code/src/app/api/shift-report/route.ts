@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { orgQuery, orgTx, pool } from "@/lib/db";
+import { orgQuery, orgTx } from "@/lib/db";
 import { randomUUID } from "node:crypto";
 import { requireAdminPermission } from "@/lib/authz";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
-import { BUPOS_LOCATION_ID } from "@/lib/env";
+import { validateBody, shiftReportSchema } from "@/lib/validation/schemas";
 
 
 /**
@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const sp = req.nextUrl.searchParams;
-    const locationId = sp.get("location") || BUPOS_LOCATION_ID;
+    const locationId = sp.get("location") ?? registerCtx?.location?.id ?? adminCtx?.employee?.locationIds?.[0];
     const date = sp.get("date") || new Date().toISOString().slice(0, 10);
     const shiftId = sp.get("shift");
 
@@ -245,10 +245,11 @@ export async function POST(req: NextRequest) {
   }
   try {
     const body = await req.json();
-    const { action } = body;
+    const v = validateBody(shiftReportSchema, body);
+    if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
+    const { action, shiftId, declaredCash, note, blindClose } = v.data;
 
     if (action === "close_shift") {
-      const { shiftId, declaredCash, note, blindClose } = body;
       if (!shiftId) return NextResponse.json({ error: "shiftId required" }, { status: 400 });
 
       const client = await orgTx(orgId);
@@ -321,7 +322,8 @@ export async function POST(req: NextRequest) {
 
       // Audit event — outside transaction so audit failure doesn't rollback the shift close
       try {
-        await pool.query(
+        await orgQuery(
+          orgId,
           `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
            VALUES ($1, $2, $3, $4, 'shift', $5, 'shift_closed', $6, now())`,
           [

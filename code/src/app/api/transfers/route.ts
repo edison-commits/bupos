@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { orgQuery, orgTx, pool } from "@/lib/db";
+import { orgQuery, orgTx } from "@/lib/db";
 import { randomUUID } from "node:crypto";
 import { requireAdminPermission } from "@/lib/authz";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
+import { validateBody, transferSchema } from "@/lib/validation/schemas";
 
 
 /**
@@ -132,7 +133,9 @@ export async function POST(req: NextRequest) {
   try {
 
     const body = await req.json();
-    const { action } = body;
+    const v = validateBody(transferSchema, body);
+    if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
+    const { action } = v.data;
 
     if (action === "create") {
       // Idempotency: if key provided, look for an already-succeeded transfer
@@ -186,7 +189,8 @@ export async function POST(req: NextRequest) {
 
       // Audit event — outside transaction
       try {
-        await pool.query(
+        await orgQuery(
+          orgId,
           `INSERT INTO audit_events (id, organization_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
            VALUES ($1, $2, $3, 'transfer', $4, 'transfer_created', $5, now())`,
           [randomUUID(), orgId, employeeId, transferId, JSON.stringify({ source: sourceLocationId, destination: destinationLocationId, line_count: lines.length })],

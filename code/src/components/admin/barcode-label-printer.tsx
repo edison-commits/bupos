@@ -57,6 +57,10 @@ function encodeCode128B(text: string): number[][] {
   return codes.map((c) => CODE128_PATTERNS[c]);
 }
 
+function escXml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
 function generateBarcodeSVG(text: string, width: number, height: number): string {
   const patterns = encodeCode128B(text);
   const bars: string[] = [];
@@ -76,7 +80,7 @@ function generateBarcodeSVG(text: string, width: number, height: number): string
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height + 20}" width="${width}" height="${height + 20}">
     <rect width="${width}" height="${height + 20}" fill="white"/>
     ${bars.join("\n    ")}
-    <text x="${width / 2}" y="${height + 14}" text-anchor="middle" font-family="monospace" font-size="10">${text}</text>
+    <text x="${width / 2}" y="${height + 14}" text-anchor="middle" font-family="monospace" font-size="10">${escXml(text)}</text>
   </svg>`;
 }
 
@@ -137,6 +141,8 @@ export function BarcodeLabelPrinter({ products, variants }: BarcodeLabelPrinterP
     if (!printRef.current) return;
     const printWindow = window.open("", "_blank");
     if (!printWindow) return;
+    // Sanitize innerHTML: strip script/iframe/object/embed tags to prevent XSS
+    const sanitized = printRef.current.innerHTML.replace(/<\s*\/?\s*(script|iframe|object|embed)[^>]*>/gi, "");
     printWindow.document.write(`<!DOCTYPE html>
       <html><head><title>Barcode Labels</title>
       <style>
@@ -148,7 +154,7 @@ export function BarcodeLabelPrinter({ products, variants }: BarcodeLabelPrinterP
         .label-price { font-size: 11px; font-weight: 700; }
         @media print { .label { border: 1px dashed #ccc; } }
       </style></head><body>
-      <div class="label-grid">${printRef.current.innerHTML}</div>
+      <div class="label-grid">${sanitized}</div>
       <script>window.onload=function(){window.print();window.close();}<\/script>
       </body></html>`);
     printWindow.document.close();

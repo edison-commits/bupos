@@ -1,9 +1,6 @@
-import { BUPOS_LOCATION_ID } from "@/lib/env";
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
 import { requireAdminPermission } from "@/lib/authz";
-
-const LOCATION_ID = BUPOS_LOCATION_ID;
 
 /**
  * GET /api/audit

@@ -8,7 +8,7 @@ import { mutateStore } from "@/lib/persistence/store";
 import pool, { orgTx } from "@/lib/db";
 import type { Cart, CheckoutResult, TenderLine } from "@/lib/cart/types";
 import { computeTotals, checkOutCart } from "@/lib/cart/cart";
-import { registerConfiguration } from "@/lib/data/mock-data";
+import { getRegisterConfig } from "@/lib/config/register-config";
 
 const isPg = () => !!process.env.USE_POSTGRES;
 
@@ -38,7 +38,8 @@ export async function checkoutAction(
   // Server-side totals — computed before entering any transaction so redirect
   // (synchronous) works cleanly without holding a DB lock.
   const totals = computeTotals(cart);
-  const thresholds = registerConfiguration.approvalThresholds;
+  const regConfig = await getRegisterConfig(context.employee.organizationId);
+  const thresholds = regConfig.approvalThresholds;
 
   if (!isPg()) {
     // JSON fallback: coarse check only (no row lock available)
@@ -81,7 +82,7 @@ export async function checkoutAction(
   const changeDue = cashTendered > cashPortion ? Number((cashTendered - cashPortion).toFixed(2)) : 0;
 
   // Loyalty calculations
-  const loyaltyConfig = registerConfiguration.loyalty;
+  const loyaltyConfig = regConfig.loyalty;
   // Round earned points to nearest integer (standard loyalty rounding — no floor/ceil bias)
   // Policy: partial points are rounded to nearest; redemption rounds to nearest as well
   const loyaltyPointsEarned = cart.customerId

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
 import { getAdminSession } from "@/lib/auth/session";
-import { BUPOS_LOCATION_ID } from "@/lib/env";
 
 
 /**
@@ -22,7 +21,10 @@ export async function GET(req: NextRequest) {
   }
   try {
     const sp = req.nextUrl.searchParams;
-    const locationId = sp.get("location") || BUPOS_LOCATION_ID;
+    const locationId = sp.get("location") ?? adminCtx?.employee?.locationIds?.[0];
+    if (!locationId) {
+      return NextResponse.json({ error: 'No location context' }, { status: 400 });
+    }
     const range = sp.get("range") || "today";
 
     const now = new Date();

@@ -41,8 +41,7 @@ export function BundleManager({ bundles, variants, products }: BundleManagerProp
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Placeholder for server action
-    console.log("Create bundle:", formData);
+    // TODO: wire up server action for bundle creation
     setFormData({
       name: "",
       description: "",

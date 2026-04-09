@@ -1,10 +1,8 @@
-import { BUPOS_LOCATION_ID } from '@/lib/env';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminPermission } from '@/lib/authz';
 import pool, { orgQuery, orgTx } from '@/lib/db';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
-
-const LOCATION_ID = BUPOS_LOCATION_ID;
+import { validateBody, cashDrawerSchema } from '@/lib/validation/schemas';
 
 /**
  * GET /api/cash-drawer?action=status|history
@@ -19,13 +17,18 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  const locationId = registerCtx?.location?.id ?? adminCtx?.employee?.locationIds?.[0];
+  if (!locationId) {
+    return NextResponse.json({ error: 'No location context' }, { status: 400 });
+  }
+
   try {
     const action = req.nextUrl.searchParams.get('action') || 'status';
 
     if (action === 'status') {
-      return handleGetStatus(orgId);
+      return handleGetStatus(orgId, locationId);
     } else if (action === 'history') {
-      return handleGetHistory(orgId);
+      return handleGetHistory(orgId, locationId);
     } else {
       return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
     }
@@ -48,20 +51,23 @@ export async function POST(req: NextRequest) {
   if (!orgId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  const locationId = ctx.employee.locationIds[0];
   try {
 
     const body = await req.json();
-    const { action } = body;
+    const v = validateBody(cashDrawerSchema, body);
+    if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
+    const { action } = v.data;
     const actorEmployeeId = ctx.employee.id;
 
     if (action === 'open_shift') {
-      return handleOpenShift(orgId, actorEmployeeId, body);
+      return handleOpenShift(orgId, locationId, actorEmployeeId, body);
     } else if (action === 'close_shift') {
-      return handleCloseShift(orgId, body);
+      return handleCloseShift(orgId, locationId, body);
     } else if (action === 'pay_in') {
-      return handlePayIn(orgId, actorEmployeeId, body);
+      return handlePayIn(orgId, locationId, actorEmployeeId, body);
     } else if (action === 'pay_out') {
-      return handlePayOut(orgId, actorEmployeeId, body);
+      return handlePayOut(orgId, locationId, actorEmployeeId, body);
     } else {
       return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
     }
@@ -78,7 +84,7 @@ export async function POST(req: NextRequest) {
 // GET Handlers
 // ────────────────────────────────────────────────────────────────────────────
 
-async function handleGetStatus(orgId: string) {
+async function handleGetStatus(orgId: string, locationId: string) {
   // Single query: fetch open shift with pay_in_outs totals via subqueries
   const shiftRes = await orgQuery(
     orgId,
@@ -91,7 +97,7 @@ async function handleGetStatus(orgId: string) {
      WHERE s.location_id = $1 AND s.status = 'open'
      ORDER BY s.opened_at DESC
      LIMIT 1`,
-    [LOCATION_ID]
+    [locationId]
   );
 
   if (shiftRes.rows.length === 0) {
@@ -112,7 +118,7 @@ async function handleGetStatus(orgId: string) {
   });
 }
 
-async function handleGetHistory(orgId: string) {
+async function handleGetHistory(orgId: string, locationId: string) {
   // Fetch last 10 closed shifts with summary
   const shiftsRes = await orgQuery(
     orgId,
@@ -125,7 +131,7 @@ async function handleGetHistory(orgId: string) {
      WHERE s.location_id = $1 AND s.status = 'closed'
      ORDER BY s.closed_at DESC
      LIMIT 10`,
-    [LOCATION_ID]
+    [locationId]
   );
 
   const shifts = shiftsRes.rows.map((row: any) => ({
@@ -146,7 +152,7 @@ async function handleGetHistory(orgId: string) {
 // POST Handlers
 // ────────────────────────────────────────────────────────────────────────────
 
-async function handleOpenShift(orgId: string, actorEmployeeId: string, body: any) {
+async function handleOpenShift(orgId: string, locationId: string, actorEmployeeId: string, body: any) {
   const { opening_float, note } = body;
 
   if (opening_float === undefined) {
@@ -162,7 +168,7 @@ async function handleOpenShift(orgId: string, actorEmployeeId: string, body: any
     `SELECT id FROM register_sessions
      WHERE location_id = $1 AND status = 'active'
      ORDER BY started_at DESC LIMIT 1`,
-    [LOCATION_ID]
+    [locationId]
   );
 
   let registerSessionId = regSessionRes.rows[0]?.id;
@@ -175,7 +181,7 @@ async function handleOpenShift(orgId: string, actorEmployeeId: string, body: any
        (auth_session_id, employee_id, location_id, status, started_at)
        VALUES (gen_random_uuid(), $1, $2, 'active', NOW())
        RETURNING id`,
-      [actorEmployeeId, LOCATION_ID]
+      [actorEmployeeId, locationId]
     );
     registerSessionId = newRegSessionRes.rows[0].id;
   }
@@ -188,7 +194,7 @@ async function handleOpenShift(orgId: string, actorEmployeeId: string, body: any
      VALUES ($1, $2, $3, $4, $5, 'open')
      RETURNING id, opened_at`,
     [
-      LOCATION_ID,
+      locationId,
       actorEmployeeId,
       registerSessionId,
       opening_float,
@@ -211,7 +217,7 @@ async function handleOpenShift(orgId: string, actorEmployeeId: string, body: any
   );
 }
 
-async function handleCloseShift(orgId: string, body: any) {
+async function handleCloseShift(orgId: string, locationId: string, body: any) {
   const { shift_id, declared_cash, note, blind_close } = body;
 
   if (!shift_id || declared_cash === undefined) {
@@ -227,7 +233,7 @@ async function handleCloseShift(orgId: string, body: any) {
     `SELECT s.id, s.opening_float, s.register_session_id
      FROM shifts s
      WHERE s.id = $1 AND s.location_id = $2`,
-    [shift_id, LOCATION_ID]
+    [shift_id, locationId]
   );
 
   if (shiftRes.rows.length === 0) {
@@ -273,7 +279,7 @@ async function handleCloseShift(orgId: string, body: any) {
   });
 }
 
-async function handlePayIn(orgId: string, actorEmployeeId: string, body: any) {
+async function handlePayIn(orgId: string, locationId: string, actorEmployeeId: string, body: any) {
   const { shift_id, amount, reason, note } = body;
 
   if (!shift_id || !amount || !reason) {
@@ -291,7 +297,7 @@ async function handlePayIn(orgId: string, actorEmployeeId: string, body: any) {
      RETURNING id, created_at`,
     [
       shift_id,
-      LOCATION_ID,
+      locationId,
       actorEmployeeId,
       amount,
       reason,
@@ -317,7 +323,7 @@ async function handlePayIn(orgId: string, actorEmployeeId: string, body: any) {
   );
 }
 
-async function handlePayOut(orgId: string, actorEmployeeId: string, body: any) {
+async function handlePayOut(orgId: string, locationId: string, actorEmployeeId: string, body: any) {
   const { shift_id, amount, reason, note } = body;
 
   if (!shift_id || !amount || !reason) {
@@ -335,7 +341,7 @@ async function handlePayOut(orgId: string, actorEmployeeId: string, body: any) {
      RETURNING id, created_at`,
     [
       shift_id,
-      LOCATION_ID,
+      locationId,
       actorEmployeeId,
       amount,
       reason,

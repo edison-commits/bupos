@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto';
 import { orgQuery, orgTx } from '@/lib/db';
 import { requireAdminPermission } from '@/lib/authz';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
-import { BUPOS_LOCATION_ID } from '@/lib/env';
+import { validateBody, returnCreateSchema, returnUpdateSchema } from '@/lib/validation/schemas';
 
 /**
  * Returns API
@@ -60,14 +60,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   try {
-    const { customer_name, reason, notes, refund_method, lines } = await request.json();
+    const body = await request.json();
+    const v = validateBody(returnCreateSchema, body);
+    if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
+    const { customer_name, reason, notes, refund_method, lines } = v.data;
 
-    if (!lines || lines.length === 0) {
-      return NextResponse.json({ error: 'At least one return item is required' }, { status: 400 });
-    }
+    const locationId = ctx.employee.locationIds?.[0];
 
     // Generate return number: RET-BEL-YYMMDD-NNN — retry loop handles concurrent collision
-    const { rows: locRows } = await orgQuery(orgId, 'SELECT name FROM locations WHERE id = $1', [BUPOS_LOCATION_ID]);
+    const { rows: locRows } = await orgQuery(orgId, 'SELECT name FROM locations WHERE id = $1', [locationId]);
     const locCode = (locRows[0]?.name || 'STR').slice(0, 3).toUpperCase();
     const now = new Date();
     const dateStr = `${String(now.getFullYear()).slice(-2)}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
@@ -95,7 +96,7 @@ export async function POST(request: NextRequest) {
           `INSERT INTO returns (id, organization_id, location_id, return_number, customer_name, reason, notes, refund_method, refund_amount, status)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')
            RETURNING *`,
-          [returnId, orgId, BUPOS_LOCATION_ID, returnNumber, customer_name || null, reason || 'other', notes || null, refund_method || 'store_credit', refundAmount],
+          [returnId, orgId, locationId, returnNumber, customer_name || null, reason || 'other', notes || null, refund_method || 'store_credit', refundAmount],
         );
         break;
       } catch (e) {
@@ -112,7 +113,7 @@ export async function POST(request: NextRequest) {
         orgId,
         `INSERT INTO return_lines (return_id, product_variant_id, quantity, unit_price, restock)
          VALUES ($1, $2, $3, $4, $5)`,
-        [returnId, line.product_variant_id, line.quantity || 1, line.unit_price || 0, line.restock !== false],
+        [returnId, line.product_variant_id, line.quantity || 1, line.unit_price || 0, true],
       );
     }
 
@@ -130,8 +131,10 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   try {
-    const { id, status, processed_by } = await request.json();
-    if (!id || !status) return NextResponse.json({ error: 'ID and status required' }, { status: 400 });
+    const body = await request.json();
+    const v = validateBody(returnUpdateSchema, body);
+    if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
+    const { id, status, processed_by } = v.data;
 
     const client = await orgTx(orgId);
     try {

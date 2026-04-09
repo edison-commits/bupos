@@ -5,7 +5,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/db';
 import { getAdminSession } from '@/lib/auth/session';
-import { BUPOS_LOCATION_ID } from '@/lib/env';
 
 interface ProductRow {
   product_id: string;
@@ -43,6 +42,11 @@ export async function GET(request: NextRequest) {
   const orgId = adminCtx?.employee?.organizationId;
   if (!orgId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const locationId = adminCtx?.employee?.locationIds?.[0];
+  if (!locationId) {
+    return NextResponse.json({ error: 'No location context' }, { status: 400 });
   }
 
   if (cached && Date.now() < cached.expiresAt) {
@@ -113,7 +117,7 @@ export async function GET(request: NextRequest) {
         ${whereClause}
         ORDER BY p.name, pv.sku
         `,
-        [BUPOS_LOCATION_ID, ...params]
+        [locationId, ...params]
       ),
 
       // Get all categories
@@ -166,7 +170,7 @@ export async function GET(request: NextRequest) {
         LEFT JOIN inventory_levels i ON pv.id = i.product_variant_id AND i.location_id = $1
         ${whereClause}
         `,
-        [BUPOS_LOCATION_ID, ...params]
+        [locationId, ...params]
       ),
     ]);
 

@@ -2,9 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { orgTx, orgQuery } from "@/lib/db";
 import { requireRegisterPermission } from "@/lib/authz";
-import { registerConfiguration } from "@/lib/data/mock-data";
-
-import { BUPOS_LOCATION_ID } from '@/lib/env';
+import { getRegisterConfig } from "@/lib/config/register-config";
+import { validateBody, offlineSyncSchema } from "@/lib/validation/schemas";
 interface CartPayload {
   employeeId?: string;
   registerSessionId?: string;
@@ -44,15 +43,13 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const body = await request.json();
-    const { id, cart, tenders, timestamp, registerSessionId, approvedExceptions = [] } = body as {
-      id: string;
-      cart: CartPayload;
-      tenders: Array<{ type: string; amount: number }>;
-      timestamp?: string;
-      registerSessionId?: string;
-      approvedExceptions?: string[];
-    };
+    const raw = await request.json();
+    const v = validateBody(offlineSyncSchema, raw);
+    if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
+    const body = v.data;
+    const { id, timestamp, registerSessionId, approvedExceptions = [] } = body;
+    const cart = body.cart as CartPayload;
+    const tenders = body.tenders as Array<{ type: string; amount: number }>;
 
     // cart is an object { items, employeeId, registerSessionId, discountMode, discountAmount, ... }
     // tenders is an array [{ tenderType, amount }, ...]
@@ -105,13 +102,16 @@ export async function POST(request: NextRequest) {
       client.release();
     }
 
+    // Derive locationId from register session context
+    const locationId = authCtx.location.id;
+
     // Look up location's tax rate from DB instead of hardcoding
     let taxRate = 0.1025; // default fallback
     try {
       const { rows: locRows } = await orgQuery(
         orgId,
         `SELECT tax_rate FROM locations WHERE id = $1`,
-        [BUPOS_LOCATION_ID],
+        [locationId],
       );
       if (locRows[0]?.tax_rate != null) {
         taxRate = Number(locRows[0].tax_rate);
@@ -161,7 +161,8 @@ export async function POST(request: NextRequest) {
     const grandTotal = Number((taxableAmount + taxTotal).toFixed(2));
 
     // ── Server-side approval enforcement — mirrors checkout-action.ts ──────────
-    const thresholds = registerConfiguration.approvalThresholds;
+    const regConfig = await getRegisterConfig(orgId);
+    const thresholds = regConfig.approvalThresholds;
     if (cartDiscount > thresholds.discountOver && !approvedExceptions.includes("discount_threshold")) {
       return NextResponse.json({ error: "Cart discount exceeds threshold without manager approval" }, { status: 403 });
     }
@@ -180,7 +181,7 @@ export async function POST(request: NextRequest) {
     const changeDue = cashTendered > cashPortion ? Number((cashTendered - cashPortion).toFixed(2)) : 0;
     const primaryTenderType = tenders.length === 1 ? tenders[0].type : "split";
     const loyaltyPointsRedeemed = loyaltyTendered > 0 && cart.customerId
-      ? Math.round(loyaltyTendered / registerConfiguration.loyalty.redemptionValuePerPoint)
+      ? Math.round(loyaltyTendered / regConfig.loyalty.redemptionValuePerPoint)
       : 0;
 
     const transactionId = id || randomUUID();
@@ -213,7 +214,7 @@ export async function POST(request: NextRequest) {
              created_at = EXCLUDED.created_at
            RETURNING id`,
           [
-            transactionId, orgId, BUPOS_LOCATION_ID, sessionId, sessionEmployeeId,
+            transactionId, orgId, locationId, sessionId, sessionEmployeeId,
             JSON.stringify(cart), subtotal, discountTotal, taxTotal, grandTotal,
             primaryTenderType, totalTendered, changeDue,
             timestamp || new Date().toISOString(),
@@ -242,7 +243,7 @@ export async function POST(request: NextRequest) {
             randomUUID(), transactionId, sessionEmployeeId,
             `Offline checkout synced`,
             JSON.stringify({
-              location_id: BUPOS_LOCATION_ID,
+              location_id: locationId,
               register_session_id: sessionId,
               item_count: items.length,
               grand_total: grandTotal.toFixed(2),
@@ -264,7 +265,7 @@ export async function POST(request: NextRequest) {
              WHERE il.product_variant_id = ANY($1::uuid[]) AND il.location_id = $2
              ORDER BY il.product_variant_id
              FOR UPDATE`,
-            [variantIds, BUPOS_LOCATION_ID],
+            [variantIds, locationId],
           );
 
           const onHandByVariant: Record<string, number> = {};
@@ -294,7 +295,7 @@ export async function POST(request: NextRequest) {
              SET on_hand = GREATEST(0, il.on_hand + delta.qty), updated_at = now()
              FROM (SELECT unnest($1::uuid[]) as variant_id, unnest($2::int[]) as qty) AS delta
              WHERE il.product_variant_id = delta.variant_id AND il.location_id = $3`,
-            [variantIds, quantities, BUPOS_LOCATION_ID],
+            [variantIds, quantities, locationId],
           );
         }
 

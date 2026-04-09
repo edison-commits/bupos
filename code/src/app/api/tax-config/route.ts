@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
 import { requireAdminPermission } from "@/lib/authz";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
+import { validateBody, taxConfigUpdateSchema } from "@/lib/validation/schemas";
 
 
 /**
@@ -70,15 +71,10 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   try {
-    const { locationId, taxRate } = await req.json();
-
-    if (!locationId || taxRate === undefined || taxRate === null) {
-      return NextResponse.json({ error: "locationId and taxRate required" }, { status: 400 });
-    }
-
-    if (taxRate < 0 || taxRate > 0.5) {
-      return NextResponse.json({ error: "Tax rate must be between 0 and 0.50 (0-50%)" }, { status: 400 });
-    }
+    const body = await req.json();
+    const v = validateBody(taxConfigUpdateSchema, body);
+    if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
+    const { locationId, taxRate } = v.data;
 
     const result = await orgQuery(
       orgId,

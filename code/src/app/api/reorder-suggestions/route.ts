@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { orgQuery } from '@/lib/db';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
 
 
@@ -22,7 +22,7 @@ export async function GET() {
   }
   try {
     // Find all low/out-of-stock items with supplier info if available
-    const { rows } = await pool.query(
+    const { rows } = await orgQuery(orgId,
       `SELECT
         il.id as inventory_id,
         il.on_hand,

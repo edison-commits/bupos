@@ -1,12 +1,21 @@
 /**
- * Environment variable access with fallback defaults.
- * Missing env vars fall back silently — no throwing at module load time.
- * The hardcoded defaults match the values used by the app in production.
+ * Environment variable access — strict in production, lenient in dev.
+ *
+ * BUPOS_ORG_ID and BUPOS_LOCATION_ID are required when USE_POSTGRES is true
+ * or NODE_ENV is "production". DATABASE_URL is required in production.
  */
 
-const DEFAULT_ORG_ID = '33262270-7100-4b46-b2fb-8b50ad872bbb';
-const DEFAULT_LOCATION_ID = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
+const isProd = process.env.NODE_ENV === "production";
+const usePg = !!process.env.USE_POSTGRES;
 
-export const BUPOS_ORG_ID = process.env.BUPOS_ORG_ID ?? DEFAULT_ORG_ID;
-export const BUPOS_LOCATION_ID = process.env.BUPOS_LOCATION_ID ?? DEFAULT_LOCATION_ID;
-export const DATABASE_URL = process.env.DATABASE_URL;
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value && (isProd || usePg)) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+  return value ?? "";
+}
+
+export const BUPOS_ORG_ID = requireEnv("BUPOS_ORG_ID");
+export const BUPOS_LOCATION_ID = requireEnv("BUPOS_LOCATION_ID");
+export const DATABASE_URL = requireEnv("DATABASE_URL");

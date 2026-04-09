@@ -66,7 +66,7 @@ export async function adminLoginAction(formData: FormData) {
           orgId ?? 'unknown', null, cred?.employeeId ?? null,
           "session", null, "admin_login_failed",
           { email, reason: err instanceof Error ? err.message : "unknown" },
-        ).catch(() => {});
+        ).catch((err) => console.error("[audit] Failed to insert audit event:", err));
       } catch {
         // audit lookup failed — skip audit, still redirect
       }

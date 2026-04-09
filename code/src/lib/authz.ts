@@ -1,43 +1,10 @@
 import { redirect } from "next/navigation";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 import type { PermissionKey, RoleKey } from "@/lib/domain/types";
+import { hasPermission, permissionsForRole } from "@/lib/domain/permissions";
 
-export const permissionMatrix: Record<RoleKey, PermissionKey[]> = {
-  owner: [
-    "register.open",
-    "register.pin_login",
-    "catalog.manage",
-    "inventory.adjust",
-    "employee.manage",
-    "audit.view",
-    "approval.discount",
-    "approval.void_item",
-    "approval.void_transaction",
-    "approval.store_credit",
-    "approval.price_override",
-  ],
-  manager: [
-    "register.open",
-    "register.pin_login",
-    "catalog.manage",
-    "inventory.adjust",
-    "employee.manage",
-    "audit.view",
-    "approval.discount",
-    "approval.void_item",
-    "approval.void_transaction",
-    "approval.store_credit",
-  ],
-  cashier: ["register.open", "register.pin_login"],
-  inventory_clerk: ["inventory.adjust"],
-  support: ["audit.view"],
-};
-
-export function hasPermission(role: RoleKey, permission: PermissionKey): boolean {
-  if (role === "owner") return true;
-  const allowed = permissionMatrix[role];
-  return allowed?.includes(permission) ?? false;
-}
+// Re-export from the single source of truth
+export { hasPermission, permissionsForRole };
 
 export function canManageEmployeeRole(actorRole: RoleKey, targetRole: RoleKey): boolean {
   if (actorRole === "owner") return true;

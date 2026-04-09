@@ -1,12 +1,10 @@
-import { BUPOS_LOCATION_ID } from "@/lib/env";
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
 import { pgOpenShift } from "@/lib/persistence/postgres-store";
 import { randomUUID } from "node:crypto";
 import { requireAdminPermission } from "@/lib/authz";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
-
-const LOCATION_ID = BUPOS_LOCATION_ID;
+import { validateBody, shiftCreateSchema } from "@/lib/validation/schemas";
 
 export async function GET(req: NextRequest) {
   const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
@@ -27,8 +25,9 @@ export async function GET(req: NextRequest) {
     const date = sp.get("date");
     const offset = (page - 1) * pageSize;
 
+    const locationId = registerCtx?.location?.id ?? adminCtx?.employee?.locationIds?.[0];
     const conditions: string[] = ["s.location_id = $1"];
-    const params: unknown[] = [LOCATION_ID];
+    const params: unknown[] = [locationId];
 
     if (status === "open") {
       conditions.push("s.status = 'open'");
@@ -110,14 +109,10 @@ export async function POST(req: NextRequest) {
   const idempotencyKey = req.headers.get('Idempotency-Key');
 
   try {
-    const { employeeId, locationId, openingFloat, openedNote } = await req.json();
-
-    if (!employeeId || !locationId) {
-      return NextResponse.json({ error: "Employee and location are required" }, { status: 400 });
-    }
-    if (typeof openingFloat !== "number" || openingFloat < 0) {
-      return NextResponse.json({ error: "Opening float must be 0 or greater" }, { status: 400 });
-    }
+    const body = await req.json();
+    const v = validateBody(shiftCreateSchema, body);
+    if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
+    const { employeeId, locationId, openingFloat, openedNote } = v.data;
 
     // Idempotency: if key provided, look for an already-succeeded shift
     if (idempotencyKey) {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/authz";
+import { validateBody, emailReceiptSchema } from "@/lib/validation/schemas";
 
 /**
  * POST /api/email-receipt
@@ -31,13 +32,14 @@ export async function POST(req: NextRequest) {
     if (adminSession?.employee && !hasPermission(adminSession.employee.roleKey, "audit.view")) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
+    if (registerSession?.employee && !hasPermission(registerSession.employee.roleKey, "register.open")) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
 
     const body = await req.json();
-    const { to, transactionId, storeName, items, subtotal, tax, total, tenders, loyaltyEarned, date } = body;
-
-    if (!to || !transactionId) {
-      return NextResponse.json({ error: "Email address and transaction ID required" }, { status: 400 });
-    }
+    const v = validateBody(emailReceiptSchema, body);
+    if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
+    const { to, transactionId, storeName, items, subtotal, tax, total, tenders, loyaltyEarned, date } = v.data;
 
     const apiKey = process.env.RESEND_API_KEY;
     if (!apiKey) {
@@ -53,7 +55,7 @@ export async function POST(req: NextRequest) {
     })[c]!);
 
     // Build HTML receipt
-    const itemRows = (items || []).map((item: { name: string; qty: number; price: number }) =>
+    const itemRows = ((items || []) as { name: string; qty: number; price: number }[]).map((item) =>
       `<tr>
         <td style="padding:6px 0;border-bottom:1px solid #f0f0f0;">${esc(item.name)}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #f0f0f0;text-align:center;">${item.qty}</td>
@@ -61,7 +63,7 @@ export async function POST(req: NextRequest) {
       </tr>`
     ).join("");
 
-    const tenderRows = (tenders || []).map((t: { type: string; amount: number }) =>
+    const tenderRows = ((tenders || []) as { type: string; amount: number }[]).map((t) =>
       `<div style="display:flex;justify-content:space-between;padding:2px 0;">
         <span style="text-transform:capitalize;">${t.type === "store_credit" ? "Store credit" : esc(t.type)}</span>
         <span>$${t.amount.toFixed(2)}</span>

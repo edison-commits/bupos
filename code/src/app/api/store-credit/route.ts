@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { requireAdminPermission } from "@/lib/authz";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
+import { validateBody, storeCreditSchema } from "@/lib/validation/schemas";
 
 
 /**
@@ -120,11 +121,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   try {
-    const { customerId, amount, reason, approvedBy } = await req.json();
-
-    if (!customerId || !amount || amount <= 0 || !reason) {
-      return NextResponse.json({ error: "Customer ID, positive amount, and reason required" }, { status: 400 });
-    }
+    const body = await req.json();
+    const v = validateBody(storeCreditSchema, body);
+    if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
+    const { customerId, amount, reason, approvedBy } = v.data;
 
     const client = await orgTx(orgId);
     try {
@@ -155,7 +155,7 @@ export async function POST(req: NextRequest) {
         orgId, null, employeeId,
         "customer", customerId, "store_credit_issued",
         { id: entryId, amount, new_balance: newBalance, reason },
-      ).catch(() => {});
+      ).catch((err) => console.error("[audit] Failed to insert audit event:", err));
       return NextResponse.json({ id: entryId, customerId, newBalance, amount }, { status: 201 });
     } catch (e) {
       await client.query("ROLLBACK");

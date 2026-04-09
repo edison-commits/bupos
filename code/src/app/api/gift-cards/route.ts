@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { requireAdminPermission } from "@/lib/authz";
 import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
+import { validateBody, giftCardSchema } from "@/lib/validation/schemas";
 
 /**
  * GET /api/gift-cards
@@ -131,7 +132,9 @@ export async function POST(req: NextRequest) {
   }
   try {
     const body = await req.json();
-    const { action } = body;
+    const v = validateBody(giftCardSchema, body);
+    if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
+    const { action } = v.data;
 
     if (action === "activate") {
       const { code, amount, customerId } = body;
@@ -165,7 +168,7 @@ export async function POST(req: NextRequest) {
           orgId, null, employeeId,
           "gift_card", gcId, "gift_card_created",
           { id: gcId, code: `****${code.slice(-4)}`, amount },
-        ).catch(() => {});
+        ).catch((err) => console.error("[audit] Failed to insert audit event:", err));
         return NextResponse.json({ id: gcId, code, balance: amount, status: "active" }, { status: 201 });
       } catch (e) {
         await client.query("ROLLBACK");

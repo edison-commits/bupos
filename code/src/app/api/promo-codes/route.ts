@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { orgQuery, orgTx } from "@/lib/db";
 import { requireAdminPermission } from "@/lib/authz";
 import { randomUUID } from "node:crypto";
+import { validateBody, promoCodeSchema } from "@/lib/validation/schemas";
 
 
 /**
@@ -141,15 +142,9 @@ export async function POST(req: NextRequest) {
     const { action } = body;
 
     if (action === "create") {
-      const { code, description, type, value, minimumPurchase, maxRedemptions, startsAt, expiresAt } = body;
-
-      if (!code || !type || !value || value <= 0 || !maxRedemptions || !startsAt) {
-        return NextResponse.json({ error: "Code, type, value, maxRedemptions, and startsAt are required" }, { status: 400 });
-      }
-
-      if (!["fixed", "percent", "bogo"].includes(type)) {
-        return NextResponse.json({ error: "Type must be fixed, percent, or bogo" }, { status: 400 });
-      }
+      const v = validateBody(promoCodeSchema, body);
+      if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
+      const { code, description, type, value, minimumPurchase, maxRedemptions, startsAt, expiresAt } = v.data;
 
       // Check for duplicate
       const existing = await orgQuery(orgId, `SELECT id FROM promo_codes WHERE LOWER(code) = LOWER($1)`, [code]);

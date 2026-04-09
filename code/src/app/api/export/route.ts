@@ -1,4 +1,3 @@
-import { BUPOS_LOCATION_ID } from "@/lib/env";
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
 import { requireAdminPermission } from "@/lib/authz";
@@ -56,7 +55,10 @@ export async function GET(req: NextRequest) {
       }
 
       case "inventory": {
-        const locationId = sp.get("location") || BUPOS_LOCATION_ID;
+        const locationId = sp.get("location") ?? ctx.employee.locationIds?.[0];
+        if (!locationId) {
+          return NextResponse.json({ error: 'No location context' }, { status: 400 });
+        }
         const rows = await orgQuery(
           orgId,
           `SELECT p.name AS product, pv.sku, pv.barcode, pv.size_label AS size, pv.color_label AS color, pv.price AS retail_price, pv.cost AS cost_price,
