@@ -1,7 +1,7 @@
 "use server";
 
 import { mutateStore } from "@/lib/persistence/store";
-import { getAdminSession } from "@/lib/auth/session";
+import { requireAdminPermission } from "@/lib/authz";
 import { orgTx, pool } from "@/lib/db";
 import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 import type { StoreCreditEntry } from "@/lib/domain/types";
@@ -19,8 +19,7 @@ export async function issueStoreCreditAction(formData: FormData) {
     throw new Error("Customer, positive amount, and reason are required");
   }
 
-  const ctx = await getAdminSession();
-  if (!ctx) throw new Error("Not authenticated");
+  const ctx = await requireAdminPermission("register.open");
 
   if (isPg()) {
     const orgId = ctx.employee.organizationId;

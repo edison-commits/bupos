@@ -181,12 +181,16 @@ async function buildZReport(orgId: string, shiftId: string): Promise<ZReportData
   ]);
 
   const openingFloat = shiftRes.rows[0] ? Number(shiftRes.rows[0].opening_float) : 0;
-  const txns = txnsRes.rows;
-  const completed = txns.filter((t: any) => t.status === "completed");
-  const refunded = txns.filter((t: any) => t.status === "refunded" || t.status === "returned");
+  interface TxnRow { id: string; status: string; grand_total: string }
+  interface TenderRow { tender_type: string; amount: string; count: number }
+  interface PayRow { direction: string; total: string }
+
+  const txns = txnsRes.rows as TxnRow[];
+  const completed = txns.filter((t) => t.status === "completed");
+  const refunded = txns.filter((t) => t.status === "refunded" || t.status === "returned");
 
   // 2) Get tender breakdown for completed transactions
-  const txnIds = completed.map((t: any) => t.id);
+  const txnIds = completed.map((t) => t.id);
   let tenderBreakdown: Array<{ type: string; count: number; amount: number }> = [];
 
   if (txnIds.length > 0) {
@@ -199,18 +203,19 @@ async function buildZReport(orgId: string, shiftId: string): Promise<ZReportData
        ORDER BY amount DESC`,
       [txnIds],
     );
-    tenderBreakdown = tenderRes.rows.map((r: any) => ({
+    tenderBreakdown = (tenderRes.rows as TenderRow[]).map((r) => ({
       type: r.tender_type,
       count: r.count,
       amount: Number(r.amount),
     }));
   }
 
-  const salesAmount = completed.reduce((s: number, t: any) => s + Number(t.grand_total), 0);
-  const refundsAmount = refunded.reduce((s: number, t: any) => s + Math.abs(Number(t.grand_total)), 0);
+  const salesAmount = completed.reduce((s, t) => s + Number(t.grand_total), 0);
+  const refundsAmount = refunded.reduce((s, t) => s + Math.abs(Number(t.grand_total)), 0);
 
-  const payIns = Number(payRes.rows.find((r: any) => r.direction === "pay_in")?.total ?? 0);
-  const payOuts = Number(payRes.rows.find((r: any) => r.direction === "pay_out")?.total ?? 0);
+  const payRows = payRes.rows as PayRow[];
+  const payIns = Number(payRows.find((r) => r.direction === "pay_in")?.total ?? 0);
+  const payOuts = Number(payRows.find((r) => r.direction === "pay_out")?.total ?? 0);
 
   const cashTender = tenderBreakdown.find((t) => t.type === "cash");
   const cashSales = cashTender?.amount ?? 0;

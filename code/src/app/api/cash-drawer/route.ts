@@ -134,7 +134,11 @@ async function handleGetHistory(orgId: string, locationId: string) {
     [locationId]
   );
 
-  const shifts = shiftsRes.rows.map((row: any) => ({
+  interface ShiftHistoryRow {
+    id: string; employee_name: string; opened_at: string; closed_at: string;
+    opening_float: string; closing_expected_cash: string; closing_declared_cash: string; closing_variance: string;
+  }
+  const shifts = (shiftsRes.rows as ShiftHistoryRow[]).map((row) => ({
     id: row.id,
     employeeName: row.employee_name,
     openedAt: row.opened_at,
@@ -152,7 +156,7 @@ async function handleGetHistory(orgId: string, locationId: string) {
 // POST Handlers
 // ────────────────────────────────────────────────────────────────────────────
 
-async function handleOpenShift(orgId: string, locationId: string, actorEmployeeId: string, body: any) {
+async function handleOpenShift(orgId: string, locationId: string, actorEmployeeId: string, body: Record<string, unknown>) {
   const { opening_float, note } = body;
 
   if (opening_float === undefined) {
@@ -217,7 +221,7 @@ async function handleOpenShift(orgId: string, locationId: string, actorEmployeeI
   );
 }
 
-async function handleCloseShift(orgId: string, locationId: string, body: any) {
+async function handleCloseShift(orgId: string, locationId: string, body: Record<string, unknown>) {
   const { shift_id, declared_cash, note, blind_close } = body;
 
   if (!shift_id || declared_cash === undefined) {
@@ -279,7 +283,7 @@ async function handleCloseShift(orgId: string, locationId: string, body: any) {
   });
 }
 
-async function handlePayIn(orgId: string, locationId: string, actorEmployeeId: string, body: any) {
+async function handlePayIn(orgId: string, locationId: string, actorEmployeeId: string, body: Record<string, unknown>) {
   const { shift_id, amount, reason, note } = body;
 
   if (!shift_id || !amount || !reason) {
@@ -323,7 +327,7 @@ async function handlePayIn(orgId: string, locationId: string, actorEmployeeId: s
   );
 }
 
-async function handlePayOut(orgId: string, locationId: string, actorEmployeeId: string, body: any) {
+async function handlePayOut(orgId: string, locationId: string, actorEmployeeId: string, body: Record<string, unknown>) {
   const { shift_id, amount, reason, note } = body;
 
   if (!shift_id || !amount || !reason) {

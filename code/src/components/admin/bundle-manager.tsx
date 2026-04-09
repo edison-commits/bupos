@@ -231,8 +231,9 @@ export function BundleManager({ bundles, variants, products }: BundleManagerProp
               </div>
 
               <div className="flex gap-2 pt-3">
-                <button type="submit" className="touch-button flex-1 rounded-2xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white">
+                <button type="submit" disabled className="touch-button flex-1 rounded-2xl bg-zinc-400 px-4 py-2 text-sm font-semibold text-white cursor-not-allowed relative">
                   Create bundle
+                  <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 uppercase">Coming Soon</span>
                 </button>
                 <button
                   type="button"

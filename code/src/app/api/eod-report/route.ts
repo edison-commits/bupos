@@ -5,6 +5,28 @@ import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 import { validateBody, eodReportSchema } from "@/lib/validation/schemas";
 const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
 
+interface SalesSummary {
+  total_sales_count: number;
+  total_sales_amount: number;
+  total_returns_count: number;
+  total_returns_amount: number;
+}
+interface PaymentMethod { payment_method: string; total_amount: number; transaction_count: number }
+interface TopProduct { name: string; sku: string; total_quantity: number; total_revenue: number }
+interface EmployeePerf { employee_name: string; transaction_count: number; total_sales: number }
+interface LowStockItem { name: string; sku: string; on_hand: number; reorder_point: number }
+interface ReportData {
+  date: string;
+  sales_summary: SalesSummary;
+  net_revenue: number;
+  avg_transaction_value: string;
+  payment_methods: PaymentMethod[];
+  top_products: TopProduct[];
+  employee_performance: EmployeePerf[];
+  shifts: { id: string; started_at: string; closed_at: string | null; duration_seconds: number }[];
+  low_stock_items: LowStockItem[];
+}
+
 /**
  * GET /api/eod-report  [DEPRECATED — no UI consumer; hardcoded locationId]
  *
@@ -47,7 +69,7 @@ export async function POST(req: NextRequest) {
   if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
 
   const locationId = ctx.employee.locationIds?.[0];
-  let reportData: any;
+  let reportData: ReportData;
   try {
     reportData = await generateReportData(orgId, locationId);
   } catch (error) {
@@ -76,7 +98,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-async function generateReportData(orgId: string, locationId?: string) {
+async function generateReportData(orgId: string, locationId?: string): Promise<ReportData> {
   const today = new Date().toISOString().split("T")[0];
   const startOfDay = `${today}T00:00:00Z`;
   const endOfDay = `${today}T23:59:59Z`;
@@ -203,13 +225,19 @@ async function generateReportData(orgId: string, locationId?: string) {
   };
 }
 
-async function sendEmailReport(reportData: any) {
+async function sendEmailReport(reportData: ReportData) {
   const emailBody = generateEmailHTML(reportData);
   const today = new Date().toISOString().split("T")[0];
 
+  // M-11: Read recipient from env var instead of hardcoding
+  const eodRecipient = process.env.EOD_REPORT_EMAIL;
+  if (!eodRecipient) {
+    throw new Error("EOD_REPORT_EMAIL not configured — skipping email send");
+  }
+
   const emailPayload = {
     from: RESEND_API_KEY.includes("test") ? "onboarding@resend.dev" : "reports@basicuniform.com",
-    to: "londonpark@gmail.com",
+    to: eodRecipient,
     subject: `BasicUniform Daily Report - ${today}`,
     html: emailBody,
   };
@@ -232,7 +260,7 @@ async function sendEmailReport(reportData: any) {
   return await response.json();
 }
 
-function generateEmailHTML(data: any): string {
+function generateEmailHTML(data: ReportData): string {
   const {
     date,
     sales_summary,

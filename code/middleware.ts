@@ -12,7 +12,7 @@ export function middleware(request: NextRequest) {
   ];
   const isCorsAllowed =
     origin === '' || // same-origin
-    allowedOrigins.some((o) => origin.startsWith(o));
+    allowedOrigins.some((o) => origin === o);
   if (isCorsAllowed) {
     response.headers.set('Access-Control-Allow-Origin', origin || "'self'");
   }

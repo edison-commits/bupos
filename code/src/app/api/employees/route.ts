@@ -8,6 +8,7 @@ import pool, { orgQuery } from '@/lib/db';
 import { hashSecret, verifySecret } from '@/lib/auth/crypto';
 import { randomUUID } from 'crypto';
 import { canManageEmployeeRole, requireAdminPermission } from '@/lib/authz';
+import { checkRateLimit } from '@/lib/auth/rate-limit';
 import type { RoleKey } from '@/lib/domain/types';
 import { getAdminSession } from '@/lib/auth/session';
 import { invalidateEmployeesCache, pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
@@ -104,6 +105,10 @@ export async function POST(request: NextRequest) {
   const orgId = ctx.employee.organizationId;
   if (!orgId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  const rl = checkRateLimit(`employees:post:${orgId}`);
+  if (!rl.allowed) {
+    return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
   }
   try {
     const body = await request.json();

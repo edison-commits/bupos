@@ -7,6 +7,7 @@ import { orgQuery } from '@/lib/db';
 import { requireAdminPermission } from '@/lib/authz';
 import { pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
 import { validateBody, customerCreateSchema, customerUpdateSchema } from '@/lib/validation/schemas';
+import { checkRateLimit } from '@/lib/auth/rate-limit';
 
 export async function GET(request: NextRequest) {
   const ctx = await (await import('@/lib/auth/session')).getAdminSession();
@@ -175,6 +176,10 @@ export async function POST(request: NextRequest) {
   if (!orgId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  const rl = checkRateLimit(`customers:post:${orgId}`);
+  if (!rl.allowed) {
+    return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
+  }
   try {
     const body = await request.json();
     const v = validateBody(customerCreateSchema, body);
@@ -200,6 +205,10 @@ export async function PUT(request: NextRequest) {
   const orgId = ctx.employee.organizationId;
   if (!orgId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  const rl = checkRateLimit(`customers:put:${orgId}`);
+  if (!rl.allowed) {
+    return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
   }
   try {
     const body = await request.json();

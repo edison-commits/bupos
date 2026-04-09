@@ -103,6 +103,29 @@ export async function signupAction(_prev: { error: string } | null, formData: Fo
     return { error: "Too many attempts. Try again shortly." };
   }
 
+  // H-05: Origin validation matching loginAction()
+  const requestHeaders = await headers();
+  const origin = requestHeaders.get("origin");
+  const host = requestHeaders.get("host");
+  const referer = requestHeaders.get("referer");
+  const allowedOrigin = host ? new RegExp(`^https?://${host.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) : null;
+
+  if (!origin || !host || !allowedOrigin?.test(origin)) {
+    return { error: "Invalid request origin." };
+  }
+
+  if (referer) {
+    let refererOrigin: string | null = null;
+    try {
+      refererOrigin = new URL(referer).origin;
+    } catch {
+      return { error: "Invalid request origin." };
+    }
+    if (!allowedOrigin.test(refererOrigin)) {
+      return { error: "Invalid request origin." };
+    }
+  }
+
   try {
     const { default: pool } = await import("@/lib/db");
 
@@ -120,35 +143,44 @@ export async function signupAction(_prev: { error: string } | null, formData: Fo
     const locationId = randomUUID();
     const employeeId = randomUUID();
     const slug = storeName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
-
-    // Create organization
-    await pool.query(
-      `INSERT INTO organizations (id, name, slug, legal_name, timezone, currency_code, plan, is_active, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, 'America/Los_Angeles', 'USD', 'free', true, $5, $5)`,
-      [orgId, storeName, slug || "store", storeName, now],
-    );
-
-    // Create default location
-    await pool.query(
-      `INSERT INTO locations (id, organization_id, name, code, address1, city, region, postal_code, tax_rate, is_active, created_at, updated_at)
-       VALUES ($1, $2, 'Main Store', 'MAIN', '', '', '', '', 0.0, true, $3, $3)`,
-      [locationId, orgId, now],
-    );
-
-    // Create owner employee
-    await pool.query(
-      `INSERT INTO employees (id, organization_id, role_key, first_name, last_name, display_name, email, pin_hint, is_active, location_ids, created_at, updated_at)
-       VALUES ($1, $2, 'owner', $3, $4, $5, $6, 'Set in admin', true, ARRAY[$7]::uuid[], $8, $8)`,
-      [employeeId, orgId, firstName, lastName, `${firstName} ${lastName}`, email, locationId, now],
-    );
-
-    // Create auth credentials with hashed password
     const passwordHash = hashSecret(password);
-    await pool.query(
-      `INSERT INTO auth_credentials (employee_id, email, password_hash, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $4)`,
-      [employeeId, email, passwordHash, now],
-    );
+
+    // M-07: Wrap org+location+employee+credentials inserts in a single transaction
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      await client.query(
+        `INSERT INTO organizations (id, name, slug, legal_name, timezone, currency_code, plan, is_active, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, 'America/Los_Angeles', 'USD', 'free', true, $5, $5)`,
+        [orgId, storeName, slug || "store", storeName, now],
+      );
+
+      await client.query(
+        `INSERT INTO locations (id, organization_id, name, code, address1, city, region, postal_code, tax_rate, is_active, created_at, updated_at)
+         VALUES ($1, $2, 'Main Store', 'MAIN', '', '', '', '', 0.0, true, $3, $3)`,
+        [locationId, orgId, now],
+      );
+
+      await client.query(
+        `INSERT INTO employees (id, organization_id, role_key, first_name, last_name, display_name, email, pin_hint, is_active, location_ids, created_at, updated_at)
+         VALUES ($1, $2, 'owner', $3, $4, $5, $6, 'Set in admin', true, ARRAY[$7]::uuid[], $8, $8)`,
+        [employeeId, orgId, firstName, lastName, `${firstName} ${lastName}`, email, locationId, now],
+      );
+
+      await client.query(
+        `INSERT INTO auth_credentials (employee_id, email, password_hash, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $4)`,
+        [employeeId, email, passwordHash, now],
+      );
+
+      await client.query("COMMIT");
+    } catch (txErr) {
+      await client.query("ROLLBACK");
+      throw txErr;
+    } finally {
+      client.release();
+    }
 
     // Sign them in
     await signInAdmin(email, password);

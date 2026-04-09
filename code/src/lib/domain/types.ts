@@ -14,6 +14,7 @@ export type PermissionKey =
   | "inventory.adjust"
   | "employee.manage"
   | "audit.view"
+  | "reports.export"
   | "approval.discount"
   | "approval.void_item"
   | "approval.void_transaction"

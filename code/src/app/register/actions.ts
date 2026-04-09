@@ -284,7 +284,7 @@ export async function quickSwitchAction(pin: string): Promise<{ success: boolean
 
   if (isPg()) {
     const { pgFindCredentialByPin } = await import("@/lib/persistence/postgres-store");
-    const credential = await pgFindCredentialByPin(cleanPin);
+    const credential = await pgFindCredentialByPin(cleanPin, context.employee.organizationId);
     if (!credential) return { success: false, error: "Invalid PIN" };
 
     const { readStore } = await import("@/lib/persistence/store");

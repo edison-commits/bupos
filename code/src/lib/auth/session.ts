@@ -339,14 +339,13 @@ export async function signInRegister(pin: string, locationId: string, deviceId?:
     const { pgFindCredentialByPin } = await import("@/lib/persistence/postgres-store");
     const pool = await pgGetPool();
 
-    // Run credential lookup + location check in parallel (avoid full readStore)
-    const [credential, locResult] = await Promise.all([
-      pgFindCredentialByPin(cleanPin),
-      pool.query(
-        `SELECT id, is_active FROM locations WHERE id = $1 AND is_active = true LIMIT 1`,
-        [locationId],
-      ),
-    ]);
+    // Look up org from location, then scope PIN search to that org
+    const locResult = await pool.query(
+      `SELECT id, organization_id, is_active FROM locations WHERE id = $1 AND is_active = true LIMIT 1`,
+      [locationId],
+    );
+    const locOrgId = (locResult.rows[0] as Record<string, unknown>)?.organization_id as string | undefined;
+    const credential = await pgFindCredentialByPin(cleanPin, locOrgId);
 
     if (!credential) {
       redirect("/register?error=PIN+login+failed");

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
 import { requireAdminPermission } from "@/lib/authz";
 
+// M-05: Validate date params to prevent Content-Disposition header injection
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * GET /api/export
@@ -15,7 +17,8 @@ import { requireAdminPermission } from "@/lib/authz";
  *   location — location ID for inventory
  */
 export async function GET(req: NextRequest) {
-  const ctx = await requireAdminPermission("audit.view");
+  // M-10: Use reports.export permission instead of audit.view
+  const ctx = await requireAdminPermission("reports.export");
   const orgId = ctx.employee.organizationId;
 
   try {
@@ -33,6 +36,9 @@ export async function GET(req: NextRequest) {
       case "transactions": {
         const from = sp.get("from") || "2020-01-01";
         const to = sp.get("to") || new Date().toISOString().slice(0, 10);
+        if (!DATE_RE.test(from) || !DATE_RE.test(to)) {
+          return NextResponse.json({ error: "from/to must be YYYY-MM-DD" }, { status: 400 });
+        }
         const rows = await orgQuery(
           orgId,
           `SELECT t.id, t.status, t.tender_type, t.subtotal, t.discount_total, t.tax_total,
@@ -152,6 +158,9 @@ export async function GET(req: NextRequest) {
       case "expenses": {
         const from = sp.get("from") || "2020-01-01";
         const to = sp.get("to") || new Date().toISOString().slice(0, 10);
+        if (!DATE_RE.test(from) || !DATE_RE.test(to)) {
+          return NextResponse.json({ error: "from/to must be YYYY-MM-DD" }, { status: 400 });
+        }
         const rows = await orgQuery(
           orgId,
           `SELECT category, description, amount, notes,
@@ -186,6 +195,14 @@ export async function GET(req: NextRequest) {
   }
 }
 
+/** Neutralize formula injection: prefix cells starting with =, +, -, @ with a single quote */
+function sanitizeCsvCell(str: string): string {
+  if (str.length > 0 && (str[0] === '=' || str[0] === '+' || str[0] === '-' || str[0] === '@')) {
+    return "'" + str;
+  }
+  return str;
+}
+
 /** Convert an array of objects to CSV string */
 function toCsv(rows: Record<string, unknown>[], columns: string[]): string {
   const header = columns.join(",");
@@ -193,7 +210,7 @@ function toCsv(rows: Record<string, unknown>[], columns: string[]): string {
     columns.map((col) => {
       const val = row[col];
       if (val === null || val === undefined) return "";
-      const str = String(val);
+      const str = sanitizeCsvCell(String(val));
       // Escape commas, quotes, and newlines
       if (str.includes(",") || str.includes('"') || str.includes("\n")) {
         return `"${str.replace(/"/g, '""')}"`;

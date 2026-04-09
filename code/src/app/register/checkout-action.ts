@@ -23,9 +23,25 @@ export async function checkoutAction(
   cart: Cart,
   tenders: TenderLine[],
   approvedExceptions: string[] = [],
+  idempotencyKey?: string,
 ): Promise<CheckoutResult> {
   void approvedExceptions;
   const context = await requireRegisterPermission("register.open");
+
+  // Idempotency: if a key is provided, check for an existing completed transaction
+  if (idempotencyKey && isPg()) {
+    const { rows: existing } = await pool.query(
+      `SELECT id, status FROM transactions WHERE idempotency_key = $1 AND organization_id = $2 LIMIT 1`,
+      [idempotencyKey, context.employee.organizationId],
+    );
+    if (existing.length > 0) {
+      return {
+        transactionId: existing[0].id,
+        status: existing[0].status,
+        duplicate: true,
+      } as CheckoutResult;
+    }
+  }
 
   if (cart.items.length === 0) {
     redirect("/register?error=Cart+is+empty");
@@ -160,16 +176,17 @@ export async function checkoutAction(
         redirect("/register?error=Tender+amount+exceeds+reasonable+limit");
       }
 
-      // 1. Transaction record
+      // 1. Transaction record (with optional idempotency key)
       await client.query(
-        `INSERT INTO transactions (id, organization_id, location_id, register_session_id, employee_id, cart_snapshot, subtotal, discount_total, tax_total, grand_total, tender_type, amount_tendered, change_due, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'completed')`,
+        `INSERT INTO transactions (id, organization_id, location_id, register_session_id, employee_id, cart_snapshot, subtotal, discount_total, tax_total, grand_total, tender_type, amount_tendered, change_due, status, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'completed', $14)`,
         [
           transactionId, context.employee.organizationId, context.location.id,
           context.registerSession.id, context.employee.id,
           JSON.stringify(checkOutCart(cart)),
           totals.subtotal, totals.discountTotal, totals.taxTotal, totals.grandTotal,
           primaryTenderType, totalTendered, changeDue,
+          idempotencyKey || null,
         ],
       );
 

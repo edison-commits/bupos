@@ -642,20 +642,33 @@ export async function pgAcceptStocktake(stocktakeId: string, acceptedBy: string)
       [stocktakeId],
     );
     const stocktake = toStocktake(rows[0]);
-    for (const line of lines) {
-      const variance = Number(line.counted_qty) - Number(line.expected_qty);
-      if (variance !== 0) {
-        await client.query(
-          `UPDATE inventory_levels SET on_hand = GREATEST(0, on_hand + $1), updated_at = $2
-           WHERE product_variant_id = $3 AND location_id = $4`,
-          [variance, ts, line.product_variant_id, stocktake.locationId],
-        );
-        await client.query(
-          `INSERT INTO inventory_adjustments (organization_id, location_id, product_variant_id, employee_id, quantity_delta, reason_code, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [stocktake.organizationId, stocktake.locationId, line.product_variant_id, acceptedBy, variance, 'stocktake_adjustment', ts],
-        );
-      }
+    // Batch inventory updates and adjustment inserts (fixes N+1)
+    const variantLines = lines
+      .map((line) => ({
+        variantId: line.product_variant_id as string,
+        variance: Number(line.counted_qty) - Number(line.expected_qty),
+      }))
+      .filter((l) => l.variance !== 0);
+
+    if (variantLines.length > 0) {
+      const variantIds = variantLines.map((l) => l.variantId);
+      const variances = variantLines.map((l) => l.variance);
+
+      // Batched UPDATE using unnest
+      await client.query(
+        `UPDATE inventory_levels il
+         SET on_hand = GREATEST(0, il.on_hand + delta.variance), updated_at = $1
+         FROM (SELECT unnest($2::uuid[]) AS variant_id, unnest($3::int[]) AS variance) AS delta
+         WHERE il.product_variant_id = delta.variant_id AND il.location_id = $4`,
+        [ts, variantIds, variances, stocktake.locationId],
+      );
+
+      // Batched INSERT using unnest
+      await client.query(
+        `INSERT INTO inventory_adjustments (organization_id, location_id, product_variant_id, employee_id, quantity_delta, reason_code, created_at)
+         SELECT $1, $2, unnest($3::uuid[]), $4, unnest($5::int[]), 'stocktake_adjustment', $6`,
+        [stocktake.organizationId, stocktake.locationId, variantIds, acceptedBy, variances, ts],
+      );
     }
     await client.query('COMMIT');
     return stocktake;

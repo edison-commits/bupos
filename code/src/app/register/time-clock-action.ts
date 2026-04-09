@@ -3,17 +3,23 @@
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { mutateStore } from "@/lib/persistence/store";
+import { requireRegisterPermission } from "@/lib/authz";
 import type { TimeClockEventType, TimesheetSummary } from "@/lib/domain/types";
 
 const isPg = () => !!process.env.USE_POSTGRES;
 
 export async function clockAction(
-  employeeId: string,
-  locationId: string,
-  organizationId: string,
+  _employeeId: string,
+  _locationId: string,
+  _organizationId: string,
   eventType: TimeClockEventType,
   note?: string,
 ): Promise<{ success: true; eventType: TimeClockEventType }> {
+  const authCtx = await requireRegisterPermission("register.open");
+  const employeeId = authCtx.employee.id;
+  const locationId = authCtx.location.id;
+  const organizationId = authCtx.employee.organizationId;
+
   if (isPg()) {
     const { pgInsertTimeClockEntry } = await import("@/lib/persistence/postgres-phase3");
     await pgInsertTimeClockEntry({ employeeId, locationId, organizationId, eventType, note });

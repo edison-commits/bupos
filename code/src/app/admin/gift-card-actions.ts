@@ -1,7 +1,7 @@
 "use server";
 
 import { mutateStore } from "@/lib/persistence/store";
-import { getAdminSession } from "@/lib/auth/session";
+import { requireAdminPermission } from "@/lib/authz";
 import { orgTx, orgQuery, pool } from "@/lib/db";
 import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 import type { GiftCard, GiftCardTransaction } from "@/lib/domain/types";
@@ -19,8 +19,7 @@ export async function activateGiftCardAction(formData: FormData) {
     throw new Error("Code and positive amount are required");
   }
 
-  const ctx = await getAdminSession();
-  if (!ctx) throw new Error("Not authenticated");
+  const ctx = await requireAdminPermission("register.open");
 
   if (isPg()) {
     const orgId = ctx.employee.organizationId;
@@ -87,8 +86,7 @@ export async function reloadGiftCardAction(formData: FormData) {
     throw new Error("Gift card ID and positive amount required");
   }
 
-  const ctx = await getAdminSession();
-  if (!ctx) throw new Error("Not authenticated");
+  const ctx = await requireAdminPermission("register.open");
 
   if (isPg()) {
     const orgId = ctx.employee.organizationId;
@@ -146,8 +144,7 @@ export async function reloadGiftCardAction(formData: FormData) {
 }
 
 export async function disableGiftCardAction(giftCardId: string) {
-  const ctx = await getAdminSession();
-  if (!ctx) throw new Error("Not authenticated");
+  const ctx = await requireAdminPermission("register.open");
   if (isPg()) {
     await orgQuery(
       ctx.employee.organizationId,

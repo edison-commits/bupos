@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/authz";
+import { orgQuery } from "@/lib/db";
 import { validateBody, emailReceiptSchema } from "@/lib/validation/schemas";
 
 /**
@@ -13,15 +14,10 @@ import { validateBody, emailReceiptSchema } from "@/lib/validation/schemas";
  * Body: {
  *   to: string (email address)
  *   transactionId: string
- *   storeName: string
- *   items: { name: string; qty: number; price: number }[]
- *   subtotal: number
- *   tax: number
- *   total: number
- *   tenders: { type: string; amount: number }[]
- *   loyaltyEarned?: number
- *   date: string
  * }
+ *
+ * The remaining fields (items, totals, tenders) are loaded server-side
+ * from the transaction record to prevent client-supplied data forgery.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -39,7 +35,48 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const v = validateBody(emailReceiptSchema, body);
     if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
-    const { to, transactionId, storeName, items, subtotal, tax, total, tenders, loyaltyEarned, date } = v.data;
+    const { to, transactionId } = v.data;
+
+    const employee = adminSession?.employee ?? registerSession!.employee;
+    const orgId = employee.organizationId;
+
+    // ── Load transaction from DB (C-04: never trust client-supplied items/totals) ──
+    const { rows: txnRows } = await orgQuery(
+      orgId,
+      `SELECT t.id, t.subtotal, t.discount_total, t.tax_total, t.grand_total, t.cart_snapshot, t.created_at,
+              o.name AS store_name
+       FROM transactions t
+       JOIN organizations o ON o.id = t.organization_id
+       WHERE t.id = $1`,
+      [transactionId],
+    );
+    if (txnRows.length === 0) {
+      return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
+    }
+    const txn = txnRows[0] as Record<string, unknown>;
+    const subtotal = Number(txn.subtotal ?? 0);
+    const tax = Number(txn.tax_total ?? 0);
+    const total = Number(txn.grand_total ?? 0);
+    const storeName = (txn.store_name as string) || "BasicUniformPOS";
+    const date = txn.created_at ? new Date(txn.created_at as string).toLocaleDateString() : new Date().toLocaleDateString();
+
+    // Parse items from the stored cart_snapshot
+    let cartSnapshot: Record<string, unknown> = {};
+    try {
+      cartSnapshot = typeof txn.cart_snapshot === "string" ? JSON.parse(txn.cart_snapshot as string) : (txn.cart_snapshot as Record<string, unknown>) ?? {};
+    } catch { /* empty cart */ }
+    const items = (Array.isArray(cartSnapshot.items) ? cartSnapshot.items : []) as { name?: string; productName?: string; qty?: number; quantity?: number; unitPrice?: number; overridePrice?: number; price?: number }[];
+
+    // Load tenders from DB
+    const { rows: tenderRows } = await orgQuery(
+      orgId,
+      `SELECT tender_type, amount FROM transaction_tenders WHERE transaction_id = $1`,
+      [transactionId],
+    );
+    const tenders = tenderRows.map((r) => ({ type: (r as Record<string, unknown>).tender_type as string, amount: Number((r as Record<string, unknown>).amount) }));
+
+    // Load loyalty points earned (from customers table delta or cart snapshot)
+    const loyaltyEarned = Number(cartSnapshot.loyaltyPointsEarned ?? 0);
 
     const apiKey = process.env.RESEND_API_KEY;
     if (!apiKey) {
@@ -55,15 +92,18 @@ export async function POST(req: NextRequest) {
     })[c]!);
 
     // Build HTML receipt
-    const itemRows = ((items || []) as { name: string; qty: number; price: number }[]).map((item) =>
-      `<tr>
-        <td style="padding:6px 0;border-bottom:1px solid #f0f0f0;">${esc(item.name)}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid #f0f0f0;text-align:center;">${item.qty}</td>
-        <td style="padding:6px 0;border-bottom:1px solid #f0f0f0;text-align:right;">$${(item.price * item.qty).toFixed(2)}</td>
-      </tr>`
-    ).join("");
+    const itemHtmlRows = items.map((item) => {
+      const name = item.name || item.productName || "Item";
+      const qty = item.qty ?? item.quantity ?? 1;
+      const price = item.overridePrice ?? item.unitPrice ?? item.price ?? 0;
+      return `<tr>
+        <td style="padding:6px 0;border-bottom:1px solid #f0f0f0;">${esc(String(name))}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #f0f0f0;text-align:center;">${qty}</td>
+        <td style="padding:6px 0;border-bottom:1px solid #f0f0f0;text-align:right;">$${(price * qty).toFixed(2)}</td>
+      </tr>`;
+    }).join("");
 
-    const tenderRows = ((tenders || []) as { type: string; amount: number }[]).map((t) =>
+    const tenderHtmlRows = tenders.map((t) =>
       `<div style="display:flex;justify-content:space-between;padding:2px 0;">
         <span style="text-transform:capitalize;">${t.type === "store_credit" ? "Store credit" : esc(t.type)}</span>
         <span>$${t.amount.toFixed(2)}</span>
@@ -80,7 +120,7 @@ export async function POST(req: NextRequest) {
 
       <!-- Header -->
       <div style="background:#18181b;color:white;padding:24px;text-align:center;">
-        <h1 style="margin:0;font-size:20px;font-weight:700;">${esc(storeName || "BasicUniformPOS")}</h1>
+        <h1 style="margin:0;font-size:20px;font-weight:700;">${esc(storeName)}</h1>
         <p style="margin:8px 0 0;font-size:13px;opacity:0.7;">Receipt</p>
       </div>
 
@@ -92,7 +132,7 @@ export async function POST(req: NextRequest) {
         </div>
         <div style="display:flex;justify-content:space-between;font-size:13px;color:#71717a;margin-top:4px;">
           <span>Date</span>
-          <span>${date || new Date().toLocaleDateString()}</span>
+          <span>${date}</span>
         </div>
       </div>
 
@@ -106,30 +146,30 @@ export async function POST(req: NextRequest) {
               <th style="text-align:right;padding:0 0 8px;font-weight:500;">Amount</th>
             </tr>
           </thead>
-          <tbody>${itemRows}</tbody>
+          <tbody>${itemHtmlRows}</tbody>
         </table>
       </div>
 
       <!-- Totals -->
       <div style="padding:16px 24px;background:#fafafa;border-top:1px solid #f0f0f0;">
         <div style="display:flex;justify-content:space-between;font-size:14px;padding:4px 0;">
-          <span>Subtotal</span><span>$${(subtotal ?? 0).toFixed(2)}</span>
+          <span>Subtotal</span><span>$${subtotal.toFixed(2)}</span>
         </div>
         <div style="display:flex;justify-content:space-between;font-size:14px;padding:4px 0;color:#71717a;">
-          <span>Tax</span><span>$${(tax ?? 0).toFixed(2)}</span>
+          <span>Tax</span><span>$${tax.toFixed(2)}</span>
         </div>
         <div style="display:flex;justify-content:space-between;font-size:18px;font-weight:700;padding:12px 0 4px;border-top:2px solid #18181b;margin-top:8px;">
-          <span>Total</span><span>$${(total ?? 0).toFixed(2)}</span>
+          <span>Total</span><span>$${total.toFixed(2)}</span>
         </div>
       </div>
 
       <!-- Tenders -->
       <div style="padding:12px 24px;font-size:13px;color:#71717a;border-top:1px solid #f0f0f0;">
         <p style="margin:0 0 4px;font-weight:600;color:#18181b;">Payment</p>
-        ${tenderRows}
+        ${tenderHtmlRows}
       </div>
 
-      ${loyaltyEarned && loyaltyEarned > 0 ? `
+      ${loyaltyEarned > 0 ? `
       <!-- Loyalty -->
       <div style="padding:12px 24px;border-top:1px solid #f0f0f0;">
         <div style="background:#ecfdf5;border-radius:8px;padding:10px 14px;font-size:13px;color:#065f46;">
@@ -159,7 +199,7 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({
         from: fromEmail,
         to: [to],
-        subject: `Your receipt from ${storeName || "BasicUniformPOS"} — #${transactionId.slice(0, 8).toUpperCase()}`,
+        subject: `Your receipt from ${storeName} — #${transactionId.slice(0, 8).toUpperCase()}`,
         html,
       }),
       signal: AbortSignal.timeout(15_000),
@@ -168,7 +208,8 @@ export async function POST(req: NextRequest) {
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
       console.error("[email-receipt] Resend error:", err);
-      return NextResponse.json({ error: "Failed to send email", details: err }, { status: 502 });
+      // C-03: Do not leak error details to client
+      return NextResponse.json({ error: "Failed to send email" }, { status: 502 });
     }
 
     const result = await response.json();

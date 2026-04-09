@@ -6,6 +6,7 @@ import { hasPermission } from "@/lib/domain/permissions";
 import pool, { orgTx } from "@/lib/db";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { verifySecret } from "@/lib/auth/crypto";
+import { requireRegisterPermission } from "@/lib/authz";
 import type { PermissionKey } from "@/lib/domain/types";
 
 const isPg = () => !!process.env.USE_POSTGRES;
@@ -52,14 +53,19 @@ const approvalPermissionMap: Record<string, PermissionKey> = {
  * Called from the client when a threshold is exceeded.
  */
 export async function verifyManagerApproval(pin: string, request: ApprovalRequest): Promise<ApprovalResult> {
+  const authCtx = await requireRegisterPermission("register.open");
+  const organizationId = authCtx.employee.organizationId;
+  const locationId = authCtx.location.id;
+  const cashierEmployeeId = authCtx.employee.id;
+
   // Rate-limit manager approval PINs (5 attempts/min per location)
-  const rl = checkRateLimit(`approval:${request.locationId}`);
+  const rl = checkRateLimit(`approval:${locationId}`);
   if (!rl.allowed) {
     return { approved: false, reason: "Too many attempts. Please wait before trying again." };
   }
 
   // 1. Resolve the PIN to an employee
-  const store = await readStore(request.organizationId);
+  const store = await readStore(organizationId);
 
   // Find employee by PIN — resolve via the hashed PIN credentials in the authCredentials table.
   // No hardcoded dev PINs; every approver must use their real stored credential.
@@ -85,7 +91,7 @@ export async function verifyManagerApproval(pin: string, request: ApprovalReques
   }
 
   // 3. Approver must not be the same as the cashier (unless they are an owner)
-  if (approverEmployee.id === request.cashierEmployeeId && approverEmployee.roleKey !== "owner") {
+  if (approverEmployee.id === cashierEmployeeId && approverEmployee.roleKey !== "owner") {
     return { approved: false, reason: "A different manager must approve this action." };
   }
 
@@ -94,7 +100,7 @@ export async function verifyManagerApproval(pin: string, request: ApprovalReques
   const timestamp = new Date().toISOString();
 
   if (isPg()) {
-    const client = await orgTx(request.organizationId);
+    const client = await orgTx(organizationId);
     try {
       await client.query(
         `INSERT INTO transaction_exceptions (id, transaction_id, exception_code, requires_manager_approval, approved_by_employee_id, reason_code, trigger_amount, threshold_amount, resolved_at, details)
@@ -124,15 +130,15 @@ export async function verifyManagerApproval(pin: string, request: ApprovalReques
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
           randomUUID(),
-          request.organizationId,
-          request.locationId,
+          organizationId,
+          locationId,
           approverEmployee.id,
           "transaction_exception",
           exceptionId,
           "manager_override",
           JSON.stringify({
             action_type: request.actionType,
-            cashier_employee_id: request.cashierEmployeeId,
+            cashier_employee_id: cashierEmployeeId,
             approver_employee_id: approverEmployee.id,
             trigger_amount: request.triggerAmount.toFixed(2),
             threshold_amount: request.thresholdAmount.toFixed(2),
@@ -158,10 +164,10 @@ export async function verifyManagerApproval(pin: string, request: ApprovalReques
         transactionId: "pending_" + exceptionId,
         eventKind: "manager_override",
         actorEmployeeId: approverEmployee!.id,
-        notes: `Manager ${approverEmployee!.displayName} approved ${request.actionType} for cashier ${request.cashierEmployeeId}`,
+        notes: `Manager ${approverEmployee!.displayName} approved ${request.actionType} for cashier ${cashierEmployeeId}`,
         payload: {
           action_type: request.actionType,
-          cashier_employee_id: request.cashierEmployeeId,
+          cashier_employee_id: cashierEmployeeId,
           trigger_amount: request.triggerAmount.toFixed(2),
           threshold_amount: request.thresholdAmount.toFixed(2),
           reason_code: request.reasonCode ?? "none",

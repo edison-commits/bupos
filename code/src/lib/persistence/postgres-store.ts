@@ -18,7 +18,7 @@ const _inventoryCache = new Map<string, CacheEntry<InventoryLevel[]>>();
 const _locationsCache = new Map<string, CacheEntry<import('@/lib/domain/types').Location[]>>();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _orgCache: CacheEntry<any> | null = null;
-let _categoriesCache: CacheEntry<Category[]> | null = null;
+const _categoriesCache = new Map<string, CacheEntry<Category[]>>();
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -106,18 +106,20 @@ function toEmployee(row: Record<string, unknown>): Employee {
 
 // ── Categories ────────────────────────────────────────────────────────
 
-export async function pgReadCategories(): Promise<Category[]> {
-  if (_categoriesCache && Date.now() < _categoriesCache.expiresAt) return _categoriesCache.data;
+export async function pgReadCategories(orgId: string): Promise<Category[]> {
+  const cached = _categoriesCache.get(orgId);
+  if (cached && Date.now() < cached.expiresAt) return cached.data;
   const { rows } = await pool.query(
     `SELECT id, organization_id, name, slug, parent_category_id, sort_order, image_url, created_at, updated_at
-     FROM categories ORDER BY sort_order`,
+     FROM categories WHERE organization_id = $1 ORDER BY sort_order`,
+    [orgId],
   );
   const data = rows.map(toCategory);
-  _categoriesCache = { data, expiresAt: Date.now() + PG_READ_TTL_MS };
+  _categoriesCache.set(orgId, { data, expiresAt: Date.now() + PG_READ_TTL_MS });
   return data;
 }
 
-export function invalidateCategoriesCache(): void { _categoriesCache = null; }
+export function invalidateCategoriesCache(): void { _categoriesCache.clear(); }
 
 export async function pgCreateCategory(data: {
   id: string; organizationId: string; name: string; slug: string;
@@ -498,21 +500,29 @@ export async function pgFindCredentialByEmail(email: string): Promise<(AuthCrede
   };
 }
 
-export async function pgFindCredentialByPin(pin: string): Promise<AuthCredentialRecord | null> {
+export async function pgFindCredentialByPin(pin: string, orgId?: string): Promise<AuthCredentialRecord | null> {
   const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
   const RATE_LIMIT_MAX_ATTEMPTS = 5;
 
-  // Fetch all pin_hash rows with current failed-attempt state.
+  // Fetch pin_hash rows scoped to org with current failed-attempt state.
   // crypto.scrypt runs in the Node.js thread pool (not on the Workers main thread),
   // so parallel verification across all employees doesn't block the event loop.
-  const { rows } = await pool.query(
-    `SELECT ac.employee_id, ac.email, ac.pin_hash, ac.pin_last_rotated_at,
-            ac.failed_pin_attempts, ac.last_failed_pin_at
-     FROM auth_credentials ac
-     JOIN employees e ON ac.employee_id = e.id
-     WHERE e.is_active = true AND ac.pin_hash IS NOT NULL
-     LIMIT 20`,
-  );
+  const { rows } = orgId
+    ? await pool.query(
+        `SELECT ac.employee_id, ac.email, ac.pin_hash, ac.pin_last_rotated_at,
+                ac.failed_pin_attempts, ac.last_failed_pin_at
+         FROM auth_credentials ac
+         JOIN employees e ON ac.employee_id = e.id
+         WHERE e.is_active = true AND ac.pin_hash IS NOT NULL AND e.organization_id = $1`,
+        [orgId],
+      )
+    : await pool.query(
+        `SELECT ac.employee_id, ac.email, ac.pin_hash, ac.pin_last_rotated_at,
+                ac.failed_pin_attempts, ac.last_failed_pin_at
+         FROM auth_credentials ac
+         JOIN employees e ON ac.employee_id = e.id
+         WHERE e.is_active = true AND ac.pin_hash IS NOT NULL`,
+      );
 
   // Verify all PINs in parallel — each scrypt call runs in the thread pool.
   // Per-employee rate limiting: check lock state before verification, then only

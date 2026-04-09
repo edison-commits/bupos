@@ -3,6 +3,7 @@
 import { randomUUID } from "node:crypto";
 import { mutateStore } from "@/lib/persistence/store";
 import pool, { orgTx } from "@/lib/db";
+import { requireRegisterPermission } from "@/lib/authz";
 
 const isPg = () => !!process.env.USE_POSTGRES;
 
@@ -40,11 +41,16 @@ export interface TransactionEventInput {
  * Called from the client at key points in the checkout flow.
  */
 export async function logTransactionEvent(input: TransactionEventInput): Promise<void> {
+  const authCtx = await requireRegisterPermission("register.open");
+  const organizationId = authCtx.employee.organizationId;
+  const employeeId = authCtx.employee.id;
+  const locationId = authCtx.location.id;
+
   const eventId = randomUUID();
   const timestamp = new Date().toISOString();
 
   if (isPg()) {
-    const client = await orgTx(input.organizationId);
+    const client = await orgTx(organizationId);
     try {
       await client.query(
         `INSERT INTO transaction_events (id, transaction_id, actor_employee_id, event_kind, notes, payload, created_at)
@@ -52,15 +58,18 @@ export async function logTransactionEvent(input: TransactionEventInput): Promise
         [
           eventId,
           input.referenceId,
-          input.employeeId,
+          employeeId,
           input.eventType,
-          `${input.eventType} by employee ${input.employeeId}`,
+          `${input.eventType} by employee ${employeeId}`,
           JSON.stringify(input.payload),
           timestamp,
         ],
       );
 
       await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
     } finally {
       client.release();
     }
@@ -72,9 +81,9 @@ export async function logTransactionEvent(input: TransactionEventInput): Promise
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
           randomUUID(),
-          input.organizationId,
-          input.locationId,
-          input.employeeId,
+          organizationId,
+          locationId,
+          employeeId,
           "transaction",
           input.referenceId,
           input.eventType as "transaction_placeholder",
@@ -90,8 +99,8 @@ export async function logTransactionEvent(input: TransactionEventInput): Promise
         id: eventId,
         transactionId: input.referenceId,
         eventKind: input.eventType as "transaction_placeholder",
-        actorEmployeeId: input.employeeId,
-        notes: `${input.eventType} by employee ${input.employeeId}`,
+        actorEmployeeId: employeeId,
+        notes: `${input.eventType} by employee ${employeeId}`,
         payload: input.payload,
         createdAt: timestamp,
       });

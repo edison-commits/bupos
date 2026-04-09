@@ -4,6 +4,10 @@
  * On Cloudflare Workers each isolate has its own memory, so this provides
  * per-instance brute-force protection. A persistent layer (KV / D1) can
  * be added later for cross-instance enforcement.
+ *
+ * TODO (H-03): This in-memory implementation is per-isolate only.
+ * For production multi-instance deployments on Cloudflare Workers,
+ * migrate to Cloudflare KV or D1 for distributed rate limiting.
  */
 
 interface WindowEntry {

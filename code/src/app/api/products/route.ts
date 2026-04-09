@@ -8,6 +8,7 @@ import { requireAdminPermission } from '@/lib/authz';
 import { invalidateProductsCache, invalidateVariantsCache, pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
 import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
 import { validateBody, productCreateSchema, productUpdateSchema, productDeleteSchema, productImportSchema } from '@/lib/validation/schemas';
+import { checkRateLimit } from '@/lib/auth/rate-limit';
 
 // 30-second response cache
 const _productsCache = new Map<string, { data: unknown; expiresAt: number }>();
@@ -22,7 +23,7 @@ export async function GET(request: NextRequest) {
   }
   const locationId = adminCtx?.employee?.locationIds?.[0];
 
-  const cacheKey = request.nextUrl.toString();
+  const cacheKey = `${orgId}:${request.nextUrl.toString()}`;
   const cached = _productsCache.get(cacheKey);
   if (cached && Date.now() < cached.expiresAt) {
     const hit = NextResponse.json(cached.data);
@@ -217,6 +218,10 @@ export async function POST(request: NextRequest) {
   if (!orgId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  const rl = checkRateLimit(`products:post:${orgId}`);
+  if (!rl.allowed) {
+    return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
+  }
   const client = await pool.connect();
   try {
     const body = await request.json();
@@ -243,9 +248,11 @@ export async function POST(request: NextRequest) {
     if (body.product_id && body.variant) {
       const { sku, barcode, name, size_label, color_label, price, compare_at_price, cost } = body.variant;
       if (!sku) {
+        await client.query('ROLLBACK');
         return NextResponse.json({ error: 'SKU is required for variants' }, { status: 400 });
       }
       if (typeof price === 'number' && price < 0) {
+        await client.query('ROLLBACK');
         return NextResponse.json({ error: 'Price cannot be negative' }, { status: 400 });
       }
       // Reject duplicate SKU within this org
@@ -254,6 +261,7 @@ export async function POST(request: NextRequest) {
         [orgId, sku],
       );
       if (dupCheck.rows.length > 0) {
+        await client.query('ROLLBACK');
         return NextResponse.json({ error: `SKU "${sku}" already exists` }, { status: 409 });
       }
       const result = await client.query(
@@ -270,7 +278,10 @@ export async function POST(request: NextRequest) {
 
     // Handle product creation
     const pv = validateBody(productCreateSchema, body);
-    if (!pv.success) return NextResponse.json({ error: pv.error }, { status: 400 });
+    if (!pv.success) {
+      await client.query('ROLLBACK');
+      return NextResponse.json({ error: pv.error }, { status: 400 });
+    }
     const { name, slug, category_id, description, image_url, is_active = true } = body;
     const is_touch_favorite = body.is_touch_favorite ?? false;
     const result = await client.query(
@@ -305,6 +316,10 @@ export async function PUT(request: NextRequest) {
   const orgId = ctx.employee.organizationId;
   if (!orgId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  const rl = checkRateLimit(`products:put:${orgId}`);
+  if (!rl.allowed) {
+    return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
   }
   const client = await pool.connect();
   try {
@@ -397,9 +412,11 @@ export async function PUT(request: NextRequest) {
     // Handle variant update
     if (updates.variant_id && (updates.price !== undefined || updates.cost !== undefined)) {
       if (typeof updates.price === 'number' && updates.price < 0) {
+        await client.query('ROLLBACK');
         return NextResponse.json({ error: 'Price cannot be negative' }, { status: 400 });
       }
       if (typeof updates.cost === 'number' && updates.cost < 0) {
+        await client.query('ROLLBACK');
         return NextResponse.json({ error: 'Cost cannot be negative' }, { status: 400 });
       }
       const fields = [];

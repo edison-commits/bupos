@@ -121,19 +121,38 @@ export async function POST(request: NextRequest) {
       console.warn("[offline-sync] tax rate lookup failed, using default 0.1025");
     }
 
-    // Recalculate totals from the cart snapshot
+    // C-05: Reload server-side variant prices instead of trusting client-supplied prices
     const items = cart.items || [];
     let subtotal = 0;
     // Round each monetary operation to 2 decimal places to prevent float drift
     // (e.g. 19.99 * 3 can be 59.9699999 in IEEE 754)
     const m = (v: number) => Number(v.toFixed(2));
 
+    // Load authoritative prices from DB
+    const variantIds = items.map((i: CartLineItem) => i.productVariantId);
+    const serverPrices: Record<string, number> = {};
+    if (variantIds.length > 0) {
+      const { rows: priceRows } = await orgQuery(
+        orgId,
+        `SELECT id, price FROM product_variants WHERE id = ANY($1::uuid[])`,
+        [variantIds],
+      );
+      for (const row of priceRows) {
+        const r = row as Record<string, unknown>;
+        serverPrices[r.id as string] = Number(r.price);
+      }
+    }
+
     let discountTotal = 0;
     let modifiersTotal = 0;
 
     for (const item of items) {
-      const effectivePrice = item.overridePrice ?? item.unitPrice ?? 0;
+      // Use server price; only allow overridePrice if an approved price_override exception exists
+      const serverPrice = serverPrices[item.productVariantId] ?? 0;
+      const hasApprovedOverride = item.overridePrice != null && approvedExceptions.includes("price_override");
+      const effectivePrice = hasApprovedOverride ? item.overridePrice! : serverPrice;
       const lineBase = m(effectivePrice * item.quantity);
+      // TODO: reload modifier prices from DB for full server-side enforcement
       const lineMods = m((item.modifierTotal || 0) * item.quantity);
       let lineDiscount = 0;
 

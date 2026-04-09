@@ -150,7 +150,7 @@ export async function readStoreFromPg(orgId?: string): Promise<LocalStoreData> {
   ] = await Promise.all([
     pool.query('SELECT * FROM locations WHERE organization_id = $1 AND is_active = true ORDER BY name', [orgId]),
     pgReadEmployees(orgId),
-    pgReadCategories(),
+    pgReadCategories(orgId),
     pgReadProducts(orgId),
     pgReadVariants(orgId),
     pgReadInventory(orgId),
