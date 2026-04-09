@@ -4,8 +4,7 @@
  */
 import { orgQuery } from "@/lib/db";
 import { NextResponse } from "next/server";
-import { getAdminSession } from "@/lib/auth/session";
-import { hasPermission } from "@/lib/authz";
+import { withAuth } from "@/lib/api/with-auth";
 
 const REPORT_TYPES = new Set(["summary", "category", "employee", "hourly", "tender", "products", "shifts"]);
 
@@ -14,79 +13,67 @@ function isValidDate(str: string): boolean {
   return !isNaN(d.getTime());
 }
 
-export async function GET(request: Request) {
-  const adminCtx = await getAdminSession();
-  const orgId = adminCtx?.employee?.organizationId;
-  if (!adminCtx?.session || !adminCtx.employee || !orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-  if (!hasPermission(adminCtx.employee.roleKey, "audit.view")) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
+export const GET = withAuth("audit.view", async (req, ctx) => {
+  const orgId = ctx.orgId;
 
-  const locationId = adminCtx?.employee?.locationIds?.[0];
+  const locationId = ctx.employee.locationIds?.[0];
   if (!locationId) {
     return NextResponse.json({ error: 'No location context' }, { status: 400 });
   }
 
-  const url = new URL(request.url);
-  const type = url.searchParams.get("type") as string;
-  const from = url.searchParams.get("from") as string;
-  const to = url.searchParams.get("to") as string;
+  const sp = req.nextUrl.searchParams;
+  const type = sp.get("type") as string;
+  const from = sp.get("from") as string;
+  const to = sp.get("to") as string;
 
   if (!type || !from || !to) {
-    return Response.json({ error: "Missing required parameters: type, from, to" }, { status: 400 });
+    return NextResponse.json({ error: "Missing required parameters: type, from, to" }, { status: 400 });
   }
 
   // Defensive: enforce allowlist on type to prevent any future switch-case injection
   if (!REPORT_TYPES.has(type)) {
-    return Response.json({ error: `Unknown report type: ${type}` }, { status: 400 });
+    return NextResponse.json({ error: `Unknown report type: ${type}` }, { status: 400 });
   }
 
   // Validate date formats before use
   if (!isValidDate(from) || !isValidDate(to)) {
-    return Response.json({ error: "Invalid date format. Use YYYY-MM-DD." }, { status: 400 });
+    return NextResponse.json({ error: "Invalid date format. Use YYYY-MM-DD." }, { status: 400 });
   }
 
   if (from > to) {
-    return Response.json({ error: "'from' must be before or equal to 'to'." }, { status: 400 });
+    return NextResponse.json({ error: "'from' must be before or equal to 'to'." }, { status: 400 });
   }
 
-  try {
-    let data: any;
+  let data: unknown;
 
-    switch (type) {
-      case "summary":
-        data = await getSalesSummary(orgId, locationId, from, to);
-        break;
-      case "category":
-        data = await getSalesByCategory(orgId, locationId, from, to);
-        break;
-      case "employee":
-        data = await getSalesByEmployee(orgId, locationId, from, to);
-        break;
-      case "hourly":
-        data = await getSalesByHour(orgId, locationId, from, to);
-        break;
-      case "tender":
-        data = await getTenderAnalysis(orgId, from, to);
-        break;
-      case "products":
-        data = await getTopProducts(orgId, locationId, from, to);
-        break;
-      case "shifts":
-        data = await getShiftSummary(orgId, locationId, from, to);
-        break;
-      default:
-        return Response.json({ error: `Unknown report type: ${type}` }, { status: 400 });
-    }
-
-    return Response.json(data);
-  } catch (error) {
-    console.error(`Error generating ${type} report:`, error);
-    return Response.json({ error: `Failed to generate ${type} report` }, { status: 500 });
+  switch (type) {
+    case "summary":
+      data = await getSalesSummary(orgId, locationId, from, to);
+      break;
+    case "category":
+      data = await getSalesByCategory(orgId, locationId, from, to);
+      break;
+    case "employee":
+      data = await getSalesByEmployee(orgId, locationId, from, to);
+      break;
+    case "hourly":
+      data = await getSalesByHour(orgId, locationId, from, to);
+      break;
+    case "tender":
+      data = await getTenderAnalysis(orgId, from, to);
+      break;
+    case "products":
+      data = await getTopProducts(orgId, locationId, from, to);
+      break;
+    case "shifts":
+      data = await getShiftSummary(orgId, locationId, from, to);
+      break;
+    default:
+      return NextResponse.json({ error: `Unknown report type: ${type}` }, { status: 400 });
   }
-}
+
+  return NextResponse.json(data);
+});
 
 async function getSalesSummary(orgId: string, locationId: string, from: string, to: string) {
   const fromDate = `${from}T00:00:00Z`;
