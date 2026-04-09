@@ -262,7 +262,7 @@ export function BarcodeLookup({ categories }: { categories: Category[] }) {
               </div>
             </div>
             {result.product.image_url && (
-              <img src={result.product.image_url} alt="" className="w-16 h-16 rounded-lg object-cover flex-shrink-0" />
+              <img src={result.product.image_url} alt={`Product image for ${result.product.product_name}`} className="w-16 h-16 rounded-lg object-cover flex-shrink-0" />
             )}
           </div>
         </div>
@@ -290,7 +290,7 @@ export function BarcodeLookup({ categories }: { categories: Category[] }) {
               </div>
             </div>
             {result.product.image_url && (
-              <img src={result.product.image_url} alt="" className="w-16 h-16 rounded-lg object-cover flex-shrink-0" />
+              <img src={result.product.image_url} alt={`Product image for ${result.product.title}`} className="w-16 h-16 rounded-lg object-cover flex-shrink-0" />
             )}
           </div>
         </div>

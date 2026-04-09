@@ -83,7 +83,7 @@ export function ApprovalModal({ request, onApproved, onDenied }: ApprovalModalPr
   }
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4" onClick={onDenied}>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-label="Manager approval required" onClick={onDenied}>
       <div className="w-full max-w-sm rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
 
         {/* Header — amber warning style */}

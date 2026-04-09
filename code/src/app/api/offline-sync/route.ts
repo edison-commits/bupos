@@ -4,6 +4,7 @@ import { orgTx, orgQuery } from "@/lib/db";
 import { requireRegisterPermission } from "@/lib/authz";
 import { getRegisterConfig } from "@/lib/config/register-config";
 import { validateBody, offlineSyncSchema } from "@/lib/validation/schemas";
+import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 interface CartPayload {
   employeeId?: string;
   registerSessionId?: string;
@@ -117,8 +118,12 @@ export async function POST(request: NextRequest) {
         taxRate = Number(locRows[0].tax_rate);
       }
     } catch {
-      // Use default tax rate if lookup fails — log for observability
-      console.warn("[offline-sync] tax rate lookup failed, using default 0.1025");
+      // Use default tax rate if lookup fails — log as audit event for observability
+      pgInsertAuditEvent(
+        orgId, locationId, null,
+        "location", locationId, "tax_rate_fallback" as "inventory_adjustment",
+        { fallback_rate: "0.1025", reason: "tax_rate_lookup_failed" },
+      ).catch(() => {});
     }
 
     // C-05: Reload server-side variant prices instead of trusting client-supplied prices

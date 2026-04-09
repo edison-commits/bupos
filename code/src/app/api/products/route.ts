@@ -134,7 +134,7 @@ export async function GET(request: NextRequest) {
     const productsMap = new Map();
     const priceRanges = new Map();
 
-    productsResult.rows.forEach((row: any) => {
+    productsResult.rows.forEach((row: Record<string, unknown>) => {
       if (!productsMap.has(row.id)) {
         productsMap.set(row.id, {
           id: row.id,
@@ -162,14 +162,14 @@ export async function GET(request: NextRequest) {
           name: row.variant_name,
           size_label: row.size_label,
           color_label: row.color_label,
-          price: parseFloat(row.price),
-          compare_at_price: row.compare_at_price ? parseFloat(row.compare_at_price) : null,
-          cost: parseFloat(row.cost),
-          is_active: row.variant_is_active,
-          stock: row.stock,
-          updatedAt: row.variant_updated_at,
+          price: parseFloat(row.price as string),
+          compare_at_price: row.compare_at_price ? parseFloat(row.compare_at_price as string) : null,
+          cost: parseFloat(row.cost as string),
+          is_active: row.variant_is_active as boolean,
+          stock: row.stock as number,
+          updatedAt: row.variant_updated_at as string,
         });
-        priceRanges.get(row.id).push(parseFloat(row.price));
+        priceRanges.get(row.id as string)!.push(parseFloat(row.price as string));
       }
     });
 
@@ -183,7 +183,7 @@ export async function GET(request: NextRequest) {
           prices.length > 0
             ? { min: Math.min(...prices), max: Math.max(...prices) }
             : null,
-        total_stock: product.variants.reduce((sum: number, v: any) => sum + v.stock, 0),
+        total_stock: product.variants.reduce((sum: number, v: { stock: number }) => sum + v.stock, 0),
       };
     });
 
@@ -378,7 +378,7 @@ export async function PUT(request: NextRequest) {
 
       // Optimistic locking: check updated_at if expectedUpdatedAt is provided
       let whereClause = `WHERE id = $${paramIndex}`;
-      const whereValues: any[] = [...values, id];
+      const whereValues: unknown[] = [...values, id];
       if (updates.expectedUpdatedAt) {
         paramIndex++;
         whereClause += ` AND updated_at = $${paramIndex}`;
@@ -438,7 +438,7 @@ export async function PUT(request: NextRequest) {
 
       // Optimistic locking: check updated_at if expectedUpdatedAt is provided
       let whereClause = `WHERE id = $${paramIndex}`;
-      const whereValues: any[] = [...values, updates.variant_id];
+      const whereValues: unknown[] = [...values, updates.variant_id];
       if (updates.expectedUpdatedAt) {
         paramIndex++;
         whereClause += ` AND updated_at = $${paramIndex}`;
@@ -536,7 +536,7 @@ export async function PATCH(request: NextRequest) {
     if (action === 'import_csv') {
       const iv = validateBody(productImportSchema, { action: 'import', rows: body.rows });
       if (!iv.success) return NextResponse.json({ error: iv.error }, { status: 400 });
-      const rows = iv.data.rows as any[];
+      const rows = iv.data.rows as Record<string, string | number>[];
 
       const results: { row: number; status: 'created' | 'updated' | 'skipped'; name: string; message?: string }[] = [];
       let created = 0;
@@ -550,19 +550,19 @@ export async function PATCH(request: NextRequest) {
         `SELECT id, name FROM categories WHERE organization_id = $1`,
         [orgId]
       );
-      const catMap = new Map(catsResult.rows.map((r: any) => [r.name.toLowerCase(), r.id]));
+      const catMap = new Map(catsResult.rows.map((r: Record<string, string>) => [r.name.toLowerCase(), r.id]));
 
       const existingResult = await client.query(
         `SELECT id, name, category_id FROM products WHERE organization_id = $1`,
         [orgId]
       );
-      const productsByName = new Map(existingResult.rows.map((r: any) => [r.name.toLowerCase(), { id: r.id, categoryId: r.category_id }]));
+      const productsByName = new Map(existingResult.rows.map((r: Record<string, string>) => [r.name.toLowerCase(), { id: r.id, categoryId: r.category_id }]));
 
       const variantResult = await client.query(
         `SELECT id, sku FROM product_variants WHERE organization_id = $1 AND sku IS NOT NULL AND sku != ''`,
         [orgId]
       );
-      const skuMap = new Map(variantResult.rows.map((r: any) => [r.sku.toLowerCase(), r.id]));
+      const skuMap = new Map(variantResult.rows.map((r: Record<string, string>) => [r.sku.toLowerCase(), r.id]));
 
       // Pre-collect new categories to batch insert
       const newCategories: { displayName: string; slug: string }[] = [];
@@ -618,11 +618,11 @@ export async function PATCH(request: NextRequest) {
         const rowNum = i + 2; // +2 for 1-indexed + header row
         const name = String(row.name || row.Name || row.PRODUCT_NAME || '').trim();
         const sku = String(row.sku || row.SKU || row.Variant_SKU || '').trim().toLowerCase();
-        const price = parseFloat(row.price || row.Price || row.PRICE || '0');
+        const price = parseFloat(String(row.price || row.Price || row.PRICE || '0'));
         const categoryName = String(row.category || row.Category || row.CATEGORY_NAME || '').trim().toLowerCase();
         const sizeLabel = String(row.size || row.Size || row.SIZE_LABEL || '').trim();
         const colorLabel = String(row.color || row.Color || row.COLOR_LABEL || '').trim();
-        const cost = parseFloat(row.cost || row.Cost || row.COST || '0') || 0;
+        const cost = parseFloat(String(row.cost || row.Cost || row.COST || '0')) || 0;
         const barcode = String(row.barcode || row.Barcode || row.BARCODE || '').trim();
         const description = String(row.description || row.Description || row.DESCRIPTION || '').trim();
         const imageUrl = String(row.image_url || row.imageUrl || row.IMAGE_URL || '').trim();
@@ -726,7 +726,7 @@ export async function PATCH(request: NextRequest) {
           const key = r.name.toLowerCase();
           const existing = productsByName.get(key);
           if (!existing || typeof existing.id !== 'string' || !existing.id.startsWith('new:')) {
-            productsByName.set(key, { id: r.id, categoryId: null });
+            productsByName.set(key, { id: r.id as string, categoryId: (r.category_id as string) ?? null });
           } else {
             existing.id = r.id;
           }

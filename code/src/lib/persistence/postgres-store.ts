@@ -16,8 +16,6 @@ const _productsCache = new Map<string, CacheEntry<Product[]>>();
 const _variantsCache = new Map<string, CacheEntry<ProductVariant[]>>();
 const _inventoryCache = new Map<string, CacheEntry<InventoryLevel[]>>();
 const _locationsCache = new Map<string, CacheEntry<import('@/lib/domain/types').Location[]>>();
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let _orgCache: CacheEntry<any> | null = null;
 const _categoriesCache = new Map<string, CacheEntry<Category[]>>();
 
 // ── Helpers ───────────────────────────────────────────────────────────
@@ -620,26 +618,6 @@ export async function pgInsertAuditEvent(
 }
 
 // ── Organization ──────────────────────────────────────────────────────
-
-export async function pgReadOrganization() {
-  const { rows } = await pool.query(
-    `SELECT id, name, slug, legal_name, timezone, currency_code, phone, email, website,
-            receipt_header, receipt_footer, created_at, updated_at
-     FROM organizations LIMIT 1`,
-  );
-  if (!rows[0]) return null;
-  const r = rows[0] as Record<string, unknown>;
-  return {
-    id: r.id as string, name: r.name as string, slug: r.slug as string,
-    legalName: r.legal_name as string, timezone: r.timezone as string,
-    currencyCode: r.currency_code as string,
-    phone: (r.phone as string) ?? '', email: (r.email as string) ?? '',
-    website: (r.website as string) ?? '',
-    receiptHeader: (r.receipt_header as string) ?? '',
-    receiptFooter: (r.receipt_footer as string) ?? 'Thank you for shopping with us!',
-    createdAt: String(r.created_at), updatedAt: String(r.updated_at),
-  };
-}
 
 export async function pgUpdateOrganization(id: string, data: Partial<{
   name: string; legalName: string; phone: string; email: string; website: string;

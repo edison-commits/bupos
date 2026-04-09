@@ -804,7 +804,8 @@ export function POSTerminal({
           <button
             type="button"
             onClick={() => setShowCustomerSearch(true)}
-            className="touch-button flex items-center gap-2 rounded-xl border px-4 py-3 text-base font-medium transition-colors"
+            aria-label="Search customer"
+            className="touch-button flex items-center gap-2 rounded-xl border px-4 py-3 text-base font-medium transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-teal-500"
             style={{ borderColor: cart.customerId ? 'var(--surface-accent)' : 'var(--border-subtle)', background: cart.customerId ? 'var(--surface-accent)' : 'var(--surface-panel)', color: cart.customerId ? 'white' : 'var(--text-secondary)' }}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
@@ -819,7 +820,8 @@ export function POSTerminal({
             type="button"
             onClick={handleHoldCart}
             disabled={cart.items.length === 0}
-            className="touch-button rounded-xl border px-4 py-3 text-base font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label="Hold cart"
+            className="touch-button rounded-xl border px-4 py-3 text-base font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-teal-500"
             style={{ borderColor: 'var(--border-subtle)', background: 'var(--surface-panel)', color: 'var(--text-secondary)' }}
           >
             Hold
@@ -855,7 +857,8 @@ export function POSTerminal({
             <button
               type="button"
               onClick={() => setShowMoreActions((v) => !v)}
-              className="touch-button flex items-center justify-center rounded-xl border px-4 py-3 text-base font-medium transition-colors"
+              aria-label="More actions"
+              className="touch-button flex items-center justify-center rounded-xl border px-4 py-3 text-base font-medium transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-teal-500"
               style={{ borderColor: 'var(--border-subtle)', background: 'var(--surface-panel)', color: 'var(--text-secondary)' }}
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>

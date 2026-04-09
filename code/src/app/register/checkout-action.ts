@@ -36,10 +36,10 @@ export async function checkoutAction(
     );
     if (existing.length > 0) {
       return {
-        transactionId: existing[0].id,
-        status: existing[0].status,
+        transactionId: existing[0].id as string,
+        status: existing[0].status as string,
         duplicate: true,
-      } as CheckoutResult;
+      } as unknown as CheckoutResult;
     }
   }
 

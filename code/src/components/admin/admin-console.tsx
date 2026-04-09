@@ -44,6 +44,16 @@ import { hasPermission, roleDefinitions } from "@/lib/domain/permissions";
 import type { RoleKey } from "@/lib/domain/types";
 import type { LocalStoreData } from "@/lib/persistence/types";
 import { formatDateTime } from "@/lib/utils/date";
+import {
+  SalesSummary as SalesSummaryWidget,
+  ShiftHistory as ShiftHistoryWidget,
+  EmployeeActivity as EmployeeActivityWidget,
+  CustomerActivity as CustomerActivityWidget,
+  CashierExceptions as CashierExceptionsWidget,
+  DiscrepancyCorrelation as DiscrepancyCorrelationWidget,
+  InventorySummary as InventorySummaryWidget,
+  Metric as MetricWidget,
+} from "@/components/admin/admin-dashboard-widgets";
 
 export function AdminConsole({
   store,
@@ -98,11 +108,11 @@ export function AdminConsole({
         </SectionCard>
 
         <SectionCard title="Sales summary" description="Transaction activity and tender breakdown.">
-          <SalesSummary store={store} />
+          <SalesSummaryWidget store={store} />
         </SectionCard>
 
         <SectionCard title="Customer activity" description="Top customers by spend and visit frequency.">
-          <CustomerActivity customers={store.customers} />
+          <CustomerActivityWidget customers={store.customers} />
         </SectionCard>
 
         <SectionCard title="Analytics" description="Visual sales trends and distribution charts.">
@@ -118,9 +128,9 @@ export function AdminConsole({
       <SectionPanel sectionKey="catalog">
         <SectionCard title="Catalog snapshot" description="Categories and products with variant details.">
           <div className="grid gap-3 md:grid-cols-3">
-            <Metric label="Categories" value={String(store.categories.length)} />
-            <Metric label="Products" value={String(store.products.length)} />
-            <Metric label="Variants" value={String(store.variants.length)} />
+            <MetricWidget label="Categories" value={String(store.categories.length)} />
+            <MetricWidget label="Products" value={String(store.products.length)} />
+            <MetricWidget label="Variants" value={String(store.variants.length)} />
           </div>
           
           <div className="mt-6 space-y-3">
@@ -415,7 +425,7 @@ export function AdminConsole({
         </SectionCard>
 
         <SectionCard title="Inventory summary" description="Stock levels, total value, and movement activity.">
-          <InventorySummary store={store} inventoryRows={inventoryRows} />
+          <InventorySummaryWidget store={store} />
         </SectionCard>
 
         <div className="grid gap-6 xl:grid-cols-2">
@@ -547,16 +557,16 @@ export function AdminConsole({
       {/* ━━ Sales ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
       <SectionPanel sectionKey="sales">
         <SectionCard title="Sales summary" description="Transaction activity and tender breakdown.">
-          <SalesSummary store={store} />
+          <SalesSummaryWidget store={store} />
         </SectionCard>
 
         <div className="grid gap-6 xl:grid-cols-2">
           <SectionCard title="Shift history" description="Closed shifts with cash reconciliation.">
-            <ShiftHistory store={store} />
+            <ShiftHistoryWidget store={store} />
           </SectionCard>
 
           <SectionCard title="Employee activity" description="Sales, voids, and exceptions per employee.">
-            <EmployeeActivity store={store} />
+            <EmployeeActivityWidget store={store} />
           </SectionCard>
         </div>
 
@@ -565,7 +575,7 @@ export function AdminConsole({
         </SectionCard>
 
         <SectionCard title="Customer activity" description="Top customers by spend and visit frequency.">
-          <CustomerActivity customers={store.customers} />
+          <CustomerActivityWidget customers={store.customers} />
         </SectionCard>
 
         <SectionCard title="Customer receipt lookup" description="Search past purchases by customer email or phone. Print or email receipts.">
@@ -607,11 +617,11 @@ export function AdminConsole({
 
         <div className="grid gap-6 xl:grid-cols-2">
           <SectionCard title="Cashier exception report" description="Flagged transactions, voids, and large discounts.">
-            <CashierExceptions store={store} />
+            <CashierExceptionsWidget store={store} />
           </SectionCard>
 
           <SectionCard title="Discrepancy correlation" description="Cash variance patterns by cashier.">
-            <DiscrepancyCorrelation store={store} />
+            <DiscrepancyCorrelationWidget store={store} />
           </SectionCard>
         </div>
 
@@ -638,9 +648,9 @@ export function AdminConsole({
 
         <SectionCard title="Audit trail" description="Recent transaction events, exceptions, and audit entries.">
           <div className="grid gap-3 md:grid-cols-3">
-            <Metric label="Transaction tenders" value={String(store.transactionTenderPlaceholders.length)} />
-            <Metric label="Lifecycle events" value={String(store.transactionEventPlaceholders.length)} />
-            <Metric label="Exceptions" value={String(store.transactionExceptionPlaceholders.length)} />
+            <MetricWidget label="Transaction tenders" value={String(store.transactionTenderPlaceholders.length)} />
+            <MetricWidget label="Lifecycle events" value={String(store.transactionEventPlaceholders.length)} />
+            <MetricWidget label="Exceptions" value={String(store.transactionExceptionPlaceholders.length)} />
           </div>
           {store.transactionEventPlaceholders.length > 0 && (
             <div className="mt-4 space-y-1">
@@ -795,10 +805,10 @@ function SalesSummary({ store }: { store: LocalStoreData }) {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Transactions" value={String(txnCount)} />
-        <Metric label="Total sales" value={`$${totalSales.toFixed(2)}`} />
-        <Metric label="Returns" value={`${returnCount} / $${totalReturns.toFixed(2)}`} />
-        <Metric label="Avg ticket" value={`$${avgTicket.toFixed(2)}`} />
+        <MetricWidget label="Transactions" value={String(txnCount)} />
+        <MetricWidget label="Total sales" value={`$${totalSales.toFixed(2)}`} />
+        <MetricWidget label="Returns" value={`${returnCount} / $${totalReturns.toFixed(2)}`} />
+        <MetricWidget label="Avg ticket" value={`$${avgTicket.toFixed(2)}`} />
       </div>
       <div className="rounded-2xl bg-zinc-50 px-4 py-3">
         <p className="text-sm font-semibold text-zinc-600">Net sales: <span className="text-lg text-zinc-900">${netSales.toFixed(2)}</span></p>
@@ -1037,16 +1047,16 @@ function InventorySummary({ store, inventoryRows }: { store: LocalStoreData; inv
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Total on hand" value={String(totalOnHand)} />
-        <Metric label="Reserved" value={String(totalReserved)} />
-        <Metric label="Retail value" value={`$${totalRetailValue.toFixed(2)}`} />
-        <Metric label="Cost value" value={`$${totalCostValue.toFixed(2)}`} />
+        <MetricWidget label="Total on hand" value={String(totalOnHand)} />
+        <MetricWidget label="Reserved" value={String(totalReserved)} />
+        <MetricWidget label="Retail value" value={`$${totalRetailValue.toFixed(2)}`} />
+        <MetricWidget label="Cost value" value={`$${totalCostValue.toFixed(2)}`} />
       </div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Low stock items" value={String(lowStockCount)} />
-        <Metric label="Out of stock" value={String(outOfStockCount)} />
-        <Metric label="Adjustments" value={String(adjustmentCount)} />
-        <Metric label="Net adjustment" value={`${netAdjustment >= 0 ? "+" : ""}${netAdjustment}`} />
+        <MetricWidget label="Low stock items" value={String(lowStockCount)} />
+        <MetricWidget label="Out of stock" value={String(outOfStockCount)} />
+        <MetricWidget label="Adjustments" value={String(adjustmentCount)} />
+        <MetricWidget label="Net adjustment" value={`${netAdjustment >= 0 ? "+" : ""}${netAdjustment}`} />
       </div>
       {store.inventory.length > 0 && (
         <div className="space-y-1">

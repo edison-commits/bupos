@@ -245,7 +245,7 @@ async function handleCloseShift(orgId: string, locationId: string, body: Record<
   }
 
   const shift = shiftRes.rows[0];
-  const expectedCash = await calculateExpectedCash(orgId, shift_id);
+  const expectedCash = await calculateExpectedCash(orgId, shift_id as string);
   const variance = Number(declared_cash) - expectedCash;
 
   // Update shift with closure details

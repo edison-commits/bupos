@@ -19,7 +19,7 @@ interface ReportData {
   date: string;
   sales_summary: SalesSummary;
   net_revenue: number;
-  avg_transaction_value: string;
+  avg_transaction_value: number;
   payment_methods: PaymentMethod[];
   top_products: TopProduct[];
   employee_performance: EmployeePerf[];
@@ -191,6 +191,8 @@ async function generateReportData(orgId: string, locationId?: string): Promise<R
         total_returns_count: 0,
         total_returns_amount: 0,
       },
+      net_revenue: 0,
+      avg_transaction_value: 0,
       payment_methods: [],
       top_products: [],
       employee_performance: [],
@@ -204,8 +206,8 @@ async function generateReportData(orgId: string, locationId?: string): Promise<R
   const netRevenue = (salesSummary.total_sales_amount || 0) - (salesSummary.total_returns_amount || 0);
   const avgTransactionValue =
     salesSummary.total_sales_count > 0
-      ? (netRevenue / salesSummary.total_sales_count).toFixed(2)
-      : "0.00";
+      ? Math.round((netRevenue / salesSummary.total_sales_count) * 100) / 100
+      : 0;
 
   return {
     date: today,
@@ -276,7 +278,7 @@ function generateEmailHTML(data: ReportData): string {
   const formatCurrency = (val: number) => `$${Number(val).toFixed(2)}`;
   const formatCount = (val: number) => (val || 0).toString();
   // Escape user-controlled strings to prevent XSS in HTML email body
-  const esc = (s: any) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
+  const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   })[c]!);
 
@@ -349,7 +351,7 @@ function generateEmailHTML(data: ReportData): string {
         <tbody>
           ${payment_methods
             .map(
-              (pm: any) => `
+              (pm: PaymentMethod) => `
             <tr>
               <td>${esc(pm.payment_method)}</td>
               <td>${pm.transaction_count}</td>
@@ -381,7 +383,7 @@ function generateEmailHTML(data: ReportData): string {
         <tbody>
           ${top_products
             .map(
-              (p: any) => `
+              (p: TopProduct) => `
             <tr>
               <td>${esc(p.name)}<br><span style="font-size: 12px; color: #999;">SKU: ${esc(p.sku)}</span></td>
               <td>${p.total_quantity}</td>
@@ -413,7 +415,7 @@ function generateEmailHTML(data: ReportData): string {
         <tbody>
           ${employee_performance
             .map(
-              (e: any) => `
+              (e: EmployeePerf) => `
             <tr>
               <td>${esc(e.employee_name)}</td>
               <td>${e.transaction_count}</td>
@@ -438,7 +440,7 @@ function generateEmailHTML(data: ReportData): string {
         ${low_stock_items.length} item(s) below reorder point:
       </p>
       <ul style="margin: 10px 0 0 0; padding-left: 20px;">
-        ${low_stock_items.map((item: any) => `<li>${esc(item.name)} (SKU: ${esc(item.sku)}) - ${item.on_hand} on hand</li>`).join("")}
+        ${low_stock_items.map((item: LowStockItem) => `<li>${esc(item.name)} (SKU: ${esc(item.sku)}) - ${item.on_hand} on hand</li>`).join("")}
       </ul>
     </div>
     `
