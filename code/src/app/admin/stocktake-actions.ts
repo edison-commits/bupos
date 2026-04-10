@@ -1,7 +1,7 @@
 "use server";
 
 import { mutateStore } from "@/lib/persistence/store";
-import { getAdminSession } from "@/lib/auth/session";
+import { requireAdminPermission } from "@/lib/authz";
 import type { Stocktake, StocktakeLine } from "@/lib/domain/types";
 import { revalidatePath } from "next/cache";
 
@@ -15,8 +15,7 @@ export async function createStocktakeAction(formData: FormData) {
     throw new Error("Location and count type are required");
   }
 
-  const ctx = await getAdminSession();
-  if (!ctx) throw new Error("Not authenticated");
+  const ctx = await requireAdminPermission("inventory.adjust");
 
   await mutateStore((store) => {
     const now = new Date().toISOString();
@@ -69,7 +68,7 @@ export async function recordCountAction(formData: FormData) {
     throw new Error("Line ID and non-negative count required");
   }
 
-  const ctx = await getAdminSession();
+  const ctx = await requireAdminPermission("inventory.adjust");
   if (!ctx) throw new Error("Not authenticated");
 
   await mutateStore((store) => {
@@ -86,7 +85,7 @@ export async function recordCountAction(formData: FormData) {
 }
 
 export async function acceptStocktakeAction(stocktakeId: string) {
-  const ctx = await getAdminSession();
+  const ctx = await requireAdminPermission("inventory.adjust");
   if (!ctx) throw new Error("Not authenticated");
 
   await mutateStore((store) => {

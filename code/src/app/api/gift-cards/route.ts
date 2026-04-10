@@ -186,7 +186,7 @@ export async function POST(req: NextRequest) {
 
       const client = await orgTx(orgId);
       try {
-        const gc = await client.query(`SELECT * FROM gift_cards WHERE id = $1 FOR UPDATE`, [giftCardId]);
+        const gc = await client.query(`SELECT id, organization_id, code, initial_balance, current_balance, status, customer_id, activated_at, expires_at FROM gift_cards WHERE id = $1 FOR UPDATE`, [giftCardId]);
         if (gc.rows.length === 0) {
           await client.query("ROLLBACK");
           return NextResponse.json({ error: "Gift card not found" }, { status: 404 });

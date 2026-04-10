@@ -221,7 +221,7 @@ export async function POST(req: NextRequest) {
       const client = await orgTx(orgId);
       try {
         const t = await client.query(
-          `SELECT * FROM transfers WHERE id = $1 AND status = 'requested' FOR UPDATE`,
+          `SELECT id, organization_id, source_location_id, destination_location_id, status, requested_by, shipped_by, received_by, notes, created_at, updated_at FROM transfers WHERE id = $1 AND status = 'requested' FOR UPDATE`,
           [transferId],
         );
         if (t.rows.length === 0) {
@@ -309,7 +309,7 @@ export async function POST(req: NextRequest) {
       const client = await orgTx(orgId);
       try {
         const t = await client.query(
-          `SELECT * FROM transfers WHERE id = $1 AND status = 'in_transit' FOR UPDATE`,
+          `SELECT id, organization_id, source_location_id, destination_location_id, status, requested_by, shipped_by, received_by, notes, created_at, updated_at FROM transfers WHERE id = $1 AND status = 'in_transit' FOR UPDATE`,
           [transferId],
         );
         if (t.rows.length === 0) {

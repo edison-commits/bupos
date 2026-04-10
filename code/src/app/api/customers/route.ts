@@ -78,7 +78,7 @@ export async function GET(request: NextRequest) {
       const [customerRes, transactionsRes, statsRes] = await Promise.all([
         orgQuery(
           orgId,
-          `SELECT * FROM customers WHERE id = $1 AND organization_id = $2`,
+          `SELECT id, organization_id, customer_id, total, subtotal, tax_amount, discount_amount, status, created_at FROM customers WHERE id = $1 AND organization_id = $2`,
           [id, orgId]
         ),
         orgQuery(

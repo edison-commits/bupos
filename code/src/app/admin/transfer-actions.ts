@@ -1,7 +1,7 @@
 "use server";
 
 import { mutateStore } from "@/lib/persistence/store";
-import { getAdminSession } from "@/lib/auth/session";
+import { requireAdminPermission } from "@/lib/authz";
 import { orgQuery, orgTx } from "@/lib/db";
 import type { Transfer, TransferLine } from "@/lib/domain/types";
 import { revalidatePath } from "next/cache";
@@ -26,7 +26,7 @@ export async function createTransferAction(formData: FormData) {
   try { parsedLines = JSON.parse(lineData || "[]"); } catch { throw new Error("Invalid line data"); }
   if (parsedLines.length === 0) throw new Error("At least one item is required");
 
-  const ctx = await getAdminSession();
+  const ctx = await requireAdminPermission("inventory.adjust");
   if (!ctx) throw new Error("Not authenticated");
 
   if (isPg()) {
@@ -76,7 +76,7 @@ export async function createTransferAction(formData: FormData) {
 }
 
 export async function shipTransferAction(transferId: string) {
-  const ctx = await getAdminSession();
+  const ctx = await requireAdminPermission("inventory.adjust");
   if (!ctx) throw new Error("Not authenticated");
 
   if (isPg()) {
@@ -135,7 +135,7 @@ export async function shipTransferAction(transferId: string) {
 }
 
 export async function receiveTransferAction(transferId: string) {
-  const ctx = await getAdminSession();
+  const ctx = await requireAdminPermission("inventory.adjust");
   if (!ctx) throw new Error("Not authenticated");
 
   if (isPg()) {
@@ -209,7 +209,7 @@ export async function receiveTransferAction(transferId: string) {
 }
 
 export async function cancelTransferAction(transferId: string) {
-  const ctx = await getAdminSession();
+  const ctx = await requireAdminPermission("inventory.adjust");
   if (!ctx) throw new Error("Not authenticated");
 
   if (isPg()) {

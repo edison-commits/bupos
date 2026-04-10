@@ -234,7 +234,7 @@ export async function PATCH(request: NextRequest) {
     // Verify PO exists and is receivable
     const { rows: poRows } = await orgQuery(
       orgId,
-      `SELECT * FROM purchase_orders WHERE id = $1`,
+      `SELECT id, organization_id, location_id, supplier_id, status, ordered_by, notes, expected_date, total_cost, created_at, updated_at FROM purchase_orders WHERE id = $1`,
       [id],
     );
     if (poRows.length === 0) return NextResponse.json({ error: 'PO not found' }, { status: 404 });

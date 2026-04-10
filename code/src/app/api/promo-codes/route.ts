@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
     if (code) {
       const result = await orgQuery(
         orgId,
-        `SELECT * FROM promo_codes WHERE LOWER(code) = LOWER($1)`,
+        `SELECT id, organization_id, code, description, type, value, minimum_purchase, max_redemptions, current_redemptions, status, starts_at, expires_at FROM promo_codes WHERE LOWER(code) = LOWER($1)`,
         [code],
       );
 
@@ -87,7 +87,7 @@ export async function GET(req: NextRequest) {
     // ── Lookup by ID with redemptions ──
     const id = sp.get("id");
     if (id) {
-      const promo = await orgQuery(orgId, `SELECT * FROM promo_codes WHERE id = $1`, [id]);
+      const promo = await orgQuery(orgId, `SELECT id, organization_id, code, description, type, value, minimum_purchase, max_redemptions, current_redemptions, status, starts_at, expires_at FROM promo_codes WHERE id = $1`, [id]);
       if (promo.rows.length === 0) {
         return NextResponse.json({ error: "Promo code not found" }, { status: 404 });
       }
@@ -112,7 +112,7 @@ export async function GET(req: NextRequest) {
 
     const codes = await orgQuery(
       orgId,
-      `SELECT * FROM promo_codes ${where} ORDER BY created_at DESC`,
+      `SELECT id, organization_id, code, description, type, value, minimum_purchase, max_redemptions, current_redemptions, status, starts_at, expires_at, created_at FROM promo_codes ${where} ORDER BY created_at DESC`,
       params,
     );
 

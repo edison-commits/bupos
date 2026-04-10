@@ -1,7 +1,7 @@
 "use server";
 
 import { mutateStore } from "@/lib/persistence/store";
-import { getAdminSession } from "@/lib/auth/session";
+import { requireAdminPermission } from "@/lib/authz";
 import type { LayawayPayment } from "@/lib/domain/types";
 import { revalidatePath } from "next/cache";
 
@@ -14,8 +14,7 @@ export async function makeLayawayPaymentAction(formData: FormData) {
     throw new Error("Layaway ID, positive amount, and tender type are required");
   }
 
-  const ctx = await getAdminSession();
-  if (!ctx) throw new Error("Not authenticated");
+  const ctx = await requireAdminPermission("register.open");
 
   await mutateStore((store) => {
     const layaway = store.layaways.find((l) => l.id === layawayId);
@@ -51,7 +50,7 @@ export async function makeLayawayPaymentAction(formData: FormData) {
 }
 
 export async function cancelLayawayAction(layawayId: string, reason: string) {
-  const ctx = await getAdminSession();
+  const ctx = await requireAdminPermission("register.open");
   if (!ctx) throw new Error("Not authenticated");
 
   await mutateStore((store) => {
