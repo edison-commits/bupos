@@ -72,7 +72,7 @@ export async function GET(req: NextRequest) {
     // Get tenders
     const tendersResult = await orgQuery(
       orgId,
-      `SELECT * FROM transaction_tenders WHERE transaction_id = $1 ORDER BY created_at`,
+      `SELECT id, transaction_id, tender_type, amount, reference, created_at FROM transaction_tenders WHERE transaction_id = $1 ORDER BY created_at`,
       [transactionId]
     );
 

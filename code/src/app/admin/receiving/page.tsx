@@ -581,7 +581,7 @@ export default function ReceivingPage() {
                             />
                             <button
                               onClick={() =>
-                                handleAddPOItem(line, (receivedQty as any).toString())
+                                handleAddPOItem(line, String(receivedQty))
                               }
                               style={{
                                 backgroundColor: isReceived ? '#14b8a6' : '#e5e7eb',

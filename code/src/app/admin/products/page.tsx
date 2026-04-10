@@ -350,7 +350,7 @@ export default function ProductsPage() {
           </select>
           <select
             value={activeFilter}
-            onChange={e => setActiveFilter(e.target.value as any)}
+            onChange={e => setActiveFilter(e.target.value as typeof activeFilter)}
             aria-label="Filter by status"
             className="rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
           >
