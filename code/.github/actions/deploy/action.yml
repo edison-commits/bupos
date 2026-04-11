@@ -1,0 +1,40 @@
+name: "Build & Deploy to Cloudflare"
+description: "Build BUPOS and deploy to Cloudflare Workers via OpenNext"
+
+inputs:
+  database-url:
+    description: "Postgres connection string"
+    required: true
+  cloudflare-api-token:
+    description: "Cloudflare API token"
+    required: true
+  cloudflare-account-id:
+    description: "Cloudflare account ID"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+        cache: "npm"
+        cache-dependency-path: code/package-lock.json
+
+    - name: Install
+      run: npm ci
+      working-directory: code
+      shell: bash
+
+    - name: Build & Deploy
+      run: npm run deploy
+      working-directory: code
+      shell: bash
+      env:
+        DATABASE_URL: ${{ inputs.database-url }}
+        USE_POSTGRES: "true"
+        NEXT_PUBLIC_SUPABASE_URL: "https://yxzzawwrkzcqqtsbdgzf.supabase.co"
+        BUPOS_ORG_ID: "713b3ff4-0582-40b1-98b0-02303af31e6f"
+        BUPOS_LOCATION_ID: "a237b403-e722-4e40-b0ba-97000c6521c1"
+        CLOUDFLARE_API_TOKEN: ${{ inputs.cloudflare-api-token }}
+        CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare-account-id }}

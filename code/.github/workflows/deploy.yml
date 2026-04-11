@@ -12,6 +12,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
       - name: Run Supabase migrations
         run: |
           for f in $(ls supabase/migrations/*.sql | sort); do
@@ -28,3 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/deploy
+        with:
+          database-url: ${{ secrets.DATABASE_URL }}
+          cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          cloudflare-account-id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
