@@ -4,24 +4,8 @@ import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import type { Category, InventoryLevel, Product, ProductVariant } from "@/lib/domain/types";
 import { VirtualKeyboard } from "@/components/ui/virtual-keyboard";
 
-// Web Audio beep for scan feedback
-function playScanBeep(success: boolean) {
-  try {
-    const ctx = new AudioContext();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.type = "sine";
-    osc.frequency.value = success ? 880 : 330; // high pitch success, low pitch error
-    gain.gain.value = 0.15;
-    osc.start();
-    osc.stop(ctx.currentTime + 0.1);
-    osc.onended = () => ctx.close();
-  } catch {
-    // Web Audio not available — silently skip
-  }
-}
+// Audio feedback imported from shared lib
+import { playScanSuccess, playScanFail } from '@/lib/audio';
 
 export interface ProductGridItem {
   product: Product;
@@ -105,13 +89,13 @@ export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) 
     const match = scanLookup.get(q);
     if (match) {
       if (match.stock <= 0) {
-        playScanBeep(false);
+        playScanFail();
         setScanFeedback(`${match.product.name} — out of stock`);
         return;
       }
       // Delay slightly to let barcode scanners finish (they type fast then press Enter)
       scanTimeoutRef.current = setTimeout(() => {
-        playScanBeep(true);
+        playScanSuccess();
         onAddItem(match.variant, match.product);
         setSearchQuery("");
         setScanFeedback(`Added: ${match.product.name} — ${match.variant.name}`);
@@ -129,11 +113,11 @@ export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) 
     if (match) {
       if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
       if (match.stock <= 0) {
-        playScanBeep(false);
+        playScanFail();
         setScanFeedback(`${match.product.name} — out of stock`);
         return;
       }
-      playScanBeep(true);
+      playScanSuccess();
       onAddItem(match.variant, match.product);
       setSearchQuery("");
       setScanFeedback(`Added: ${match.product.name} — ${match.variant.name}`);

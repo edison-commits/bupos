@@ -3,6 +3,7 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import type { Category, Customer, Employee, GiftCard, InventoryLevel, Location, Product, ProductVariant, PromoCode, RegisterConfiguration, RegisterSessionRecord, ShiftRecord } from "@/lib/domain/types";
 import type { Cart, CartTotals, DiscountMode, LineDiscount, TenderLine } from "@/lib/cart/types";
+import { playCheckoutComplete, playVoid, playApprovalNeeded, playError, speakTotal, speakChange } from "@/lib/audio";
 import { createCart, addItem, removeItem, updateQuantity, setDiscount, setDiscountMode, setLineDiscount, setPriceOverride, computeTotals, voidCart } from "@/lib/cart/cart";
 import { checkoutAction } from "@/app/register/checkout-action";
 import { useOnlineStatus } from "@/lib/offline/use-online-status";
@@ -24,6 +25,7 @@ import { ExchangeModal } from "./exchange-modal";
 import { PromoCodeModal } from "./promo-code-modal";
 import { useKeyboardShortcuts, KeyboardShortcutsOverlay } from "./keyboard-shortcuts";
 import { ThemeToggle } from "./theme-toggle";
+import { AudioToggle } from "./audio-toggle";
 import { ProductRecommendations } from "./product-recommendations";
 import { processReturnAction } from "@/app/register/return-action";
 import { createLayawayAction } from "@/app/register/layaway-action";
@@ -120,8 +122,21 @@ export function POSTerminal({
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Speak change due when receipt appears
+  useEffect(() => {
+    if (receipt && receipt.changeDue > 0) {
+      const timer = setTimeout(() => speakChange(receipt.changeDue), 2500);
+      return () => clearTimeout(timer);
+    }
+  }, [receipt]);
+
   // Approval state
   const [approvalRequest, setApprovalRequest] = useState<ApprovalRequest | null>(null);
+
+  // Audio: play approval-needed chime when approval is requested
+  useEffect(() => {
+    if (approvalRequest) playApprovalNeeded();
+  }, [approvalRequest]);
   const [approvedExceptions, setApprovedExceptions] = useState<string[]>([]);
   const pendingTendersRef = useRef<TenderEntry[] | null>(null);
 
@@ -452,6 +467,7 @@ export function POSTerminal({
     setError(null);
     setVoidState(null);
     setApprovedExceptions([]);
+    playVoid();
   }, [freshCart, logEvent]);
 
   // ─── Hold / Recall ──────────────────────────────────
@@ -677,6 +693,10 @@ export function POSTerminal({
       channel.postMessage({ type: "receipt", totals });
       channel.close();
       setScreen("receipt");
+
+      // Audio feedback: chime + spoken total
+      playCheckoutComplete();
+      speakTotal(totals.grandTotal);
       setApprovedExceptions([]);
     } catch (e) {
       // If online checkout fails due to network error, try offline queue
@@ -717,10 +737,12 @@ export function POSTerminal({
         } catch {
           setError("Checkout failed and offline save failed");
           setScreen("selling");
+          playError();
         }
       } else {
         setError(e instanceof Error ? e.message : "Checkout failed");
         setScreen("selling");
+        playError();
       }
     } finally {
       setProcessing(false);
@@ -1183,9 +1205,10 @@ export function POSTerminal({
         />
       )}
 
-      {/* Theme toggle (floating) */}
-      <div className="fixed bottom-4 left-4 z-30">
+      {/* Theme + Audio toggles (floating) */}
+      <div className="fixed bottom-4 left-4 z-30 flex items-center gap-2">
         <ThemeToggle />
+        <AudioToggle />
       </div>
 
       {/* Keyboard shortcuts overlay */}
