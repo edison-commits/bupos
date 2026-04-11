@@ -10,6 +10,7 @@ import { SectionCard } from "@/components/ui/section-card";
 import type { PayInOutRecord } from "@/lib/domain/types";
 import type { LocalStoreData, RegisterSessionContext } from "@/lib/persistence/types";
 import { formatDateTime } from "@/lib/utils/date";
+import { NumpadInput } from "./numpad-input";
 import { ShiftCloseModal } from "./shift-close-modal";
 import { PayInOutModal, type PayDirection } from "./pay-in-out-modal";
 import { EODWizard } from "./eod-wizard";
@@ -126,6 +127,7 @@ export function RegisterConsoleClient({
   const [switchPin, setSwitchPin] = useState("");
   const [switching, setSwitching] = useState(false);
   const [drawerStatus, setDrawerStatus] = useState<"idle" | "opening" | "done" | "error">("idle");
+  const [shiftFloatValue, setShiftFloatValue] = useState("200.00");
 
   // Sortable button state
   const [buttons, setButtons] = useState<ButtonConfig[]>(loadButtons);
@@ -569,7 +571,14 @@ export function RegisterConsoleClient({
             <form action={openShiftAction} className="grid gap-3 md:grid-cols-2">
               <label className="grid gap-1 text-base font-medium text-zinc-700">
                 <span>Opening float</span>
-                <input name="openingFloat" type="number" step="0.01" defaultValue="200.00" className="rounded-2xl border border-zinc-300 bg-white px-4 py-3" />
+                <input type="hidden" name="openingFloat" value={shiftFloatValue} />
+                <NumpadInput
+                  value={shiftFloatValue}
+                  onChange={setShiftFloatValue}
+                  placeholder="200.00"
+                  label="Opening float"
+                  prefix="$"
+                />
               </label>
               <label className="grid gap-1 text-base font-medium text-zinc-700 md:col-span-2">
                 <span>Opening note</span>

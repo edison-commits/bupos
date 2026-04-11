@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from "react";
 import type { TransactionEventPlaceholder, TransactionTenderPlaceholder } from "@/lib/domain/types";
+import { NumpadInput } from "./numpad-input";
 
 interface ExchangeItem {
   productVariantId: string;
@@ -175,15 +176,11 @@ export function ExchangeModal({
 
         <div className="px-5 py-4 space-y-4">
           <label className="grid gap-1">
-            <span className="text-sm font-medium text-zinc-600">Return amount (pre-tax)</span>
-            <input
-              type="number"
-              step="0.01"
-              min="0.01"
-              max={selectedTxn ? selectedTxn.grandTotal / (1 + 0.1025) : 999}
+            <span className="text-base font-medium text-zinc-600">Return amount (pre-tax)</span>
+            <NumpadInput
               value={returnItems[0]?.unitPrice.toFixed(2) ?? "0.00"}
-              onChange={(e) => {
-                const val = Number(e.target.value) || 0;
+              onChange={(v) => {
+                const val = Number(v) || 0;
                 setReturnItems((prev) =>
                   prev.map((item, i) => (i === 0 ? { ...item, unitPrice: val, returnQuantity: val > 0 ? 1 : 0 } : item)),
                 );

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { CheckCircle2 } from "lucide-react";
+import { NumpadInput } from "./numpad-input";
 
 interface EODWizardProps {
   expectedCash: number;
@@ -188,19 +189,14 @@ export function EODWizard({
 
               {/* Declared cash input */}
               <div className="space-y-2">
-                <label className="block text-sm font-semibold text-zinc-700">Declared cash</label>
-                <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-2xl font-bold text-zinc-700">$</span>
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    step="0.01"
-                    value={declaredCash || ""}
-                    onChange={handleDeclaredCashChange}
-                    placeholder="0.00"
-                    className="w-full rounded-2xl border-2 border-zinc-300 bg-white pl-10 pr-4 py-6 text-2xl font-bold text-zinc-900 placeholder-zinc-400 focus:border-teal-400 focus:outline-none"
-                  />
-                </div>
+                <label className="block text-base font-semibold text-zinc-700">Declared cash</label>
+                <NumpadInput
+                  value={String(declaredCash || "")}
+                  onChange={(v) => setDeclaredCash(Number(v) || 0)}
+                  placeholder="0.00"
+                  label="Declared cash"
+                  prefix="$"
+                />
               </div>
 
               {/* Quick-add denomination buttons */}

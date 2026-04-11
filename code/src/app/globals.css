@@ -229,6 +229,18 @@ html[data-theme="high-contrast"] .search-bar {
   font-size: 1.25rem !important;
 }
 
+/* High-contrast: numpad keys MUCH bigger for seniors */
+html[data-theme="high-contrast"] .fixed.bottom-0 button {
+  min-height: 4.5rem !important;
+  font-size: 1.5rem !important;
+}
+html[data-theme="high-contrast"] .fixed.bottom-0 {
+  font-size: 1.125rem;
+}
+html[data-theme="high-contrast"] .fixed.bottom-0 .text-2xl {
+  font-size: 2rem !important;
+}
+
 /* Even on mouse/trackpad devices, keep POS elements roomy */
 @media (pointer: fine) {
   :root {

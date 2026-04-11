@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import { NumpadInput } from "./numpad-input";
 
 interface DenominationRow {
   label: string;
@@ -176,16 +177,13 @@ export function ShiftCloseModal({
 
             {useManual ? (
               <label className="grid gap-1">
-                <span className="text-sm font-medium text-zinc-600">Total cash in drawer</span>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
+                <span className="text-base font-medium text-zinc-600">Total cash in drawer</span>
+                <NumpadInput
                   value={manualTotal}
-                  onChange={(e) => setManualTotal(e.target.value)}
+                  onChange={setManualTotal}
                   placeholder="0.00"
-                  className="rounded-xl border border-zinc-300 px-4 py-3 text-lg font-semibold"
-                  autoFocus
+                  label="Cash total"
+                  prefix="$"
                 />
               </label>
             ) : (
@@ -201,13 +199,7 @@ export function ShiftCloseModal({
                       >
                         −
                       </button>
-                      <input
-                        type="number"
-                        min="0"
-                        value={d.count}
-                        onChange={(e) => updateDenomination(i, Number(e.target.value) || 0)}
-                        className="h-10 w-16 rounded-lg border border-zinc-200 text-center text-sm font-semibold"
-                      />
+                      <span className="w-10 text-center text-base font-bold tabular-nums">{d.count}</span>
                       <button
                         type="button"
                         onClick={() => updateDenomination(i, d.count + 1)}

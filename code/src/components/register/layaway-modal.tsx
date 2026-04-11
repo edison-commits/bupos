@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { CartTotals } from "@/lib/cart/types";
+import { NumpadInput } from "./numpad-input";
 
 interface LayawayModalProps {
   totals: CartTotals;
@@ -58,18 +59,15 @@ export function LayawayModal({ totals, customerName, onConfirm, onCancel, proces
               </div>
 
               <label className="block">
-                <span className="text-sm font-medium text-zinc-600">
+                <span className="text-base font-medium text-zinc-600">
                   Deposit amount (min ${minimumDeposit.toFixed(2)})
                 </span>
-                <input
-                  type="number"
-                  min={minimumDeposit}
-                  max={totals.grandTotal}
-                  step="0.01"
+                <NumpadInput
                   value={deposit}
-                  onChange={(e) => setDeposit(e.target.value)}
-                  autoFocus
-                  className="mt-1 w-full rounded-2xl border border-zinc-300 bg-white px-4 py-3 text-right text-xl font-bold"
+                  onChange={setDeposit}
+                  placeholder={minimumDeposit.toFixed(2)}
+                  label="Deposit"
+                  prefix="$"
                 />
               </label>
 
