@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { AppNav } from "@/components/layout/app-nav";
 import { PosSidebar } from "@/components/layout/pos-sidebar";
 import { RegisterConsole } from "@/components/register/register-console";
@@ -6,6 +7,8 @@ import { PinLoginForm } from "@/components/register/pin-login-form";
 import { getRegisterSession } from "@/lib/auth/session";
 import { readStore } from "@/lib/persistence/store";
 import pool from "@/lib/db";
+
+export const metadata: Metadata = { title: "Register | BasicUniformPOS" };
 
 /** Single-row query — no joins, no full store load. Used only for unauthenticated PIN login. */
 async function getDefaultLocation() {

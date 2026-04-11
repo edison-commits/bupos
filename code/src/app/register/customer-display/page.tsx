@@ -1,6 +1,9 @@
+import type { Metadata } from "next";
 import { readStore } from "@/lib/persistence/store";
 import { BUPOS_ORG_ID } from "@/lib/env";
 import { CustomerDisplayClient } from "./customer-display-client";
+
+export const metadata: Metadata = { title: "Customer Display | BasicUniformPOS" };
 
 export const dynamic = "force-dynamic";
 
