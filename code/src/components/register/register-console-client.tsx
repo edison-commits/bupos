@@ -232,9 +232,9 @@ export function RegisterConsoleClient({
           key={b.id}
           {...dragProps}
           href={b.href}
-          className={`touch-button flex items-center gap-1 rounded-xl px-4 py-2 text-sm font-semibold ${variantClass(b.variant)} ${isDragging ? "opacity-40" : ""}`}
+          className={`touch-button flex items-center gap-1 rounded-xl px-4 py-2 text-base font-semibold ${variantClass(b.variant)} ${isDragging ? "opacity-40" : ""}`}
         >
-          {!isLocked && <span className="text-xs opacity60">⋮⋮</span>}
+          {!isLocked && <span className="text-xs opacity-60">⋮⋮</span>}
           {b.label}
         </a>
       );
@@ -245,7 +245,7 @@ export function RegisterConsoleClient({
           <button
             {...dragProps}
             type="submit"
-            className={`touch-button flex items-center gap-1 rounded-xl px-4 py-2 text-sm font-semibold ${variantClass(b.variant)} ${isDragging ? "opacity-40" : ""}`}
+            className={`touch-button flex items-center gap-1 rounded-xl px-4 py-2 text-base font-semibold ${variantClass(b.variant)} ${isDragging ? "opacity-40" : ""}`}
           >
             {!isLocked && <span className="text-xs opacity-60">⋮⋮</span>}
             {b.label}
@@ -271,7 +271,7 @@ export function RegisterConsoleClient({
         type="button"
         disabled={isDisabled}
         onClick={clickHandlers[b.type]}
-        className={`touch-button flex items-center gap-1 rounded-xl px-3 py-2 text-sm font-semibold ${variantClass(b.variant)} ${isDragging ? "opacity-40" : ""} ${isDropTarget ? "ring-2 ring-offset-1 ring-teal-400" : ""} ${isDisabled && b.type !== "drawer" ? "disabled:opacity-50" : ""}`}
+        className={`touch-button flex items-center gap-1 rounded-xl px-4 py-3 text-base font-semibold ${variantClass(b.variant)} ${isDragging ? "opacity-40" : ""} ${isDropTarget ? "ring-2 ring-offset-1 ring-teal-400" : ""} ${isDisabled && b.type !== "drawer" ? "disabled:opacity-50" : ""}`}
       >
         {!isLocked && <span className="text-xs opacity-60">⋮⋮</span>}
         {label}
@@ -359,7 +359,7 @@ export function RegisterConsoleClient({
             type="button"
             onClick={toggleLock}
             title={isLocked ? "Unlock to rearrange buttons" : "Lock button order"}
-            className={`touch-button flex items-center gap-1 rounded-xl px-3 py-2 text-sm font-semibold transition-colors ${isLocked ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200"}`}
+            className={`touch-button flex items-center gap-1 rounded-xl px-4 py-3 text-base font-semibold transition-colors ${isLocked ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200"}`}
           >
             {isLocked
               ? <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
@@ -439,7 +439,7 @@ export function RegisterConsoleClient({
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
             <div className="w-full max-w-xs rounded-2xl bg-white shadow-2xl">
               <div className="rounded-t-2xl bg-indigo-600 px-5 py-4 text-center text-white">
-                <p className="text-lg font-bold">Switch employee</p>
+              <p className="text-base font-bold">Switch employee</p>
                 <p className="mt-1 text-sm text-indigo-200">Enter new cashier&apos;s PIN</p>
               </div>
               <div className="p-5">
@@ -504,22 +504,22 @@ export function RegisterConsoleClient({
         <SectionCard title="Register session" description="Open a shift to start selling. The shift tracks cash accountability for the drawer.">
           <div className="grid gap-4 md:grid-cols-2">
             <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-4">
-              <p className="text-sm text-zinc-500">Cashier</p>
+              <p className="text-base text-zinc-700">Cashier</p>
               <p className="mt-2 text-2xl font-semibold">{context.employee.displayName}</p>
-              <p className="text-sm text-zinc-600">{context.employee.roleKey}</p>
+              <p className="text-base text-zinc-800">{context.employee.roleKey}</p>
             </div>
             <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-4">
-              <p className="text-sm text-zinc-500">Location</p>
+              <p className="text-base text-zinc-700">Location</p>
               <p className="mt-2 text-2xl font-semibold">{context.location.name}</p>
-              <p className="text-sm text-zinc-600">{context.location.address1}</p>
+              <p className="text-base text-zinc-800">{context.location.address1}</p>
             </div>
           </div>
           <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div className="text-sm text-zinc-600">
+            <div className="text-base text-zinc-800">
               Session opened {formatDateTime(context.session.createdAt)}
             </div>
             <form action={registerLogoutAction}>
-              <button className="touch-button rounded-2xl bg-zinc-900 px-5 text-sm font-semibold text-white">Close session</button>
+              <button className="touch-button rounded-2xl bg-zinc-900 px-5 text-base font-semibold text-white">Close session</button>
             </form>
           </div>
           {notice ? <p className="mt-4 rounded-2xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{notice}</p> : null}
@@ -558,15 +558,15 @@ export function RegisterConsoleClient({
             </div>
           ) : (
             <form action={openShiftAction} className="grid gap-3 md:grid-cols-2">
-              <label className="grid gap-1 text-sm font-medium text-zinc-700">
+              <label className="grid gap-1 text-base font-medium text-zinc-700">
                 <span>Opening float</span>
                 <input name="openingFloat" type="number" step="0.01" defaultValue="200.00" className="rounded-2xl border border-zinc-300 bg-white px-4 py-3" />
               </label>
-              <label className="grid gap-1 text-sm font-medium text-zinc-700 md:col-span-2">
+              <label className="grid gap-1 text-base font-medium text-zinc-700 md:col-span-2">
                 <span>Opening note</span>
                 <textarea name="openedNote" className="min-h-24 rounded-2xl border border-zinc-300 bg-white px-4 py-3" placeholder="Drawer counted and receipt printer loaded." />
               </label>
-              <button className="touch-button rounded-2xl bg-teal-700 px-5 text-sm font-semibold text-white md:col-span-2">Open shift</button>
+              <button className="touch-button rounded-2xl bg-teal-700 px-5 text-base font-semibold text-white md:col-span-2">Open shift</button>
             </form>
           )}
         </SectionCard>
@@ -576,18 +576,18 @@ export function RegisterConsoleClient({
         <SectionCard title="Recent shifts" description="Previous shifts at this location.">
           <div className="space-y-3">
             {recentShifts.length === 0 ? (
-              <p className="text-sm text-zinc-600">No shifts opened yet.</p>
+              <p className="text-base text-zinc-700">No shifts opened yet.</p>
             ) : (
               recentShifts.map((shift) => (
                 <div key={shift.id} className="rounded-2xl border border-zinc-200 px-4 py-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="font-medium">{shift.employee?.displayName ?? "Unknown"}</p>
-                      <p className="text-sm text-zinc-600">Opened {formatDateTime(shift.openedAt)}</p>
+                      <p className="text-base text-zinc-700">Opened {formatDateTime(shift.openedAt)}</p>
                     </div>
-                    <span className={`rounded-full px-3 py-1 text-xs font-semibold ${shift.status === "open" ? "bg-emerald-100 text-emerald-800" : "bg-zinc-100 text-zinc-700"}`}>{shift.status}</span>
+                    <span className={`rounded-full px-3 py-1 text-sm font-semibold ${shift.status === "open" ? "bg-emerald-100 text-emerald-800" : "bg-zinc-100 text-zinc-700"}`}>{shift.status}</span>
                   </div>
-                  <div className="mt-3 text-sm text-zinc-600">
+                  <div className="mt-3 text-base text-zinc-700">
                     Float ${shift.openingFloat.toFixed(2)}
                     {typeof shift.closingVariance === "number" ? ` · variance ${shift.closingVariance >= 0 ? "+" : ""}$${shift.closingVariance.toFixed(2)}` : ""}
                   </div>
@@ -602,7 +602,7 @@ export function RegisterConsoleClient({
             {store.registerConfiguration.supportedTenders.map((tender) => (
               <div key={tender} className="flex items-center justify-between rounded-2xl border border-zinc-200 px-4 py-3">
                 <span className="font-medium capitalize">{tender === "store_credit" ? "Store Credit" : tender}</span>
-                <span className="rounded-full bg-teal-50 px-2 py-0.5 text-xs font-semibold text-teal-700">Enabled</span>
+                <span className="rounded-full bg-teal-50 px-2 py-0.5 text-sm font-semibold text-teal-700">Enabled</span>
               </div>
             ))}
           </div>

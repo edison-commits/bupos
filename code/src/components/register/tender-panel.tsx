@@ -180,7 +180,7 @@ export function TenderPanel({
 
         {/* Tip UI */}
         <div className="border-b border-[var(--border-subtle)] px-8 py-4">
-          <p className="text-sm font-bold text-[var(--text-secondary)] uppercase tracking-wide mb-3">Add tip</p>
+          <p className="text-base font-bold text-[var(--text-secondary)] uppercase tracking-wide mb-3">Add tip</p>
           <div className="flex gap-3">
             {[15, 18, 20].map((pct) => (
               <button
@@ -195,7 +195,7 @@ export function TenderPanel({
                 style={!showCustomTip && tipPercent === pct ? { background: 'var(--surface-accent)' } : undefined}
               >
                 <span className="text-2xl">{pct}%</span>
-                <p className="text-sm mt-0.5 opacity-80">${(totals.grandTotal * pct / 100).toFixed(2)}</p>
+                <p className="text-base mt-0.5 opacity-80">${(totals.grandTotal * pct / 100).toFixed(2)}</p>
               </button>
             ))}
             <button
@@ -209,7 +209,7 @@ export function TenderPanel({
               style={showCustomTip ? { background: 'var(--surface-accent)' } : undefined}
             >
               <span className="text-2xl">Custom</span>
-              {showCustomTip && customTip ? <p className="text-sm mt-0.5 opacity-80">${(Number(customTip) || 0).toFixed(2)}</p> : null}
+              {showCustomTip && customTip ? <p className="text-base mt-0.5 opacity-80">${(Number(customTip) || 0).toFixed(2)}</p> : null}
             </button>
             {(tipPercent != null || (showCustomTip && Number(customTip) > 0)) && (
               <button
@@ -510,7 +510,7 @@ export function TenderPanel({
                               <span className="text-xl font-bold capitalize">
                                 {t.type === "store_credit" ? "Store Credit" : t.type === "loyalty" ? "Loyalty" : t.type === "gift_card" ? "Gift Card" : t.type}
                               </span>
-                              <p className="text-sm text-[var(--text-secondary)]">Running: ${runningTotal.toFixed(2)}</p>
+                              <p className="text-base text-[var(--text-secondary)]">Running: ${runningTotal.toFixed(2)}</p>
                             </div>
                           </div>
                           <div className="flex items-center gap-4">

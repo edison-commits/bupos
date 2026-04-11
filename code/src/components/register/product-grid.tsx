@@ -205,7 +205,7 @@ export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) 
             onChange={(e) => handleSearchChange(e.target.value)}
             onKeyDown={handleSearchKeyDown}
             placeholder="Search, scan or SKU..."
-            className="w-full rounded-2xl border px-12 py-4 text-lg focus:ring-2 focus:outline-none transition-all"
+            className="w-full rounded-2xl border px-12 py-4 text-xl focus:ring-2 focus:outline-none transition-all"
             style={{
               borderColor: 'var(--border-subtle)',
               background: 'var(--surface-panel)',
@@ -240,7 +240,7 @@ export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) 
           </div>
         </div>
         {scanFeedback && (
-          <p className={`mt-2 rounded-full px-3 py-1 text-sm font-medium inline-block scan-feedback-fade ${
+          <p className={`mt-2 rounded-full px-3 py-1 text-base font-medium inline-block scan-feedback-fade ${
             scanFeedback.includes("out of stock")
               ? "bg-red-100 text-red-700"
               : "bg-emerald-100 text-emerald-700"
@@ -249,7 +249,7 @@ export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) 
 
         {/* Tile size control */}
         <div className="flex items-center gap-1 mt-3">
-          <span className="text-sm font-medium text-zinc-500 mr-1">Tiles:</span>
+          <span className="text-base font-medium text-zinc-600 mr-1">Tiles:</span>
           {([['sm', 'S'], ['md', 'M'], ['lg', 'L']] as const).map(([size, label]) => (
             <button
               key={size}
@@ -362,18 +362,18 @@ export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) 
                 {/* Stock badge - top right over image */}
                 <div className="absolute top-2 right-2">
                   {outOfStock ? (
-                    <span className="inline-block rounded-full bg-red-500 px-2.5 py-0.5 text-xs font-bold text-white shadow">Out</span>
+                    <span className="inline-block rounded-full bg-red-500 px-3 py-1 text-sm font-bold text-white shadow">Out</span>
                   ) : totalStock <= 5 ? (
-                    <span className="inline-block rounded-full bg-amber-500 px-2.5 py-0.5 text-xs font-bold text-white shadow">{totalStock}</span>
+                    <span className="inline-block rounded-full bg-amber-500 px-3 py-1 text-sm font-bold text-white shadow">{totalStock}</span>
                   ) : (
-                    <span className="inline-block rounded-full bg-black/50 px-2.5 py-0.5 text-xs font-bold text-white backdrop-blur-sm">{totalStock}</span>
+                    <span className="inline-block rounded-full bg-black/50 px-3 py-1 text-sm font-bold text-white backdrop-blur-sm">{totalStock}</span>
                   )}
                 </div>
 
                 {/* Category badge - top left */}
                 {item.category && catColor && (
                   <div className="absolute top-2 left-2">
-                    <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold shadow ${catColor}`}>
+                    <span className={`inline-block rounded-full px-2.5 py-1 text-xs font-bold shadow ${catColor}`}>
                       {item.category.name}
                     </span>
                   </div>
@@ -383,13 +383,13 @@ export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) 
               {/* Product info overlay below image */}
               <div className="flex flex-1 flex-col justify-between px-3 py-2.5">
                 <div>
-                  <p className="text-sm font-semibold leading-snug line-clamp-2" style={{ color: 'var(--text-primary)' }}>{item.product.name}</p>
+                  <p className="text-base font-bold leading-snug line-clamp-2" style={{ color: 'var(--text-primary)' }}>{item.product.name}</p>
                   {item.variants.length > 1 && (
-                    <p className="mt-0.5 text-xs" style={{ color: 'var(--text-secondary)' }}>{item.variants.length} variants</p>
+                    <p className="mt-0.5 text-sm" style={{ color: 'var(--text-secondary)' }}>{item.variants.length} variants</p>
                   )}
                 </div>
                 <div className="mt-1.5 flex items-center justify-between">
-                  <span className="text-lg font-bold" style={{ color: 'var(--surface-accent)' }}>
+                  <span className="text-xl font-bold" style={{ color: 'var(--surface-accent)' }}>
                     ${defaultVariant?.price.toFixed(2) ?? "0.00"}
                   </span>
                 </div>
@@ -464,14 +464,14 @@ export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) 
                     <div className="text-left min-w-0 flex-1">
                       <p className="text-lg font-semibold text-zinc-900">{v.name}</p>
                       {(v.sizeLabel || v.colorLabel) && (
-                        <p className="text-sm text-zinc-500 mt-0.5">
+                        <p className="text-sm text-zinc-700 mt-0.5">
                           {[v.sizeLabel, v.colorLabel].filter(Boolean).join(" · ")}
                         </p>
                       )}
                     </div>
                     <div className="flex items-center gap-4 ml-3 shrink-0">
                       <div className="text-right">
-                        <span className="text-sm text-zinc-500">{stock > 0 ? `${stock} in stock` : "Out"}</span>
+                        <span className="text-base text-zinc-700">{stock > 0 ? `${stock} in stock` : "Out"}</span>
                       </div>
                       <span className="text-2xl font-bold text-teal-600">${v.price.toFixed(2)}</span>
                     </div>
@@ -503,7 +503,7 @@ function CategoryChip({
     <button
       type="button"
       onClick={onTap}
-      className={`shrink-0 rounded-full px-5 py-2.5 text-sm font-bold transition-all whitespace-nowrap ${
+      className={`shrink-0 rounded-full px-5 py-2.5 text-base font-bold transition-all whitespace-nowrap ${
         active
           ? `${activeClass} shadow-md scale-105`
           : `${colorClass} opacity-80 hover:opacity-100 hover:scale-105`

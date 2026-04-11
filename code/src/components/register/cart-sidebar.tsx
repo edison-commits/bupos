@@ -87,7 +87,7 @@ export function CartSidebar({
             <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>Current Sale</h2>
             {!isEmpty && (
               <span
-                className="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-teal-600 px-2 text-sm font-bold text-white transition-transform"
+                className="inline-flex h-8 min-w-8 items-center justify-center rounded-full bg-teal-600 px-2 text-base font-bold text-white transition-transform"
                 style={{ transform: badgePulse ? 'scale(1.3)' : 'scale(1)' }}
               >
                 {totals.itemCount}
@@ -98,7 +98,7 @@ export function CartSidebar({
             <button
               type="button"
               onClick={onVoidCart}
-              className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors hover:bg-red-50 hover:text-red-600"
+              className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-base font-medium transition-colors hover:bg-red-50 hover:text-red-600"
               style={{ color: 'var(--text-secondary)' }}
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
@@ -108,7 +108,7 @@ export function CartSidebar({
         </div>
         {/* Running total — always visible, prominent */}
         {!isEmpty && (
-          <div className="mt-2 text-2xl font-bold tracking-tight" style={{ color: 'var(--surface-accent)' }}>
+          <div className="mt-2 text-3xl font-bold tracking-tight" style={{ color: 'var(--surface-accent)' }}>
             ${totals.grandTotal.toFixed(2)}
           </div>
         )}
@@ -175,19 +175,19 @@ export function CartSidebar({
                     >
                       <div className="flex items-center gap-3">
                         {/* Item number badge */}
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-bold" style={{ background: 'var(--surface-panel-muted)', color: 'var(--text-secondary)' }}>
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-base font-bold" style={{ background: 'var(--surface-panel-muted)', color: 'var(--text-secondary)' }}>
                           {index + 1}
                         </div>
 
                         {/* Quantity + Product info */}
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
-                            <span className="shrink-0 rounded-md bg-teal-100 px-2 py-0.5 text-sm font-bold text-teal-700">
+                            <span className="shrink-0 rounded-md bg-teal-100 px-2 py-0.5 text-base font-bold text-teal-700">
                               ×{item.quantity}
                             </span>
                             <p className="truncate text-base font-semibold" style={{ color: 'var(--text-primary)' }}>{item.productName}</p>
                           </div>
-                          <p className="mt-1 truncate text-sm" style={{ color: 'var(--text-secondary)' }}>
+                          <p className="mt-1 truncate text-base" style={{ color: 'var(--text-secondary)' }}>
                             {item.variantName}
                             {hasOverride && (
                               <span className="ml-1.5 text-amber-600">
@@ -241,7 +241,7 @@ export function CartSidebar({
 
                         {/* Detail rows */}
                         {(hasOverride || item.lineDiscount || item.modifierTotal > 0) && (
-                          <div className="mb-3 space-y-1 rounded-lg px-3 py-2 text-xs" style={{ background: 'var(--surface-panel-muted)' }}>
+                          <div className="mb-3 space-y-1 rounded-lg px-3 py-2 text-sm" style={{ background: 'var(--surface-panel-muted)' }}>
                             <div className="flex justify-between" style={{ color: 'var(--text-secondary)' }}>
                               <span>Unit price</span>
                               <span className="font-medium">${effectivePrice.toFixed(2)}</span>
@@ -270,7 +270,7 @@ export function CartSidebar({
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); onLineDiscount(item.id); }}
-                            className="flex flex-col items-center gap-1.5 rounded-xl px-3 py-3 text-sm font-medium transition-colors hover:bg-teal-50"
+                            className="flex flex-col items-center gap-1.5 rounded-xl px-4 py-3 text-base font-medium transition-colors hover:bg-teal-50"
                             style={{ color: item.lineDiscount ? '#dc2626' : 'var(--text-secondary)' }}
                           >
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
@@ -279,7 +279,7 @@ export function CartSidebar({
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); onPriceOverride(item.id); }}
-                            className="flex flex-col items-center gap-1.5 rounded-xl px-3 py-3 text-sm font-medium transition-colors hover:bg-amber-50"
+                            className="flex flex-col items-center gap-1.5 rounded-xl px-4 py-3 text-base font-medium transition-colors hover:bg-amber-50"
                             style={{ color: hasOverride ? '#d97706' : 'var(--text-secondary)' }}
                           >
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
@@ -288,7 +288,7 @@ export function CartSidebar({
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); onRemoveItem(item.id); }}
-                            className="flex flex-col items-center gap-1.5 rounded-xl px-3 py-3 text-sm font-medium text-red-500 transition-colors hover:bg-red-50"
+                            className="flex flex-col items-center gap-1.5 rounded-xl px-4 py-3 text-base font-medium text-red-500 transition-colors hover:bg-red-50"
                           >
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                             Remove
@@ -310,7 +310,7 @@ export function CartSidebar({
           <button
             type="button"
             onClick={() => setShowDiscount((v) => !v)}
-            className="flex w-full items-center justify-between px-5 py-3 text-sm font-medium transition-colors hover:bg-zinc-50/50"
+            className="flex w-full items-center justify-between px-5 py-3 text-base font-medium transition-colors hover:bg-zinc-50/50"
             style={{ color: cart.discountAmount > 0 ? '#dc2626' : 'var(--text-secondary)' }}
           >
             <div className="flex items-center gap-1.5">
@@ -327,10 +327,10 @@ export function CartSidebar({
                 <button
                   type="button"
                   onClick={() => onSetDiscountMode("fixed")}
-                  className={`px-3 py-1.5 text-xs font-bold transition-colors ${
+                  className={`px-3 py-1.5 text-sm font-bold transition-colors ${
                     cart.discountMode === "fixed"
                       ? "bg-teal-600 text-white"
-                      : "text-zinc-500 hover:text-zinc-700"
+                      : "text-zinc-600 hover:text-zinc-800"
                   }`}
                   style={cart.discountMode !== "fixed" ? { background: 'var(--surface-panel-muted)' } : undefined}
                 >
@@ -339,10 +339,10 @@ export function CartSidebar({
                 <button
                   type="button"
                   onClick={() => onSetDiscountMode("percent")}
-                  className={`px-3 py-1.5 text-xs font-bold transition-colors ${
+                  className={`px-3 py-1.5 text-sm font-bold transition-colors ${
                     cart.discountMode === "percent"
                       ? "bg-teal-600 text-white"
-                      : "text-zinc-500 hover:text-zinc-700"
+                      : "text-zinc-600 hover:text-zinc-800"
                   }`}
                   style={cart.discountMode !== "percent" ? { background: 'var(--surface-panel-muted)' } : undefined}
                 >
@@ -364,7 +364,7 @@ export function CartSidebar({
                 <button
                   type="button"
                   onClick={() => onSetDiscount(0)}
-                  className="rounded-lg px-2 py-1 text-xs font-medium text-red-500 hover:bg-red-50"
+                  className="rounded-lg px-2 py-1 text-sm font-medium text-red-500 hover:bg-red-50"
                 >
                   Clear
                 </button>
