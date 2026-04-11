@@ -389,7 +389,7 @@ export default function ProductsPage() {
               onEdit={() => setModal({ type: 'edit-product', productId: product.id, data: product })}
               onDelete={() => handleDeleteProduct(product.id)}
               onAddVariant={() => setModal({ type: 'add-variant', productId: product.id })}
-              onEditVariant={(variant: any) => setModal({ type: 'edit-variant', productId: product.id, variantId: variant.id, data: variant })}
+              onEditVariant={(variant: ProductVariant) => setModal({ type: 'edit-variant', productId: product.id, variantId: variant.id, data: variant })}
             />
           ))
         )}
@@ -486,7 +486,17 @@ export default function ProductsPage() {
   );
 }
 
-function ProductRow({ product, expanded, onToggleExpand, onEdit, onDelete, onAddVariant, onEditVariant }: any) {
+interface ProductRowProps {
+  product: Product;
+  expanded: boolean;
+  onToggleExpand: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  onAddVariant: () => void;
+  onEditVariant: (variant: ProductVariant) => void;
+}
+
+function ProductRow({ product, expanded, onToggleExpand, onEdit, onDelete, onAddVariant, onEditVariant }: ProductRowProps) {
   return (
     <div className="rounded-lg border border-emerald-200 bg-white shadow-sm">
       <div className="flex items-center justify-between border-b border-emerald-100 p-4">
@@ -543,7 +553,7 @@ function ProductRow({ product, expanded, onToggleExpand, onEdit, onDelete, onAdd
             <div className="text-sm text-emerald-600">No variants yet</div>
           ) : (
             <div className="space-y-2">
-              {product.variants.map((variant: any) => (
+              {product.variants.map((variant: ProductVariant) => (
                 <div key={variant.id} className="flex items-center justify-between rounded-lg bg-white p-3 text-sm">
                   <div>
                     <div className="font-medium text-emerald-900">{variant.sku}</div>
@@ -592,7 +602,7 @@ function ProductRow({ product, expanded, onToggleExpand, onEdit, onDelete, onAdd
 
 interface ModalProps {
   categories?: Category[];
-  onSave: (data: any) => void;
+  onSave: (data: Partial<Product> | Partial<ProductVariant>) => void;
   onClose: () => void;
   saving: boolean;
   product?: Product;
@@ -883,7 +893,7 @@ function AddProductModal({ categories = [], onSave, onClose, saving }: ModalProp
 }
 
 function EditProductModal({ product, categories = [], onSave, onClose, saving }: ModalProps) {
-  const [formData, setFormData] = useState<any>(product || {});
+  const [formData, setFormData] = useState<Partial<Product>>(product || {});
 
   const handleSubmit = () => {
     onSave(formData);
@@ -968,7 +978,7 @@ function AddVariantModal({ onSave, onClose, saving }: ModalProps) {
 }
 
 function EditVariantModal({ variant, onSave, onClose, saving }: ModalProps) {
-  const [formData, setFormData] = useState<any>(variant || {});
+  const [formData, setFormData] = useState<Partial<ProductVariant>>(variant || {});
 
   const handleSubmit = () => {
     onSave(formData);

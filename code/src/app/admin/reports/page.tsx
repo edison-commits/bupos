@@ -8,9 +8,97 @@ import { authFetch } from '@/lib/api/client';
 type DateRange = "today" | "week" | "month" | "custom";
 type ReportType = "summary" | "category" | "employee" | "hourly" | "tender" | "products" | "shifts";
 
+interface SalesPeriod {
+  revenue: number;
+  transactionCount: number;
+  avgTicket: number;
+  itemCount: number;
+  taxTotal: number;
+  discountTotal: number;
+  refundCount: number;
+  returnTotal: number;
+}
+
+interface SalesSummaryData {
+  current: SalesPeriod;
+  previous: Pick<SalesPeriod, "revenue" | "avgTicket">;
+}
+
+interface CategoryItem {
+  name: string;
+  revenue: number;
+  itemCount: number;
+  transactionCount: number;
+}
+
+interface CategoryReportData {
+  categories: CategoryItem[];
+  totalRevenue: number;
+}
+
+interface EmployeeItem {
+  name: string;
+  transactionCount: number;
+  totalSales: number;
+  avgTicket: number;
+  refundCount: number;
+}
+
+interface EmployeeReportData {
+  employees: EmployeeItem[];
+}
+
+interface HourlyItem {
+  hour: number;
+  revenue: number;
+  transactionCount: number;
+}
+
+interface HourlyReportData {
+  hours: HourlyItem[];
+}
+
+interface TenderItem {
+  type: string;
+  amount: number;
+  count: number;
+}
+
+interface TenderReportData {
+  tenders: TenderItem[];
+}
+
+interface ProductReportItem {
+  name: string;
+  revenue: number;
+  quantity: number;
+}
+
+interface ProductsReportData {
+  byRevenue: ProductReportItem[];
+  byQuantity: ProductReportItem[];
+}
+
+interface ShiftItem {
+  employee: string;
+  date: string;
+  status: string;
+  openingFloat: number;
+  sales: number;
+  closingExpectedCash: number;
+  closingDeclaredCash: number;
+  variance: number;
+}
+
+interface ShiftsReportData {
+  shifts: ShiftItem[];
+}
+
+type AnyReportData = SalesSummaryData | CategoryReportData | EmployeeReportData | HourlyReportData | TenderReportData | ProductsReportData | ShiftsReportData;
+
 interface ReportData {
   type: ReportType;
-  data: any;
+  data: AnyReportData | null;
   loading: boolean;
   error: string | null;
 }
@@ -91,7 +179,7 @@ export default function ReportsPage() {
   const handleExportCSV = () => {
     if (!currentReport.data) return;
 
-    const csv = reportToCSV(activeReport, currentReport.data);
+    const csv = reportToCSV(activeReport, currentReport.data!);
     const blob = new Blob([csv], { type: "text/csv" });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -194,13 +282,13 @@ export default function ReportsPage() {
               <div className="rounded-2xl bg-red-50 p-4 text-sm text-red-700">{currentReport.error}</div>
             ) : (
               <>
-                {activeReport === "summary" && <SalesSummaryReport data={currentReport.data} />}
-                {activeReport === "category" && <CategoryReport data={currentReport.data} />}
-                {activeReport === "employee" && <EmployeeReport data={currentReport.data} />}
-                {activeReport === "hourly" && <HourlyReport data={currentReport.data} />}
-                {activeReport === "tender" && <TenderReport data={currentReport.data} />}
-                {activeReport === "products" && <ProductsReport data={currentReport.data} />}
-                {activeReport === "shifts" && <ShiftsReport data={currentReport.data} />}
+                {activeReport === "summary" && <SalesSummaryReport data={currentReport.data as SalesSummaryData | null} />}
+                {activeReport === "category" && <CategoryReport data={currentReport.data as CategoryReportData | null} />}
+                {activeReport === "employee" && <EmployeeReport data={currentReport.data as EmployeeReportData | null} />}
+                {activeReport === "hourly" && <HourlyReport data={currentReport.data as HourlyReportData | null} />}
+                {activeReport === "tender" && <TenderReport data={currentReport.data as TenderReportData | null} />}
+                {activeReport === "products" && <ProductsReport data={currentReport.data as ProductsReportData | null} />}
+                {activeReport === "shifts" && <ShiftsReport data={currentReport.data as ShiftsReportData | null} />}
               </>
             )}
           </div>
@@ -220,7 +308,7 @@ export default function ReportsPage() {
   );
 }
 
-function SalesSummaryReport({ data }: { data: any }) {
+function SalesSummaryReport({ data }: { data: SalesSummaryData | null }) {
   if (!data) return null;
 
   const { current, previous } = data;
@@ -241,15 +329,15 @@ function SalesSummaryReport({ data }: { data: any }) {
   );
 }
 
-function CategoryReport({ data }: { data: any }) {
+function CategoryReport({ data }: { data: CategoryReportData | null }) {
   if (!data?.categories) return null;
 
-  const maxRevenue = Math.max(...data.categories.map((c: any) => c.revenue));
+  const maxRevenue = Math.max(...data.categories.map((c) => c.revenue));
 
   return (
     <div className="space-y-6">
       <div className="grid gap-4">
-        {data.categories.map((cat: any, idx: number) => (
+        {data.categories.map((cat, idx) => (
           <div key={idx} className="rounded-lg border border-zinc-200 p-4">
             <div className="flex items-center justify-between mb-2">
               <h3 className="font-semibold text-zinc-900">{cat.name}</h3>
@@ -279,7 +367,7 @@ function CategoryReport({ data }: { data: any }) {
   );
 }
 
-function EmployeeReport({ data }: { data: any }) {
+function EmployeeReport({ data }: { data: EmployeeReportData | null }) {
   if (!data?.employees) return null;
 
   return (
@@ -295,7 +383,7 @@ function EmployeeReport({ data }: { data: any }) {
           </tr>
         </thead>
         <tbody>
-          {data.employees.map((emp: any, idx: number) => (
+          {data.employees.map((emp, idx) => (
             <tr key={idx} className="border-b border-zinc-100 hover:bg-zinc-50">
               <td className="px-4 py-3 font-medium text-zinc-900">{emp.name}</td>
               <td className="px-4 py-3 text-right text-zinc-600">{emp.transactionCount}</td>
@@ -310,14 +398,14 @@ function EmployeeReport({ data }: { data: any }) {
   );
 }
 
-function HourlyReport({ data }: { data: any }) {
+function HourlyReport({ data }: { data: HourlyReportData | null }) {
   if (!data?.hours) return null;
 
-  const maxRevenue = Math.max(...data.hours.map((h: any) => h.revenue));
+  const maxRevenue = Math.max(...data.hours.map((h) => h.revenue));
 
   return (
     <div className="space-y-3">
-      {data.hours.map((hour: any, idx: number) => (
+      {data.hours.map((hour, idx) => (
         <div key={idx} className="flex items-center gap-3">
           <div className="w-16 text-sm font-medium text-zinc-700">{hour.hour}:00</div>
           <div className="flex-1">
@@ -335,14 +423,14 @@ function HourlyReport({ data }: { data: any }) {
   );
 }
 
-function TenderReport({ data }: { data: any }) {
+function TenderReport({ data }: { data: TenderReportData | null }) {
   if (!data?.tenders) return null;
 
-  const total = data.tenders.reduce((sum: number, t: any) => sum + t.amount, 0);
+  const total = data.tenders.reduce((sum, t) => sum + t.amount, 0);
 
   return (
     <div className="space-y-4">
-      {data.tenders.map((tender: any, idx: number) => (
+      {data.tenders.map((tender, idx) => (
         <div key={idx} className="rounded-lg border border-zinc-200 p-4">
           <div className="flex items-center justify-between mb-2">
             <h3 className="font-semibold text-zinc-900">{tender.type}</h3>
@@ -367,7 +455,7 @@ function TenderReport({ data }: { data: any }) {
   );
 }
 
-function ProductsReport({ data }: { data: any }) {
+function ProductsReport({ data }: { data: ProductsReportData | null }) {
   if (!data?.byRevenue) return null;
 
   return (
@@ -384,7 +472,7 @@ function ProductsReport({ data }: { data: any }) {
               </tr>
             </thead>
             <tbody>
-              {data.byRevenue.map((prod: any, idx: number) => (
+              {data.byRevenue.map((prod, idx) => (
                 <tr key={idx} className="border-b border-zinc-100 hover:bg-zinc-50">
                   <td className="px-4 py-3 font-medium text-zinc-900">{prod.name}</td>
                   <td className="px-4 py-3 text-right font-semibold text-teal-600">${prod.revenue.toFixed(2)}</td>
@@ -408,7 +496,7 @@ function ProductsReport({ data }: { data: any }) {
               </tr>
             </thead>
             <tbody>
-              {data.byQuantity.map((prod: any, idx: number) => (
+              {data.byQuantity.map((prod, idx) => (
                 <tr key={idx} className="border-b border-zinc-100 hover:bg-zinc-50">
                   <td className="px-4 py-3 font-medium text-zinc-900">{prod.name}</td>
                   <td className="px-4 py-3 text-right font-semibold text-emerald-600">{prod.quantity}</td>
@@ -423,12 +511,12 @@ function ProductsReport({ data }: { data: any }) {
   );
 }
 
-function ShiftsReport({ data }: { data: any }) {
+function ShiftsReport({ data }: { data: ShiftsReportData | null }) {
   if (!data?.shifts) return null;
 
   return (
     <div className="space-y-3">
-      {data.shifts.map((shift: any, idx: number) => (
+      {data.shifts.map((shift, idx) => (
         <div key={idx} className="rounded-lg border border-zinc-200 p-4">
           <div className="flex items-start justify-between mb-3">
             <div>
@@ -494,48 +582,55 @@ function getTenderColor(type: string): string {
   return colors[type] || "#6b7280";
 }
 
-function reportToCSV(type: ReportType, data: any): string {
+function reportToCSV(type: ReportType, data: AnyReportData): string {
   let csv = "";
 
   if (type === "summary") {
+    const d = data as SalesSummaryData;
     csv = "Metric,Value\n";
-    csv += `Revenue,$${data.current.revenue.toFixed(2)}\n`;
-    csv += `Transactions,${data.current.transactionCount}\n`;
-    csv += `Avg Ticket,$${data.current.avgTicket.toFixed(2)}\n`;
-    csv += `Items Sold,${data.current.itemCount}\n`;
-    csv += `Tax,$${data.current.taxTotal.toFixed(2)}\n`;
-    csv += `Discounts,$${data.current.discountTotal.toFixed(2)}\n`;
-    csv += `Refunds,${data.current.refundCount}\n`;
-    csv += `Returns Total,$${data.current.returnTotal.toFixed(2)}\n`;
+    csv += `Revenue,$${d.current.revenue.toFixed(2)}\n`;
+    csv += `Transactions,${d.current.transactionCount}\n`;
+    csv += `Avg Ticket,$${d.current.avgTicket.toFixed(2)}\n`;
+    csv += `Items Sold,${d.current.itemCount}\n`;
+    csv += `Tax,$${d.current.taxTotal.toFixed(2)}\n`;
+    csv += `Discounts,$${d.current.discountTotal.toFixed(2)}\n`;
+    csv += `Refunds,${d.current.refundCount}\n`;
+    csv += `Returns Total,$${d.current.returnTotal.toFixed(2)}\n`;
   } else if (type === "category") {
+    const d = data as CategoryReportData;
     csv = "Category,Revenue,Items,Transactions,% of Total\n";
-    data.categories.forEach((cat: any) => {
-      csv += `"${cat.name}","${cat.revenue.toFixed(2)}","${cat.itemCount}","${cat.transactionCount}","${((cat.revenue / data.totalRevenue) * 100).toFixed(1)}%"\n`;
+    d.categories.forEach((cat) => {
+      csv += `"${cat.name}","${cat.revenue.toFixed(2)}","${cat.itemCount}","${cat.transactionCount}","${((cat.revenue / d.totalRevenue) * 100).toFixed(1)}%"\n`;
     });
   } else if (type === "employee") {
+    const d = data as EmployeeReportData;
     csv = "Employee,Transactions,Sales,Avg Ticket,Refunds\n";
-    data.employees.forEach((emp: any) => {
+    d.employees.forEach((emp) => {
       csv += `"${emp.name}","${emp.transactionCount}","${emp.totalSales.toFixed(2)}","${emp.avgTicket.toFixed(2)}","${emp.refundCount}"\n`;
     });
   } else if (type === "hourly") {
+    const d = data as HourlyReportData;
     csv = "Hour,Revenue,Transactions\n";
-    data.hours.forEach((hour: any) => {
+    d.hours.forEach((hour) => {
       csv += `"${hour.hour}:00","${hour.revenue.toFixed(2)}","${hour.transactionCount}"\n`;
     });
   } else if (type === "tender") {
+    const d = data as TenderReportData;
     csv = "Tender Type,Amount,Count,% of Total\n";
-    const total = data.tenders.reduce((sum: number, t: any) => sum + t.amount, 0);
-    data.tenders.forEach((tender: any) => {
+    const total = d.tenders.reduce((sum, t) => sum + t.amount, 0);
+    d.tenders.forEach((tender) => {
       csv += `"${tender.type}","${tender.amount.toFixed(2)}","${tender.count}","${((tender.amount / total) * 100).toFixed(1)}%"\n`;
     });
   } else if (type === "products") {
+    const d = data as ProductsReportData;
     csv = "Product,Revenue,Quantity\n";
-    data.byRevenue.forEach((prod: any) => {
+    d.byRevenue.forEach((prod) => {
       csv += `"${prod.name}","${prod.revenue.toFixed(2)}","${prod.quantity}"\n`;
     });
   } else if (type === "shifts") {
+    const d = data as ShiftsReportData;
     csv = "Employee,Date,Status,Opening Float,Sales,Expected Cash,Declared Cash,Variance\n";
-    data.shifts.forEach((shift: any) => {
+    d.shifts.forEach((shift) => {
       csv += `"${shift.employee}","${shift.date}","${shift.status}","${shift.openingFloat.toFixed(2)}","${shift.sales.toFixed(2)}","${shift.closingExpectedCash.toFixed(2)}","${shift.closingDeclaredCash.toFixed(2)}","${shift.variance.toFixed(2)}"\n`;
     });
   }

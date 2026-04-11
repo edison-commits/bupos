@@ -179,8 +179,8 @@ export default function PurchaseOrdersPage() {
       const data = await res.json();
       // Extract variants from products
       const variants: ProductVariant[] = [];
-      data.products?.forEach((p: any) => {
-        p.variants?.forEach((v: any) => {
+      data.products?.forEach((p: { id: string; name: string; variants?: Array<{ id: string; sku: string; variant_name: string; size_label: string | null; color_label: string | null; price: number; cost: number }> }) => {
+        p.variants?.forEach((v) => {
           variants.push({
             id: v.id,
             sku: v.sku,
