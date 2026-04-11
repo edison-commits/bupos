@@ -180,6 +180,55 @@ html[data-theme="high-contrast"] span[class*="rounded-full"] {
   font-size: 0.9375rem;
 }
 
+/* High-contrast: force large tiles (2-3 cols max) */
+html[data-theme="high-contrast"] .product-grid-inner {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+}
+@media (min-width: 1024px) {
+  html[data-theme="high-contrast"] .product-grid-inner {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+}
+
+/* High-contrast: massive charge button */
+html[data-theme="high-contrast"] .charge-button {
+  min-height: 5.5rem !important;
+  font-size: 1.5rem !important;
+  font-weight: 900 !important;
+  border: 3px solid var(--surface-accent) !important;
+}
+
+/* High-contrast: bigger product info in tiles */
+html[data-theme="high-contrast"] .product-tile .text-base {
+  font-size: 1.125rem;
+}
+html[data-theme="high-contrast"] .product-tile .text-xl {
+  font-size: 1.5rem;
+}
+html[data-theme="high-contrast"] .product-tile .text-4xl {
+  font-size: 3.5rem;
+}
+
+/* High-contrast: category chips bigger and bolder */
+html[data-theme="high-contrast"] .category-chip {
+  padding: 0.625rem 1.25rem !important;
+  font-size: 1.0625rem !important;
+  font-weight: 800 !important;
+}
+
+/* High-contrast: quantity stepper buttons much larger */
+html[data-theme="high-contrast"] .cart-item-stepper button {
+  height: 3.5rem !important;
+  width: 3.5rem !important;
+  font-size: 1.5rem !important;
+}
+
+/* High-contrast: search bar taller */
+html[data-theme="high-contrast"] .search-bar {
+  min-height: 4rem !important;
+  font-size: 1.25rem !important;
+}
+
 /* Even on mouse/trackpad devices, keep POS elements roomy */
 @media (pointer: fine) {
   :root {

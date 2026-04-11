@@ -54,11 +54,25 @@ function getCategoryChipActive(index: number): string {
 
 export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) {
   const [activeCategoryId, setActiveCategoryId] = useState<string | "all" | "favorites">("all");
-  const [tileSize, setTileSize] = useState<'sm' | 'md' | 'lg'>('md');
+  const [tileSize, setTileSize] = useState<'sm' | 'md' | 'lg'>(() => {
+    if (typeof window !== 'undefined' && document.documentElement.getAttribute('data-theme') === 'high-contrast') return 'lg';
+    return 'md';
+  });
   const [variantPickerProduct, setVariantPickerProduct] = useState<ProductGridItem | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [scanFeedback, setScanFeedback] = useState<string | null>(null);
   const [showKeyboard, setShowKeyboard] = useState(false);
+
+  // Auto-switch to large tiles when high-contrast mode is enabled
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      if (document.documentElement.getAttribute('data-theme') === 'high-contrast') {
+        setTileSize('lg');
+      }
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => observer.disconnect();
+  }, []);
   const searchRef = useRef<HTMLInputElement>(null);
   const scanTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -189,7 +203,7 @@ export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) 
             onChange={(e) => handleSearchChange(e.target.value)}
             onKeyDown={handleSearchKeyDown}
             placeholder="Search, scan or SKU..."
-            className="w-full rounded-2xl border px-12 py-4 text-xl focus:ring-2 focus:outline-none transition-all"
+            className="search-bar w-full rounded-2xl border px-12 py-4 text-xl focus:ring-2 focus:outline-none transition-all"
             style={{
               borderColor: 'var(--border-subtle)',
               background: 'var(--surface-panel)',
@@ -297,7 +311,7 @@ export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) 
       </div>
 
       {/* Product grid with larger tiles */}
-      <div className={`grid flex-1 auto-rows-min gap-4 overflow-y-auto ${
+      <div className={`product-grid-inner grid flex-1 auto-rows-min gap-4 overflow-y-auto ${
         tileSize === 'sm' ? 'grid-cols-3 md:grid-cols-4 lg:grid-cols-5' :
         tileSize === 'md' ? 'grid-cols-2 md:grid-cols-3 lg:grid-cols-4' :
         'grid-cols-1 md:grid-cols-2 lg:grid-cols-3'
@@ -487,7 +501,7 @@ function CategoryChip({
     <button
       type="button"
       onClick={onTap}
-      className={`shrink-0 rounded-full px-5 py-2.5 text-base font-bold transition-all whitespace-nowrap ${
+      className={`category-chip shrink-0 rounded-full px-5 py-2.5 text-base font-bold transition-all whitespace-nowrap ${
         active
           ? `${activeClass} shadow-md scale-105`
           : `${colorClass} opacity-80 hover:opacity-100 hover:scale-105`

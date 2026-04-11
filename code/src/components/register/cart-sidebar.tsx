@@ -211,7 +211,7 @@ export function CartSidebar({
                     {isExpanded && (
                       <div className="px-3 pb-3">
                         {/* Quantity stepper */}
-                        <div className="mb-3 flex items-center justify-center gap-2 rounded-xl p-2" style={{ background: 'var(--surface-panel-muted)' }}>
+                        <div className="cart-item-stepper mb-3 flex items-center justify-center gap-2 rounded-xl p-2" style={{ background: 'var(--surface-panel-muted)' }}>
                           <button
                             type="button"
                             onClick={(e) => {
@@ -398,7 +398,7 @@ export function CartSidebar({
           type="button"
           disabled={isEmpty || !shiftOpen}
           onClick={onCheckout}
-          className={`relative w-full overflow-hidden rounded-2xl px-6 text-xl font-bold tracking-wide transition-all ${
+          className={`charge-button relative w-full overflow-hidden rounded-2xl px-6 text-xl font-bold tracking-wide transition-all ${
             isEmpty || !shiftOpen
               ? "cursor-not-allowed text-zinc-400"
               : "text-white shadow-lg hover:shadow-xl active:shadow-md"
