@@ -256,7 +256,7 @@ export async function POST(request: NextRequest) {
       await client.query(
         `INSERT INTO transaction_tenders (transaction_id, tender_type, amount, is_refund)
          VALUES ($1, $2, $3, true)`,
-        [transaction_id, refund_method === 'cash' ? 'cash' : 'credit_card', refund_amount]
+        [transaction_id, refund_method === 'cash' ? 'cash' : 'card', refund_amount]
       );
     } else if (refund_method === 'store_credit') {
       // Look up customer by name
