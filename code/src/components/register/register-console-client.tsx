@@ -279,19 +279,28 @@ export function RegisterConsoleClient({
     );
   }
 
-  // Dark mode by default for register — Toast POS feel
+  // Theme for register — respects pos-theme (light/dark/high-contrast)
   useEffect(() => {
-    const stored = localStorage.getItem("bupos-dark-mode");
-    // Default to dark if no preference stored
-    if (stored === null || stored === "true") {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
+    type ThemeMode = 'light' | 'dark' | 'high-contrast';
+    const posTheme = localStorage.getItem('pos-theme') as ThemeMode | null;
+    // Legacy: migrate old bupos-dark-mode to pos-theme
+    if (!posTheme) {
+      const legacy = localStorage.getItem('bupos-dark-mode');
+      const theme: ThemeMode = (legacy === null || legacy === 'true') ? 'dark' : 'light';
+      localStorage.setItem('pos-theme', theme);
+      localStorage.removeItem('bupos-dark-mode');
     }
-    if (stored === null) localStorage.setItem("bupos-dark-mode", "true");
+    const theme: ThemeMode = posTheme ?? (localStorage.getItem('pos-theme') as ThemeMode) ?? 'dark';
+    document.documentElement.classList.remove('dark');
+    document.documentElement.removeAttribute('data-theme');
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else if (theme === 'high-contrast') {
+      document.documentElement.setAttribute('data-theme', 'high-contrast');
+    }
     return () => {
-      // Clean up dark class when leaving register
-      document.documentElement.classList.remove("dark");
+      document.documentElement.classList.remove('dark');
+      document.documentElement.removeAttribute('data-theme');
     };
   }, []);
 

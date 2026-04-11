@@ -86,6 +86,100 @@ html.dark {
   }
 }
 
+/* ═══════════════════════════════════════════════
+   HIGH-CONTRAST MODE — seniors & low vision
+   Activated via data-theme="high-contrast" on <html>
+   ═══════════════════════════════════════════════ */
+
+html[data-theme="high-contrast"],
+html.dark[data-theme="high-contrast"] {
+  --surface-app: #ffffff;
+  --surface-panel: #ffffff;
+  --surface-panel-muted: #f0f0f0;
+  --surface-inverse: #000000;
+  --surface-accent: #005500;
+  --surface-danger: #cc0000;
+  --border-subtle: #888888;
+  --border-strong: #000000;
+  --text-primary: #000000;
+  --text-secondary: #333333;
+  --text-inverse: #ffffff;
+  --status-ok: #005500;
+  --status-warn: #7a5000;
+  --status-alert: #cc0000;
+  --shadow-card: 0 4px 12px rgba(0, 0, 0, 0.25);
+
+  /* Larger fonts across the board */
+  --pos-base-font: 1.25rem;     /* 20px base */
+  --pos-label-font: 1.125rem;   /* 18px labels */
+  --pos-small-font: 0.9375rem;  /* 15px small text */
+}
+
+/* High-contrast: thicker borders on everything interactive */
+html[data-theme="high-contrast"] .touch-button {
+  border: 2px solid var(--border-strong);
+  font-weight: 800;
+}
+
+html[data-theme="high-contrast"] .card {
+  border: 2px solid var(--border-subtle);
+}
+
+html[data-theme="high-contrast"] .product-tile {
+  border: 3px solid var(--border-strong);
+  font-weight: 800;
+}
+
+html[data-theme="high-contrast"] .product-tile:active {
+  background: #e0e0e0 !important;
+  border-color: var(--surface-accent);
+  border-width: 4px;
+}
+
+/* High-contrast: make all badges pill-shaped and bold */
+html[data-theme="high-contrast"] .rounded-full {
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+/* High-contrast: thicker input borders */
+html[data-theme="high-contrast"] input,
+html[data-theme="high-contrast"] select,
+html[data-theme="high-contrast"] textarea {
+  border: 2px solid var(--border-strong);
+  font-weight: 600;
+}
+
+/* High-contrast: focus rings are more visible */
+html[data-theme="high-contrast"] *:focus-visible {
+  outline: 3px solid var(--surface-accent);
+  outline-offset: 2px;
+}
+
+/* High-contrast: cart sidebar bolder */
+html[data-theme="high-contrast"] .cart-item-new {
+  border: 3px solid var(--surface-accent) !important;
+}
+
+/* High-contrast: variant picker buttons */
+html[data-theme="high-contrast"] button[class*="rounded-xl"][class*="border-2"] {
+  border-width: 3px;
+  font-weight: 700;
+}
+
+/* High-contrast: scan feedback more visible */
+html[data-theme="high-contrast"] .scan-feedback-fade {
+  font-size: 1.25rem;
+  font-weight: 800;
+  padding: 0.5rem 1rem;
+}
+
+/* High-contrast: shift badges bigger */
+html[data-theme="high-contrast"] span[class*="rounded-full"] {
+  padding: 0.25rem 0.75rem;
+  font-size: 0.9375rem;
+}
+
 /* Even on mouse/trackpad devices, keep POS elements roomy */
 @media (pointer: fine) {
   :root {
