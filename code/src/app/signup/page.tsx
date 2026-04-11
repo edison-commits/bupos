@@ -16,7 +16,7 @@ export default async function SignupPage() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-50 px-4">
+    <div className="flex min-h-screen flex-col items-center justify-center px-4" style={{ background: "var(--surface-app)" }}>
       <div className="w-full max-w-md">
         {/* Logo */}
         <div className="mb-8 text-center">
@@ -27,17 +27,17 @@ export default async function SignupPage() {
               <line x1="12" y1="17" x2="12" y2="21" />
             </svg>
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-900">Create your store</h1>
-          <p className="mt-1 text-sm text-zinc-500">Get started with BasicUniformPOS in under a minute.</p>
+          <h1 className="text-2xl font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>Create your store</h1>
+          <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>Get started with BasicUniformPOS in under a minute.</p>
         </div>
 
         {/* Signup card */}
-        <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+        <div className="rounded-2xl border p-6 shadow-sm" style={{ background: "var(--surface-panel)", borderColor: "var(--border-subtle)" }}>
           <SignupForm />
         </div>
 
         {/* Back to login */}
-        <p className="mt-6 text-center text-sm text-zinc-500">
+        <p className="mt-6 text-center text-sm" style={{ color: "var(--text-secondary)" }}>
           Already have an account?{" "}
           <Link href="/" className="font-medium text-teal-700 hover:text-teal-600">
             Sign in

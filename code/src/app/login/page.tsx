@@ -17,7 +17,7 @@ export default async function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-50 px-4">
+    <div className="flex min-h-screen flex-col items-center justify-center px-4" style={{ background: "var(--surface-app)" }}>
       <div className="w-full max-w-md">
         {/* Logo / brand */}
         <div className="mb-8 text-center">
@@ -28,20 +28,20 @@ export default async function LoginPage() {
               <line x1="12" y1="17" x2="12" y2="21" />
             </svg>
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-900">BasicUniformPOS</h1>
-          <p className="mt-1 text-sm text-zinc-500">Web-first retail POS for your store</p>
+          <h1 className="text-2xl font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>BasicUniformPOS</h1>
+          <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>Web-first retail POS for your store</p>
         </div>
 
         {/* Login card */}
-        <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
-          <h2 className="text-lg font-semibold text-zinc-900">Sign in</h2>
-          <p className="mt-1 text-sm text-zinc-500">Enter your admin credentials to continue.</p>
+        <div className="rounded-2xl border p-6 shadow-sm" style={{ background: "var(--surface-panel)", borderColor: "var(--border-subtle)" }}>
+          <h2 className="text-lg font-semibold" style={{ color: "var(--text-primary)" }}>Sign in</h2>
+          <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>Enter your admin credentials to continue.</p>
 
           <LoginForm />
         </div>
 
         {/* Signup CTA */}
-        <p className="mt-6 text-center text-sm text-zinc-500">
+        <p className="mt-6 text-center text-sm" style={{ color: "var(--text-secondary)" }}>
           Don&apos;t have an account?{" "}
           <Link href="/signup" className="font-medium text-teal-700 hover:text-teal-600">
             Create your store
