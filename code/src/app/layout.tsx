@@ -1,4 +1,7 @@
 import type { Metadata, Viewport } from "next";
+import { Suspense } from "react";
+import { Toaster } from "sonner";
+import { NoticeToaster } from "@/components/notice-toaster";
 import "./globals.css";
 
 export const viewport: Viewport = {
@@ -8,7 +11,6 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   title: "BasicUniformPOS",
   description: "Web-first retail POS for casualwear and uniform stores.",
-  manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
@@ -30,6 +32,10 @@ export default function RootLayout({
     >
       <body className="min-h-full font-sans">
         {children}
+        <Toaster richColors />
+        <Suspense>
+          <NoticeToaster />
+        </Suspense>
         <script
           dangerouslySetInnerHTML={{
             __html: `if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{})}`,
