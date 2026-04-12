@@ -67,8 +67,6 @@ export function VirtualNumpad({
     }
   }
 
-  const numValue = Number(value) || 0;
-
   return (
     <div className="fixed inset-x-0 bottom-0 z-[60] animate-slide-up" ref={panelRef}>
       {/* Backdrop gradient */}

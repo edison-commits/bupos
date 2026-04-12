@@ -11,11 +11,6 @@ import {
 } from '@/lib/persistence/postgres-store';
 import {
   pgReadCustomers,
-  pgReadGiftCards,
-  pgReadBehaviorFlags,
-  pgReadLayaways,
-  pgReadStocktakes,
-  pgReadTransfers,
 } from '@/lib/persistence/postgres-phase2';
 import {
   pgReadPromoCodes,

@@ -758,7 +758,7 @@ export async function pgShipTransfer(transferId: string, shippedBy: string, ship
       [lineIds, shippedQtys],
     );
     // Batch deduct inventory — single UPDATE with JOIN instead of per-line queries
-    const { rows: lines } = await client.query(
+    await client.query(
       `UPDATE inventory_levels il
        SET on_hand = GREATEST(0, il.on_hand - delta.qty), updated_at = $1
        FROM (

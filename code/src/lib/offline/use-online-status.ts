@@ -7,13 +7,15 @@ import { useState, useEffect, useCallback } from "react";
  * Uses both navigator.onLine and a periodic connectivity check.
  */
 export function useOnlineStatus() {
-  const [isOnline, setIsOnline] = useState(true);
+  const [isOnline, setIsOnline] = useState(() => {
+    if (typeof window === "undefined") return true;
+    return navigator.onLine;
+  });
   const [lastChecked, setLastChecked] = useState<string | null>(null);
 
   // Check actual server reachability (not just browser online flag)
   const checkConnectivity = useCallback(async () => {
     try {
-      // Ping a lightweight endpoint with cache busting
       const res = await fetch(`/api/health?_t=${Date.now()}`, {
         method: "HEAD",
         cache: "no-store",
@@ -30,13 +32,10 @@ export function useOnlineStatus() {
   }, []);
 
   useEffect(() => {
-    // Initial check
     if (typeof window === "undefined") return;
-    setIsOnline(navigator.onLine);
 
     const handleOnline = () => {
       setIsOnline(true);
-      // Verify with server ping
       checkConnectivity();
     };
     const handleOffline = () => setIsOnline(false);

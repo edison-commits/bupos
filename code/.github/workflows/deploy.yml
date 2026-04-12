@@ -27,9 +27,22 @@ jobs:
 
       - name: Run DB migrations
         run: |
+          psql "$DATABASE_URL" -c "
+            CREATE TABLE IF NOT EXISTS _migrations (
+              filename TEXT PRIMARY KEY,
+              applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+          " || true
           for f in $(ls supabase/migrations/*.sql | sort); do
-            echo "Applying migration: $f"
-            psql "$DATABASE_URL" -f "$f" || { echo "Migration failed: $f"; exit 1; }
+            basename=$(basename "$f")
+            applied=$(psql "$DATABASE_URL" -tAc "SELECT COUNT(*) FROM _migrations WHERE filename='$basename'")
+            if [ "$applied" = "0" ]; then
+              echo "Applying migration: $f"
+              psql "$DATABASE_URL" -f "$f" || { echo "Migration failed: $f"; exit 1; }
+              psql "$DATABASE_URL" -c "INSERT INTO _migrations (filename) VALUES ('$basename')"
+            else
+              echo "Skipping (already applied): $f"
+            fi
           done
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -40,8 +53,8 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           USE_POSTGRES: "true"
-          NEXT_PUBLIC_SUPABASE_URL: "https://yxzzawwrkzcqqtsbdgzf.supabase.co"
-          BUPOS_ORG_ID: "713b3ff4-0582-40b1-98b0-02303af31e6f"
-          BUPOS_LOCATION_ID: "a237b403-e722-4e40-b0ba-97000c6521c1"
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          BUPOS_ORG_ID: ${{ secrets.BUPOS_ORG_ID }}
+          BUPOS_LOCATION_ID: ${{ secrets.BUPOS_LOCATION_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

@@ -141,8 +141,17 @@ export function BarcodeLabelPrinter({ products, variants }: BarcodeLabelPrinterP
     if (!printRef.current) return;
     const printWindow = window.open("", "_blank");
     if (!printWindow) return;
-    // Sanitize innerHTML: strip script/iframe/object/embed tags to prevent XSS
-    const sanitized = printRef.current.innerHTML.replace(/<\s*\/?\s*(script|iframe|object|embed)[^>]*>/gi, "");
+    // Safe print: extract label content as text and rebuild. Avoids innerHTML XSS.
+    const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const labels = labelItems.map(({ variant, product, quantity }) => {
+      const name = escapeHtml(product.name);
+      const sku = escapeHtml(variant.sku || '');
+      const price = `$${variant.price.toFixed(2)}`;
+      const barcode = generateBarcodeSVG(variant.barcode || variant.sku || variant.id, sizeConfig.w - 16, sizeConfig.bh);
+      return Array.from({ length: quantity }, () =>
+        `<div class="label"><div class="label-name">${name}</div><div class="label-sku">${sku}</div>${barcode}<div class="label-price">${price}</div></div>`
+      ).join('');
+    }).join('');
     printWindow.document.write(`<!DOCTYPE html>
       <html><head><title>Barcode Labels</title>
       <style>
@@ -154,7 +163,7 @@ export function BarcodeLabelPrinter({ products, variants }: BarcodeLabelPrinterP
         .label-price { font-size: 11px; font-weight: 700; }
         @media print { .label { border: 1px dashed #ccc; } }
       </style></head><body>
-      <div class="label-grid">${sanitized}</div>
+      <div class="label-grid">${labels}</div>
       <script>window.onload=function(){window.print();window.close();}<\/script>
       </body></html>`);
     printWindow.document.close();

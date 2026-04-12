@@ -382,7 +382,6 @@ export async function signInRegister(pin: string, locationId: string, deviceId?:
     if (!locRows[0]) {
       redirect("/register?error=PIN+login+failed");
     }
-    const loc = locRows[0] as Record<string, unknown>;
 
     const timestamp = new Date().toISOString();
     const employeeId = credential.employeeId;

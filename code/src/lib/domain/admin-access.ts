@@ -1,5 +1,5 @@
 import type { RoleKey } from "@/lib/domain/types";
-import { hasPermission } from "@/lib/domain/permissions";
+
 
 /**
  * Maps each admin route to the minimum roles that can access it.
