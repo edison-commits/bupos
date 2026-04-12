@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
-import { requireAdminPermission } from "@/lib/authz";
-import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
+import { withDualAuth, withAdminAuth } from "@/lib/api/with-auth";
 import { pgCloseShift } from "@/lib/persistence/postgres-store";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { validateBody, shiftCloseSchema } from "@/lib/validation/schemas";
@@ -11,13 +10,8 @@ import { validateBody, shiftCloseSchema } from "@/lib/validation/schemas";
  * Fetch current open shift and Z-report data.
  * If no shift param, fetches the most recent open shift.
  */
-export async function GET(req: NextRequest) {
-  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-  const locationId = registerCtx?.location?.id ?? adminCtx?.employee?.locationIds?.[0];
+export const GET = withDualAuth("register.open", async (req, ctx) => {
+  const { orgId, locationId } = ctx;
   try {
     let shiftId = req.nextUrl.searchParams.get("shift");
 
@@ -70,15 +64,14 @@ export async function GET(req: NextRequest) {
     console.error("[shift-close GET]", error);
     return NextResponse.json({ error: "Failed to fetch shift data" }, { status: 500 });
   }
-}
+});
 
 /**
  * POST /api/shift-close
  * Close a shift with declared cash count.
  * Body: { shiftId, declaredCash, notes? }
  */
-export async function POST(req: NextRequest) {
-  const ctx = await requireAdminPermission('register.open');
+export const POST = withAdminAuth('register.open', async (req, ctx) => {
   const employeeId = ctx.employee.id;
 
   const rl = checkRateLimit(`shift-close:${employeeId}`);
@@ -86,10 +79,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
   }
 
-  const orgId = ctx.employee.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const { orgId } = ctx;
 
   try {
     const body = await req.json();
@@ -140,10 +130,9 @@ export async function POST(req: NextRequest) {
     console.error("[shift-close POST]", error);
     return NextResponse.json({ error: "Failed to close shift" }, { status: 500 });
   }
-}
+});
 
 // ── Z-Report builder ─────────────────────────────────────────
-// transactions links to shifts via register_session_id → shifts.register_session_id
 
 interface ZReportData {
   salesCount: number;
@@ -159,7 +148,6 @@ interface ZReportData {
 }
 
 async function buildZReport(orgId: string, shiftId: string): Promise<ZReportData> {
-  // 1) Get shift info + transactions + pay in/outs in parallel
   const [shiftRes, txnsRes, payRes] = await Promise.all([
     orgQuery(orgId, `SELECT opening_float, register_session_id FROM shifts WHERE id = $1`, [shiftId]),
     orgQuery(
@@ -189,7 +177,6 @@ async function buildZReport(orgId: string, shiftId: string): Promise<ZReportData
   const completed = txns.filter((t) => t.status === "completed");
   const refunded = txns.filter((t) => t.status === "refunded" || t.status === "returned");
 
-  // 2) Get tender breakdown for completed transactions
   const txnIds = completed.map((t) => t.id);
   let tenderBreakdown: Array<{ type: string; count: number; amount: number }> = [];
 

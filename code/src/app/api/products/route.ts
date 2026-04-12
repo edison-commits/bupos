@@ -4,9 +4,8 @@
  */
 import { orgQuery, pool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAdminPermission } from '@/lib/authz';
 import { invalidateProductsCache, invalidateVariantsCache, pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
-import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
+import { withDualAuth } from '@/lib/api/with-auth';
 import { validateBody, productCreateSchema, productUpdateSchema, productDeleteSchema, productImportSchema } from '@/lib/validation/schemas';
 import { checkRateLimit } from '@/lib/auth/rate-limit';
 
@@ -24,13 +23,8 @@ function cacheSet(key: string, value: { data: unknown; expiresAt: number }) {
   _productsCache.set(key, value);
 }
 
-export async function GET(request: NextRequest) {
-  const adminCtx = await getAdminSession();
-  const orgId = adminCtx?.employee?.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-  const locationId = adminCtx?.employee?.locationIds?.[0];
+export const GET = withDualAuth("catalog.manage", async (request, ctx) => {
+  const { orgId, locationId } = ctx;
 
   const cacheKey = `${orgId}:${request.nextUrl.toString()}`;
   const cached = _productsCache.get(cacheKey);
@@ -219,14 +213,10 @@ export async function GET(request: NextRequest) {
       { status: 500, headers: { 'Cache-Control': 'no-store' } }
     );
   }
-}
+});
 
-export async function POST(request: NextRequest) {
-  const ctx = await requireAdminPermission('catalog.manage');
-  const orgId = ctx.employee.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const POST = withDualAuth("catalog.manage", async (request, ctx) => {
+  const { orgId, employee } = ctx;
   const rl = checkRateLimit(`products:post:${orgId}`);
   if (!rl.allowed) {
     return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
@@ -302,7 +292,7 @@ export async function POST(request: NextRequest) {
     await client.query('COMMIT');
     const newProduct = result.rows[0];
     pgInsertAuditEvent(
-      orgId, null, ctx.employee.id,
+      orgId, null, employee.id,
       "product", newProduct.id, "product_created",
       { id: newProduct.id, name: newProduct.name, slug: newProduct.slug },
     ).catch((err) => console.error("[audit] Failed to insert audit event:", err));
@@ -318,14 +308,10 @@ export async function POST(request: NextRequest) {
   } finally {
     client.release();
   }
-}
+});
 
-export async function PUT(request: NextRequest) {
-  const ctx = await requireAdminPermission('catalog.manage');
-  const orgId = ctx.employee.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const PUT = withDualAuth("catalog.manage", async (request, ctx) => {
+  const { orgId, employee } = ctx;
   const rl = checkRateLimit(`products:put:${orgId}`);
   if (!rl.allowed) {
     return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
@@ -410,7 +396,7 @@ export async function PUT(request: NextRequest) {
       await client.query('COMMIT');
       const updatedProduct = result.rows[0];
       pgInsertAuditEvent(
-        orgId, null, ctx.employee.id,
+        orgId, null, employee.id,
         "product", id, "product_updated",
         { id, name: updatedProduct.name, slug: updatedProduct.slug },
       ).catch((err) => console.error("[audit] Failed to insert audit event:", err));
@@ -470,7 +456,7 @@ export async function PUT(request: NextRequest) {
       await client.query('COMMIT');
       const updatedVariant = result.rows[0];
       pgInsertAuditEvent(
-        orgId, null, ctx.employee.id,
+        orgId, null, employee.id,
         "product_variant", updates.variant_id, "variant_updated",
         { id: updates.variant_id, sku: updatedVariant.sku },
       ).catch((err) => console.error("[audit] Failed to insert audit event:", err));
@@ -492,14 +478,10 @@ export async function PUT(request: NextRequest) {
   } finally {
     client.release();
   }
-}
+});
 
-export async function DELETE(request: NextRequest) {
-  const ctx = await requireAdminPermission('catalog.manage');
-  const orgId = ctx.employee.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const DELETE = withDualAuth("catalog.manage", async (request, ctx) => {
+  const { orgId } = ctx;
   const client = await pool.connect();
   try {
     const body = await request.json();
@@ -529,14 +511,10 @@ export async function DELETE(request: NextRequest) {
   } finally {
     client.release();
   }
-}
+});
 
-export async function PATCH(request: NextRequest) {
-  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const PATCH = withDualAuth("catalog.manage", async (request, ctx) => {
+  const { orgId } = ctx;
   const client = await pool.connect();
   try {
     const body = await request.json();
@@ -782,4 +760,4 @@ export async function PATCH(request: NextRequest) {
   } finally {
     client.release();
   }
-}
+});

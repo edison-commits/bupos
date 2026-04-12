@@ -1,19 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/db';
-import { requireAdminPermission } from '@/lib/authz';
-import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
+import { withDualAuth, withAdminAuth } from '@/lib/api/with-auth';
 import { validateBody, settingsUpdateSchema } from '@/lib/validation/schemas';
 
-export async function GET() {
-  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }  if (!adminCtx && !registerCtx) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const locationId = registerCtx?.location?.id ?? adminCtx?.employee?.locationIds?.[0];
+export const GET = withDualAuth("catalog.manage", async (req, ctx) => {
+  const { orgId, locationId } = ctx;
   if (!locationId) {
     return NextResponse.json({ error: 'No location context' }, { status: 400 });
   }
@@ -83,15 +74,11 @@ export async function GET() {
     console.error('Settings GET error:', error);
     return NextResponse.json({ error: 'Failed to fetch settings' }, { status: 500 });
   }
-}
+});
 
-export async function PUT(request: NextRequest) {
-  const ctx = await requireAdminPermission('catalog.manage');
-  const orgId = ctx.employee.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-  const locationId = ctx.employee.locationIds[0];
+export const PUT = withAdminAuth('catalog.manage', async (request, ctx) => {
+  const { orgId } = ctx;
+  const locationId = ctx.employee.locationIds?.[0];
   try {
     const raw = await request.json();
     const v = validateBody(settingsUpdateSchema, raw);
@@ -187,4 +174,4 @@ export async function PUT(request: NextRequest) {
     console.error('Settings PUT error:', error);
     return NextResponse.json({ error: 'Failed to update settings' }, { status: 500 });
   }
-}
+});

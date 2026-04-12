@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import { orgQuery, orgTx } from '@/lib/db';
-import { requireAdminPermission } from '@/lib/authz';
-import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
+import { withDualAuth, withAdminAuth } from '@/lib/api/with-auth';
 import { validateBody, returnCreateSchema, returnUpdateSchema } from '@/lib/validation/schemas';
 
 /**
@@ -11,12 +10,8 @@ import { validateBody, returnCreateSchema, returnUpdateSchema } from '@/lib/vali
  * POST - Create a new return with line items
  * PUT  - Update status (approve/complete/reject). On complete with restock, updates inventory.
  */
-export async function GET(request: NextRequest) {
-  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const GET = withDualAuth("audit.view", async (request, ctx) => {
+  const { orgId } = ctx;
   const pageRaw = parseInt(request.nextUrl.searchParams.get('page') ?? '1', 10);
   const pageSizeRaw = parseInt(request.nextUrl.searchParams.get('pageSize') ?? '20', 10);
   const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
@@ -51,14 +46,10 @@ export async function GET(request: NextRequest) {
     console.error('Returns GET error:', error);
     return NextResponse.json({ error: 'Failed to fetch returns' }, { status: 500 });
   }
-}
+});
 
-export async function POST(request: NextRequest) {
-  const ctx = await requireAdminPermission('employee.manage');
-  const orgId = ctx.employee.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const POST = withAdminAuth('employee.manage', async (request, ctx) => {
+  const { orgId } = ctx;
   try {
     const body = await request.json();
     const v = validateBody(returnCreateSchema, body);
@@ -122,14 +113,10 @@ export async function POST(request: NextRequest) {
     console.error('Returns POST error:', error);
     return NextResponse.json({ error: 'Failed to create return' }, { status: 500 });
   }
-}
+});
 
-export async function PUT(request: NextRequest) {
-  const ctx = await requireAdminPermission('employee.manage');
-  const orgId = ctx.employee.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
+  const { orgId } = ctx;
   try {
     const body = await request.json();
     const v = validateBody(returnUpdateSchema, body);
@@ -185,4 +172,4 @@ export async function PUT(request: NextRequest) {
     console.error('Returns PUT error:', error);
     return NextResponse.json({ error: 'Failed to update return' }, { status: 500 });
   }
-}
+});

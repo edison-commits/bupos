@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
-import { requireAdminPermission } from "@/lib/authz";
-import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
+import { withDualAuth, withAdminAuth } from "@/lib/api/with-auth";
 import { validateBody, taxConfigUpdateSchema } from "@/lib/validation/schemas";
 
 
@@ -12,14 +11,8 @@ import { validateBody, taxConfigUpdateSchema } from "@/lib/validation/schemas";
  * Query params:
  *   location — specific location ID
  */
-export async function GET(req: NextRequest) {
-  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }  if (!adminCtx && !registerCtx) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+export const GET = withDualAuth("catalog.manage", async (req, ctx) => {
+  const { orgId } = ctx;
 
   try {
     const locationId = req.nextUrl.searchParams.get("location");
@@ -56,7 +49,7 @@ export async function GET(req: NextRequest) {
     console.error("GET /api/tax-config error:", err);
     return NextResponse.json({ error: "Failed to fetch tax config" }, { status: 500 });
   }
-}
+});
 
 /**
  * PUT /api/tax-config
@@ -64,12 +57,8 @@ export async function GET(req: NextRequest) {
  * Update tax rate for a location.
  * Body: { locationId, taxRate } — taxRate as decimal (e.g., 0.1025 for 10.25%)
  */
-export async function PUT(req: NextRequest) {
-  const ctx = await requireAdminPermission('catalog.manage');
-  const orgId = ctx.employee.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const PUT = withAdminAuth('catalog.manage', async (req, ctx) => {
+  const { orgId } = ctx;
   try {
     const body = await req.json();
     const v = validateBody(taxConfigUpdateSchema, body);
@@ -94,4 +83,4 @@ export async function PUT(req: NextRequest) {
     console.error("PUT /api/tax-config error:", err);
     return NextResponse.json({ error: "Failed to update tax config" }, { status: 500 });
   }
-}
+});

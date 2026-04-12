@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/db';
-import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
+import { withDualAuth } from '@/lib/api/with-auth';
 
 
 /**
@@ -12,14 +12,8 @@ import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
  *
  * Also returns items with no supplier assigned so they can be flagged.
  */
-export async function GET() {
-  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }  if (!adminCtx && !registerCtx) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const GET = withDualAuth("inventory.adjust", async (_req, ctx) => {
+  const { orgId } = ctx;
   try {
     // Find all low/out-of-stock items with supplier info if available
     const { rows } = await orgQuery(orgId,
@@ -76,4 +70,4 @@ export async function GET() {
     console.error('Reorder suggestions error:', error);
     return NextResponse.json({ error: 'Failed to fetch reorder suggestions' }, { status: 500 });
   }
-}
+});

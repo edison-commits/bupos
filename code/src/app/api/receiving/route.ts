@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery, pool } from '@/lib/db';
-import { requireAdminPermission } from '@/lib/authz';
-import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
+import { withDualAuth } from '@/lib/api/with-auth';
 import { pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
 import { validateBody, receivingCreateSchema } from '@/lib/validation/schemas';
 
@@ -14,16 +13,9 @@ import { validateBody, receivingCreateSchema } from '@/lib/validation/schemas';
  * POST /api/receiving                          - Process receiving batch
  */
 
-export async function GET(request: NextRequest) {
-  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }  if (!adminCtx && !registerCtx) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const GET = withDualAuth("inventory.adjust", async (request, ctx) => {
+  const { orgId, locationId } = ctx;
 
-  const locationId = registerCtx?.location?.id ?? adminCtx?.employee?.locationIds?.[0];
   const type = request.nextUrl.searchParams.get('type');
 
   try {
@@ -115,23 +107,18 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     );
   }
-}
+});
 
-export async function POST(request: NextRequest) {
-  const ctx = await requireAdminPermission('catalog.manage');
-  const orgId = ctx.employee.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const POST = withDualAuth("inventory.adjust", async (request, ctx) => {
+  const { orgId, employee, locationId } = ctx;
+  const employeeId = employee.id;
+
   try {
     const body = await request.json();
     const v = validateBody(receivingCreateSchema, body);
     if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
     const { items: validatedItems, mode, po_id } = v.data;
     const items = body.items as Array<{ product_variant_id: string; quantity: number; po_line_id?: string }>;
-
-    const locationId = ctx.employee.locationIds[0];
-    const employeeId = ctx.employee.id;
 
     // Process receiving in transaction
     const client = await pool.connect();
@@ -255,4 +242,4 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-}
+});

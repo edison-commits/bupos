@@ -1,16 +1,9 @@
 import { NextResponse } from 'next/server';
-import { pgReadLocations } from '@/lib/persistence/postgres-store';
-import { pgReadEmployees } from '@/lib/persistence/postgres-store';
-import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
+import { pgReadLocations, pgReadEmployees } from '@/lib/persistence/postgres-store';
+import { withDualAuth } from '@/lib/api/with-auth';
 
-export async function GET() {
-  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }  if (!adminCtx && !registerCtx) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const GET = withDualAuth("register.open", async (_req, ctx) => {
+  const { orgId } = ctx;
 
   const [locations, employees] = await Promise.all([
     pgReadLocations(orgId),
@@ -18,4 +11,4 @@ export async function GET() {
   ]);
   const safeEmployees = employees.map(({ pinHint: _pinHint, ...employee }) => employee);
   return NextResponse.json({ locations, employees: safeEmployees });
-}
+});

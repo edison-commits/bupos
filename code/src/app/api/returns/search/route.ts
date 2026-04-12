@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/db';
-import { requireAdminPermission } from '@/lib/authz';
+import { withAdminAuth } from '@/lib/api/with-auth';
 
 
 /**
@@ -10,9 +10,8 @@ import { requireAdminPermission } from '@/lib/authz';
  *   search    — transaction ID or customer name
  *   dateRange — 'today', 'week', 'month', 'all'
  */
-export async function GET(req: NextRequest) {
-  const ctx = await requireAdminPermission('audit.view');
-  const orgId = ctx.employee.organizationId;
+export const GET = withAdminAuth('audit.view', async (req, ctx) => {
+  const { orgId } = ctx;
 
   try {
     const sp = req.nextUrl.searchParams;
@@ -96,4 +95,4 @@ export async function GET(req: NextRequest) {
     console.error('GET /api/returns/search error:', error);
     return NextResponse.json({ error: 'Failed to search transaction' }, { status: 500 });
   }
-}
+});

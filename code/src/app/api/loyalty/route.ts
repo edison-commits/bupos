@@ -1,28 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
-import { requireAdminPermission } from "@/lib/authz";
+import { withAdminAuth } from "@/lib/api/with-auth";
 import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 import { validateBody, loyaltyAdjustSchema } from "@/lib/validation/schemas";
 
 
 /**
  * GET /api/loyalty
- *
- * Loyalty program overview:
- * - Total customers enrolled
- * - Total points outstanding
- * - Top 10 customers by loyalty_points
- * - Recent loyalty activity (transactions in last 30 days)
- * - Points distribution histogram
  */
-export async function GET(req: NextRequest) {
-  const ctx = await requireAdminPermission("audit.view");
-  const orgId = ctx.employee.organizationId;
+export const GET = withAdminAuth("audit.view", async (req, ctx) => {
+  const { orgId } = ctx;
 
   try {
     const sp = req.nextUrl.searchParams;
 
-    // If customer_id is specified, get details for that customer
     const customerId = sp.get("customer_id");
     if (customerId) {
       const customerResult = await orgQuery(
@@ -40,7 +31,6 @@ export async function GET(req: NextRequest) {
 
       const customer = customerResult.rows[0];
 
-      // Get recent transactions for this customer
       const transactionResult = await orgQuery(
         orgId,
         `SELECT id, created_at, grand_total AS total_due, grand_total AS total_paid, status
@@ -57,7 +47,6 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Get comprehensive loyalty overview using single consolidated query
     const overviewResult = await orgQuery(
       orgId,
       `WITH loyalty_stats AS (
@@ -154,27 +143,19 @@ export async function GET(req: NextRequest) {
       { status: 500 }
     );
   }
-}
+});
 
 /**
  * POST /api/loyalty
- *
- * Adjust loyalty points for a customer
- * body: { customer_id, adjustment (positive or negative int), reason }
  */
-export async function POST(req: NextRequest) {
-  const ctx = await requireAdminPermission("employee.manage");
-  const orgId = ctx.employee.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const POST = withAdminAuth("employee.manage", async (req, ctx) => {
+  const { orgId } = ctx;
   try {
     const body = await req.json();
     const v = validateBody(loyaltyAdjustSchema, body);
     if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
     const { customer_id, adjustment, reason } = v.data;
 
-    // Check if customer exists
     const checkResult = await orgQuery(
       orgId,
       `SELECT id, loyalty_points FROM customers WHERE id = $1 AND organization_id = $2`,
@@ -186,9 +167,8 @@ export async function POST(req: NextRequest) {
     }
 
     const currentPoints = checkResult.rows[0].loyalty_points || 0;
-    const newPoints = Math.max(0, currentPoints + adjustment); // Prevent negative points
+    const newPoints = Math.max(0, currentPoints + adjustment);
 
-    // Update customer loyalty points
     const updateResult = await orgQuery(
       orgId,
       `UPDATE customers
@@ -219,4 +199,4 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     );
   }
-}
+});

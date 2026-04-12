@@ -2,19 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
 import { pgOpenShift } from "@/lib/persistence/postgres-store";
 import { randomUUID } from "node:crypto";
-import { requireAdminPermission } from "@/lib/authz";
-import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
+import { withDualAuth, withAdminAuth } from "@/lib/api/with-auth";
 import { validateBody, shiftCreateSchema } from "@/lib/validation/schemas";
 
-export async function GET(req: NextRequest) {
-  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }  if (!adminCtx && !registerCtx) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const GET = withDualAuth("register.open", async (req, ctx) => {
+  const { orgId, locationId } = ctx;
   try {
     const sp = req.nextUrl.searchParams;
     const pageRaw = parseInt(sp.get("page") ?? "1", 10);
@@ -25,7 +17,6 @@ export async function GET(req: NextRequest) {
     const date = sp.get("date");
     const offset = (page - 1) * pageSize;
 
-    const locationId = registerCtx?.location?.id ?? adminCtx?.employee?.locationIds?.[0];
     const conditions: string[] = ["s.location_id = $1"];
     const params: unknown[] = [locationId];
 
@@ -97,15 +88,11 @@ export async function GET(req: NextRequest) {
     console.error("[shifts GET]", error);
     return NextResponse.json({ error: "Failed to load shifts" }, { status: 500 });
   }
-}
+});
 
 // POST /api/shifts — open a new shift (admin-initiated, no register session required)
-export async function POST(req: NextRequest) {
-  const ctx = await requireAdminPermission('register.open');
-  const orgId = ctx.employee.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const POST = withAdminAuth('register.open', async (req, ctx) => {
+  const { orgId } = ctx;
   const idempotencyKey = req.headers.get('Idempotency-Key');
 
   try {
@@ -143,4 +130,4 @@ export async function POST(req: NextRequest) {
     console.error("[shifts POST]", error);
     return NextResponse.json({ error: "Failed to open shift" }, { status: 500 });
   }
-}
+});

@@ -1,15 +1,9 @@
 import { orgQuery } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
-import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
+import { withDualAuth } from '@/lib/api/with-auth';
 
-export async function GET(request: NextRequest) {
-  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const locationId = registerCtx?.location?.id ?? adminCtx?.employee?.locationIds?.[0];
+export const GET = withDualAuth("catalog.manage", async (request, ctx) => {
+  const { orgId, locationId } = ctx;
   if (!locationId) {
     return NextResponse.json({ error: 'No location context' }, { status: 400 });
   }
@@ -81,4 +75,4 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     )
   }
-}
+});

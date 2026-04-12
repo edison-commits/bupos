@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/db';
-import { requireAdminPermission } from '@/lib/authz';
-import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
+import { withDualAuth, withAdminAuth } from '@/lib/api/with-auth';
 import { pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
 import { validateBody, supplierCreateSchema, supplierUpdateSchema } from '@/lib/validation/schemas';
 
@@ -11,13 +10,8 @@ import { validateBody, supplierCreateSchema, supplierUpdateSchema } from '@/lib/
  * POST /api/suppliers - Create a new supplier
  * PUT /api/suppliers - Update an existing supplier
  */
-export async function GET(request: NextRequest) {
-  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
+export const GET = withDualAuth("inventory.adjust", async (request, ctx) => {
+  const { orgId } = ctx;
   const pageSize = Math.min(Math.max(1, Number(request.nextUrl.searchParams.get('pageSize')) || 100), 500);
   const cursor = request.nextUrl.searchParams.get('cursor') || null;
 
@@ -44,14 +38,10 @@ export async function GET(request: NextRequest) {
     console.error('Suppliers GET error:', error);
     return NextResponse.json({ error: 'Failed to fetch suppliers' }, { status: 500 });
   }
-}
+});
 
-export async function POST(request: NextRequest) {
-  const ctx = await requireAdminPermission('catalog.manage');
-  const orgId = ctx.employee.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const POST = withAdminAuth('catalog.manage', async (request, ctx) => {
+  const { orgId } = ctx;
   try {
     const body = await request.json();
     const v = validateBody(supplierCreateSchema, body);
@@ -78,14 +68,10 @@ export async function POST(request: NextRequest) {
     console.error('Suppliers POST error:', error);
     return NextResponse.json({ error: 'Failed to create supplier' }, { status: 500 });
   }
-}
+});
 
-export async function PUT(request: NextRequest) {
-  const ctx = await requireAdminPermission('catalog.manage');
-  const orgId = ctx.employee.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const PUT = withAdminAuth('catalog.manage', async (request, ctx) => {
+  const { orgId } = ctx;
   try {
     const body = await request.json();
     const v = validateBody(supplierUpdateSchema, body);
@@ -108,4 +94,4 @@ export async function PUT(request: NextRequest) {
     console.error('Suppliers PUT error:', error);
     return NextResponse.json({ error: 'Failed to update supplier' }, { status: 500 });
   }
-}
+});

@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAdminPermission } from '@/lib/authz';
 import pool, { orgQuery, orgTx } from '@/lib/db';
-import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
 import { validateBody, cashDrawerSchema } from '@/lib/validation/schemas';
+import { withDualAuth } from '@/lib/api/with-auth';
 
 /**
  * GET /api/cash-drawer?action=status|history
@@ -10,14 +9,8 @@ import { validateBody, cashDrawerSchema } from '@/lib/validation/schemas';
  * action=status: Returns current open shift (if any) with pay_in_outs totals
  * action=history: Returns last 10 closed shifts with summary
  */
-export async function GET(req: NextRequest) {
-  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const locationId = registerCtx?.location?.id ?? adminCtx?.employee?.locationIds?.[0];
+export const GET = withDualAuth("register.open", async (req, ctx) => {
+  const { orgId, locationId } = ctx;
   if (!locationId) {
     return NextResponse.json({ error: 'No location context' }, { status: 400 });
   }
@@ -39,26 +32,24 @@ export async function GET(req: NextRequest) {
       { status: 500 }
     );
   }
-}
+});
 
 /**
  * POST /api/cash-drawer
  * Body: { action: 'open_shift' | 'close_shift' | 'pay_in' | 'pay_out', ... }
  */
-export async function POST(req: NextRequest) {
-  const ctx = await requireAdminPermission('register.open');
-  const orgId = ctx.employee.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+export const POST = withDualAuth("register.open", async (req, ctx) => {
+  const { orgId, locationId, employee } = ctx;
+  if (!locationId) {
+    return NextResponse.json({ error: 'No location context' }, { status: 400 });
   }
-  const locationId = ctx.employee.locationIds[0];
-  try {
 
+  try {
     const body = await req.json();
     const v = validateBody(cashDrawerSchema, body);
     if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
     const { action } = v.data;
-    const actorEmployeeId = ctx.employee.id;
+    const actorEmployeeId = employee.id;
 
     if (action === 'open_shift') {
       return handleOpenShift(orgId, locationId, actorEmployeeId, body);
@@ -78,7 +69,7 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     );
   }
-}
+});
 
 // ────────────────────────────────────────────────────────────────────────────
 // GET Handlers

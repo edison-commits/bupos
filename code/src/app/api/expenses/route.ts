@@ -1,17 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/db';
-import { requireAdminPermission } from '@/lib/authz';
-import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
+import { withDualAuth } from '@/lib/api/with-auth';
 import { validateBody, expenseCreateSchema, expenseDeleteSchema } from '@/lib/validation/schemas';
 
-export async function GET(request: NextRequest) {
-  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }  if (!adminCtx && !registerCtx) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const GET = withDualAuth("audit.view", async (request, ctx) => {
+  const { orgId } = ctx;
 
   const month = request.nextUrl.searchParams.get('month') || ''; // YYYY-MM
   const category = request.nextUrl.searchParams.get('category') || '';
@@ -56,22 +49,15 @@ export async function GET(request: NextRequest) {
     console.error('Expenses GET error:', error);
     return NextResponse.json({ error: 'Failed to fetch expenses' }, { status: 500 });
   }
-}
+});
 
-export async function POST(request: NextRequest) {
-  const ctx = await requireAdminPermission('catalog.manage');
-  const orgId = ctx.employee.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const POST = withDualAuth("audit.view", async (request, ctx) => {
+  const { orgId, locationId } = ctx;
   try {
     const body = await request.json();
     const v = validateBody(expenseCreateSchema, body);
     if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
     const { category, description, amount, expense_date, is_recurring, recurrence_period, notes } = v.data;
-
-    const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-    const locationId = registerCtx?.location?.id ?? adminCtx?.employee?.locationIds?.[0];
 
     const { rows } = await orgQuery(
       orgId,
@@ -84,14 +70,10 @@ export async function POST(request: NextRequest) {
     console.error('Expenses POST error:', error);
     return NextResponse.json({ error: 'Failed to create expense' }, { status: 500 });
   }
-}
+});
 
-export async function DELETE(request: NextRequest) {
-  const ctx = await requireAdminPermission('catalog.manage');
-  const orgId = ctx.employee.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const DELETE = withDualAuth("audit.view", async (request, ctx) => {
+  const { orgId } = ctx;
   try {
     const body = await request.json();
     const v = validateBody(expenseDeleteSchema, body);
@@ -104,4 +86,4 @@ export async function DELETE(request: NextRequest) {
     console.error('Expenses DELETE error:', error);
     return NextResponse.json({ error: 'Failed to delete expense' }, { status: 500 });
   }
-}
+});

@@ -4,7 +4,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/db';
-import { getAdminSession } from '@/lib/auth/session';
+import { withAdminAuth } from '@/lib/api/with-auth';
 
 interface ProductRow {
   product_id: string;
@@ -17,7 +17,7 @@ interface ProductRow {
   sku: string | null;
   size_label: string | null;
   color_label: string | null;
-  price: string | null;  // Postgres returns numerics as strings
+  price: string | null;
   cost: string | null;
   quantity: number;
 }
@@ -34,17 +34,12 @@ const _inventoryCache = new Map<string, { data: unknown; expiresAt: number }>();
 const INV_CACHE_TTL = 30_000;
 const MAX_CACHE_SIZE = 50;
 
-export async function GET(request: NextRequest) {
+export const GET = withAdminAuth("inventory.adjust", async (request, ctx) => {
   const cacheKey = request.nextUrl.toString();
   const cached = _inventoryCache.get(cacheKey);
 
-  const adminCtx = await getAdminSession();
-  const orgId = adminCtx?.employee?.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const locationId = adminCtx?.employee?.locationIds?.[0];
+  const { orgId } = ctx;
+  const locationId = ctx.locationId;
   if (!locationId) {
     return NextResponse.json({ error: 'No location context' }, { status: 400 });
   }
@@ -93,7 +88,6 @@ export async function GET(request: NextRequest) {
 
     // Query all in parallel: products, categories, types, brands, summary
     const [productsResult, categoriesResult, typesResult, brandsResult, summaryResult] = await Promise.all([
-      // Get products with variants and inventory
       orgQuery(
         orgId,
         `
@@ -120,7 +114,6 @@ export async function GET(request: NextRequest) {
         [locationId, ...params]
       ),
 
-      // Get all categories
       orgQuery(
         orgId,
         `
@@ -132,7 +125,6 @@ export async function GET(request: NextRequest) {
         []
       ),
 
-      // Get all distinct product types
       orgQuery(
         orgId,
         `
@@ -144,7 +136,6 @@ export async function GET(request: NextRequest) {
         []
       ),
 
-      // Get all distinct brands
       orgQuery(
         orgId,
         `
@@ -156,7 +147,6 @@ export async function GET(request: NextRequest) {
         []
       ),
 
-      // Get summary statistics
       orgQuery(
         orgId,
         `
@@ -273,4 +263,4 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     );
   }
-}
+});

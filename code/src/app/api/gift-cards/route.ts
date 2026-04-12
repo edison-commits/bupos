@@ -1,24 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery, orgTx } from "@/lib/db";
 import { randomUUID } from "node:crypto";
-import { requireAdminPermission } from "@/lib/authz";
+import { withAdminAuth } from "@/lib/api/with-auth";
 import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { validateBody, giftCardSchema } from "@/lib/validation/schemas";
 
 /**
  * GET /api/gift-cards
- *
- * Query params:
- *   code   — lookup single card by code (for register use)
- *   id     — lookup single card by ID (with transaction history)
- *   status — filter by status (active, depleted, disabled, expired)
- *
- * Without params returns all gift cards with summary stats.
  */
-export async function GET(req: NextRequest) {
-  const ctx = await requireAdminPermission("audit.view");
-  const orgId = ctx.employee.organizationId;
+export const GET = withAdminAuth("audit.view", async (req, ctx) => {
+  const { orgId } = ctx;
 
   try {
     const sp = req.nextUrl.searchParams;
@@ -87,7 +79,6 @@ export async function GET(req: NextRequest) {
       params,
     );
 
-    // Summary stats
     const stats = await orgQuery(
       orgId,
       `SELECT
@@ -107,18 +98,12 @@ export async function GET(req: NextRequest) {
     console.error("GET /api/gift-cards error:", err);
     return NextResponse.json({ error: "Failed to fetch gift cards" }, { status: 500 });
   }
-}
+});
 
 /**
  * POST /api/gift-cards
- *
- * Body: { action, ... }
- *   action: "activate" — { code, amount, customerId?, employeeId }
- *   action: "reload"   — { giftCardId, amount, employeeId }
- *   action: "disable"  — { giftCardId }
  */
-export async function POST(req: NextRequest) {
-  const ctx = await requireAdminPermission('catalog.manage');
+export const POST = withAdminAuth('catalog.manage', async (req, ctx) => {
   const employeeId = ctx.employee.id;
 
   const rl = checkRateLimit(`gift-cards:${employeeId}`);
@@ -126,10 +111,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
   }
 
-  const orgId = ctx.employee.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const { orgId } = ctx;
   try {
     const body = await req.json();
     const v = validateBody(giftCardSchema, body);
@@ -142,7 +124,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Code and positive amount required" }, { status: 400 });
       }
 
-      // Check for duplicate code
       const existing = await orgQuery(orgId, `SELECT id FROM gift_cards WHERE LOWER(code) = LOWER($1)`, [code]);
       if (existing.rows.length > 0) {
         return NextResponse.json({ error: `Gift card code "${code}" already exists` }, { status: 409 });
@@ -238,4 +219,4 @@ export async function POST(req: NextRequest) {
     console.error("POST /api/gift-cards error:", err);
     return NextResponse.json({ error: "Failed to process gift card action" }, { status: 500 });
   }
-}
+});

@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery, orgTx } from "@/lib/db";
 import { randomUUID } from "node:crypto";
-import { requireAdminPermission } from "@/lib/authz";
-import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
+import { withDualAuth, withAdminAuth } from "@/lib/api/with-auth";
 import { validateBody, transferSchema } from "@/lib/validation/schemas";
 
 
@@ -14,12 +13,8 @@ import { validateBody, transferSchema } from "@/lib/validation/schemas";
  *   status   — filter by status (requested, in_transit, received, cancelled)
  *   location — filter by source or destination location
  */
-export async function GET(req: NextRequest) {
-  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const GET = withDualAuth("inventory.adjust", async (req, ctx) => {
+  const { orgId } = ctx;
   try {
     const sp = req.nextUrl.searchParams;
 
@@ -110,7 +105,7 @@ export async function GET(req: NextRequest) {
     console.error("GET /api/transfers error:", err);
     return NextResponse.json({ error: "Failed to fetch transfers" }, { status: 500 });
   }
-}
+});
 
 /**
  * POST /api/transfers
@@ -121,13 +116,9 @@ export async function GET(req: NextRequest) {
  *   action: "receive" — { transferId }
  *   action: "cancel"  — { transferId }
  */
-export async function POST(req: NextRequest) {
-  const ctx = await requireAdminPermission("catalog.manage");
-  const orgId = ctx.employee.organizationId;
+export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
+  const { orgId } = ctx;
   const employeeId = ctx.employee.id;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
   const idempotencyKey = req.headers.get('Idempotency-Key');
 
   try {
@@ -138,7 +129,6 @@ export async function POST(req: NextRequest) {
     const { action } = v.data;
 
     if (action === "create") {
-      // Idempotency: if key provided, look for an already-succeeded transfer
       if (idempotencyKey) {
         const existing = await orgQuery(
           orgId,
@@ -187,7 +177,6 @@ export async function POST(req: NextRequest) {
         client.release();
       }
 
-      // Audit event — outside transaction
       try {
         await orgQuery(
           orgId,
@@ -206,7 +195,6 @@ export async function POST(req: NextRequest) {
       const { transferId } = body;
       if (!transferId) return NextResponse.json({ error: "transferId required" }, { status: 400 });
 
-      // Idempotency: if key provided and already shipped, return current state without re-executing
       if (idempotencyKey) {
         const existing = await orgQuery(
           orgId,
@@ -235,13 +223,11 @@ export async function POST(req: NextRequest) {
           [employeeId || null, transferId],
         );
 
-        // Update transfer lines: shipped = requested
         await client.query(
           `UPDATE transfer_lines SET quantity_shipped = quantity_requested WHERE transfer_id = $1`,
           [transferId],
         );
 
-        // Deduct inventory from source location
         const lines = await client.query(
           `SELECT product_variant_id, quantity_requested FROM transfer_lines WHERE transfer_id = $1`,
           [transferId],
@@ -294,7 +280,6 @@ export async function POST(req: NextRequest) {
       const { transferId } = body;
       if (!transferId) return NextResponse.json({ error: "transferId required" }, { status: 400 });
 
-      // Idempotency: if key provided and already received, return current state without re-executing
       if (idempotencyKey) {
         const existing = await orgQuery(
           orgId,
@@ -323,19 +308,16 @@ export async function POST(req: NextRequest) {
           [employeeId || null, transferId],
         );
 
-        // Update lines: received = shipped
         await client.query(
           `UPDATE transfer_lines SET quantity_received = COALESCE(quantity_shipped, quantity_requested) WHERE transfer_id = $1`,
           [transferId],
         );
 
-        // Add inventory to destination location
         const lines = await client.query(
           `SELECT product_variant_id, COALESCE(quantity_shipped, quantity_requested) AS qty FROM transfer_lines WHERE transfer_id = $1`,
           [transferId],
         );
         for (const line of lines.rows) {
-          // Upsert: increment if exists, insert if not
           await client.query(
             `INSERT INTO inventory_levels (id, organization_id, product_variant_id, location_id, on_hand, reserved, reorder_point, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, 0, 0, now(), now())
@@ -377,4 +359,4 @@ export async function POST(req: NextRequest) {
     console.error("POST /api/transfers error:", err);
     return NextResponse.json({ error: "Failed to process transfer" }, { status: 500 });
   }
-}
+});
