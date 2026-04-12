@@ -171,7 +171,7 @@ export function SalesDigestSettings({ store }: { store: LocalStoreData }) {
             <div>
               <h3 className="font-medium text-zinc-900">Daily Sales Digest</h3>
               <p className="text-sm text-zinc-600 mt-1">
-                Receive a summary of today's sales performance
+                Receive a summary of today&apos;s sales performance
               </p>
             </div>
             <button
@@ -193,7 +193,7 @@ export function SalesDigestSettings({ store }: { store: LocalStoreData }) {
             <div>
               <h3 className="font-medium text-zinc-900">Weekly Sales Digest</h3>
               <p className="text-sm text-zinc-600 mt-1">
-                Receive a summary of the week's performance (sent Mondays)
+                Receive a summary of the week&apos;s performance (sent Mondays)
               </p>
             </div>
             <button

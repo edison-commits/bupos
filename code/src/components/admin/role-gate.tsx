@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import type { RoleKey } from '@/lib/domain/types';
 
 interface RoleGateProps {
@@ -56,12 +57,12 @@ export function RoleGate({ allowedRoles, children, fallback }: RoleGateProps) {
             <p className="text-slate-600 mb-4">
               You need to sign in to access this page. Please log in from the register or main menu.
             </p>
-            <a
+            <Link
               href="/"
               className="inline-block px-6 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors"
             >
               Go to Home
-            </a>
+            </Link>
           </div>
         </div>
       </div>

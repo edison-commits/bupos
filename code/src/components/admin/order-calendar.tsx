@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import type { EntityId, Supplier, PurchaseOrder } from '@/lib/domain/types';
 
 // Event types and data structures
@@ -147,7 +147,7 @@ export function OrderCalendar({ suppliers, purchaseOrders, employees, locations,
   const showOnlyCurrentStore = () => setVisibleStores(new Set([currentLocationId]));
 
   // Auto-populate events from purchase orders
-  useMemo(() => {
+  useEffect(() => {
     const autoEvents: CalendarEvent[] = [];
 
     purchaseOrders.forEach((po) => {

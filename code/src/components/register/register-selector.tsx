@@ -21,7 +21,7 @@ export function RegisterSelector({
           Select register
         </h2>
         <p className="text-sm text-zinc-600">
-          Choose which register terminal you'll be using for this session.
+          Choose which register terminal you&apos;ll be using for this session.
         </p>
       </div>
 
