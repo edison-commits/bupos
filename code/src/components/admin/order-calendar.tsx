@@ -163,7 +163,7 @@ export function OrderCalendar({ suppliers, purchaseOrders, employees, locations,
         status: 'ordered',
         notes: po.notes,
         recurrence: 'none',
-        locationId: (po as any).locationId || currentLocationId,
+        locationId: (po as { locationId?: string }).locationId || currentLocationId,
         createdAt: new Date(),
       });
 
@@ -179,7 +179,7 @@ export function OrderCalendar({ suppliers, purchaseOrders, employees, locations,
           poNumber: po.orderNumber,
           status: 'in_transit',
           recurrence: 'none',
-          locationId: (po as any).locationId || currentLocationId,
+          locationId: (po as { locationId?: string }).locationId || currentLocationId,
           createdAt: new Date(),
         });
       }
@@ -195,7 +195,7 @@ export function OrderCalendar({ suppliers, purchaseOrders, employees, locations,
           poNumber: po.orderNumber,
           status: 'delivered',
           recurrence: 'none',
-          locationId: (po as any).locationId || currentLocationId,
+          locationId: (po as { locationId?: string }).locationId || currentLocationId,
           createdAt: new Date(),
         });
       }

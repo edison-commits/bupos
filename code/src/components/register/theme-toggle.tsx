@@ -12,6 +12,20 @@ const themes: { value: ThemeMode; label: string; icon: string }[] = [
   { value: 'high-contrast', label: 'High Visibility', icon: '👁️' },
 ];
 
+function applyTheme(next: ThemeMode) {
+  const root = document.documentElement;
+
+  // Clear all theme classes/attributes first
+  root.classList.remove('dark');
+  root.removeAttribute('data-theme');
+
+  if (next === 'dark') {
+    root.classList.add('dark');
+  } else if (next === 'high-contrast') {
+    root.setAttribute('data-theme', 'high-contrast');
+  }
+}
+
 export function ThemeToggle() {
   const [theme, setTheme] = useState<ThemeMode>('light');
   const [mounted, setMounted] = useState(false);
@@ -23,20 +37,6 @@ export function ThemeToggle() {
     applyTheme(initial);
     setTheme(initial);
   }, []);
-
-  function applyTheme(next: ThemeMode) {
-    const root = document.documentElement;
-
-    // Clear all theme classes/attributes first
-    root.classList.remove('dark');
-    root.removeAttribute('data-theme');
-
-    if (next === 'dark') {
-      root.classList.add('dark');
-    } else if (next === 'high-contrast') {
-      root.setAttribute('data-theme', 'high-contrast');
-    }
-  }
 
   const cycleTheme = () => {
     const idx = themes.findIndex((t) => t.value === theme);

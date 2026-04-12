@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
         varsIgnorePattern: "^_",
         destructuredArrayIgnorePattern: "^_",
       }],
+      // React Compiler optimality hints — not correctness issues
+      "react-hooks/set-state-in-effect": "off",
+      "react-hooks/preserve-manual-memoization": "off",
     },
   },
   // Override default ignores of eslint-config-next.

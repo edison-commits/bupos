@@ -216,7 +216,7 @@ export default function DashboardPage() {
 interface MetricCardProps {
   label: string;
   value: string;
-  Icon?: any;
+  Icon?: React.ComponentType<{ className?: string }>;
 }
 
 function MetricCard({ label, value }: MetricCardProps) {

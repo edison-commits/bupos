@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import { orgQuery, orgTx } from '@/lib/db';

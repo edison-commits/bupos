@@ -48,8 +48,8 @@ export default async function RegisterPage({
         locationName: session.location.name,
         shiftOpenedAt: session.activeShift.openedAt,
         openingFloat: session.activeShift.openingFloat,
-        payInTotal: store.payInOuts.filter((p: any) => p.direction === "pay_in").reduce((s: number, p: any) => s + p.amount, 0),
-        payOutTotal: store.payInOuts.filter((p: any) => p.direction === "pay_out").reduce((s: number, p: any) => s + p.amount, 0),
+        payInTotal: store.payInOuts.filter((p: { direction: string }) => p.direction === "pay_in").reduce((s: number, p: { amount: number }) => s + p.amount, 0),
+        payOutTotal: store.payInOuts.filter((p: { direction: string }) => p.direction === "pay_out").reduce((s: number, p: { amount: number }) => s + p.amount, 0),
       }
     : undefined;
 

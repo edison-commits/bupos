@@ -121,7 +121,7 @@ export function SalesDigestSettings({ store }: { store: LocalStoreData }) {
     };
   }, [store]);
 
-  const handleSettingChange = (key: keyof DigestSettings, value: any) => {
+  const handleSettingChange = (key: keyof DigestSettings, value: string | boolean | number) => {
     setSettings((prev) => ({
       ...prev,
       [key]: value,

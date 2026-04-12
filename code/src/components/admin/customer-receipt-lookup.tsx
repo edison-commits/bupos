@@ -260,7 +260,7 @@ export function CustomerReceiptLookup({
               {/* No results message */}
               {showResults && searchQuery.trim() && matchedCustomers.length === 0 && (
                 <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-zinc-300 rounded-2xl shadow-lg p-4 text-center">
-                  <p className="text-zinc-600">No customers found matching '{searchQuery}'</p>
+                  <p className="text-zinc-600">No customers found matching &apos;{searchQuery}&apos;</p>
                 </div>
               )}
             </div>

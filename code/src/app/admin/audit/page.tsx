@@ -14,7 +14,7 @@ interface AuditEvent {
   role_key: string | null;
   event_kind: string;
   notes: string | null;
-  payload: Record<string, any>;
+  payload: Record<string, unknown>;
   created_at: string;
 }
 

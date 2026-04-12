@@ -138,7 +138,7 @@ export function LoyaltyTiers({ customers, currentConfig }: LoyaltyTiersProps) {
 
   const maxCustomersInTier = Math.max(...tiers.map((t) => customersByTier[t.id]?.length || 0), 1);
 
-  const handleTierChange = (tierId: string, field: string, value: any) => {
+  const handleTierChange = (tierId: string, field: string, value: string | number | null) => {
     setTiers((prev) =>
       prev.map((t) =>
         t.id === tierId
