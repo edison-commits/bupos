@@ -2,6 +2,24 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
 export function middleware(request: NextRequest) {
+  // Handle CORS preflight
+  if (request.method === 'OPTIONS') {
+    const response = new NextResponse(null, { status: 204 })
+    const origin = request.headers.get('origin') ?? '';
+    const allowedOrigins = [
+      'https://bupos.basicuniform.com',
+      ...(process.env.NODE_ENV !== 'production' ? ['http://localhost:3000'] : []),
+    ];
+    if (allowedOrigins.includes(origin)) {
+      response.headers.set('Access-Control-Allow-Origin', origin);
+    }
+    response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+    response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    response.headers.set('Access-Control-Allow-Credentials', 'true');
+    response.headers.set('Access-Control-Max-Age', '3600');
+    return response;
+  }
+
   const response = NextResponse.next()
 
   // CORS — allow same-origin and known cross-origin API callers
@@ -37,6 +55,11 @@ export function middleware(request: NextRequest) {
     'Content-Security-Policy',
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' https://*.supabase.co https://*.cloudflare.com; frame-ancestors 'none';"
   )
+
+  // HSTS — force HTTPS (1 year, include subdomains)
+  if (process.env.NODE_ENV === 'production') {
+    response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+  }
 
   // Referrer policy
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')

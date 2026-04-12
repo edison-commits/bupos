@@ -233,8 +233,8 @@ export const GET = withAdminAuth("inventory.adjust", async (request, ctx) => {
     }
 
     const summary = summaryResult.rows[0] as SummaryRow;
-    const types = typesResult.rows.map((r: any) => r.value).filter(Boolean);
-    const brands = brandsResult.rows.map((r: any) => r.value).filter(Boolean);
+    const types = typesResult.rows.map((r: Record<string, string>) => r.value).filter(Boolean);
+    const brands = brandsResult.rows.map((r: Record<string, string>) => r.value).filter(Boolean);
 
     const response = {
       products: filteredProducts,

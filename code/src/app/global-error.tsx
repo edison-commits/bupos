@@ -1,42 +1,44 @@
-"use client";
-
-import { useEffect } from "react";
+'use client';
 
 export default function GlobalError({
   error,
   reset,
 }: {
-  error: unknown;
+  error: Error & { digest?: string };
   reset: () => void;
 }) {
-  useEffect(() => {
-    // Log to server-side console for alerting visibility
-    console.error("[global-error]", error);
-  }, [error]);
-
   return (
     <html lang="en">
-      <body>
-        <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-50 px-4">
-          <div className="w-full max-w-md text-center">
-            <div className="mx-auto mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-red-100">
-              <svg className="h-7 w-7 text-red-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="8" x2="12" y2="12" />
-                <line x1="12" y1="16" x2="12.01" y2="16" />
-              </svg>
-            </div>
-            <h1 className="mb-2 text-2xl font-bold text-zinc-900">Something went wrong</h1>
-            <p className="mb-6 text-sm text-zinc-500">
-              An unexpected error occurred. Your session is safe.
-            </p>
-            <button
-              onClick={reset}
-              className="rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 transition-colors"
-            >
-              Try again
-            </button>
-          </div>
+      <body style={{
+        margin: 0,
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontFamily: 'system-ui, sans-serif',
+        background: '#fef2f2',
+        color: '#991b1b',
+      }}>
+        <div style={{ textAlign: 'center', padding: '2rem' }}>
+          <h1 style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>Something went wrong</h1>
+          <p style={{ color: '#7f1d1d', marginBottom: '1.5rem' }}>
+            {error.message || 'An unexpected error occurred.'}
+          </p>
+          <button
+            onClick={reset}
+            style={{
+              padding: '0.75rem 1.5rem',
+              borderRadius: '0.75rem',
+              border: 'none',
+              background: '#991b1b',
+              color: 'white',
+              fontSize: '1rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            Try again
+          </button>
         </div>
       </body>
     </html>
