@@ -122,7 +122,7 @@ export async function readStoreFromPg(orgId?: string): Promise<LocalStoreData> {
   // when no org context is set. Write paths use orgTx() for strict isolation.
   // CRITICAL: Run all queries in parallel to avoid Cloudflare Worker CPU timeouts.
 
-  const { rows: orgRows } = await pool.query('SELECT * FROM organizations WHERE id = $1 LIMIT 1', [orgId]);
+  const { rows: orgRows } = await pool.query('SELECT id, name, slug, legal_name, timezone, currency_code, phone, email, website, receipt_header, receipt_footer, created_at, updated_at FROM organizations WHERE id = $1 LIMIT 1', [orgId]);
   const org = toOrg(orgRows[0]);
 
   // Run ALL remaining queries in parallel
@@ -143,7 +143,7 @@ export async function readStoreFromPg(orgId?: string): Promise<LocalStoreData> {
     rsResult,
     pioResult,
   ] = await Promise.all([
-    pool.query('SELECT * FROM locations WHERE organization_id = $1 AND is_active = true ORDER BY name', [orgId]),
+    pool.query('SELECT id, organization_id, name, code, address1, city, region, postal_code, phone, tax_rate, is_active, created_at, updated_at FROM locations WHERE organization_id = $1 AND is_active = true ORDER BY name', [orgId]),
     pgReadEmployees(orgId),
     pgReadCategories(orgId),
     pgReadProducts(orgId),
@@ -151,25 +151,30 @@ export async function readStoreFromPg(orgId?: string): Promise<LocalStoreData> {
     pgReadInventory(orgId),
     pgReadCustomers(orgId),
     pgReadPromoCodes(orgId),
-    pool.query('SELECT * FROM modifier_groups WHERE organization_id = $1 ORDER BY name', [orgId]),
-    pool.query('SELECT * FROM modifiers WHERE organization_id = $1 ORDER BY sort_order', [orgId]),
+    pool.query('SELECT id, organization_id, name, selection_mode, min_selections, max_selections, created_at, updated_at FROM modifier_groups WHERE organization_id = $1 ORDER BY name', [orgId]),
+    pool.query('SELECT id, organization_id, modifier_group_id, name, price_delta, sort_order, created_at, updated_at FROM modifiers WHERE organization_id = $1 ORDER BY sort_order', [orgId]),
     pool.query(
-      `SELECT ac.* FROM auth_credentials ac
+      `SELECT ac.employee_id, ac.email, ac.password_hash, ac.pin_hash, ac.password_last_rotated_at, ac.pin_last_rotated_at
+       FROM auth_credentials ac
        JOIN employees e ON e.id = ac.employee_id
        WHERE e.organization_id = $1`,
       [orgId],
     ),
-    pool.query('SELECT * FROM sessions WHERE organization_id = $1 ORDER BY created_at DESC LIMIT 100', [orgId]),
+    pool.query('SELECT id, employee_id, organization_id, scope, location_id, created_at, last_seen_at, expires_at FROM sessions WHERE organization_id = $1 ORDER BY created_at DESC LIMIT 100', [orgId]),
     pool.query(
-      `SELECT s.* FROM shifts s
+      `SELECT s.id, s.location_id, s.employee_id, s.register_session_id, s.status,
+              s.opened_at, s.opening_float, s.opened_note, s.closed_at,
+              s.closing_expected_cash, s.closing_declared_cash, s.closing_variance,
+              s.closed_note, s.blind_close
+       FROM shifts s
        JOIN locations l ON l.id = s.location_id
        WHERE l.organization_id = $1
        ORDER BY s.opened_at DESC
        LIMIT 200`,
       [orgId],
     ),
-    pool.query('SELECT * FROM register_sessions WHERE organization_id = $1 ORDER BY started_at DESC LIMIT 200', [orgId]),
-    pool.query('SELECT * FROM pay_in_outs WHERE organization_id = $1 ORDER BY created_at DESC LIMIT 500', [orgId]),
+    pool.query('SELECT id, auth_session_id, employee_id, location_id, status, started_at, ended_at, active_shift_id, last_cart_id, last_transaction_id, pending_exception_ids FROM register_sessions WHERE organization_id = $1 ORDER BY started_at DESC LIMIT 200', [orgId]),
+    pool.query('SELECT id, shift_id, location_id, employee_id, direction, amount, reason, note, created_at FROM pay_in_outs WHERE organization_id = $1 ORDER BY created_at DESC LIMIT 500', [orgId]),
     // NOTE: transaction_tenders, transaction_events, and transaction_exceptions are
     // intentionally excluded from this initial load. They contain 1000–2500+ historical
     // rows that are not needed for register-terminal operation. Load them on demand via

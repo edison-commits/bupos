@@ -3,6 +3,8 @@ import { withDualAuth } from "@/lib/api/with-auth";
 import { orgQuery } from "@/lib/db";
 import { validateBody, emailReceiptSchema } from "@/lib/validation/schemas";
 
+export const runtime = "edge";
+
 /**
  * POST /api/email-receipt
  *

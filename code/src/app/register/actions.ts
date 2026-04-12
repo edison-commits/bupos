@@ -1,6 +1,5 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { pool, orgTx } from "@/lib/db";
@@ -44,7 +43,7 @@ export async function registerLoginAction(formData: FormData) {
     ).catch((err) => console.error("[registerLoginAction] login audit failed:", err));
 
     // Auto-open shift on login — workers clock in by entering their PIN
-    const shiftId = randomUUID();
+    const shiftId = crypto.randomUUID();
     await pgOpenShift({
       id: shiftId,
       organizationId: employee.organizationId,
@@ -77,7 +76,7 @@ export async function openShiftAction(formData: FormData) {
     if (context.registerSession.activeShiftId) {
       redirect("/register?error=Shift+already+open");
     }
-    const shiftId = randomUUID();
+    const shiftId = crypto.randomUUID();
     await pgOpenShift({
       id: shiftId, organizationId: context.employee.organizationId, locationId: context.location.id,
       employeeId: context.employee.id,
@@ -99,7 +98,7 @@ export async function openShiftAction(formData: FormData) {
       if (registerSession.activeShiftId) {
         redirect("/register?error=Shift+already+open");
       }
-      const shiftId = randomUUID();
+      const shiftId = crypto.randomUUID();
       store.shifts.unshift({
         id: shiftId, locationId: context.location.id,
         employeeId: context.employee.id,
@@ -109,7 +108,7 @@ export async function openShiftAction(formData: FormData) {
       });
       registerSession.activeShiftId = shiftId;
       store.transactionEventPlaceholders.unshift({
-        id: randomUUID(), transactionId: "txn_register_shift_placeholder",
+        id: crypto.randomUUID(), transactionId: "txn_register_shift_placeholder",
         eventKind: "shift_opened", actorEmployeeId: context.employee.id,
         notes: `Shift opened by ${context.employee.displayName}`,
         payload: {
@@ -157,7 +156,7 @@ export async function adminOpenShiftAction(formData: FormData) {
     if (existing.length > 0) {
       redirect("/admin/clock-in?error=Employee+already+has+an+open+shift");
     }
-    const shiftId = randomUUID();
+    const shiftId = crypto.randomUUID();
     await (await import("@/lib/persistence/postgres-store")).pgOpenShift({
       id: shiftId, organizationId: ctx.employee.organizationId, locationId, employeeId, registerSessionId: null,
       openingFloat, openedNote: openedNote || undefined,
@@ -222,7 +221,7 @@ export async function closeShiftAction(formData: FormData) {
       shift.closedNote = closedNote || undefined;
       registerSession.activeShiftId = undefined;
       store.transactionEventPlaceholders.unshift({
-        id: randomUUID(), transactionId: "txn_register_shift_placeholder",
+        id: crypto.randomUUID(), transactionId: "txn_register_shift_placeholder",
         eventKind: "shift_closed", actorEmployeeId: context.employee.id,
         notes: `Shift closed by ${context.employee.displayName}`,
         payload: {
@@ -338,7 +337,13 @@ export async function quickSwitchAction(pin: string): Promise<{ success: boolean
   const { verifySecret } = await import("@/lib/auth/crypto");
   const { readStore } = await import("@/lib/persistence/store");
   const store = await readStore();
-  const credential = store.authCredentials.find((c) => c.pinHash && verifySecret(cleanPin, c.pinHash));
+  let credential = null;
+  for (const c of store.authCredentials) {
+    if (c.pinHash && (await verifySecret(cleanPin, c.pinHash))) {
+      credential = c;
+      break;
+    }
+  }
   if (!credential) return { success: false, error: "Invalid PIN" };
 
   const newEmployee = store.employees.find((e) => e.id === credential.employeeId && e.isActive);
@@ -358,7 +363,7 @@ export async function quickSwitchAction(pin: string): Promise<{ success: boolean
     if (shift) shift.employeeId = newEmployee.id;
 
     s.transactionEventPlaceholders.unshift({
-      id: randomUUID(),
+      id: crypto.randomUUID(),
       transactionId: "txn_register_session_placeholder",
       eventKind: "pin_login",
       actorEmployeeId: newEmployee.id,
@@ -382,7 +387,7 @@ export async function createCustomerAction(data: {
 
   if (!data.firstName.trim() || !data.lastName.trim()) return null;
 
-  const id = randomUUID();
+  const id = crypto.randomUUID();
   const orgId = context.employee.organizationId;
 
   if (isPg()) {

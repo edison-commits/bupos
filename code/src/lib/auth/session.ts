@@ -1,6 +1,5 @@
 import "server-only";
 
-import { randomUUID } from "node:crypto";
 import { addDays } from "@/lib/utils/date";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
@@ -19,7 +18,7 @@ const REGISTER_COOKIE = "basicuniformpos_register_session";
 function buildSession(scope: SessionRecord["scope"], employeeId: string, organizationId: string, locationId?: string): SessionRecord {
   const now = new Date();
   return {
-    id: randomUUID(),
+    id: crypto.randomUUID(),
     employeeId,
     organizationId,
     scope,
@@ -241,7 +240,7 @@ export async function signInAdmin(email: string, password: string) {
       throw new Error("Invalid admin credentials");
     }
 
-    if (!verifySecret(password, credential.passwordHash)) {
+    if (!(await verifySecret(password, credential.passwordHash))) {
       throw new Error("Invalid admin credentials");
     }
 
@@ -301,7 +300,7 @@ export async function signInAdmin(email: string, password: string) {
       return null;
     }
 
-    if (!verifySecret(password, credential.passwordHash)) {
+    if (!(await verifySecret(password, credential.passwordHash))) {
       return null;
     }
 
@@ -388,7 +387,7 @@ export async function signInRegister(pin: string, locationId: string, deviceId?:
     const organizationId = emp.organization_id as string;
 
     const nextSession = buildSession("register", employeeId, organizationId, locationId);
-    const registerSessionId = randomUUID();
+    const registerSessionId = crypto.randomUUID();
 
     const client = await pool.connect();
     try {
@@ -456,7 +455,13 @@ export async function signInRegister(pin: string, locationId: string, deviceId?:
 
   // JSON path
   const session = await mutateStore(async (store) => {
-    const credential = store.authCredentials.find((entry) => entry.pinHash && verifySecret(cleanPin, entry.pinHash));
+    let credential = null;
+    for (const entry of store.authCredentials) {
+      if (entry.pinHash && (await verifySecret(cleanPin, entry.pinHash))) {
+        credential = entry;
+        break;
+      }
+    }
     if (!credential) {
       return null;
     }
@@ -484,7 +489,7 @@ export async function signInRegister(pin: string, locationId: string, deviceId?:
     }
 
     const nextSession = buildSession("register", employee.id, employee.organizationId, locationId);
-    const registerSessionId = randomUUID();
+    const registerSessionId = crypto.randomUUID();
 
     store.sessions.push(nextSession);
     store.registerSessions.push({
@@ -498,7 +503,7 @@ export async function signInRegister(pin: string, locationId: string, deviceId?:
       deviceId,
     });
     store.transactionEventPlaceholders.unshift({
-      id: randomUUID(),
+      id: crypto.randomUUID(),
       transactionId: "txn_register_session_placeholder",
       eventKind: "register_session_started",
       actorEmployeeId: employee.id,
@@ -507,7 +512,7 @@ export async function signInRegister(pin: string, locationId: string, deviceId?:
       createdAt: timestamp,
     });
     store.transactionEventPlaceholders.unshift({
-      id: randomUUID(),
+      id: crypto.randomUUID(),
       transactionId: "txn_register_session_placeholder",
       eventKind: "pin_login",
       actorEmployeeId: employee.id,
@@ -597,7 +602,7 @@ export async function signOutRegister() {
           `INSERT INTO transaction_events (id, transaction_id, actor_employee_id, event_kind, notes, payload, created_at)
            VALUES ($1, $2, $3, 'shift_closed', 'Shift auto-closed during register logout', $4, $5)`,
           [
-            randomUUID(),
+            crypto.randomUUID(),
             `txn_${registerSession.active_shift_id}`,
             registerSession.employee_id,
             JSON.stringify({ register_session_id: registerSession.id, auto_closed: "true" }),
@@ -629,7 +634,7 @@ export async function signOutRegister() {
             }
 
             store.transactionEventPlaceholders.unshift({
-              id: randomUUID(),
+              id: crypto.randomUUID(),
               transactionId: "txn_register_shift_placeholder",
               eventKind: "shift_closed",
               actorEmployeeId: registerSession.employeeId,
@@ -643,7 +648,7 @@ export async function signOutRegister() {
           registerSession.endedAt = timestamp;
           registerSession.activeShiftId = undefined;
           store.transactionEventPlaceholders.unshift({
-            id: randomUUID(),
+            id: crypto.randomUUID(),
             transactionId: "txn_register_session_placeholder",
             eventKind: "register_session_ended",
             actorEmployeeId: registerSession.employeeId,

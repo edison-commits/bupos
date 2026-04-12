@@ -6,7 +6,7 @@ const now = new Date().toISOString();
 
 const orgId = () => seedBundle.organization.id;
 
-export function createSeedStore(): LocalStoreData {
+export async function createSeedStore(): Promise<LocalStoreData> {
   return {
     ...seedBundle,
     customers: [
@@ -24,22 +24,22 @@ export function createSeedStore(): LocalStoreData {
       {
         employeeId: seedBundle.employees[0].id,
         email: "owner@basicuniformpos.local",
-        passwordHash: hashSecret("ownerpass"),
-        pinHash: hashSecret("1111"),
+        passwordHash: await hashSecret("ownerpass"),
+        pinHash: await hashSecret("1111"),
         passwordLastRotatedAt: now,
         pinLastRotatedAt: now,
       },
       {
         employeeId: seedBundle.employees[1].id,
         email: "manager@basicuniformpos.local",
-        passwordHash: hashSecret("managerpass"),
-        pinHash: hashSecret("2222"),
+        passwordHash: await hashSecret("managerpass"),
+        pinHash: await hashSecret("2222"),
         passwordLastRotatedAt: now,
         pinLastRotatedAt: now,
       },
       {
         employeeId: seedBundle.employees[2].id,
-        pinHash: hashSecret("3333"),
+        pinHash: await hashSecret("3333"),
         pinLastRotatedAt: now,
       },
     ],

@@ -76,7 +76,8 @@ export async function pgReadTimeClockEntries(
   datePrefix: string,
 ): Promise<TimeClockEntry[]> {
   const { rows } = await pool.query(
-    `SELECT * FROM time_clock_entries
+    `SELECT id, organization_id, employee_id, location_id, event_type, note, created_at, updated_at
+     FROM time_clock_entries
      WHERE location_id = $1 AND created_at::text LIKE $2
      ORDER BY created_at ASC`,
     [locationId, `${datePrefix}%`],
@@ -89,7 +90,8 @@ export async function pgReadEmployeeTimeClockEntries(
   datePrefix: string,
 ): Promise<TimeClockEntry[]> {
   const { rows } = await pool.query(
-    `SELECT * FROM time_clock_entries
+    `SELECT id, organization_id, employee_id, location_id, event_type, note, created_at, updated_at
+     FROM time_clock_entries
      WHERE employee_id = $1 AND created_at::text LIKE $2
      ORDER BY created_at ASC`,
     [employeeId, `${datePrefix}%`],
@@ -187,7 +189,7 @@ export async function pgGetTimesheetSummaries(
 
 export async function pgReadPromoCodes(orgId: string): Promise<PromoCode[]> {
   const { rows } = await pool.query(
-    'SELECT * FROM promo_codes WHERE organization_id = $1 ORDER BY created_at DESC',
+    'SELECT id, organization_id, code, description, type, value, minimum_purchase, max_redemptions, current_redemptions, status, starts_at, expires_at, created_at, updated_at FROM promo_codes WHERE organization_id = $1 ORDER BY created_at DESC',
     [orgId],
   );
   return rows.map(toPromoCode);
@@ -195,7 +197,7 @@ export async function pgReadPromoCodes(orgId: string): Promise<PromoCode[]> {
 
 export async function pgFindPromoCodeByCode(orgId: string, code: string): Promise<PromoCode | null> {
   const { rows } = await pool.query(
-    'SELECT * FROM promo_codes WHERE organization_id = $1 AND code = $2',
+    'SELECT id, organization_id, code, description, type, value, minimum_purchase, max_redemptions, current_redemptions, status, starts_at, expires_at, created_at, updated_at FROM promo_codes WHERE organization_id = $1 AND code = $2',
     [orgId, code.toUpperCase()],
   );
   return rows[0] ? toPromoCode(rows[0]) : null;
@@ -270,7 +272,7 @@ export async function pgUpdatePromoCodeStatus(
 
 export async function pgReadPromoRedemptions(promoCodeId: string): Promise<PromoRedemption[]> {
   const { rows } = await pool.query(
-    'SELECT * FROM promo_redemptions WHERE promo_code_id = $1 ORDER BY created_at DESC',
+    'SELECT id, promo_code_id, transaction_id, employee_id, discount_amount, created_at FROM promo_redemptions WHERE promo_code_id = $1 ORDER BY created_at DESC',
     [promoCodeId],
   );
   return rows.map(toPromoRedemption);

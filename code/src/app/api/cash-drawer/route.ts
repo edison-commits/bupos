@@ -3,6 +3,8 @@ import { orgQuery, orgTx } from '@/lib/db';
 import { validateBody, cashDrawerSchema } from '@/lib/validation/schemas';
 import { withDualAuth } from '@/lib/api/with-auth';
 
+export const runtime = "edge";
+
 /**
  * GET /api/cash-drawer?action=status|history
  *

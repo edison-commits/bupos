@@ -1,6 +1,5 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { requireRegisterPermission } from "@/lib/authz";
 import { mutateStore } from "@/lib/persistence/store";
@@ -41,7 +40,7 @@ export async function createLayawayAction(
     throw new Error("Deposit cannot exceed total");
   }
 
-  const layawayId = randomUUID();
+  const layawayId = crypto.randomUUID();
 
   if (isPg()) {
     const client = await orgTx(context.employee.organizationId);
@@ -72,7 +71,7 @@ export async function createLayawayAction(
         await client.query(
           `INSERT INTO layaway_payments (id, layaway_id, tender_type, amount, employee_id, metadata)
            VALUES ($1, $2, 'cash', $3, $4, $5)`,
-          [randomUUID(), layawayId, depositAmount, context.employee.id, JSON.stringify({ note: "Initial deposit" })],
+          [crypto.randomUUID(), layawayId, depositAmount, context.employee.id, JSON.stringify({ note: "Initial deposit" })],
         );
       }
 
@@ -103,7 +102,7 @@ export async function createLayawayAction(
         `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
          VALUES ($1, $2, $3, $4, 'layaway', $5, 'layaway_created', $6, now())`,
         [
-          randomUUID(), context.employee.organizationId, context.location.id,
+          crypto.randomUUID(), context.employee.organizationId, context.location.id,
           context.employee.id, layawayId,
           JSON.stringify({
             customer_id: cart.customerId!,
@@ -153,7 +152,7 @@ export async function createLayawayAction(
     // Record the initial deposit payment
     if (depositAmount > 0) {
       store.layawayPayments.push({
-        id: randomUUID(),
+        id: crypto.randomUUID(),
         layawayId,
         tenderType: "cash",
         amount: depositAmount,
@@ -176,7 +175,7 @@ export async function createLayawayAction(
 
     // Log event
     store.transactionEventPlaceholders.unshift({
-      id: randomUUID(),
+      id: crypto.randomUUID(),
       transactionId: layawayId,
       eventKind: "layaway_created",
       actorEmployeeId: context.employee.id,

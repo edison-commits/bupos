@@ -6,7 +6,6 @@ import { orgTx, orgQuery } from "@/lib/db";
 import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 import type { GiftCard, GiftCardTransaction } from "@/lib/domain/types";
 import { revalidatePath } from "next/cache";
-import { randomUUID } from "node:crypto";
 
 const isPg = () => !!process.env.USE_POSTGRES;
 
@@ -30,7 +29,7 @@ export async function activateGiftCardAction(formData: FormData) {
 
     const client = await orgTx(orgId);
     try {
-      const gcId = randomUUID();
+      const gcId = crypto.randomUUID();
       await client.query(
         `INSERT INTO gift_cards (id, organization_id, code, balance, initial_balance, status, customer_id, activated_by, activated_at, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $4, 'active', $5, $6, now(), now(), now())`,
@@ -39,7 +38,7 @@ export async function activateGiftCardAction(formData: FormData) {
       await client.query(
         `INSERT INTO gift_card_transactions (id, gift_card_id, transaction_type, amount, balance_after, employee_id, reason, created_at)
          VALUES ($1, $2, 'activation', $3, $3, $4, 'New gift card activated', now())`,
-        [randomUUID(), gcId, amount, ctx.employee.id],
+        [crypto.randomUUID(), gcId, amount, ctx.employee.id],
       );
       await client.query("COMMIT");
       // Audit event (non-fatal — committed regardless)
@@ -107,7 +106,7 @@ export async function reloadGiftCardAction(formData: FormData) {
       await client.query(
         `INSERT INTO gift_card_transactions (id, gift_card_id, transaction_type, amount, balance_after, employee_id, reason, created_at)
          VALUES ($1, $2, 'reload', $3, $4, $5, 'Gift card reloaded', now())`,
-        [randomUUID(), giftCardId, amount, newBal, ctx.employee.id],
+        [crypto.randomUUID(), giftCardId, amount, newBal, ctx.employee.id],
       );
       await client.query("COMMIT");
       // Audit event (non-fatal — committed regardless)

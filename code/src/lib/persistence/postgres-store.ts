@@ -3,21 +3,6 @@ import pool, { orgTx } from '@/lib/db';
 import type { Category, Employee, InventoryLevel, Product, ProductVariant, RegisterSessionRecord, ShiftRecord } from '@/lib/domain/types';
 import type { AuthCredentialRecord, InventoryAdjustmentRecord } from '@/lib/persistence/types';
 
-// Generic TTL cache for read functions
-// Caches the result for TTL_MS, then refetches.
-// Call the invalidate function after any mutation.
-const PG_READ_TTL_MS = 30_000;
-
-interface CacheEntry<T> { data: T; expiresAt: number; }
-
-// Per-org caches
-const _employeesCache = new Map<string, CacheEntry<Employee[]>>();
-const _productsCache = new Map<string, CacheEntry<Product[]>>();
-const _variantsCache = new Map<string, CacheEntry<ProductVariant[]>>();
-const _inventoryCache = new Map<string, CacheEntry<InventoryLevel[]>>();
-const _locationsCache = new Map<string, CacheEntry<import('@/lib/domain/types').Location[]>>();
-const _categoriesCache = new Map<string, CacheEntry<Category[]>>();
-
 // ── Helpers ───────────────────────────────────────────────────────────
 
 function toCategory(row: Record<string, unknown>): Category {
@@ -105,19 +90,15 @@ function toEmployee(row: Record<string, unknown>): Employee {
 // ── Categories ────────────────────────────────────────────────────────
 
 export async function pgReadCategories(orgId: string): Promise<Category[]> {
-  const cached = _categoriesCache.get(orgId);
-  if (cached && Date.now() < cached.expiresAt) return cached.data;
   const { rows } = await pool.query(
     `SELECT id, organization_id, name, slug, parent_category_id, sort_order, image_url, created_at, updated_at
      FROM categories WHERE organization_id = $1 ORDER BY sort_order`,
     [orgId],
   );
-  const data = rows.map(toCategory);
-  _categoriesCache.set(orgId, { data, expiresAt: Date.now() + PG_READ_TTL_MS });
-  return data;
+  return rows.map(toCategory);
 }
 
-export function invalidateCategoriesCache(): void { _categoriesCache.clear(); }
+export function invalidateCategoriesCache(): void { /* no-op: cache removed */ }
 
 export async function pgCreateCategory(data: {
   id: string; organizationId: string; name: string; slug: string;
@@ -158,8 +139,6 @@ export async function pgDeleteCategory(id: string): Promise<boolean> {
 // NOTE: callers should be updated to pass ORG_ID (organizationId) from their request context.
 
 export async function pgReadProducts(organizationId: string): Promise<Product[]> {
-  const cached = _productsCache.get(organizationId);
-  if (cached && Date.now() < cached.expiresAt) return cached.data;
   const { rows } = await pool.query(
     `SELECT p.id, p.organization_id, p.category_id, p.name, p.slug, p.description, p.image_url,
             p.is_active, p.is_touch_favorite, p.default_variant_id, p.created_at, p.updated_at,
@@ -169,15 +148,10 @@ export async function pgReadProducts(organizationId: string): Promise<Product[]>
      GROUP BY p.id ORDER BY p.name`,
     [organizationId],
   );
-  const data = rows.map(toProduct);
-  _productsCache.set(organizationId, { data, expiresAt: Date.now() + PG_READ_TTL_MS });
-  return data;
+  return rows.map(toProduct);
 }
 
-export function invalidateProductsCache(orgId?: string): void {
-  if (orgId) _productsCache.delete(orgId);
-  else _productsCache.clear();
-}
+export function invalidateProductsCache(_orgId?: string): void { /* no-op: cache removed */ }
 
 export async function pgCreateProduct(data: {
   id: string; organizationId: string; categoryId: string; name: string; slug: string;
@@ -243,23 +217,16 @@ export async function pgDeleteProduct(id: string): Promise<boolean> {
 // NOTE: callers should be updated to pass ORG_ID (organizationId) from their request context.
 
 export async function pgReadVariants(organizationId: string): Promise<ProductVariant[]> {
-  const cached = _variantsCache.get(organizationId);
-  if (cached && Date.now() < cached.expiresAt) return cached.data;
   const { rows } = await pool.query(
     `SELECT id, organization_id, product_id, sku, barcode, name, size_label, color_label,
             price, compare_at_price, cost, is_active, created_at, updated_at
      FROM product_variants WHERE organization_id = $1 ORDER BY name`,
     [organizationId],
   );
-  const data = rows.map(toVariant);
-  _variantsCache.set(organizationId, { data, expiresAt: Date.now() + PG_READ_TTL_MS });
-  return data;
+  return rows.map(toVariant);
 }
 
-export function invalidateVariantsCache(orgId?: string): void {
-  if (orgId) _variantsCache.delete(orgId);
-  else _variantsCache.clear();
-}
+export function invalidateVariantsCache(_orgId?: string): void { /* no-op: cache removed */ }
 
 export async function pgCreateVariant(data: {
   id: string; organizationId: string; productId: string; sku: string; barcode?: string;
@@ -319,9 +286,6 @@ export async function pgDeleteVariant(id: string): Promise<boolean> {
 export async function pgReadInventory(organizationId: string, locationId?: string): Promise<InventoryLevel[]> {
   // When locationId is provided (e.g. POS terminal), only load that location's inventory
   // to avoid fetching and transmitting inventory for all locations.
-  const cacheKey = locationId ? `${organizationId}:${locationId}` : organizationId;
-  const cached = _inventoryCache.get(cacheKey);
-  if (cached && Date.now() < cached.expiresAt) return cached.data;
   const { rows } = locationId
     ? await pool.query(
         `SELECT id, organization_id, location_id, product_variant_id, on_hand, reserved, reorder_point, created_at, updated_at
@@ -333,15 +297,10 @@ export async function pgReadInventory(organizationId: string, locationId?: strin
          FROM inventory_levels WHERE organization_id = $1`,
         [organizationId],
       );
-  const data = rows.map(toInventory);
-  _inventoryCache.set(cacheKey, { data, expiresAt: Date.now() + PG_READ_TTL_MS });
-  return data;
+  return rows.map(toInventory);
 }
 
-export function invalidateInventoryCache(orgId?: string): void {
-  if (orgId) _inventoryCache.delete(orgId);
-  else _inventoryCache.clear();
-}
+export function invalidateInventoryCache(_orgId?: string): void { /* no-op: cache removed */ }
 
 export async function pgCreateInventoryLevel(data: {
   id: string; organizationId: string; locationId: string; productVariantId: string;
@@ -399,29 +358,23 @@ export async function pgAdjustInventory(inventoryLevelId: string, delta: number,
 // ── Employees ─────────────────────────────────────────────────────────
 
 export async function pgReadEmployees(organizationId: string): Promise<Employee[]> {
-  const cached = _employeesCache.get(organizationId);
-  if (cached && Date.now() < cached.expiresAt) return cached.data;
   const { rows } = await pool.query(
     `SELECT id, organization_id, role_key, first_name, last_name, display_name, email,
             pin_hint, is_active, location_ids, created_at, updated_at
      FROM employees WHERE organization_id = $1 ORDER BY last_name`,
     [organizationId],
   );
-  const data = rows.map(toEmployee);
-  _employeesCache.set(organizationId, { data, expiresAt: Date.now() + PG_READ_TTL_MS });
-  return data;
+  return rows.map(toEmployee);
 }
 
 export function invalidateEmployeesCache(orgId?: string): void {
-  if (orgId) _employeesCache.delete(orgId);
-  else _employeesCache.clear();
   void import('@/lib/persistence/postgres-read-store').then(({ invalidateStoreCache }) => invalidateStoreCache(orgId));
 }
 
 export async function pgCreateEmployee(data: {
   id: string; organizationId: string; roleKey: string; firstName: string; lastName: string;
   displayName: string; email?: string; pinHash: string; passwordHash?: string; pinHint: string;
-  isActive: boolean; locationIds: string[];
+  pinHashPrefix?: string; isActive: boolean; locationIds: string[];
 }): Promise<Employee> {
   const client = await orgTx(data.organizationId);
   const ts = new Date().toISOString();
@@ -432,9 +385,9 @@ export async function pgCreateEmployee(data: {
       [data.id, data.organizationId, data.roleKey, data.firstName, data.lastName, data.displayName, data.email ?? null, data.pinHint, data.isActive, data.locationIds, ts],
     );
     await client.query(
-      `INSERT INTO auth_credentials (employee_id, email, password_hash, pin_hash, pin_last_rotated_at, failed_pin_attempts, last_failed_pin_at, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, 0, NULL, $5, $5)`,
-      [data.id, data.email ?? null, data.passwordHash ?? null, data.pinHash, ts],
+      `INSERT INTO auth_credentials (employee_id, email, password_hash, pin_hash, pin_hash_prefix, pin_last_rotated_at, failed_pin_attempts, last_failed_pin_at, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, 0, NULL, $6, $6)`,
+      [data.id, data.email ?? null, data.passwordHash ?? null, data.pinHash, data.pinHashPrefix ?? null, ts],
     );
     await client.query('COMMIT');
     invalidateEmployeesCache(data.organizationId);
@@ -472,7 +425,7 @@ export async function pgToggleEmployee(id: string): Promise<boolean> {
 
 export async function pgReadEmployeeById(id: string): Promise<Employee | null> {
   const { rows } = await pool.query(
-    `SELECT * FROM employees WHERE id = $1`,
+    `SELECT id, organization_id, role_key, first_name, last_name, display_name, email, pin_hint, is_active, location_ids, created_at, updated_at FROM employees WHERE id = $1`,
     [id],
   );
   return rows[0] ? toEmployee(rows[0]) : null;
@@ -498,20 +451,51 @@ export async function pgFindCredentialByEmail(email: string): Promise<(AuthCrede
   };
 }
 
+/** Compute a deterministic SHA-256 prefix of a PIN for fast DB pre-filtering. */
+export async function computePinPrefix(pin: string): Promise<string> {
+  const enc = new TextEncoder();
+  const hash = await crypto.subtle.digest('SHA-256', enc.encode(pin));
+  const hex = [...new Uint8Array(hash)].map(b => b.toString(16).padStart(2, '0')).join('');
+  return hex.slice(0, 8);
+}
+
 export async function pgFindCredentialByPin(pin: string, orgId?: string): Promise<AuthCredentialRecord | null> {
   const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
   const RATE_LIMIT_MAX_ATTEMPTS = 5;
 
-  // Fetch pin_hash rows scoped to org with current failed-attempt state.
-  // crypto.scrypt runs in the Node.js thread pool (not on the Workers main thread),
-  // so parallel verification across all employees doesn't block the event loop.
-  const { rows } = orgId
+  const prefix = await computePinPrefix(pin);
+
+  // First try: fetch only rows whose pin_hash_prefix matches (fast path).
+  // Fall back to all rows if no prefix-indexed candidates exist yet (lazy backfill).
+  const prefixQuery = orgId
     ? await pool.query(
         `SELECT ac.employee_id, ac.email, ac.pin_hash, ac.pin_last_rotated_at,
                 ac.failed_pin_attempts, ac.last_failed_pin_at
          FROM auth_credentials ac
          JOIN employees e ON ac.employee_id = e.id
-         WHERE e.is_active = true AND ac.pin_hash IS NOT NULL AND e.organization_id = $1`,
+         WHERE e.is_active = true AND ac.pin_hash IS NOT NULL
+           AND ac.pin_hash_prefix = $1 AND e.organization_id = $2`,
+        [prefix, orgId],
+      )
+    : await pool.query(
+        `SELECT ac.employee_id, ac.email, ac.pin_hash, ac.pin_last_rotated_at,
+                ac.failed_pin_attempts, ac.last_failed_pin_at
+         FROM auth_credentials ac
+         JOIN employees e ON ac.employee_id = e.id
+         WHERE e.is_active = true AND ac.pin_hash IS NOT NULL
+           AND ac.pin_hash_prefix = $1`,
+        [prefix],
+      );
+
+  // Also fetch rows that haven't been backfilled yet (pin_hash_prefix IS NULL)
+  const nullPrefixQuery = orgId
+    ? await pool.query(
+        `SELECT ac.employee_id, ac.email, ac.pin_hash, ac.pin_last_rotated_at,
+                ac.failed_pin_attempts, ac.last_failed_pin_at
+         FROM auth_credentials ac
+         JOIN employees e ON ac.employee_id = e.id
+         WHERE e.is_active = true AND ac.pin_hash IS NOT NULL
+           AND ac.pin_hash_prefix IS NULL AND e.organization_id = $1`,
         [orgId],
       )
     : await pool.query(
@@ -519,12 +503,14 @@ export async function pgFindCredentialByPin(pin: string, orgId?: string): Promis
                 ac.failed_pin_attempts, ac.last_failed_pin_at
          FROM auth_credentials ac
          JOIN employees e ON ac.employee_id = e.id
-         WHERE e.is_active = true AND ac.pin_hash IS NOT NULL`,
+         WHERE e.is_active = true AND ac.pin_hash IS NOT NULL
+           AND ac.pin_hash_prefix IS NULL`,
       );
 
-  // Verify all PINs in parallel — each scrypt call runs in the thread pool.
-  // Per-employee rate limiting: check lock state before verification, then only
-  // increment the counter after a PIN has been confirmed invalid.
+  const rows = [...prefixQuery.rows, ...nullPrefixQuery.rows];
+
+  // Verify candidates in parallel — each PBKDF2 call uses Web Crypto.
+  // Per-employee rate limiting: check lock state before verification.
   const results = await Promise.all(
     rows.map(async (r) => {
       const row = r as Record<string, unknown>;
@@ -535,8 +521,6 @@ export async function pgFindCredentialByPin(pin: string, orgId?: string): Promis
       const lastAttempt = row.last_failed_pin_at as Date | null;
       const now = Date.now();
 
-      // If this specific employee has >=5 failed attempts within the window,
-      // reject only this employee (not all candidates).
       if (
         prevAttempts >= RATE_LIMIT_MAX_ATTEMPTS &&
         lastAttempt &&
@@ -548,15 +532,16 @@ export async function pgFindCredentialByPin(pin: string, orgId?: string): Promis
       const valid = await verifySecretAsync(pin, row.pin_hash as string);
 
       if (valid) {
+        // Reset rate-limit counter and lazily backfill pin_hash_prefix
         await pool.query(
-          `UPDATE auth_credentials SET failed_pin_attempts = 0, last_failed_pin_at = NULL
-           WHERE employee_id = $1`,
-          [employeeId],
+          `UPDATE auth_credentials SET failed_pin_attempts = 0, last_failed_pin_at = NULL,
+                  pin_hash_prefix = $1
+           WHERE employee_id = $2`,
+          [prefix, employeeId],
         );
         return row;
       }
 
-      // PIN wrong — increment after confirming the verification failed.
       if (prevAttempts < RATE_LIMIT_MAX_ATTEMPTS) {
         await pool.query(
           `UPDATE auth_credentials
@@ -581,20 +566,26 @@ export async function pgFindCredentialByPin(pin: string, orgId?: string): Promis
   };
 }
 
-/** Async scrypt verify — runs in Node.js thread pool, does not block the Workers main thread. */
+/** Edge-compatible PBKDF2 verify using Web Crypto API. */
 async function verifySecretAsync(secret: string, encoded: string): Promise<boolean> {
-  const { scrypt, timingSafeEqual } = await import("node:crypto");
-  const [salt, stored] = encoded.split(":");
-  if (!salt || !stored) return false;
+  const [saltHex, storedHex] = encoded.split(":");
+  if (!saltHex || !storedHex) return false;
   const KEY_LENGTH = 64;
   try {
-    const derived = await new Promise<Buffer>((resolve, reject) => {
-      scrypt(secret, salt, KEY_LENGTH, (err, derived) => {
-        if (err) reject(err);
-        else resolve(derived);
-      });
-    });
-    return timingSafeEqual(derived, Buffer.from(stored, "hex"));
+    const salt = new Uint8Array((saltHex.match(/.{1,2}/g) ?? []).map((b) => parseInt(b, 16)));
+    const stored = new Uint8Array((storedHex.match(/.{1,2}/g) ?? []).map((b) => parseInt(b, 16)));
+    const enc = new TextEncoder();
+    const keyMaterial = await crypto.subtle.importKey("raw", enc.encode(secret), "PBKDF2", false, ["deriveBits"]);
+    const bits = await crypto.subtle.deriveBits(
+      { name: "PBKDF2", salt, iterations: 100_000, hash: "SHA-256" },
+      keyMaterial,
+      KEY_LENGTH * 8,
+    );
+    const derived = new Uint8Array(bits);
+    if (derived.length !== stored.length) return false;
+    let result = 0;
+    for (let i = 0; i < derived.length; i++) result |= derived[i] ^ stored[i];
+    return result === 0;
   } catch {
     return false;
   }
@@ -644,15 +635,13 @@ export async function pgReadLocations(organizationId?: string) {
   if (!organizationId) {
     throw new Error("pgReadLocations requires explicit organizationId");
   }
-  const cached = _locationsCache.get(organizationId);
-  if (cached && Date.now() < cached.expiresAt) return cached.data;
   const { rows } = await pool.query(
     `SELECT id, organization_id, name, code, address_1, city, region, postal_code, phone,
             tax_rate, is_active, created_at, updated_at
      FROM locations WHERE organization_id = $1 AND is_active = true ORDER BY name`,
     [organizationId],
   );
-  const data = rows.map((r: Record<string, unknown>) => ({
+  return rows.map((r: Record<string, unknown>) => ({
     id: r.id as string, organizationId: r.organization_id as string,
     name: r.name as string, code: r.code as string,
     address1: r.address_1 as string, city: r.city as string,
@@ -662,13 +651,9 @@ export async function pgReadLocations(organizationId?: string) {
     isActive: r.is_active as boolean,
     createdAt: String(r.created_at), updatedAt: String(r.updated_at),
   }));
-  _locationsCache.set(organizationId, { data, expiresAt: Date.now() + PG_READ_TTL_MS });
-  return data;
 }
 
 export function invalidateLocationsCache(orgId?: string): void {
-  if (orgId) _locationsCache.delete(orgId);
-  else _locationsCache.clear();
   void import('@/lib/persistence/postgres-read-store').then(({ invalidateStoreCache }) => invalidateStoreCache(orgId));
 }
 
@@ -842,7 +827,7 @@ export async function pgCloseShift(shiftId: string, registerSessionId: string, d
 
 export async function pgFindOpenShift(shiftId: string): Promise<ShiftRecord | null> {
   const { rows } = await pool.query(
-    `SELECT * FROM shifts WHERE id = $1 AND status = 'open' LIMIT 1`,
+    `SELECT id, location_id, employee_id, register_session_id, status, opened_at, opening_float, opened_note, closed_at, closing_expected_cash, closing_declared_cash, closing_variance, closed_note FROM shifts WHERE id = $1 AND status = 'open' LIMIT 1`,
     [shiftId],
   );
   return rows[0] ? toShift(rows[0]) : null;

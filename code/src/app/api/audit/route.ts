@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
 import { withAuth } from "@/lib/api/with-auth";
 
+export const runtime = "edge";
+
 /**
  * GET /api/audit
  *
@@ -26,7 +28,7 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
   let cursorCreatedAt: string | null = null;
   if (cursorParam) {
     try {
-      const decoded = JSON.parse(Buffer.from(cursorParam, "base64").toString("utf-8"));
+      const decoded = JSON.parse(atob(cursorParam));
       cursorId = decoded.id ?? null;
       cursorCreatedAt = decoded.created_at ?? null;
     } catch {
@@ -102,7 +104,7 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
   let nextCursor: string | null = null;
   if (hasMore && events.length > 0) {
     const last = events[events.length - 1];
-    nextCursor = Buffer.from(JSON.stringify({ id: last.id, created_at: last.created_at })).toString("base64");
+    nextCursor = btoa(JSON.stringify({ id: last.id, created_at: last.created_at }));
   }
 
   return NextResponse.json({

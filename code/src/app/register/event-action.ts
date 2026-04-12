@@ -1,6 +1,5 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
 import { mutateStore } from "@/lib/persistence/store";
 import pool, { orgTx } from "@/lib/db";
 import { requireRegisterPermission } from "@/lib/authz";
@@ -46,7 +45,7 @@ export async function logTransactionEvent(input: TransactionEventInput): Promise
   const employeeId = authCtx.employee.id;
   const locationId = authCtx.location.id;
 
-  const eventId = randomUUID();
+  const eventId = crypto.randomUUID();
   const timestamp = new Date().toISOString();
 
   if (isPg()) {
@@ -80,7 +79,7 @@ export async function logTransactionEvent(input: TransactionEventInput): Promise
         `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
-          randomUUID(),
+          crypto.randomUUID(),
           organizationId,
           locationId,
           employeeId,

@@ -1,6 +1,5 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { requireRegisterPermission } from "@/lib/authz";
 import { mutateStore } from "@/lib/persistence/store";
@@ -37,7 +36,7 @@ export async function payInOutAction(input: PayInOutInput): Promise<{ success: b
         `INSERT INTO pay_in_outs (id, organization_id, shift_id, location_id, employee_id, direction, amount, reason, note)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [
-          randomUUID(), context.employee.organizationId, context.activeShift!.id,
+          crypto.randomUUID(), context.employee.organizationId, context.activeShift!.id,
           context.location.id, context.employee.id, input.direction,
           input.amount, input.reason, input.note || null,
         ],
@@ -48,7 +47,7 @@ export async function payInOutAction(input: PayInOutInput): Promise<{ success: b
         `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
          VALUES ($1, $2, $3, $4, 'shift', $5, $6, $7, now())`,
         [
-          randomUUID(), context.employee.organizationId, context.location.id,
+          crypto.randomUUID(), context.employee.organizationId, context.location.id,
           context.employee.id, context.activeShift!.id, input.direction,
           JSON.stringify({
             shift_id: context.activeShift!.id,
@@ -75,7 +74,7 @@ export async function payInOutAction(input: PayInOutInput): Promise<{ success: b
     const timestamp = new Date().toISOString();
 
     store.payInOuts.unshift({
-      id: randomUUID(),
+      id: crypto.randomUUID(),
       shiftId: context.activeShift!.id,
       locationId: context.location.id,
       employeeId: context.employee.id,
@@ -87,7 +86,7 @@ export async function payInOutAction(input: PayInOutInput): Promise<{ success: b
     });
 
     store.transactionEventPlaceholders.unshift({
-      id: randomUUID(),
+      id: crypto.randomUUID(),
       transactionId: "txn_register_shift_placeholder",
       eventKind: input.direction,
       actorEmployeeId: context.employee.id,
@@ -158,7 +157,7 @@ export async function closeShiftEnhancedAction(
         `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
          VALUES ($1, $2, $3, $4, 'shift', $5, 'shift_closed', $6, now())`,
         [
-          randomUUID(), context.employee.organizationId, context.location.id,
+          crypto.randomUUID(), context.employee.organizationId, context.location.id,
           context.employee.id, context.activeShift!.id,
           JSON.stringify({
             register_session_id: context.registerSession.id,
@@ -201,7 +200,7 @@ export async function closeShiftEnhancedAction(
     registerSession.activeShiftId = undefined;
 
     store.transactionEventPlaceholders.unshift({
-      id: randomUUID(),
+      id: crypto.randomUUID(),
       transactionId: "txn_register_shift_placeholder",
       eventKind: "shift_closed",
       actorEmployeeId: context.employee.id,

@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/db';
 import { withAdminAuth } from '@/lib/api/with-auth';
 
+export const runtime = "edge";
+
 
 /**
  * GET /api/returns/search

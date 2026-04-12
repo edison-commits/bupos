@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { orgQuery, orgTx } from "@/lib/db";
-import { randomUUID } from "node:crypto";
 import { withAdminAuth } from "@/lib/api/with-auth";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 import { validateBody, storeCreditSchema } from "@/lib/validation/schemas";
+
+export const runtime = "edge";
 
 
 /**
@@ -138,7 +139,7 @@ export const POST = withAdminAuth('approval.store_credit', async (req, ctx) => {
       const newBalance = updated.rows[0].store_credit_balance;
 
       // Insert ledger entry
-      const entryId = randomUUID();
+      const entryId = crypto.randomUUID();
       await client.query(
         `INSERT INTO store_credit_ledger (id, organization_id, customer_id, transaction_type, amount, balance_after, employee_id, reason, approved_by, created_at)
          VALUES ($1, $2, $3, 'issuance', $4, $5, $6, $7, $8, now())`,

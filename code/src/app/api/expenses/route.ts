@@ -3,6 +3,8 @@ import { orgQuery } from '@/lib/db';
 import { withDualAuth } from '@/lib/api/with-auth';
 import { validateBody, expenseCreateSchema, expenseDeleteSchema } from '@/lib/validation/schemas';
 
+export const runtime = "edge";
+
 export const GET = withDualAuth("audit.view", async (request, ctx) => {
   const { orgId } = ctx;
 

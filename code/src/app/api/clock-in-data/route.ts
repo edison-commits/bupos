@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { pgReadLocations, pgReadEmployees } from '@/lib/persistence/postgres-store';
 import { withDualAuth } from '@/lib/api/with-auth';
 
+export const runtime = "edge";
+
 export const GET = withDualAuth("register.open", async (_req, ctx) => {
   const { orgId } = ctx;
 

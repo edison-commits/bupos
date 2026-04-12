@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
 /**
  * BuPOS Product Catalog API
  * @tags products
@@ -10,30 +9,10 @@ import { withDualAuth } from '@/lib/api/with-auth';
 import { validateBody, productCreateSchema, productUpdateSchema, productDeleteSchema, productImportSchema } from '@/lib/validation/schemas';
 import { checkRateLimit } from '@/lib/auth/rate-limit';
 
-// 30-second response cache
-const _productsCache = new Map<string, { data: unknown; expiresAt: number }>();
-const PROD_CACHE_TTL = 30_000;
-const MAX_CACHE_SIZE = 50;
-
-function cacheSet(key: string, value: { data: unknown; expiresAt: number }) {
-  if (_productsCache.size >= MAX_CACHE_SIZE) {
-    // Evict oldest entry
-    const firstKey = _productsCache.keys().next().value;
-    if (firstKey !== undefined) _productsCache.delete(firstKey);
-  }
-  _productsCache.set(key, value);
-}
+export const runtime = "edge";
 
 export const GET = withDualAuth("catalog.manage", async (request, ctx) => {
   const { orgId, locationId } = ctx;
-
-  const cacheKey = `${orgId}:${request.nextUrl.toString()}`;
-  const cached = _productsCache.get(cacheKey);
-  if (cached && Date.now() < cached.expiresAt) {
-    const hit = NextResponse.json(cached.data);
-    hit.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
-    return hit;
-  }
 
   try {
     const searchParams = request.nextUrl.searchParams;
@@ -199,13 +178,8 @@ export const GET = withDualAuth("catalog.manage", async (request, ctx) => {
       categories,
       summary,
     };
-    cacheSet(cacheKey, { data: response, expiresAt: Date.now() + PROD_CACHE_TTL });
-    if (_productsCache.size > MAX_CACHE_SIZE) {
-      const firstKey = _productsCache.keys().next().value;
-      if (firstKey) _productsCache.delete(firstKey);
-    }
     const resp = NextResponse.json(response);
-    resp.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    resp.headers.set('Cache-Control', 'private, max-age=10, stale-while-revalidate=30');
     return resp;
   } catch (error) {
     console.error('Products GET error:', error);

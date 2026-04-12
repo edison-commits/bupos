@@ -1,47 +1,68 @@
-// H-07: scryptSync blocks the Worker thread. Migrate to Web Crypto API
-// (crypto.subtle.deriveBits() with PBKDF2) for production Workers deployments.
-// The sync version is kept for backward compatibility; use verifySecretAsync where possible.
-import { randomBytes, scryptSync, timingSafeEqual, scrypt } from "node:crypto";
+// Edge-compatible crypto using Web Crypto API (PBKDF2).
+// No Node.js built-ins — works on Cloudflare Workers.
 
 const KEY_LENGTH = 64;
+const PBKDF2_ITERATIONS = 100_000;
 
-export function hashSecret(secret: string) {
-  const salt = randomBytes(16).toString("hex");
-  const derived = scryptSync(secret, salt, KEY_LENGTH).toString("hex");
-  return `${salt}:${derived}`;
+function hexToUint8Array(hex: string): Uint8Array {
+  const matches = hex.match(/.{1,2}/g);
+  return new Uint8Array(matches ? matches.map((b) => parseInt(b, 16)) : []);
 }
 
-export function verifySecret(secret: string, encoded: string) {
-  const [salt, stored] = encoded.split(":");
+function uint8ArrayToHex(bytes: Uint8Array): string {
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
 
-  if (!salt || !stored) {
-    return false;
+function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a[i] ^ b[i];
   }
+  return result === 0;
+}
 
-  const derived = scryptSync(secret, salt, KEY_LENGTH);
-  const storedBuffer = Buffer.from(stored, "hex");
+async function deriveKey(secret: string, salt: Uint8Array): Promise<Uint8Array> {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    "PBKDF2",
+    false,
+    ["deriveBits"],
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", salt: salt.buffer as ArrayBuffer, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
+    keyMaterial,
+    KEY_LENGTH * 8,
+  );
+  return new Uint8Array(bits);
+}
 
-  if (derived.length !== storedBuffer.length) {
-    return false;
-  }
+export async function hashSecret(secret: string): Promise<string> {
+  const salt = new Uint8Array(16);
+  crypto.getRandomValues(salt);
+  const derived = await deriveKey(secret, salt);
+  return `${uint8ArrayToHex(salt)}:${uint8ArrayToHex(derived)}`;
+}
 
-  return timingSafeEqual(derived, storedBuffer);
+export async function verifySecret(secret: string, encoded: string): Promise<boolean> {
+  const [saltHex, storedHex] = encoded.split(":");
+  if (!saltHex || !storedHex) return false;
+
+  const salt = hexToUint8Array(saltHex);
+  const stored = hexToUint8Array(storedHex);
+  const derived = await deriveKey(secret, salt);
+
+  return timingSafeEqual(derived, stored);
 }
 
 /**
- * Async secret verification using Node.js thread pool (non-blocking).
- * Preferred over verifySecret in Workers / async contexts.
+ * Async secret verification — same as verifySecret (both are async now).
+ * Kept for API compatibility.
  */
-export function verifySecretAsync(secret: string, encoded: string): Promise<boolean> {
-  const [salt, stored] = encoded.split(":");
-  if (!salt || !stored) return Promise.resolve(false);
-
-  return new Promise((resolve, reject) => {
-    scrypt(secret, salt, KEY_LENGTH, (err, derived) => {
-      if (err) return reject(err);
-      const storedBuffer = Buffer.from(stored, "hex");
-      if (derived.length !== storedBuffer.length) return resolve(false);
-      resolve(timingSafeEqual(derived, storedBuffer));
-    });
-  });
+export async function verifySecretAsync(secret: string, encoded: string): Promise<boolean> {
+  return verifySecret(secret, encoded);
 }

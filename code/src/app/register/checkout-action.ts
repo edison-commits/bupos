@@ -1,6 +1,5 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireRegisterPermission } from "@/lib/authz";
@@ -109,7 +108,7 @@ export async function checkoutAction(
     ? Math.round(loyaltyTendered / loyaltyConfig.redemptionValuePerPoint)
     : 0;
 
-  const transactionId = randomUUID();
+  const transactionId = crypto.randomUUID();
   const primaryTenderType = tenders.length === 1 ? tenders[0].type : "split";
 
   if (isPg()) {
@@ -197,7 +196,7 @@ export async function checkoutAction(
           `INSERT INTO transaction_tenders (id, transaction_id, tender_type, amount, metadata)
            VALUES ($1, $2, $3, $4, $5)`,
           [
-            randomUUID(), transactionId, tender.type, tender.amount,
+            crypto.randomUUID(), transactionId, tender.type, tender.amount,
             JSON.stringify(isLastCash ? { change_due: changeDue.toFixed(2) } : {}),
           ],
         );
@@ -208,7 +207,7 @@ export async function checkoutAction(
         `INSERT INTO transaction_events (id, transaction_id, actor_employee_id, event_kind, notes, payload)
          VALUES ($1, $2, $3, 'transaction_placeholder', $4, $5)`,
         [
-          randomUUID(), transactionId, context.employee.id,
+          crypto.randomUUID(), transactionId, context.employee.id,
           `Checkout completed by ${context.employee.displayName}`,
           JSON.stringify({
             location_id: context.location.id,
@@ -277,7 +276,7 @@ export async function checkoutAction(
         `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
          VALUES ($1, $2, $3, $4, 'transaction', $5, 'transaction_completed', $6, now())`,
         [
-          randomUUID(), context.employee.organizationId, context.location.id,
+          crypto.randomUUID(), context.employee.organizationId, context.location.id,
           context.employee.id, transactionId,
           JSON.stringify({
             register_session_id: context.registerSession.id,
@@ -329,7 +328,7 @@ export async function checkoutAction(
           await client.query(
             `INSERT INTO store_credit_ledger (id, organization_id, customer_id, transaction_type, amount, balance_after, employee_id, transaction_id, reason, created_at)
              VALUES ($1, $2, $3, 'redemption', $4, $5, $6, $7, 'Checkout redemption', now())`,
-            [randomUUID(), context.employee.organizationId, cart.customerId, -storeCreditTenderedTotal, newBalance, context.employee.id, transactionId],
+            [crypto.randomUUID(), context.employee.organizationId, cart.customerId, -storeCreditTenderedTotal, newBalance, context.employee.id, transactionId],
           );
         }
       }
@@ -356,7 +355,7 @@ export async function checkoutAction(
           await client.query(
             `INSERT INTO gift_card_transactions (id, gift_card_id, transaction_type, amount, balance_after, employee_id, transaction_id, reason, created_at)
              VALUES ($1, $2, 'redemption', $3, $4, $5, $6, 'Checkout redemption', now())`,
-            [randomUUID(), tender.metadata.gift_card_id, -tender.amount, newBalance, context.employee.id, transactionId],
+            [crypto.randomUUID(), tender.metadata.gift_card_id, -tender.amount, newBalance, context.employee.id, transactionId],
           );
         }
       }
@@ -382,14 +381,14 @@ export async function checkoutAction(
       for (const tender of tenders) {
         const isLastCash = tender.type === "cash" && tender === tenders.filter((t) => t.type === "cash").at(-1);
         store.transactionTenderPlaceholders.unshift({
-          id: randomUUID(), transactionId, tenderType: tender.type, amount: tender.amount,
+          id: crypto.randomUUID(), transactionId, tenderType: tender.type, amount: tender.amount,
           metadata: isLastCash ? { change_due: changeDue.toFixed(2) } : {},
         });
       }
 
       // Completion event
       store.transactionEventPlaceholders.unshift({
-        id: randomUUID(), transactionId,
+        id: crypto.randomUUID(), transactionId,
         eventKind: "transaction_placeholder",
         actorEmployeeId: context.employee.id,
         notes: `Checkout completed by ${context.employee.displayName}`,
@@ -444,7 +443,7 @@ export async function checkoutAction(
           if (storeCreditTenderedTotal > 0) {
             customer.storeCreditBalance = Math.max(0, customer.storeCreditBalance - storeCreditTenderedTotal);
             store.storeCreditLedger.unshift({
-              id: randomUUID(),
+              id: crypto.randomUUID(),
               organizationId: context.employee.organizationId,
               customerId: cart.customerId,
               transactionType: "redemption",
@@ -469,7 +468,7 @@ export async function checkoutAction(
             if (gc.balance <= 0) gc.status = "depleted";
             gc.updatedAt = timestamp;
             store.giftCardTransactions.unshift({
-              id: randomUUID(),
+              id: crypto.randomUUID(),
               giftCardId: gc.id,
               transactionType: "redemption",
               amount: -tender.amount,

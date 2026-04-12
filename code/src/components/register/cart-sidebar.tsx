@@ -1,7 +1,7 @@
 "use client";
 import { S } from "./styles";
 
-import type { Cart, CartTotals, DiscountMode } from "@/lib/cart/types";
+import type { Cart, CartLineItem as CartLineItemType, CartTotals, DiscountMode } from "@/lib/cart/types";
 import { useState, useRef, useCallback, useEffect, memo } from "react";
 import { VirtualNumpad } from "@/components/ui/virtual-numpad";
 

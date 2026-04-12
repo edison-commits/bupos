@@ -210,14 +210,14 @@ function toTransferLine(r: Record<string, unknown>): TransferLine {
 
 export async function pgReadCustomers(orgId: string): Promise<Customer[]> {
   const { rows } = await pool.query(
-    'SELECT * FROM customers WHERE organization_id = $1 ORDER BY last_name, first_name',
+    'SELECT id, organization_id, first_name, last_name, email, phone, loyalty_points, total_spend, visit_count, store_credit_balance, notes, tax_exempt, is_active, created_at, updated_at FROM customers WHERE organization_id = $1 ORDER BY last_name, first_name',
     [orgId],
   );
   return rows.map(toCustomer);
 }
 
 export async function pgReadCustomerById(id: string): Promise<Customer | null> {
-  const { rows } = await pool.query('SELECT * FROM customers WHERE id = $1', [id]);
+  const { rows } = await pool.query('SELECT id, organization_id, first_name, last_name, email, phone, loyalty_points, total_spend, visit_count, store_credit_balance, notes, tax_exempt, is_active, created_at, updated_at FROM customers WHERE id = $1', [id]);
   return rows[0] ? toCustomer(rows[0]) : null;
 }
 
@@ -256,7 +256,7 @@ export async function pgUpdateCustomerStoreCredit(customerId: string, newBalance
 
 export async function pgReadGiftCards(orgId: string): Promise<GiftCard[]> {
   const { rows } = await pool.query(
-    'SELECT * FROM gift_cards WHERE organization_id = $1 ORDER BY created_at DESC',
+    'SELECT id, organization_id, code, balance, initial_balance, status, customer_id, activated_by, activated_at, expires_at, created_at, updated_at FROM gift_cards WHERE organization_id = $1 ORDER BY created_at DESC',
     [orgId],
   );
   return rows.map(toGiftCard);
@@ -264,7 +264,7 @@ export async function pgReadGiftCards(orgId: string): Promise<GiftCard[]> {
 
 export async function pgFindGiftCardByCode(orgId: string, code: string): Promise<GiftCard | null> {
   const { rows } = await pool.query(
-    'SELECT * FROM gift_cards WHERE organization_id = $1 AND code = $2',
+    'SELECT id, organization_id, code, balance, initial_balance, status, customer_id, activated_by, activated_at, expires_at, created_at, updated_at FROM gift_cards WHERE organization_id = $1 AND code = $2',
     [orgId, code],
   );
   return rows[0] ? toGiftCard(rows[0]) : null;
@@ -370,7 +370,7 @@ export async function pgReloadGiftCard(giftCardId: string, amount: number, emplo
 
 export async function pgReadGiftCardTransactions(giftCardId: string): Promise<GiftCardTransaction[]> {
   const { rows } = await pool.query(
-    'SELECT * FROM gift_card_transactions WHERE gift_card_id = $1 ORDER BY created_at DESC',
+    'SELECT id, gift_card_id, transaction_type, amount, balance_after, employee_id, transaction_id, reason, created_at FROM gift_card_transactions WHERE gift_card_id = $1 ORDER BY created_at DESC',
     [giftCardId],
   );
   return rows.map(toGiftCardTxn);
@@ -437,7 +437,7 @@ export async function pgRedeemStoreCredit(data: {
 
 export async function pgReadStoreCreditLedger(customerId: string): Promise<StoreCreditEntry[]> {
   const { rows } = await pool.query(
-    'SELECT * FROM store_credit_ledger WHERE customer_id = $1 ORDER BY created_at DESC',
+    'SELECT id, organization_id, customer_id, transaction_type, amount, balance_after, employee_id, transaction_id, reason, approved_by, created_at FROM store_credit_ledger WHERE customer_id = $1 ORDER BY created_at DESC',
     [customerId],
   );
   return rows.map(toStoreCreditEntry);
@@ -471,7 +471,7 @@ export async function pgReadBehaviorFlags(orgId: string, filters?: {
   if (filters?.severity) { conditions.push(`severity = $${i++}`); vals.push(filters.severity); }
   if (filters?.isReviewed !== undefined) { conditions.push(`is_reviewed = $${i++}`); vals.push(filters.isReviewed); }
   const { rows } = await pool.query(
-    `SELECT * FROM behavior_flags WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC`,
+    `SELECT id, organization_id, employee_id, location_id, flag_type, severity, title, description, source_ref_type, source_ref_id, details, is_reviewed, reviewed_by, reviewed_at, review_notes, created_at FROM behavior_flags WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC`,
     vals,
   );
   return rows.map(toBehaviorFlag);
@@ -554,7 +554,7 @@ export async function pgReadLayaways(orgId: string, filters?: {
   if (filters?.customerId) { conditions.push(`customer_id = $${i++}`); vals.push(filters.customerId); }
   if (filters?.status) { conditions.push(`status = $${i++}`); vals.push(filters.status); }
   const { rows } = await pool.query(
-    `SELECT * FROM layaways WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC`,
+    `SELECT id, organization_id, location_id, customer_id, employee_id, status, cart_snapshot, subtotal, discount_total, tax_total, grand_total, deposit_paid, balance_due, minimum_deposit, due_date, notes, completed_transaction_id, cancelled_by, cancelled_at, cancellation_reason, created_at, updated_at FROM layaways WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC`,
     vals,
   );
   return rows.map(toLayaway);
@@ -562,7 +562,7 @@ export async function pgReadLayaways(orgId: string, filters?: {
 
 export async function pgReadLayawayPayments(layawayId: string): Promise<LayawayPayment[]> {
   const { rows } = await pool.query(
-    'SELECT * FROM layaway_payments WHERE layaway_id = $1 ORDER BY created_at',
+    'SELECT id, layaway_id, tender_type, amount, employee_id, metadata, created_at FROM layaway_payments WHERE layaway_id = $1 ORDER BY created_at',
     [layawayId],
   );
   return rows.map(toLayawayPayment);
@@ -638,7 +638,7 @@ export async function pgAcceptStocktake(stocktakeId: string, acceptedBy: string)
     if (!rows[0]) { await client.query('ROLLBACK'); return null; }
     // Apply inventory adjustments from accepted counts
     const { rows: lines } = await client.query(
-      'SELECT * FROM stocktake_lines WHERE stocktake_id = $1 AND counted_qty IS NOT NULL',
+      'SELECT product_variant_id, counted_qty, expected_qty FROM stocktake_lines WHERE stocktake_id = $1 AND counted_qty IS NOT NULL',
       [stocktakeId],
     );
     const stocktake = toStocktake(rows[0]);
@@ -685,7 +685,7 @@ export async function pgReadStocktakes(orgId: string, locationId?: string): Prom
   const vals: unknown[] = [orgId];
   if (locationId) { conditions.push('location_id = $2'); vals.push(locationId); }
   const { rows } = await pool.query(
-    `SELECT * FROM stocktakes WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC`,
+    `SELECT id, organization_id, location_id, initiated_by, status, count_type, category_filter, notes, accepted_by, accepted_at, created_at, updated_at FROM stocktakes WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC`,
     vals,
   );
   return rows.map(toStocktake);
@@ -693,7 +693,7 @@ export async function pgReadStocktakes(orgId: string, locationId?: string): Prom
 
 export async function pgReadStocktakeLines(stocktakeId: string): Promise<StocktakeLine[]> {
   const { rows } = await pool.query(
-    'SELECT * FROM stocktake_lines WHERE stocktake_id = $1 ORDER BY created_at',
+    'SELECT id, stocktake_id, product_variant_id, expected_qty, counted_qty, variance, counted_by, counted_at, created_at FROM stocktake_lines WHERE stocktake_id = $1 ORDER BY created_at',
     [stocktakeId],
   );
   return rows.map(toStocktakeLine);
@@ -852,7 +852,7 @@ export async function pgReadTransfers(orgId: string, filters?: { status?: string
   const vals: unknown[] = [orgId];
   if (filters?.status) { conditions.push('status = $2'); vals.push(filters.status); }
   const { rows } = await pool.query(
-    `SELECT * FROM transfers WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC`,
+    `SELECT id, organization_id, source_location_id, destination_location_id, status, requested_by, shipped_by, shipped_at, received_by, received_at, cancelled_by, cancelled_at, notes, created_at, updated_at FROM transfers WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC`,
     vals,
   );
   return rows.map(toTransfer);
@@ -860,7 +860,7 @@ export async function pgReadTransfers(orgId: string, filters?: { status?: string
 
 export async function pgReadTransferLines(transferId: string): Promise<TransferLine[]> {
   const { rows } = await pool.query(
-    'SELECT * FROM transfer_lines WHERE transfer_id = $1 ORDER BY created_at',
+    'SELECT id, transfer_id, product_variant_id, quantity_requested, quantity_shipped, quantity_received, created_at FROM transfer_lines WHERE transfer_id = $1 ORDER BY created_at',
     [transferId],
   );
   return rows.map(toTransferLine);
@@ -882,7 +882,7 @@ export async function pgCreatePayInOut(data: {
 
 export async function pgReadPayInOuts(shiftId: string): Promise<{ id: string; direction: string; amount: number; reason: string; note?: string; createdAt: string }[]> {
   const { rows } = await pool.query(
-    'SELECT * FROM pay_in_outs WHERE shift_id = $1 ORDER BY created_at',
+    'SELECT id, direction, amount, reason, note, created_at FROM pay_in_outs WHERE shift_id = $1 ORDER BY created_at',
     [shiftId],
   );
   return rows.map((r: Record<string, unknown>) => ({

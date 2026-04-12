@@ -5,7 +5,6 @@ import { redirect } from "next/navigation";
 import { signInAdmin, getAdminSession } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { hashSecret } from "@/lib/auth/crypto";
-import { randomUUID } from "node:crypto";
 import { pgFindCredentialByEmail, pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 
 // ── Login action (used by useActionState) ─────────────────────────────
@@ -139,11 +138,11 @@ export async function signupAction(_prev: { error: string } | null, formData: Fo
     }
 
     const now = new Date().toISOString();
-    const orgId = randomUUID();
-    const locationId = randomUUID();
-    const employeeId = randomUUID();
+    const orgId = crypto.randomUUID();
+    const locationId = crypto.randomUUID();
+    const employeeId = crypto.randomUUID();
     const slug = storeName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
-    const passwordHash = hashSecret(password);
+    const passwordHash = await hashSecret(password);
 
     // M-07: Wrap org+location+employee+credentials inserts in a single transaction
     const client = await pool.connect();

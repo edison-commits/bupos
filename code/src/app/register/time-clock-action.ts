@@ -1,6 +1,5 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { mutateStore } from "@/lib/persistence/store";
 import { requireRegisterPermission } from "@/lib/authz";
@@ -26,7 +25,7 @@ export async function clockAction(
   } else {
     await mutateStore((store) => {
       store.timeClockEntries.unshift({
-        id: randomUUID(),
+        id: crypto.randomUUID(),
         organizationId,
         employeeId,
         locationId,

@@ -169,13 +169,13 @@ export const ProductGrid = memo(function ProductGrid({ items, categories, onAddI
     return result;
   }, [items, activeCategoryId, searchQuery]);
 
-  function handleProductTap(item: ProductGridItem) {
+  const handleProductTap = useCallback(function handleProductTap(item: ProductGridItem) {
     if (item.variants.length === 1) {
       onAddItem(item.variants[0], item.product);
     } else {
       setVariantPickerProduct(item);
     }
-  }
+  }, [onAddItem]);
 
   function handleVariantSelect(variant: ProductVariant, product: Product) {
     onAddItem(variant, product);
@@ -319,85 +319,14 @@ export const ProductGrid = memo(function ProductGrid({ items, categories, onAddI
         tileSize === 'md' ? 'grid-cols-2 md:grid-cols-3 lg:grid-cols-4' :
         'grid-cols-1 md:grid-cols-2 lg:grid-cols-3'
       }`}>
-        {filtered.map((item) => {
-          const defaultVariant = item.variants.find((v) => v.id === item.product.defaultVariantId) ?? item.variants[0];
-          const totalStock = item.inventory.reduce((sum, inv) => sum + inv.onHand, 0);
-          const outOfStock = totalStock <= 0;
-          const firstLetter = item.product.name.charAt(0).toUpperCase();
-          const catIdx = categories.findIndex((c) => c.id === item.product.categoryId);
-          const catColor = catIdx >= 0 ? getCategoryColor(catIdx + 2) : "";
-
-          return (
-            <button
-              key={item.product.id}
-              type="button"
-              disabled={outOfStock}
-              onClick={() => handleProductTap(item)}
-              className={`product-tile relative flex flex-col overflow-hidden rounded-2xl text-left transition-all ${
-                outOfStock
-                  ? "cursor-not-allowed opacity-50"
-                  : "hover:scale-[1.02] active:scale-[0.98] hover:shadow-xl"
-              }`}
-              style={{
-                background: 'var(--surface-panel)',
-                boxShadow: 'var(--shadow-card)',
-                borderRadius: 'var(--radius-card)',
-                minHeight: '11rem',
-              }}
-            >
-              {/* Hero image area — 60%+ of card */}
-              <div className="relative w-full" style={S.aspect4x3}>
-                {item.product.imageUrl ? (
-                  <Image
-                    src={item.product.imageUrl}
-                    alt={item.product.name}
-                    className="h-full w-full object-cover"
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                  />
-                ) : (
-                  <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-teal-600/20 to-teal-800/30">
-                    <span className="text-4xl font-bold" style={S.surfaceAccent}>{firstLetter}</span>
-                  </div>
-                )}
-
-                {/* Stock badge - top right over image */}
-                <div className="absolute top-2 right-2">
-                  {outOfStock ? (
-                    <span className="inline-block rounded-full bg-red-500 px-3 py-1 text-sm font-bold text-white shadow">Out</span>
-                  ) : totalStock <= 5 ? (
-                    <span className="inline-block rounded-full bg-amber-500 px-3 py-1 text-sm font-bold text-white shadow">{totalStock}</span>
-                  ) : (
-                    <span className="inline-block rounded-full bg-black/50 px-3 py-1 text-sm font-bold text-white backdrop-blur-sm">{totalStock}</span>
-                  )}
-                </div>
-
-                {/* Category badge - top left */}
-                {item.category && catColor && (
-                  <div className="absolute top-2 left-2">
-                    <span className={`inline-block rounded-full px-2.5 py-1 text-xs font-bold shadow ${catColor}`}>
-                      {item.category.name}
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              {/* Product info overlay below image */}
-              <div className="flex flex-1 flex-col justify-between px-3 py-2.5">
-                <div>
-                  <p className="text-base font-bold leading-snug line-clamp-2" style={S.textPrimary}>{item.product.name}</p>
-                  {item.variants.length > 1 && (
-                    <p className="mt-0.5 text-sm" style={S.textSecondary}>{item.variants.length} variants</p>
-                  )}
-                </div>
-                <div className="mt-1.5 flex items-center justify-between">
-                  <span className="text-xl font-bold" style={S.surfaceAccent}>
-                    ${defaultVariant?.price.toFixed(2) ?? "0.00"}
-                  </span>
-                </div>
-              </div>
-            </button>
-          );
-        })}
+        {filtered.map((item) => (
+          <ProductTile
+            key={item.product.id}
+            item={item}
+            categories={categories}
+            onTap={handleProductTap}
+          />
+        ))}
         {filtered.length === 0 && (
           <div className="col-span-full flex flex-col items-center justify-center py-16">
             <svg className="h-16 w-16 text-zinc-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -487,7 +416,90 @@ export const ProductGrid = memo(function ProductGrid({ items, categories, onAddI
   );
 });
 
-function CategoryChip({
+const ProductTile = memo(function ProductTile({
+  item,
+  categories,
+  onTap,
+}: {
+  item: ProductGridItem;
+  categories: Category[];
+  onTap: (item: ProductGridItem) => void;
+}) {
+  const defaultVariant = item.variants.find((v) => v.id === item.product.defaultVariantId) ?? item.variants[0];
+  const totalStock = item.inventory.reduce((sum, inv) => sum + inv.onHand, 0);
+  const outOfStock = totalStock <= 0;
+  const firstLetter = item.product.name.charAt(0).toUpperCase();
+  const catIdx = categories.findIndex((c) => c.id === item.product.categoryId);
+  const catColor = catIdx >= 0 ? getCategoryColor(catIdx + 2) : "";
+
+  return (
+    <button
+      type="button"
+      disabled={outOfStock}
+      onClick={() => onTap(item)}
+      className={`product-tile relative flex flex-col overflow-hidden rounded-2xl text-left transition-all ${
+        outOfStock
+          ? "cursor-not-allowed opacity-50"
+          : "hover:scale-[1.02] active:scale-[0.98] hover:shadow-xl"
+      }`}
+      style={{
+        background: 'var(--surface-panel)',
+        boxShadow: 'var(--shadow-card)',
+        borderRadius: 'var(--radius-card)',
+        minHeight: '11rem',
+      }}
+    >
+      <div className="relative w-full" style={S.aspect4x3}>
+        {item.product.imageUrl ? (
+          <Image
+            src={item.product.imageUrl}
+            alt={item.product.name}
+            className="h-full w-full object-cover"
+            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-teal-600/20 to-teal-800/30">
+            <span className="text-4xl font-bold" style={S.surfaceAccent}>{firstLetter}</span>
+          </div>
+        )}
+
+        <div className="absolute top-2 right-2">
+          {outOfStock ? (
+            <span className="inline-block rounded-full bg-red-500 px-3 py-1 text-sm font-bold text-white shadow">Out</span>
+          ) : totalStock <= 5 ? (
+            <span className="inline-block rounded-full bg-amber-500 px-3 py-1 text-sm font-bold text-white shadow">{totalStock}</span>
+          ) : (
+            <span className="inline-block rounded-full bg-black/50 px-3 py-1 text-sm font-bold text-white backdrop-blur-sm">{totalStock}</span>
+          )}
+        </div>
+
+        {item.category && catColor && (
+          <div className="absolute top-2 left-2">
+            <span className={`inline-block rounded-full px-2.5 py-1 text-xs font-bold shadow ${catColor}`}>
+              {item.category.name}
+            </span>
+          </div>
+        )}
+      </div>
+
+      <div className="flex flex-1 flex-col justify-between px-3 py-2.5">
+        <div>
+          <p className="text-base font-bold leading-snug line-clamp-2" style={S.textPrimary}>{item.product.name}</p>
+          {item.variants.length > 1 && (
+            <p className="mt-0.5 text-sm" style={S.textSecondary}>{item.variants.length} variants</p>
+          )}
+        </div>
+        <div className="mt-1.5 flex items-center justify-between">
+          <span className="text-xl font-bold" style={S.surfaceAccent}>
+            ${defaultVariant?.price.toFixed(2) ?? "0.00"}
+          </span>
+        </div>
+      </div>
+    </button>
+  );
+});
+
+const CategoryChip = memo(function CategoryChip({
   label,
   active,
   colorClass,
@@ -513,4 +525,4 @@ function CategoryChip({
       {label}
     </button>
   );
-}
+});

@@ -4,6 +4,8 @@ import { withDualAuth, withAdminAuth } from '@/lib/api/with-auth';
 import { pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
 import { validateBody, supplierCreateSchema, supplierUpdateSchema } from '@/lib/validation/schemas';
 
+export const runtime = "edge";
+
 
 /**
  * GET /api/suppliers - List all suppliers
@@ -33,7 +35,9 @@ export const GET = withDualAuth("inventory.adjust", async (request, ctx) => {
     const items = hasMore ? rows.slice(0, pageSize) : rows;
     const nextCursor = hasMore ? items[items.length - 1].name : null;
 
-    return NextResponse.json({ suppliers: items, nextCursor });
+    const response = NextResponse.json({ suppliers: items, nextCursor });
+    response.headers.set("Cache-Control", "private, max-age=30, stale-while-revalidate=120");
+    return response;
   } catch (error) {
     console.error('Suppliers GET error:', error);
     return NextResponse.json({ error: 'Failed to fetch suppliers' }, { status: 500 });

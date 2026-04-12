@@ -5,6 +5,8 @@ import { orgQuery, orgTx } from '@/lib/db';
 import { withDualAuth, withAdminAuth } from '@/lib/api/with-auth';
 import { validateBody, returnCreateSchema, returnUpdateSchema } from '@/lib/validation/schemas';
 
+export const runtime = "edge";
+
 /**
  * Returns API
  * GET  - List all returns (paginated)
@@ -69,7 +71,7 @@ export const POST = withAdminAuth('employee.manage', async (request, ctx) => {
     const refundAmount = lines.reduce((sum: number, l: { quantity: number; unit_price: number }) =>
       sum + (l.quantity * l.unit_price), 0);
 
-    const returnId = randomUUID();
+    const returnId = crypto.randomUUID();
     let returnNumber = '';
     let retRows: any = null;
 

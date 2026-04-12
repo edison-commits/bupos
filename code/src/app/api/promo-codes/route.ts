@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { orgQuery, orgTx } from "@/lib/db";
 import { withAdminAuth, withDualAuth } from "@/lib/api/with-auth";
-import { randomUUID } from "node:crypto";
 import { validateBody, promoCodeSchema } from "@/lib/validation/schemas";
+
+export const runtime = "edge";
 
 
 /**
@@ -140,7 +141,7 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
         return NextResponse.json({ error: `Promo code "${code}" already exists` }, { status: 409 });
       }
 
-      const promoId = randomUUID();
+      const promoId = crypto.randomUUID();
       await orgQuery(
         orgId,
         `INSERT INTO promo_codes (id, organization_id, code, description, type, value, minimum_purchase, max_redemptions, current_redemptions, status, starts_at, expires_at, created_at, updated_at)
@@ -174,7 +175,7 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
         await client.query(
           `INSERT INTO promo_redemptions (id, promo_code_id, transaction_id, employee_id, discount_amount, created_at)
            VALUES ($1, $2, $3, $4, $5, now())`,
-          [randomUUID(), promoCodeId, transactionId, employee.id, discountAmount],
+          [crypto.randomUUID(), promoCodeId, transactionId, employee.id, discountAmount],
         );
 
         // Auto-disable if maxed out

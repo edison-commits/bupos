@@ -6,7 +6,6 @@ import { orgTx } from "@/lib/db";
 import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 import type { StoreCreditEntry } from "@/lib/domain/types";
 import { revalidatePath } from "next/cache";
-import { randomUUID } from "node:crypto";
 
 const isPg = () => !!process.env.USE_POSTGRES;
 
@@ -39,7 +38,7 @@ export async function issueStoreCreditAction(formData: FormData) {
       await client.query(
         `INSERT INTO store_credit_ledger (id, organization_id, customer_id, transaction_type, amount, balance_after, employee_id, reason, created_at)
          VALUES ($1, $2, $3, 'issuance', $4, $5, $6, $7, now())`,
-        [randomUUID(), orgId, customerId, amount, newBalance, ctx.employee.id, reason],
+        [crypto.randomUUID(), orgId, customerId, amount, newBalance, ctx.employee.id, reason],
       );
       await client.query("COMMIT");
       // Audit event (non-fatal — committed regardless)

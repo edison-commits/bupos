@@ -6,6 +6,8 @@ import { NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/db';
 import { withAdminAuth } from '@/lib/api/with-auth';
 
+export const runtime = "edge";
+
 interface ProductRow {
   product_id: string;
   name: string;
@@ -29,25 +31,11 @@ interface SummaryRow {
   out_of_stock_count: string;
 }
 
-// 30-second response cache — keyed by URL so search params are included
-const _inventoryCache = new Map<string, { data: unknown; expiresAt: number }>();
-const INV_CACHE_TTL = 30_000;
-const MAX_CACHE_SIZE = 50;
-
 export const GET = withAdminAuth("inventory.adjust", async (request, ctx) => {
-  const cacheKey = request.nextUrl.toString();
-  const cached = _inventoryCache.get(cacheKey);
-
   const { orgId } = ctx;
   const locationId = ctx.locationId;
   if (!locationId) {
     return NextResponse.json({ error: 'No location context' }, { status: 400 });
-  }
-
-  if (cached && Date.now() < cached.expiresAt) {
-    const hit = NextResponse.json(cached.data);
-    hit.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
-    return hit;
   }
   try {
     const searchParams = request.nextUrl.searchParams;
@@ -248,14 +236,7 @@ export const GET = withAdminAuth("inventory.adjust", async (request, ctx) => {
         outOfStockCount: parseInt(summary.out_of_stock_count) || 0,
       },
     };
-    _inventoryCache.set(cacheKey, { data: response, expiresAt: Date.now() + INV_CACHE_TTL });
-    if (_inventoryCache.size > MAX_CACHE_SIZE) {
-      const firstKey = _inventoryCache.keys().next().value;
-      if (firstKey) _inventoryCache.delete(firstKey);
-    }
-    const resp = NextResponse.json(response);
-    resp.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
-    return resp;
+    return NextResponse.json(response);
   } catch (error) {
     console.error('Inventory API error:', error);
     return NextResponse.json(

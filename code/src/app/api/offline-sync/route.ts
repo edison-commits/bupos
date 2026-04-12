@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
-import { randomUUID } from "node:crypto";
 import { orgTx, orgQuery } from "@/lib/db";
 import { withDualAuth } from "@/lib/api/with-auth";
 import { getRegisterConfig } from "@/lib/config/register-config";
 import { validateBody, offlineSyncSchema } from "@/lib/validation/schemas";
 import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
+
+export const runtime = "edge";
 interface CartPayload {
   employeeId?: string;
   registerSessionId?: string;
@@ -208,7 +209,7 @@ export const POST = withDualAuth("register.open", async (request, ctx) => {
       ? Math.round(loyaltyTendered / regConfig.loyalty.redemptionValuePerPoint)
       : 0;
 
-    const transactionId = id || randomUUID();
+    const transactionId = id || crypto.randomUUID();
 
     const syncClient = await orgTx(orgId);
     let inserted = true;
@@ -254,7 +255,7 @@ export const POST = withDualAuth("register.open", async (request, ctx) => {
             `INSERT INTO transaction_tenders (id, transaction_id, tender_type, amount, metadata)
              VALUES ($1, $2, $3, $4, $5)
              ON CONFLICT DO NOTHING`,
-            [randomUUID(), transactionId, tender.type, tender.amount,
+            [crypto.randomUUID(), transactionId, tender.type, tender.amount,
              JSON.stringify(isLastCash ? { change_due: changeDue.toFixed(2) } : {})],
           );
         }
@@ -264,7 +265,7 @@ export const POST = withDualAuth("register.open", async (request, ctx) => {
            VALUES ($1, $2, $3, 'transaction_placeholder', $4, $5)
            ON CONFLICT DO NOTHING`,
           [
-            randomUUID(), transactionId, sessionEmployeeId,
+            crypto.randomUUID(), transactionId, sessionEmployeeId,
             `Offline checkout synced`,
             JSON.stringify({
               location_id: locationId,
@@ -357,7 +358,7 @@ export const POST = withDualAuth("register.open", async (request, ctx) => {
           await syncClient.query(
             `INSERT INTO store_credit_ledger (id, organization_id, customer_id, transaction_type, amount, balance_after, employee_id, transaction_id, reason, created_at)
              VALUES ($1, $2, $3, 'redemption', $4, $5, $6, $7, 'Offline sync redemption', now())`,
-            [randomUUID(), orgId, cart.customerId, -storeCreditTendered, balRows[0]?.store_credit_balance ?? 0, sessionEmployeeId, transactionId],
+            [crypto.randomUUID(), orgId, cart.customerId, -storeCreditTendered, balRows[0]?.store_credit_balance ?? 0, sessionEmployeeId, transactionId],
           );
         }
       }

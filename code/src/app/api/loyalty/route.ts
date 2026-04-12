@@ -4,6 +4,8 @@ import { withAdminAuth } from "@/lib/api/with-auth";
 import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 import { validateBody, loyaltyAdjustSchema } from "@/lib/validation/schemas";
 
+export const runtime = "edge";
+
 
 /**
  * GET /api/loyalty

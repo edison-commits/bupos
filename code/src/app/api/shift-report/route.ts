@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { orgQuery, orgTx } from "@/lib/db";
-import { randomUUID } from "node:crypto";
 import { withAdminAuth, withDualAuth } from "@/lib/api/with-auth";
 import { validateBody, shiftReportSchema } from "@/lib/validation/schemas";
+
+export const runtime = "edge";
 
 
 /**
@@ -318,7 +319,7 @@ export const POST = withAdminAuth("register.open", async (req, ctx) => {
           `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
            VALUES ($1, $2, $3, $4, 'shift', $5, 'shift_closed', $6, now())`,
           [
-            randomUUID(), orgId, auditPayload.location_id, auditPayload.employee_id, shiftId,
+            crypto.randomUUID(), orgId, auditPayload.location_id, auditPayload.employee_id, shiftId,
             JSON.stringify({ expected: auditPayload.expected, declared: auditPayload.declared, variance: auditPayload.variance, blind: auditPayload.blind }),
           ],
         );

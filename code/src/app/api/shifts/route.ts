@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
 import { pgOpenShift } from "@/lib/persistence/postgres-store";
-import { randomUUID } from "node:crypto";
 import { withDualAuth, withAdminAuth } from "@/lib/api/with-auth";
 import { validateBody, shiftCreateSchema } from "@/lib/validation/schemas";
+
+export const runtime = "edge";
 
 export const GET = withDualAuth("register.open", async (req, ctx) => {
   const { orgId, locationId } = ctx;
@@ -113,7 +114,7 @@ export const POST = withAdminAuth('register.open', async (req, ctx) => {
       }
     }
 
-    const shiftId = randomUUID();
+    const shiftId = crypto.randomUUID();
     const shift = await pgOpenShift({
       id: shiftId,
       organizationId: ctx.employee.organizationId,

@@ -13,6 +13,8 @@ import { withAdminAuth } from '@/lib/api/with-auth';
 import { invalidateEmployeesCache, pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
 import { validateBody, employeeCreateSchema, employeeUpdateSchema, employeePatchSchema } from '@/lib/validation/schemas';
 
+export const runtime = "edge";
+
 /**
  * Invalidate all active sessions for an employee — both admin and register scopes.
  * Call this when the employee's role changes or they are deactivated so that
@@ -120,8 +122,8 @@ export const POST = withAdminAuth('employee.manage', async (request, ctx) => {
       );
     }
 
-    const employeeId = randomUUID();
-    const pinHash = hashSecret(pin);
+    const employeeId = crypto.randomUUID();
+    const pinHash = await hashSecret(pin);
     const now = new Date().toISOString();
 
     // Stored PIN hashes are salted, so detect collisions by verifying against each stored hash.
@@ -369,7 +371,7 @@ export const PATCH = withAdminAuth('employee.manage', async (request, ctx) => {
         );
       }
 
-      const pinHash = hashSecret(pin);
+      const pinHash = await hashSecret(pin);
       const now = new Date().toISOString();
 
       // Stored PIN hashes are salted, so detect collisions by verifying against each stored hash.

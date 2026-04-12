@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
 import { withAdminAuth } from "@/lib/api/with-auth";
 
+export const runtime = "edge";
+
 /**
  * BuPOS Transaction History API
  * @tags transactions
@@ -28,49 +30,48 @@ export const GET = withAdminAuth("audit.view", async (req, ctx) => {
     // ── Single transaction detail ──
     const id = sp.get("id");
     if (id) {
-      const txn = await orgQuery(
-        orgId,
-        `SELECT t.*,
-                e.display_name AS employee_name,
-                c.first_name || ' ' || c.last_name AS customer_name,
-                c.email AS customer_email,
-                c.phone AS customer_phone
-         FROM transactions t
-         LEFT JOIN employees e ON e.id = t.employee_id
-         LEFT JOIN customers c ON c.id = t.customer_id
-         WHERE t.id = $1`,
-        [id],
-      );
+      const [txn, tenders, events, exceptions] = await Promise.all([
+        orgQuery(
+          orgId,
+          `SELECT t.*,
+                  e.display_name AS employee_name,
+                  c.first_name || ' ' || c.last_name AS customer_name,
+                  c.email AS customer_email,
+                  c.phone AS customer_phone
+           FROM transactions t
+           LEFT JOIN employees e ON e.id = t.employee_id
+           LEFT JOIN customers c ON c.id = t.customer_id
+           WHERE t.id = $1`,
+          [id],
+        ),
+        orgQuery(
+          orgId,
+          `SELECT id, transaction_id, tender_type, amount, reference, created_at FROM transaction_tenders WHERE transaction_id = $1 ORDER BY created_at`,
+          [id],
+        ),
+        orgQuery(
+          orgId,
+          `SELECT te.*, e.display_name AS actor_name
+           FROM transaction_events te
+           LEFT JOIN employees e ON e.id = te.actor_employee_id
+           WHERE te.transaction_id = $1
+           ORDER BY te.created_at`,
+          [id],
+        ),
+        orgQuery(
+          orgId,
+          `SELECT tex.*, e.display_name AS approver_name
+           FROM transaction_exceptions tex
+           LEFT JOIN employees e ON e.id = tex.approved_by
+           WHERE tex.transaction_id = $1
+           ORDER BY tex.created_at`,
+          [id],
+        ),
+      ]);
 
       if (txn.rows.length === 0) {
         return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
       }
-
-      const tenders = await orgQuery(
-        orgId,
-        `SELECT id, transaction_id, tender_type, amount, reference, created_at FROM transaction_tenders WHERE transaction_id = $1 ORDER BY created_at`,
-        [id],
-      );
-
-      const events = await orgQuery(
-        orgId,
-        `SELECT te.*, e.display_name AS actor_name
-         FROM transaction_events te
-         LEFT JOIN employees e ON e.id = te.actor_employee_id
-         WHERE te.transaction_id = $1
-         ORDER BY te.created_at`,
-        [id],
-      );
-
-      const exceptions = await orgQuery(
-        orgId,
-        `SELECT tex.*, e.display_name AS approver_name
-         FROM transaction_exceptions tex
-         LEFT JOIN employees e ON e.id = tex.approved_by
-         WHERE tex.transaction_id = $1
-         ORDER BY tex.created_at`,
-        [id],
-      );
 
       return NextResponse.json({
         transaction: txn.rows[0],
@@ -88,7 +89,7 @@ export const GET = withAdminAuth("audit.view", async (req, ctx) => {
 
     if (cursorParam) {
       try {
-        const decoded = JSON.parse(Buffer.from(cursorParam, "base64").toString("utf-8"));
+        const decoded = JSON.parse(atob(cursorParam));
         cursorId = decoded.id ?? null;
         cursorCreatedAt = decoded.created_at ?? null;
       } catch {
@@ -176,7 +177,7 @@ export const GET = withAdminAuth("audit.view", async (req, ctx) => {
     let nextCursor: string | null = null;
     if (hasMore && transactions.length > 0) {
       const last = transactions[transactions.length - 1];
-      nextCursor = Buffer.from(JSON.stringify({ id: last.id, created_at: last.created_at })).toString("base64");
+      nextCursor = btoa(JSON.stringify({ id: last.id, created_at: last.created_at }));
     }
 
     return NextResponse.json({

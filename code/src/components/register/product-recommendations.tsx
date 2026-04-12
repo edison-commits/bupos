@@ -1,7 +1,7 @@
 'use client';
 import Image from "next/image";
 
-import { useMemo } from 'react';
+import { useMemo, memo } from 'react';
 
 interface ProductRecommendationsProps {
   currentCartItems: {
@@ -310,7 +310,7 @@ interface RecommendationCardProps {
   onAdd: () => void;
 }
 
-function RecommendationCard({ item, onAdd }: RecommendationCardProps) {
+const RecommendationCard = memo(function RecommendationCard({ item, onAdd }: RecommendationCardProps) {
   const reasonLabel =
     item.reason === 'frequently_bought_together'
       ? `Bought together ${item.frequency}x`
@@ -367,4 +367,4 @@ function RecommendationCard({ item, onAdd }: RecommendationCardProps) {
       </div>
     </div>
   );
-}
+});

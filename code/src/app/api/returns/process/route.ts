@@ -5,6 +5,8 @@ import { withDualAuth } from '@/lib/api/with-auth';
 import { checkRateLimit } from '@/lib/auth/rate-limit';
 import { validateBody, returnProcessSchema } from '@/lib/validation/schemas';
 
+export const runtime = "edge";
+
 interface ReturnLineItem {
   product_id: string;
   product_name: string;
@@ -269,7 +271,7 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
         await client.query(
           `INSERT INTO store_credit_ledger (id, organization_id, customer_id, transaction_type, amount, balance_after, employee_id, transaction_id, reason, created_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`,
-          [randomUUID(), orgId, customer.id, 'refund', refund_amount, newBalance, employeeId, transaction_id, `Return: ${reason}`]
+          [crypto.randomUUID(), orgId, customer.id, 'refund', refund_amount, newBalance, employeeId, transaction_id, `Return: ${reason}`]
         );
       }
     }

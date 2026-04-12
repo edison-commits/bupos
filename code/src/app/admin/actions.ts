@@ -1,6 +1,5 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { hashSecret } from "@/lib/auth/crypto";
@@ -131,7 +130,7 @@ export async function createCategoryAction(formData: FormData) {
   const timestamp = now();
 
   if (isPg()) {
-    const id = randomUUID();
+    const id = crypto.randomUUID();
     const orgId = employee.organizationId;
     await pgCreateCategory({
       id, organizationId: orgId, name, slug,
@@ -141,7 +140,7 @@ export async function createCategoryAction(formData: FormData) {
   } else {
     await mutateStore((store) => {
       store.categories.push({
-        id: randomUUID(),
+        id: crypto.randomUUID(),
         organizationId: store.organization.id,
         name,
         slug,
@@ -152,7 +151,7 @@ export async function createCategoryAction(formData: FormData) {
         updatedAt: timestamp,
       });
       store.transactionEventPlaceholders.unshift({
-        id: randomUUID(),
+        id: crypto.randomUUID(),
         transactionId: "txn_admin_catalog_placeholder",
         eventKind: "catalog_update",
         actorEmployeeId: employee.id,
@@ -181,8 +180,8 @@ export async function createProductAction(formData: FormData) {
 
   const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
   const timestamp = now();
-  const productId = randomUUID();
-  const variantId = randomUUID();
+  const productId = crypto.randomUUID();
+  const variantId = crypto.randomUUID();
 
   if (isPg()) {
     const orgId = employee.organizationId;
@@ -205,7 +204,7 @@ export async function createProductAction(formData: FormData) {
       isActive: true,
     });
     await pgCreateInventoryLevel({
-      id: randomUUID(), organizationId: orgId, locationId,
+      id: crypto.randomUUID(), organizationId: orgId, locationId,
       productVariantId: variantId,
       onHand: Number(formData.get("openingStock") ?? 0) || 0,
       reserved: 0, reorderPoint: Number(formData.get("reorderPoint") ?? 0) || 0,
@@ -234,7 +233,7 @@ export async function createProductAction(formData: FormData) {
       const locationId = store.locations[0]?.id;
       if (locationId) {
         store.inventory.push({
-          id: randomUUID(), organizationId: store.organization.id, locationId,
+          id: crypto.randomUUID(), organizationId: store.organization.id, locationId,
           productVariantId: variantId,
           onHand: Number(formData.get("openingStock") ?? 0) || 0,
           reserved: 0, reorderPoint: Number(formData.get("reorderPoint") ?? 0) || 0,
@@ -242,7 +241,7 @@ export async function createProductAction(formData: FormData) {
         });
       }
       store.transactionEventPlaceholders.unshift({
-        id: randomUUID(), transactionId: "txn_admin_catalog_placeholder",
+        id: crypto.randomUUID(), transactionId: "txn_admin_catalog_placeholder",
         eventKind: "catalog_update", actorEmployeeId: employee.id,
         notes: `Created product ${name}`, payload: { entity: "product", sku },
         createdAt: timestamp,
@@ -277,12 +276,12 @@ export async function adjustInventoryAction(formData: FormData) {
       inventoryRow.onHand = Math.max(0, inventoryRow.onHand + delta);
       inventoryRow.updatedAt = timestamp;
       store.inventoryAdjustments.unshift({
-        id: randomUUID(), inventoryLevelId: inventoryRow.id,
+        id: crypto.randomUUID(), inventoryLevelId: inventoryRow.id,
         productVariantId: inventoryRow.productVariantId, locationId: inventoryRow.locationId,
         employeeId: employee.id, reason, delta, resultingOnHand: inventoryRow.onHand, createdAt: timestamp,
       });
       store.transactionEventPlaceholders.unshift({
-        id: randomUUID(), transactionId: "txn_inventory_placeholder",
+        id: crypto.randomUUID(), transactionId: "txn_inventory_placeholder",
         eventKind: "inventory_adjustment", actorEmployeeId: employee.id,
         notes: `${reason} (${delta > 0 ? "+" : ""}${delta})`,
         payload: { inventory_level_id: inventoryRow.id }, createdAt: timestamp,
@@ -317,21 +316,21 @@ export async function createEmployeeAction(formData: FormData) {
   }
 
   if (isPg()) {
-    const employeeId = randomUUID();
+    const employeeId = crypto.randomUUID();
     const orgId = employee.organizationId;
     await pgCreateEmployee({
       id: employeeId, organizationId: orgId, roleKey, firstName, lastName,
       displayName: `${firstName} ${lastName[0] ?? ""}.`.trim(),
-      email, pinHash: hashSecret(pin),
-      passwordHash: password ? hashSecret(password) : undefined,
+      email, pinHash: await hashSecret(pin),
+      passwordHash: password ? await hashSecret(password) : undefined,
       pinHint: `4-digit ${roleKey.replace("_", " ")} PIN`,
       isActive: true, locationIds: employee.locationIds,
     });
     await pgInsertAuditEvent(orgId, null, employee.id, "employee", employeeId, "catalog_update", { action: "created_employee", name: `${firstName} ${lastName}` });
   } else {
-    await mutateStore((store) => {
+    await mutateStore(async (store) => {
       const timestamp = now();
-      const employeeId = randomUUID();
+      const employeeId = crypto.randomUUID();
       store.employees.push({
         id: employeeId, organizationId: store.organization.id,
         locationIds: [store.locations[0].id], roleKey, firstName, lastName,
@@ -341,8 +340,8 @@ export async function createEmployeeAction(formData: FormData) {
       });
       store.authCredentials.push({
         employeeId, email,
-        passwordHash: password ? hashSecret(password) : undefined,
-        pinHash: hashSecret(pin),
+        passwordHash: password ? await hashSecret(password) : undefined,
+        pinHash: await hashSecret(pin),
         passwordLastRotatedAt: password ? timestamp : undefined,
         pinLastRotatedAt: timestamp,
       });
@@ -417,7 +416,7 @@ export async function editCategoryAction(formData: FormData) {
       category.imageUrl = imageUrl;
       category.updatedAt = now();
       store.transactionEventPlaceholders.unshift({
-        id: randomUUID(),
+        id: crypto.randomUUID(),
         transactionId: "txn_admin_catalog_placeholder",
         eventKind: "catalog_update",
         actorEmployeeId: employee.id,
@@ -452,7 +451,7 @@ export async function deleteCategoryAction(formData: FormData) {
       }
       const deleted = store.categories.splice(index, 1)[0];
       store.transactionEventPlaceholders.unshift({
-        id: randomUUID(),
+        id: crypto.randomUUID(),
         transactionId: "txn_admin_catalog_placeholder",
         eventKind: "catalog_update",
         actorEmployeeId: employee.id,
@@ -502,7 +501,7 @@ export async function editProductAction(formData: FormData) {
       product.isTouchFavorite = isTouchFavorite;
       product.updatedAt = now();
       store.transactionEventPlaceholders.unshift({
-        id: randomUUID(),
+        id: crypto.randomUUID(),
         transactionId: "txn_admin_catalog_placeholder",
         eventKind: "catalog_update",
         actorEmployeeId: employee.id,
@@ -538,7 +537,7 @@ export async function deleteProductAction(formData: FormData) {
       const deleted = store.products.splice(index, 1)[0];
       store.variants = store.variants.filter((v) => v.productId !== productId);
       store.transactionEventPlaceholders.unshift({
-        id: randomUUID(),
+        id: crypto.randomUUID(),
         transactionId: "txn_admin_catalog_placeholder",
         eventKind: "catalog_update",
         actorEmployeeId: employee.id,
@@ -589,7 +588,7 @@ export async function editVariantAction(formData: FormData) {
       variant.isActive = isActive;
       variant.updatedAt = now();
       store.transactionEventPlaceholders.unshift({
-        id: randomUUID(),
+        id: crypto.randomUUID(),
         transactionId: "txn_admin_catalog_placeholder",
         eventKind: "catalog_update",
         actorEmployeeId: employee.id,
@@ -624,7 +623,7 @@ export async function deleteVariantAction(formData: FormData) {
       }
       const deleted = store.variants.splice(index, 1)[0];
       store.transactionEventPlaceholders.unshift({
-        id: randomUUID(),
+        id: crypto.randomUUID(),
         transactionId: "txn_admin_catalog_placeholder",
         eventKind: "catalog_update",
         actorEmployeeId: employee.id,

@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
 import { withAdminAuth } from "@/lib/api/with-auth";
 
+export const runtime = "edge";
+
 // M-05: Validate date params to prevent Content-Disposition header injection
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
