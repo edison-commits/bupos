@@ -6,7 +6,7 @@ import { BarcodeLabelPrinter } from "@/components/admin/barcode-label-printer";
 import { BehaviorDashboard } from "@/components/admin/behavior-dashboard";
 import { BulkProductImport } from "@/components/admin/bulk-product-import";
 import { BundleManager } from "@/components/admin/bundle-manager";
-import { DashboardCharts } from "@/components/admin/dashboard-charts";
+import { DashboardCharts } from "@/components/admin/dashboard-charts-lazy";
 import { EmployeeScheduler } from "@/components/admin/employee-scheduler";
 import { InventoryBrowser } from "@/components/admin/inventory-browser";
 import { BarcodeLookup } from "@/components/admin/barcode-lookup";

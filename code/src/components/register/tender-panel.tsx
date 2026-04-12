@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, memo } from "react";
 import type { TenderType, ApprovalThresholds, LoyaltyConfig, GiftCard } from "@/lib/domain/types";
 import type { CartTotals } from "@/lib/cart/types";
 import { VirtualNumpad } from "@/components/ui/virtual-numpad";
@@ -26,7 +26,7 @@ interface TenderPanelProps {
   giftCards: GiftCard[];
 }
 
-export function TenderPanel({
+export const TenderPanel = memo(function TenderPanel({
   totals,
   supportedTenders,
   approvalThresholds,
@@ -672,7 +672,7 @@ export function TenderPanel({
       />
     </div>
   );
-}
+});
 
 function CashKey({
   label,

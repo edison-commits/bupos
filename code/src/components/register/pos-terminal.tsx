@@ -1,4 +1,5 @@
 "use client";
+import { S } from "./styles";
 
 import {
   usePOSTerminal,
@@ -146,7 +147,7 @@ export function POSTerminal(props: POSTerminalProps) {
       <div className="flex flex-1 flex-col gap-3 lg:flex-row">
       {/* Left: Product grid + recommendations */}
       <div className="flex flex-1 flex-col gap-2 overflow-hidden lg:flex-[1.2]">
-        <div className="flex-1 overflow-hidden rounded-2xl border p-3 shadow-lg sm:p-4" style={{ borderColor: 'var(--border-subtle)', background: 'var(--surface-panel)' }}>
+        <div className="flex-1 overflow-hidden rounded-2xl border p-3 shadow-lg sm:p-4" style={S.panelWithBorder}>
           <ProductGrid items={gridItems} categories={categories} onAddItem={handleAddItem} />
         </div>
         {screen === "selling" && cart.items.length > 0 && (
@@ -194,7 +195,7 @@ export function POSTerminal(props: POSTerminalProps) {
             disabled={cart.items.length === 0}
             aria-label="Hold cart"
             className="touch-button rounded-xl border px-4 py-3 text-base font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-teal-500"
-            style={{ borderColor: 'var(--border-subtle)', background: 'var(--surface-panel)', color: 'var(--text-secondary)' }}
+            style={S.panelWithBorderSecondary}
           >
             Hold
           </button>
@@ -231,34 +232,34 @@ export function POSTerminal(props: POSTerminalProps) {
               onClick={() => setShowMoreActions((v) => !v)}
               aria-label="More actions"
               className="touch-button flex items-center justify-center rounded-xl border px-4 py-3 text-base font-medium transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-teal-500"
-              style={{ borderColor: 'var(--border-subtle)', background: 'var(--surface-panel)', color: 'var(--text-secondary)' }}
+              style={S.panelWithBorderSecondary}
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
             </button>
             {showMoreActions && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setShowMoreActions(false)} />
-                <div className="absolute right-0 top-full z-50 mt-1 w-56 rounded-xl border p-1.5 shadow-xl" style={{ borderColor: 'var(--border-subtle)', background: 'var(--surface-panel)' }}>
-                  <button type="button" onClick={() => { setShowReturnModal(true); setShowMoreActions(false); }} className="flex w-full items-center gap-3 rounded-lg px-4 py-3.5 text-left text-base font-medium transition-colors hover:bg-amber-50 hover:text-amber-700" style={{ color: 'var(--text-primary)' }}>
+                <div className="absolute right-0 top-full z-50 mt-1 w-56 rounded-xl border p-1.5 shadow-xl" style={S.panelWithBorder}>
+                  <button type="button" onClick={() => { setShowReturnModal(true); setShowMoreActions(false); }} className="flex w-full items-center gap-3 rounded-lg px-4 py-3.5 text-left text-base font-medium transition-colors hover:bg-amber-50 hover:text-amber-700" style={S.textPrimary}>
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
                     Return
                   </button>
-                  <button type="button" onClick={() => { setShowExchangeModal(true); setShowMoreActions(false); }} className="flex w-full items-center gap-3 rounded-lg px-4 py-3.5 text-left text-base font-medium transition-colors hover:bg-teal-50 hover:text-teal-700" style={{ color: 'var(--text-primary)' }}>
+                  <button type="button" onClick={() => { setShowExchangeModal(true); setShowMoreActions(false); }} className="flex w-full items-center gap-3 rounded-lg px-4 py-3.5 text-left text-base font-medium transition-colors hover:bg-teal-50 hover:text-teal-700" style={S.textPrimary}>
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
                     Exchange
                   </button>
-                  <button type="button" disabled={cart.items.length === 0} onClick={() => { setShowLayawayModal(true); setShowMoreActions(false); }} className="flex w-full items-center gap-3 rounded-lg px-4 py-3.5 text-left text-base font-medium transition-colors hover:bg-indigo-50 hover:text-indigo-700 disabled:opacity-40" style={{ color: 'var(--text-primary)' }}>
+                  <button type="button" disabled={cart.items.length === 0} onClick={() => { setShowLayawayModal(true); setShowMoreActions(false); }} className="flex w-full items-center gap-3 rounded-lg px-4 py-3.5 text-left text-base font-medium transition-colors hover:bg-indigo-50 hover:text-indigo-700 disabled:opacity-40" style={S.textPrimary}>
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>
                     Layaway
                   </button>
                   {!appliedPromo && (
-                    <button type="button" disabled={cart.items.length === 0} onClick={() => { setShowPromoModal(true); setShowMoreActions(false); }} className="flex w-full items-center gap-3 rounded-lg px-4 py-3.5 text-left text-base font-medium transition-colors hover:bg-purple-50 hover:text-purple-700 disabled:opacity-40" style={{ color: 'var(--text-primary)' }}>
+                    <button type="button" disabled={cart.items.length === 0} onClick={() => { setShowPromoModal(true); setShowMoreActions(false); }} className="flex w-full items-center gap-3 rounded-lg px-4 py-3.5 text-left text-base font-medium transition-colors hover:bg-purple-50 hover:text-purple-700 disabled:opacity-40" style={S.textPrimary}>
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
                       Promo Code
                     </button>
                   )}
-                  <div className="my-1.5 border-t" style={{ borderColor: 'var(--border-subtle)' }} />
-                  <button type="button" onClick={() => { setShowShortcuts(true); setShowMoreActions(false); }} className="flex w-full items-center gap-3 rounded-lg px-4 py-3.5 text-left text-base font-medium transition-colors" style={{ color: 'var(--text-secondary)' }}>
+                  <div className="my-1.5 border-t" style={S.borderSubtle} />
+                  <button type="button" onClick={() => { setShowShortcuts(true); setShowMoreActions(false); }} className="flex w-full items-center gap-3 rounded-lg px-4 py-3.5 text-left text-base font-medium transition-colors" style={S.textSecondary}>
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/></svg>
                     Keyboard Shortcuts
                   </button>

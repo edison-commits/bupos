@@ -1,5 +1,7 @@
 "use client";
+import { S } from "./styles";
 import Image from "next/image";
+import { memo } from "react";
 
 import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import type { Category, InventoryLevel, Product, ProductVariant } from "@/lib/domain/types";
@@ -53,7 +55,7 @@ function getCategoryChipActive(index: number): string {
   return CATEGORY_CHIP_ACTIVE[index % CATEGORY_CHIP_ACTIVE.length];
 }
 
-export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) {
+export const ProductGrid = memo(function ProductGrid({ items, categories, onAddItem }: ProductGridProps) {
   const [activeCategoryId, setActiveCategoryId] = useState<string | "all" | "favorites">("all");
   const [tileSize, setTileSize] = useState<'sm' | 'md' | 'lg'>(() => {
     if (typeof window !== 'undefined' && document.documentElement.getAttribute('data-theme') === 'high-contrast') return 'lg';
@@ -344,7 +346,7 @@ export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) 
               }}
             >
               {/* Hero image area — 60%+ of card */}
-              <div className="relative w-full" style={{ aspectRatio: '4/3' }}>
+              <div className="relative w-full" style={S.aspect4x3}>
                 {item.product.imageUrl ? (
                   <Image
                     src={item.product.imageUrl}
@@ -354,7 +356,7 @@ export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) 
                   />
                 ) : (
                   <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-teal-600/20 to-teal-800/30">
-                    <span className="text-4xl font-bold" style={{ color: 'var(--surface-accent)' }}>{firstLetter}</span>
+                    <span className="text-4xl font-bold" style={S.surfaceAccent}>{firstLetter}</span>
                   </div>
                 )}
 
@@ -382,13 +384,13 @@ export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) 
               {/* Product info overlay below image */}
               <div className="flex flex-1 flex-col justify-between px-3 py-2.5">
                 <div>
-                  <p className="text-base font-bold leading-snug line-clamp-2" style={{ color: 'var(--text-primary)' }}>{item.product.name}</p>
+                  <p className="text-base font-bold leading-snug line-clamp-2" style={S.textPrimary}>{item.product.name}</p>
                   {item.variants.length > 1 && (
-                    <p className="mt-0.5 text-sm" style={{ color: 'var(--text-secondary)' }}>{item.variants.length} variants</p>
+                    <p className="mt-0.5 text-sm" style={S.textSecondary}>{item.variants.length} variants</p>
                   )}
                 </div>
                 <div className="mt-1.5 flex items-center justify-between">
-                  <span className="text-xl font-bold" style={{ color: 'var(--surface-accent)' }}>
+                  <span className="text-xl font-bold" style={S.surfaceAccent}>
                     ${defaultVariant?.price.toFixed(2) ?? "0.00"}
                   </span>
                 </div>
@@ -411,7 +413,7 @@ export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) 
       {/* Variant picker overlay with cleaner card design */}
       {variantPickerProduct && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-lg rounded-2xl p-7 shadow-2xl" style={{ background: 'var(--surface-panel)' }}>
+          <div className="w-full max-w-lg rounded-2xl p-7 shadow-2xl" style={S.surfacePanel}>
             {/* Header with product info */}
             <div className="flex items-start justify-between gap-4 mb-6">
               <div className="flex items-center gap-4 flex-1">
@@ -483,7 +485,7 @@ export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) 
       )}
     </div>
   );
-}
+});
 
 function CategoryChip({
   label,

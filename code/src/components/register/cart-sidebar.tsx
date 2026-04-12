@@ -1,7 +1,8 @@
 "use client";
+import { S } from "./styles";
 
 import type { Cart, CartTotals, DiscountMode } from "@/lib/cart/types";
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, memo } from "react";
 import { VirtualNumpad } from "@/components/ui/virtual-numpad";
 
 interface CartSidebarProps {
@@ -18,7 +19,7 @@ interface CartSidebarProps {
   shiftOpen: boolean;
 }
 
-export function CartSidebar({
+export const CartSidebar = memo(function CartSidebar({
   cart,
   totals,
   onUpdateQuantity,
@@ -76,15 +77,15 @@ export function CartSidebar({
   }, [swipeOffset, swipingItemId, onRemoveItem]);
 
   return (
-    <div className="flex h-full flex-col rounded-2xl border shadow-lg overflow-hidden" style={{ borderColor: 'var(--border-subtle)', background: 'var(--surface-panel)' }}>
+    <div className="flex h-full flex-col rounded-2xl border shadow-lg overflow-hidden" style={S.panelWithBorder}>
       {/* Header with running total */}
-      <div className="px-5 py-4" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+      <div className="px-5 py-4" style={S.borderBSubtle}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--text-secondary)' }}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={S.textSecondary}>
               <circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
             </svg>
-            <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>Current Sale</h2>
+            <h2 className="text-lg font-bold" style={S.textPrimary}>Current Sale</h2>
             {!isEmpty && (
               <span
                 className="inline-flex h-8 min-w-8 items-center justify-center rounded-full bg-teal-600 px-2 text-base font-bold text-white transition-transform"
@@ -108,23 +109,23 @@ export function CartSidebar({
         </div>
         {/* Running total — always visible, prominent */}
         {!isEmpty && (
-          <div className="mt-2 text-3xl font-bold tracking-tight" style={{ color: 'var(--surface-accent)' }}>
+          <div className="mt-2 text-3xl font-bold tracking-tight" style={S.surfaceAccent}>
             ${totals.grandTotal.toFixed(2)}
           </div>
         )}
       </div>
 
       {/* Line items */}
-      <div className="flex-1 overflow-y-auto px-2 py-2" style={{ scrollbarWidth: 'thin' }}>
+      <div className="flex-1 overflow-y-auto px-2 py-2" style={S.scrollbarThin}>
         {isEmpty ? (
           <div className="flex h-full flex-col items-center justify-center gap-5 px-6">
-            <div className="rounded-2xl p-6" style={{ background: 'var(--surface-panel-muted)' }}>
+            <div className="rounded-2xl p-6" style={S.surfacePanelMuted}>
               <svg className="h-14 w-14" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.2} style={{ color: 'var(--text-secondary)', opacity: 0.4 }}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
               </svg>
             </div>
             <div className="text-center">
-              <p className="text-lg font-medium" style={{ color: 'var(--text-secondary)' }}>No items yet</p>
+              <p className="text-lg font-medium" style={S.textSecondary}>No items yet</p>
               <p className="mt-1 text-base" style={{ color: 'var(--text-secondary)', opacity: 0.6 }}>Tap products or scan a barcode</p>
             </div>
           </div>
@@ -175,7 +176,7 @@ export function CartSidebar({
                     >
                       <div className="flex items-center gap-3">
                         {/* Item number badge */}
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-base font-bold" style={{ background: 'var(--surface-panel-muted)', color: 'var(--text-secondary)' }}>
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-base font-bold" style={S.panelMutedWithSecondary}>
                           {index + 1}
                         </div>
 
@@ -185,9 +186,9 @@ export function CartSidebar({
                             <span className="shrink-0 rounded-md bg-teal-100 px-2 py-0.5 text-base font-bold text-teal-700">
                               ×{item.quantity}
                             </span>
-                            <p className="truncate text-base font-semibold" style={{ color: 'var(--text-primary)' }}>{item.productName}</p>
+                            <p className="truncate text-base font-semibold" style={S.textPrimary}>{item.productName}</p>
                           </div>
-                          <p className="mt-1 truncate text-base" style={{ color: 'var(--text-secondary)' }}>
+                          <p className="mt-1 truncate text-base" style={S.textSecondary}>
                             {item.variantName}
                             {hasOverride && (
                               <span className="ml-1.5 text-amber-600">
@@ -211,7 +212,7 @@ export function CartSidebar({
                     {isExpanded && (
                       <div className="px-3 pb-3">
                         {/* Quantity stepper */}
-                        <div className="cart-item-stepper mb-3 flex items-center justify-center gap-2 rounded-xl p-2" style={{ background: 'var(--surface-panel-muted)' }}>
+                        <div className="cart-item-stepper mb-3 flex items-center justify-center gap-2 rounded-xl p-2" style={S.surfacePanelMuted}>
                           <button
                             type="button"
                             onClick={(e) => {
@@ -223,11 +224,11 @@ export function CartSidebar({
                               }
                             }}
                             className="flex h-12 w-14 items-center justify-center rounded-xl bg-white text-2xl font-bold shadow-sm transition-colors hover:bg-zinc-50 active:bg-zinc-100"
-                            style={{ color: 'var(--text-primary)' }}
+                            style={S.textPrimary}
                           >
                             −
                           </button>
-                          <span className="w-16 text-center text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{item.quantity}</span>
+                          <span className="w-16 text-center text-2xl font-bold" style={S.textPrimary}>{item.quantity}</span>
                           <button
                             type="button"
                             onClick={(e) => {
@@ -235,7 +236,7 @@ export function CartSidebar({
                               onUpdateQuantity(item.id, item.quantity + 1);
                             }}
                             className="flex h-12 w-14 items-center justify-center rounded-xl bg-white text-2xl font-bold shadow-sm transition-colors hover:bg-zinc-50 active:bg-zinc-100"
-                            style={{ color: 'var(--text-primary)' }}
+                            style={S.textPrimary}
                           >
                             +
                           </button>
@@ -243,13 +244,13 @@ export function CartSidebar({
 
                         {/* Detail rows */}
                         {(hasOverride || item.lineDiscount || item.modifierTotal > 0) && (
-                          <div className="mb-3 space-y-1 rounded-lg px-3 py-2 text-sm" style={{ background: 'var(--surface-panel-muted)' }}>
-                            <div className="flex justify-between" style={{ color: 'var(--text-secondary)' }}>
+                          <div className="mb-3 space-y-1 rounded-lg px-3 py-2 text-sm" style={S.surfacePanelMuted}>
+                            <div className="flex justify-between" style={S.textSecondary}>
                               <span>Unit price</span>
                               <span className="font-medium">${effectivePrice.toFixed(2)}</span>
                             </div>
                             {item.modifierTotal > 0 && (
-                              <div className="flex justify-between" style={{ color: 'var(--text-secondary)' }}>
+                              <div className="flex justify-between" style={S.textSecondary}>
                                 <span>Modifiers</span>
                                 <span className="font-medium">+${item.modifierTotal.toFixed(2)}</span>
                               </div>
@@ -308,7 +309,7 @@ export function CartSidebar({
 
       {/* Cart discount toggle + input */}
       {!isEmpty && (
-        <div style={{ borderTop: '1px solid var(--border-subtle)' }}>
+        <div style={S.borderTopSubtle}>
           <button
             type="button"
             onClick={() => setShowDiscount((v) => !v)}
@@ -325,7 +326,7 @@ export function CartSidebar({
           </button>
           {showDiscount && (
             <div className="flex items-center gap-2 px-5 pb-3">
-              <div className="inline-flex items-center rounded-lg border overflow-hidden" style={{ borderColor: 'var(--border-subtle)' }}>
+              <div className="inline-flex items-center rounded-lg border overflow-hidden" style={S.borderSubtle}>
                 <button
                   type="button"
                   onClick={() => onSetDiscountMode("fixed")}
@@ -358,7 +359,7 @@ export function CartSidebar({
                   setShowDiscountNumpad(true);
                 }}
                 className="w-24 rounded-lg border px-3 py-2 text-right text-base font-medium hover:border-teal-300 transition-colors"
-                style={{ borderColor: 'var(--border-subtle)', background: 'var(--surface-panel-muted)', color: 'var(--text-primary)' }}
+                style={S.panelMutedWithBorder}
               >
                 {cart.discountAmount || (cart.discountMode === "percent" ? "0" : "0.00")}
               </button>
@@ -377,7 +378,7 @@ export function CartSidebar({
       )}
 
       {/* Totals section */}
-      <div className="px-5 py-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+      <div className="px-5 py-4" style={S.borderTopSubtle}>
         <div className="space-y-2">
           <Row label="Subtotal" value={totals.subtotal + totals.modifiersTotal} />
           {totals.discountTotal > 0 && <Row label="Discount" value={-totals.discountTotal} highlight="text-red-500" />}
@@ -390,7 +391,7 @@ export function CartSidebar({
         {/* Grand total display */}
         {!isEmpty && (
           <div className="mb-4 flex items-center justify-between px-1">
-            <span className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>Total</span>
+            <span className="text-lg font-bold" style={S.textPrimary}>Total</span>
             <span className="text-3xl font-extrabold tracking-tight text-teal-700">${totals.grandTotal.toFixed(2)}</span>
           </div>
         )}
@@ -447,13 +448,13 @@ export function CartSidebar({
       />
     </div>
   );
-}
+});
 
 function Row({ label, value, highlight }: { label: string; value: number; highlight?: string }) {
   return (
     <div className="flex items-center justify-between">
-      <span style={{ color: 'var(--text-secondary)' }} className="text-base">{label}</span>
-      <span className={`text-base font-semibold ${highlight ?? ""}`} style={highlight ? undefined : { color: 'var(--text-primary)' }}>
+      <span style={S.textSecondary} className="text-base">{label}</span>
+      <span className={`text-base font-semibold ${highlight ?? ""}`} style={highlight ? undefined : S.textPrimary}>
         {value < 0 ? "−" : ""}${Math.abs(value).toFixed(2)}
       </span>
     </div>
