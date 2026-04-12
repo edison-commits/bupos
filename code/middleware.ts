@@ -1,7 +1,15 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
+function generateNonce(): string {
+  const bytes = new Uint8Array(16)
+  crypto.getRandomValues(bytes)
+  return Buffer.from(bytes).toString('base64')
+}
+
 export function middleware(request: NextRequest) {
+  const nonce = generateNonce()
+
   // Handle CORS preflight
   if (request.method === 'OPTIONS') {
     const response = new NextResponse(null, { status: 204 })
@@ -20,7 +28,13 @@ export function middleware(request: NextRequest) {
     return response;
   }
 
-  const response = NextResponse.next()
+  // Pass nonce to the app via a custom request header so Next.js can read it
+  const requestHeaders = new Headers(request.headers)
+  requestHeaders.set('x-nonce', nonce)
+
+  const response = NextResponse.next({
+    request: { headers: requestHeaders },
+  })
 
   // CORS — allow same-origin and known cross-origin API callers
   const origin = request.headers.get('origin') ?? '';
@@ -48,12 +62,10 @@ export function middleware(request: NextRequest) {
   // XSS protection
   response.headers.set('X-XSS-Protection', '1; mode=block')
 
-  // Content Security Policy — restrict to same-origin, no eval
-  // TODO: Replace 'unsafe-inline' for style-src with nonce-based CSP once
-  // Next.js supports per-request nonces in this middleware path (see next/headers).
+  // Content Security Policy — nonce-based, no unsafe-inline
   response.headers.set(
     'Content-Security-Policy',
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' https://*.supabase.co https://*.cloudflare.com; frame-ancestors 'none';"
+    `default-src 'self'; script-src 'self' 'nonce-${nonce}'; style-src 'self' 'nonce-${nonce}'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' https://*.supabase.co https://*.cloudflare.com; frame-ancestors 'none';`
   )
 
   // HSTS — force HTTPS (1 year, include subdomains)
