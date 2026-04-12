@@ -4,17 +4,13 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/db';
-import { requireAdminPermission } from '@/lib/authz';
+import { withAdminAuth } from '@/lib/api/with-auth';
 import { pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
 import { validateBody, customerCreateSchema, customerUpdateSchema } from '@/lib/validation/schemas';
 import { checkRateLimit } from '@/lib/auth/rate-limit';
 
-export async function GET(request: NextRequest) {
-  const ctx = await (await import('@/lib/auth/session')).getAdminSession();
-  const orgId = ctx?.employee?.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const GET = withAdminAuth('employee.manage', async (request, ctx) => {
+  const { orgId } = ctx;
 
   // Escape SQL LIKE wildcards in search so % and _ are treated as literal characters
   const rawSearch = request.nextUrl.searchParams.get('search')?.trim() || '';
@@ -168,14 +164,10 @@ export async function GET(request: NextRequest) {
     console.error('Customers GET error:', error);
     return NextResponse.json({ error: 'Failed to fetch customers' }, { status: 500 });
   }
-}
+});
 
-export async function POST(request: NextRequest) {
-  const ctx = await requireAdminPermission('employee.manage');
-  const orgId = ctx.employee.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const POST = withAdminAuth('employee.manage', async (request, ctx) => {
+  const { orgId, employee } = ctx;
   const rl = checkRateLimit(`customers:post:${orgId}`);
   if (!rl.allowed) {
     return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
@@ -198,14 +190,10 @@ export async function POST(request: NextRequest) {
     console.error('Customers POST error:', error);
     return NextResponse.json({ error: 'Failed to create customer' }, { status: 500 });
   }
-}
+});
 
-export async function PUT(request: NextRequest) {
-  const ctx = await requireAdminPermission('employee.manage');
-  const orgId = ctx.employee.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
+  const { orgId, employee } = ctx;
   const rl = checkRateLimit(`customers:put:${orgId}`);
   if (!rl.allowed) {
     return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
@@ -227,7 +215,7 @@ export async function PUT(request: NextRequest) {
     if (rows.length === 0) return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
     const customer = rows[0];
     pgInsertAuditEvent(
-      orgId, null, ctx.employee.id,
+      orgId, null, employee.id,
       "customer", id, "customer_updated",
       { id, first_name: customer.first_name, last_name: customer.last_name },
     ).catch((err) => console.error("[audit] Failed to insert audit event:", err));
@@ -236,4 +224,4 @@ export async function PUT(request: NextRequest) {
     console.error('Customers PUT error:', error);
     return NextResponse.json({ error: 'Failed to update customer' }, { status: 500 });
   }
-}
+});

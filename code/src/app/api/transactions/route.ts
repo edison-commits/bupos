@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
-import { requireAdminPermission } from "@/lib/authz";
+import { withAdminAuth } from "@/lib/api/with-auth";
 
 /**
  * BuPOS Transaction History API
@@ -19,9 +19,8 @@ import { requireAdminPermission } from "@/lib/authz";
  *   limit    — results per page (default 50, max 200)
  *   id       — fetch single transaction by ID (returns full detail with tenders/events)
  */
-export async function GET(req: NextRequest) {
-  const ctx = await requireAdminPermission("audit.view");
-  const orgId = ctx.employee.organizationId;
+export const GET = withAdminAuth("audit.view", async (req, ctx) => {
+  const { orgId } = ctx;
 
   try {
     const sp = req.nextUrl.searchParams;
@@ -189,4 +188,4 @@ export async function GET(req: NextRequest) {
     console.error("GET /api/transactions error:", err);
     return NextResponse.json({ error: "Failed to fetch transactions" }, { status: 500 });
   }
-}
+});

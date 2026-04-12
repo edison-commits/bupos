@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
-import { requireAdminPermission } from "@/lib/authz";
+import { withAdminAuth } from "@/lib/api/with-auth";
 
 // M-05: Validate date params to prevent Content-Disposition header injection
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -16,10 +16,8 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
  *   to       — end date (ISO)
  *   location — location ID for inventory
  */
-export async function GET(req: NextRequest) {
-  // M-10: Use reports.export permission instead of audit.view
-  const ctx = await requireAdminPermission("reports.export");
-  const orgId = ctx.employee.organizationId;
+export const GET = withAdminAuth("reports.export", async (req, ctx) => {
+  const { orgId } = ctx;
 
   try {
     const sp = req.nextUrl.searchParams;
@@ -195,7 +193,8 @@ export async function GET(req: NextRequest) {
   }
 }
 
-/** Neutralize formula injection: prefix cells starting with =, +, -, @ with a single quote */
+/** Neutralize formula injection: prefix cells starting with =, +, -, @ with a single quote */);
+
 function sanitizeCsvCell(str: string): string {
   if (str.length > 0 && (str[0] === '=' || str[0] === '+' || str[0] === '-' || str[0] === '@')) {
     return "'" + str;

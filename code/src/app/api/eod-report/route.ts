@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
-import { requireAdminPermission } from "@/lib/authz";
-import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
+import { withAdminAuth, withDualAuth } from "@/lib/api/with-auth";
 import { validateBody, eodReportSchema } from "@/lib/validation/schemas";
 const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
 
@@ -34,14 +33,8 @@ interface ReportData {
  * GET has no active consumer and relies on the hardcoded BUPOS_locationId,
  * making it unreliable for multi-location deployments.
  */
-export async function GET(req: NextRequest) {
-  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const locationId = registerCtx?.location?.id ?? adminCtx?.employee?.locationIds?.[0];
+export const GET = withDualAuth("audit.view", async (req, ctx) => {
+  const { orgId, locationId } = ctx;
   try {
     const reportData = await generateReportData(orgId, locationId);
     return NextResponse.json(reportData);
@@ -52,23 +45,19 @@ export async function GET(req: NextRequest) {
       { status: 500 }
     );
   }
-}
+});
 
 /**
  * POST /api/eod-report
  * Generate and send the daily email report
  */
-export async function POST(req: NextRequest) {
-  const ctx = await requireAdminPermission('audit.view');
-  const orgId = ctx.employee.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const POST = withAdminAuth("audit.view", async (req, ctx) => {
+  const { orgId, employee } = ctx;
   const body = await req.json().catch(() => ({}));
   const v = validateBody(eodReportSchema, body);
   if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
 
-  const locationId = ctx.employee.locationIds?.[0];
+  const locationId = employee.locationIds?.[0];
   let reportData: ReportData;
   try {
     reportData = await generateReportData(orgId, locationId);
@@ -96,7 +85,7 @@ export async function POST(req: NextRequest) {
       { status: 502 }
     );
   }
-}
+});
 
 async function generateReportData(orgId: string, locationId?: string): Promise<ReportData> {
   const today = new Date().toISOString().split("T")[0];

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery, orgTx } from "@/lib/db";
 import { randomUUID } from "node:crypto";
-import { requireAdminPermission } from "@/lib/authz";
+import { withAdminAuth } from "@/lib/api/with-auth";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 import { validateBody, storeCreditSchema } from "@/lib/validation/schemas";
@@ -17,9 +17,8 @@ import { validateBody, storeCreditSchema } from "@/lib/validation/schemas";
  *
  * Without customer param returns all customers with credit + summary.
  */
-export async function GET(req: NextRequest) {
-  const ctx = await requireAdminPermission("audit.view");
-  const orgId = ctx.employee.organizationId;
+export const GET = withAdminAuth("audit.view", async (req, ctx) => {
+  const { orgId } = ctx;
 
   try {
     const sp = req.nextUrl.searchParams;
@@ -98,7 +97,7 @@ export async function GET(req: NextRequest) {
     console.error("GET /api/store-credit error:", err);
     return NextResponse.json({ error: "Failed to fetch store credit" }, { status: 500 });
   }
-}
+});
 
 /**
  * POST /api/store-credit
@@ -107,19 +106,15 @@ export async function GET(req: NextRequest) {
  *
  * Issues store credit to a customer. Amount must be positive.
  */
-export async function POST(req: NextRequest) {
-  const ctx = await requireAdminPermission('approval.store_credit');
-  const employeeId = ctx.employee.id;
+export const POST = withAdminAuth('approval.store_credit', async (req, ctx) => {
+  const { orgId, employee } = ctx;
+  const employeeId = employee.id;
 
   const rl = checkRateLimit(`store-credit:${employeeId}`);
   if (!rl.allowed) {
     return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
   }
 
-  const orgId = ctx.employee.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
   try {
     const body = await req.json();
     const v = validateBody(storeCreditSchema, body);
@@ -167,4 +162,4 @@ export async function POST(req: NextRequest) {
     console.error("POST /api/store-credit error:", err);
     return NextResponse.json({ error: "Failed to issue store credit" }, { status: 500 });
   }
-}
+});

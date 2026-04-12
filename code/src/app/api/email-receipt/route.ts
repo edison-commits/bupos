@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
-import { hasPermission } from "@/lib/authz";
+import { withDualAuth } from "@/lib/api/with-auth";
 import { orgQuery } from "@/lib/db";
 import { validateBody, emailReceiptSchema } from "@/lib/validation/schemas";
 
@@ -19,26 +18,14 @@ import { validateBody, emailReceiptSchema } from "@/lib/validation/schemas";
  * The remaining fields (items, totals, tenders) are loaded server-side
  * from the transaction record to prevent client-supplied data forgery.
  */
-export async function POST(req: NextRequest) {
+export const POST = withDualAuth("audit.view", async (req, ctx) => {
   try {
-    const [adminSession, registerSession] = await Promise.all([getAdminSession(), getRegisterSession()]);
-    if (!adminSession?.employee && !registerSession?.employee) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    if (adminSession?.employee && !hasPermission(adminSession.employee.roleKey, "audit.view")) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-    if (registerSession?.employee && !hasPermission(registerSession.employee.roleKey, "register.open")) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const { orgId, employee } = ctx;
 
     const body = await req.json();
     const v = validateBody(emailReceiptSchema, body);
     if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
     const { to, transactionId } = v.data;
-
-    const employee = adminSession?.employee ?? registerSession!.employee;
-    const orgId = employee.organizationId;
 
     // ── Load transaction from DB (C-04: never trust client-supplied items/totals) ──
     const { rows: txnRows } = await orgQuery(
@@ -218,4 +205,4 @@ export async function POST(req: NextRequest) {
     console.error("POST /api/email-receipt error:", err);
     return NextResponse.json({ error: "Failed to send receipt email" }, { status: 500 });
   }
-}
+});

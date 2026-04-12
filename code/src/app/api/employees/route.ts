@@ -3,14 +3,13 @@
  * @tags employees
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { redirect } from 'next/navigation';
 import pool, { orgQuery } from '@/lib/db';
 import { hashSecret, verifySecret } from '@/lib/auth/crypto';
 import { randomUUID } from 'crypto';
-import { canManageEmployeeRole, requireAdminPermission } from '@/lib/authz';
+import { canManageEmployeeRole } from '@/lib/authz';
 import { checkRateLimit } from '@/lib/auth/rate-limit';
 import type { RoleKey } from '@/lib/domain/types';
-import { getAdminSession } from '@/lib/auth/session';
+import { withAdminAuth } from '@/lib/api/with-auth';
 import { invalidateEmployeesCache, pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
 import { validateBody, employeeCreateSchema, employeeUpdateSchema, employeePatchSchema } from '@/lib/validation/schemas';
 
@@ -27,16 +26,8 @@ async function invalidateEmployeeSessions(employeeId: string): Promise<void> {
 }
 
 // GET: List all employees with their roles and location info
-export async function GET(request: NextRequest) {
-  // Require only a valid admin session — no specific permission needed for read-only list
-  const ctx = await getAdminSession();
-  if (!ctx || !ctx.session || !ctx.employee) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-  const orgId = ctx.employee.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const GET = withAdminAuth('employee.manage', async (request, ctx) => {
+  const { orgId } = ctx;
   // Escape SQL LIKE wildcards in search so % and _ are treated as literal characters
   const rawSearch = request.nextUrl.searchParams.get('search')?.trim() || '';
   const search = rawSearch.replace(/[%_\\]/g, '\\$&');
@@ -97,15 +88,11 @@ export async function GET(request: NextRequest) {
     console.error('Employees GET error:', error);
     return NextResponse.json({ error: 'Failed to fetch employees' }, { status: 500 });
   }
-}
+});
 
 // POST: Create new employee with auth credential (PIN)
-export async function POST(request: NextRequest) {
-  const ctx = await requireAdminPermission('employee.manage');
-  const orgId = ctx.employee.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const POST = withAdminAuth('employee.manage', async (request, ctx) => {
+  const { orgId, employee: actor } = ctx;
   const rl = checkRateLimit(`employees:post:${orgId}`);
   if (!rl.allowed) {
     return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
@@ -126,7 +113,7 @@ export async function POST(request: NextRequest) {
       locationIds,
     } = v.data;
 
-    if (!canManageEmployeeRole(ctx.employee.roleKey, roleKey as RoleKey)) {
+    if (!canManageEmployeeRole(actor.roleKey, roleKey as RoleKey)) {
       return NextResponse.json(
         { error: 'Forbidden: you cannot assign the requested role' },
         { status: 403 }
@@ -201,7 +188,7 @@ export async function POST(request: NextRequest) {
 
     invalidateEmployeesCache(orgId);
     pgInsertAuditEvent(
-      orgId, null, ctx.employee.id,
+      orgId, null, actor.id,
       "employee", employee.id, "employee_created",
       { id: employee.id, display_name: employee.displayName, role_key: employee.roleKey },
     ).catch((err) => console.error("[audit] Failed to insert audit event:", err));
@@ -210,15 +197,11 @@ export async function POST(request: NextRequest) {
     console.error('Employees POST error:', error);
     return NextResponse.json({ error: 'Failed to create employee' }, { status: 500 });
   }
-}
+});
 
 // PUT: Update employee details
-export async function PUT(request: NextRequest) {
-  const ctx = await requireAdminPermission('employee.manage');
-  const orgId = ctx.employee.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
+  const { orgId, employee: actor } = ctx;
   try {
     const body = await request.json();
     const v = validateBody(employeeUpdateSchema, body);
@@ -235,7 +218,7 @@ export async function PUT(request: NextRequest) {
       locationIds,
     } = v.data;
 
-    if (roleKey !== undefined && !canManageEmployeeRole(ctx.employee.roleKey, roleKey as RoleKey)) {
+    if (roleKey !== undefined && !canManageEmployeeRole(actor.roleKey, roleKey as RoleKey)) {
       return NextResponse.json(
         { error: 'Forbidden: you cannot assign the requested role' },
         { status: 403 }
@@ -322,7 +305,7 @@ export async function PUT(request: NextRequest) {
 
     invalidateEmployeesCache(orgId);
     pgInsertAuditEvent(
-      orgId, null, ctx.employee.id,
+      orgId, null, actor.id,
       "employee", id, "employee_updated",
       { id, display_name: employee.displayName, role_key: employee.roleKey },
     ).catch((err) => console.error("[audit] Failed to insert audit event:", err));
@@ -331,15 +314,11 @@ export async function PUT(request: NextRequest) {
     console.error('Employees PUT error:', error);
     return NextResponse.json({ error: 'Failed to update employee' }, { status: 500 });
   }
-}
+});
 
 // PATCH: Toggle active status or reset PIN
-export async function PATCH(request: NextRequest) {
-  const ctx = await requireAdminPermission('employee.manage');
-  const orgId = ctx.employee.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const PATCH = withAdminAuth('employee.manage', async (request, ctx) => {
+  const { orgId, employee: actor } = ctx;
   try {
     const body = await request.json();
     const v = validateBody(employeePatchSchema, body);
@@ -432,4 +411,4 @@ export async function PATCH(request: NextRequest) {
     console.error('Employees PATCH error:', error);
     return NextResponse.json({ error: 'Failed to update employee' }, { status: 500 });
   }
-}
+});

@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery, orgTx } from "@/lib/db";
 import { randomUUID } from "node:crypto";
-import { requireAdminPermission } from "@/lib/authz";
-import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
+import { withAdminAuth, withDualAuth } from "@/lib/api/with-auth";
 import { validateBody, shiftReportSchema } from "@/lib/validation/schemas";
 
 
@@ -17,16 +16,12 @@ import { validateBody, shiftReportSchema } from "@/lib/validation/schemas";
  *   location — location ID (returns today's Z-report for all shifts at that location)
  *   date     — specific date YYYY-MM-DD (defaults to today)
  */
-export async function GET(req: NextRequest) {
-  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const GET = withDualAuth("register.open", async (req, ctx) => {
+  const { orgId, registerSession, locationId: defaultLocationId } = ctx;
 
   try {
     const sp = req.nextUrl.searchParams;
-    const locationId = sp.get("location") ?? registerCtx?.location?.id ?? adminCtx?.employee?.locationIds?.[0];
+    const locationId = sp.get("location") ?? defaultLocationId;
     const date = sp.get("date") || new Date().toISOString().slice(0, 10);
     const shiftId = sp.get("shift");
 
@@ -230,19 +225,15 @@ export async function GET(req: NextRequest) {
     console.error("GET /api/shift-report error:", err);
     return NextResponse.json({ error: "Failed to generate shift report" }, { status: 500 });
   }
-}
+});
 
 /**
  * POST /api/shift-report
  *
  * Body: { action: "close_shift", shiftId, declaredCash, note?, blindClose? }
  */
-export async function POST(req: NextRequest) {
-  const ctx = await requireAdminPermission('register.open');
-  const orgId = ctx.employee.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const POST = withAdminAuth("register.open", async (req, ctx) => {
+  const { orgId, employee } = ctx;
   try {
     const body = await req.json();
     const v = validateBody(shiftReportSchema, body);
@@ -309,7 +300,7 @@ export async function POST(req: NextRequest) {
           variance,
           blind: blindClose || false,
           location_id: s.location_id,
-          employee_id: ctx.employee.id,
+          employee_id: employee.id,
         };
 
         await client.query("COMMIT");
@@ -349,7 +340,7 @@ export async function POST(req: NextRequest) {
     console.error("POST /api/shift-report error:", err);
     return NextResponse.json({ error: "Failed to process shift action" }, { status: 500 });
   }
-}
+});
 
 /** Helper: build report data for a single shift */
 async function buildShiftReport(orgId: string, shiftId: string, locationId: string, openedAt: string, closedAt: string) {

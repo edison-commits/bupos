@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { orgQuery, orgTx } from "@/lib/db";
-import { requireAdminPermission } from "@/lib/authz";
+import { withAdminAuth, withDualAuth } from "@/lib/api/with-auth";
 import { randomUUID } from "node:crypto";
 import { validateBody, promoCodeSchema } from "@/lib/validation/schemas";
 
@@ -16,17 +16,9 @@ import { validateBody, promoCodeSchema } from "@/lib/validation/schemas";
  *
  * Without params returns all promo codes.
  */
-export async function GET(req: NextRequest) {
+export const GET = withDualAuth("catalog.manage", async (req, ctx) => {
+  const { orgId } = ctx;
   try {
-    // Validate that the request has a valid session (admin or register)
-    const [adminCtx, registerCtx] = await Promise.all([
-      (await import("@/lib/auth/session")).getAdminSession(),
-      (await import("@/lib/auth/session")).getRegisterSession(),
-    ]);
-    const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
-    if (!orgId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
 
     const sp = req.nextUrl.searchParams;
 
@@ -121,7 +113,7 @@ export async function GET(req: NextRequest) {
     console.error("GET /api/promo-codes error:", err);
     return NextResponse.json({ error: "Failed to fetch promo codes" }, { status: 500 });
   }
-}
+});
 
 /**
  * POST /api/promo-codes
@@ -131,12 +123,8 @@ export async function GET(req: NextRequest) {
  *   action: "redeem" — { promoCodeId, transactionId, employeeId, discountAmount }
  *   action: "disable" — { promoCodeId }
  */
-export async function POST(req: NextRequest) {
-  const ctx = await requireAdminPermission("catalog.manage");
-  const orgId = ctx.employee.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
+  const { orgId, employee } = ctx;
   try {
     const body = await req.json();
     const { action } = body;
@@ -186,7 +174,7 @@ export async function POST(req: NextRequest) {
         await client.query(
           `INSERT INTO promo_redemptions (id, promo_code_id, transaction_id, employee_id, discount_amount, created_at)
            VALUES ($1, $2, $3, $4, $5, now())`,
-          [randomUUID(), promoCodeId, transactionId, ctx.employee.id, discountAmount],
+          [randomUUID(), promoCodeId, transactionId, employee.id, discountAmount],
         );
 
         // Auto-disable if maxed out
@@ -226,4 +214,4 @@ export async function POST(req: NextRequest) {
     console.error("POST /api/promo-codes error:", err);
     return NextResponse.json({ error: "Failed to process promo code action" }, { status: 500 });
   }
-}
+});

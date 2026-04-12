@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { orgTx, orgQuery } from "@/lib/db";
-import { requireRegisterPermission } from "@/lib/authz";
+import { withDualAuth } from "@/lib/api/with-auth";
 import { getRegisterConfig } from "@/lib/config/register-config";
 import { validateBody, offlineSyncSchema } from "@/lib/validation/schemas";
 import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
@@ -36,10 +36,10 @@ interface CartLineItem {
  * This mirrors the logic in checkout-action.ts but works from a serialized payload
  * rather than requiring a live session.
  */
-export async function POST(request: NextRequest) {
-  const authCtx = await requireRegisterPermission("register.open");
-  const orgId = authCtx.employee.organizationId;
-  if (!orgId) {
+export const POST = withDualAuth("register.open", async (request, ctx) => {
+  const { orgId, registerSession } = ctx;
+  const authCtx = registerSession;
+  if (!authCtx?.employee) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -378,4 +378,4 @@ export async function POST(request: NextRequest) {
       { status: 500 },
     );
   }
-}
+});

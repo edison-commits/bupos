@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'node:crypto';
 import { orgTx } from '@/lib/db';
-import { requireRegisterPermission } from '@/lib/authz';
-import { getAdminSession, getRegisterSession } from '@/lib/auth/session';
+import { withDualAuth } from '@/lib/api/with-auth';
 import { checkRateLimit } from '@/lib/auth/rate-limit';
 import { validateBody, returnProcessSchema } from '@/lib/validation/schemas';
 
@@ -34,16 +33,10 @@ interface ProcessReturnRequest {
  * 3. If restocking, adjust inventory
  * 4. Record refund tender/transaction
  */
-export async function POST(request: NextRequest) {
+export const POST = withDualAuth('register.open', async (request, ctx) => {
   const idempotencyKey = request.headers.get('Idempotency-Key');
-
-  const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
-  const orgId = adminCtx?.employee?.organizationId ?? registerCtx?.employee?.organizationId;
-  if (!orgId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-  const authCtx = await requireRegisterPermission('register.open');
-  const employeeId = authCtx.employee.id;
+  const { orgId, employee, registerSession, locationId } = ctx;
+  const employeeId = employee.id;
 
   const rl = checkRateLimit(`returns:${employeeId}`);
   if (!rl.allowed) {
@@ -150,7 +143,7 @@ export async function POST(request: NextRequest) {
     // Generate return number: RET-BEL-YYMMDD-NNN
     const locResult = await client.query(
       'SELECT name FROM locations WHERE id = $1',
-      [authCtx.location.id]
+      [locationId]
     );
     const locCode = (locResult.rows[0]?.name || 'STR').slice(0, 3).toUpperCase();
     const now = new Date();
@@ -185,7 +178,7 @@ export async function POST(request: NextRequest) {
            RETURNING id`,
           [
             orgId,
-            authCtx.location.id,
+            locationId,
             transaction_id,
             returnNumber,
             customer_name || null,
@@ -237,7 +230,7 @@ export async function POST(request: NextRequest) {
          SET on_hand = on_hand + $1, received_at = NOW(), updated_at = NOW()
          WHERE product_variant_id = $2 AND location_id = $3
          RETURNING id`,
-        [item.quantity, variantId, authCtx.location.id]
+        [item.quantity, variantId, locationId]
       );
 
       // If no row existed, insert a new inventory_levels row
@@ -245,7 +238,7 @@ export async function POST(request: NextRequest) {
         await client.query(
           `INSERT INTO inventory_levels (organization_id, product_variant_id, location_id, on_hand, received_at, updated_at)
            VALUES ($1, $2, $3, $4, NOW(), NOW())`,
-          [orgId, variantId, authCtx.location.id, item.quantity]
+          [orgId, variantId, locationId, item.quantity]
         );
       }
     }
@@ -298,4 +291,4 @@ export async function POST(request: NextRequest) {
   } finally {
     client.release();
   }
-}
+});
