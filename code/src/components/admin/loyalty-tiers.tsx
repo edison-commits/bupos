@@ -87,7 +87,7 @@ const DEFAULT_TIERS: Tier[] = [
 export function LoyaltyTiers({ customers, currentConfig }: LoyaltyTiersProps) {
   const [tiers, setTiers] = useState<Tier[]>(DEFAULT_TIERS);
   const [searchQuery, setSearchQuery] = useState('');
-  const [editingTierId, setEditingTierId] = useState<string | null>(null);
+  const [_editingTierId, _setEditingTierId] = useState<string | null>(null);
   const [expandedTier, setExpandedTier] = useState<string | null>(null);
 
   const customersByTier = useMemo(() => {
@@ -109,7 +109,7 @@ export function LoyaltyTiers({ customers, currentConfig }: LoyaltyTiersProps) {
     const potentialLiability = totalPoints * currentConfig.redemptionValuePerPoint;
 
     const closeToNextTier = activeCustomers.filter((c) => {
-      const currentTier = tiers.find((t) => c.loyaltyPoints >= t.minPoints && (t.maxPoints === null || c.loyaltyPoints <= t.maxPoints));
+      const _currentTier = tiers.find((t) => c.loyaltyPoints >= t.minPoints && (t.maxPoints === null || c.loyaltyPoints <= t.maxPoints));
       const nextTier = tiers.find((t) => t.minPoints > c.loyaltyPoints);
       if (!nextTier) return false;
       const pointsNeeded = nextTier.minPoints - c.loyaltyPoints;
@@ -136,7 +136,7 @@ export function LoyaltyTiers({ customers, currentConfig }: LoyaltyTiersProps) {
     return fullName.includes(query) || tierName.toLowerCase().includes(query);
   });
 
-  const maxCustomersInTier = Math.max(...tiers.map((t) => customersByTier[t.id]?.length || 0), 1);
+  const _maxCustomersInTier = Math.max(...tiers.map((t) => customersByTier[t.id]?.length || 0), 1);
 
   const handleTierChange = (tierId: string, field: string, value: string | number | null) => {
     setTiers((prev) =>

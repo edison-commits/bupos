@@ -3,7 +3,6 @@
 import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import { useCallback, useEffect, useState } from 'react';
-import Link from 'next/link';
 import { authFetch } from '@/lib/api/client';
 import { formatCurrency } from '@/lib/format';
 interface Supplier {
@@ -68,7 +67,7 @@ interface LineItemInput {
   product_name: string;
   quantity_ordered: number;
   unit_cost: number;
-  temp_id: string; // For UI tracking before save
+  _temp_id: string; // For UI tracking before save
 }
 
 const statusBadgeColor = (status: string) => {
@@ -231,7 +230,7 @@ export default function PurchaseOrdersPage() {
       product_name: selectedVariant.product_name,
       quantity_ordered: qty,
       unit_cost: cost,
-      temp_id: Math.random().toString(36).substring(7),
+      _temp_id: Math.random().toString(36).substring(7),
     };
 
     setCreateForm({
@@ -249,7 +248,7 @@ export default function PurchaseOrdersPage() {
   const handleRemoveLine = (tempId: string) => {
     setCreateForm({
       ...createForm,
-      lines: createForm.lines.filter((l) => l.temp_id !== tempId),
+      lines: createForm.lines.filter((l) => l._temp_id !== tempId),
     });
   };
 
@@ -270,7 +269,7 @@ export default function PurchaseOrdersPage() {
           supplier_id: createForm.supplier_id,
           notes: createForm.notes || null,
           expected_at: createForm.expected_at || null,
-          lines: createForm.lines.map(({ temp_id, ...rest }) => rest),
+          lines: createForm.lines.map(({ _temp_id, ...rest }) => rest),
         }),
       });
 
@@ -858,7 +857,7 @@ export default function PurchaseOrdersPage() {
                     <div className="space-y-2">
                       {createForm.lines.map((line) => (
                         <div
-                          key={line.temp_id}
+                          key={line._temp_id}
                           className="flex items-center justify-between rounded border p-2"
                           style={{
                             backgroundColor: 'var(--surface-default)',
@@ -874,7 +873,7 @@ export default function PurchaseOrdersPage() {
                             </p>
                           </div>
                           <button
-                            onClick={() => handleRemoveLine(line.temp_id)}
+                            onClick={() => handleRemoveLine(line._temp_id)}
                             className="text-xs font-medium transition"
                             style={{ color: '#ef4444' }}
                           >

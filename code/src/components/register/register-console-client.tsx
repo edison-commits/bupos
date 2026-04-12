@@ -118,7 +118,7 @@ export function RegisterConsoleClient({
   recentShifts,
   payInOuts,
 }: RegisterConsoleClientProps) {
-  const uid = useId();
+  const _uid = useId();
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [showEODWizard, setShowEODWizard] = useState(false);
   const [payDirection, setPayDirection] = useState<PayDirection | null>(null);
@@ -307,8 +307,8 @@ export function RegisterConsoleClient({
     };
   }, []);
 
-  const payInTotal = payInOuts.filter((p) => p.direction === "pay_in").reduce((s, p) => s + p.amount, 0);
-  const payOutTotal = payInOuts.filter((p) => p.direction === "pay_out").reduce((s, p) => s + p.amount, 0);
+  const _payInTotal = payInOuts.filter((p) => p.direction === "pay_in").reduce((s, p) => s + p.amount, 0);
+  const _payOutTotal = payInOuts.filter((p) => p.direction === "pay_out").reduce((s, p) => s + p.amount, 0);
 
   async function handleCloseShift(declaredCash: number, note: string, blind: boolean) {
     setClosing(true);

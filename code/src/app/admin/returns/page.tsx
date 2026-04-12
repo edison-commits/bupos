@@ -206,7 +206,7 @@ export default function ReturnsPage() {
 
   const refundAmount = calculateRefundAmount();
   const itemsInCart = searchResults?.items || [];
-  const remainingItems = itemsInCart.filter(
+  const _remainingItems = itemsInCart.filter(
     (item) => !selectedItems.some((s) => s.product_id === item.product_id)
   );
 

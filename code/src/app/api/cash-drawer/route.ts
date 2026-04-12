@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import pool, { orgQuery, orgTx } from '@/lib/db';
+import { orgQuery, orgTx } from '@/lib/db';
 import { validateBody, cashDrawerSchema } from '@/lib/validation/schemas';
 import { withDualAuth } from '@/lib/api/with-auth';
 
@@ -235,7 +235,7 @@ async function handleCloseShift(orgId: string, locationId: string, body: Record<
     return NextResponse.json({ error: 'Shift not found' }, { status: 404 });
   }
 
-  const shift = shiftRes.rows[0];
+  const _shift = shiftRes.rows[0];
   const expectedCash = await calculateExpectedCash(orgId, shift_id as string);
   const variance = Number(declared_cash) - expectedCash;
 

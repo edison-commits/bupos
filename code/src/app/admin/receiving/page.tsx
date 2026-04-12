@@ -68,7 +68,7 @@ export default function ReceivingPage() {
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(null);
 
   // Review & submit state
-  const [showReview, setShowReview] = useState(false);
+  const [_showReview, _setShowReview] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState(false);

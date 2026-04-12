@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import type { TenderType, ApprovalThresholds, LoyaltyConfig, GiftCard } from "@/lib/domain/types";
 import type { CartTotals } from "@/lib/cart/types";
 import { VirtualNumpad } from "@/components/ui/virtual-numpad";
@@ -122,16 +122,6 @@ export function TenderPanel({
 
   function handleSplitConfirm() {
     onConfirm(splitTenders);
-  }
-
-  function handleNumpadClick(value: string) {
-    if (value === "backspace") {
-      setCashGiven(cashGiven.slice(0, -1));
-    } else if (value === "00") {
-      setCashGiven(cashGiven + "00");
-    } else {
-      setCashGiven(cashGiven + value);
-    }
   }
 
   function handleNumpadPress(key: string) {

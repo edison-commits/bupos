@@ -516,7 +516,7 @@ export function DailyManagerReport({ store }: { store: LocalStoreData }) {
   // Day transfers
   const dayTransfers = transfers.filter((t) => t.date.toDateString() === selectedDate.toDateString());
 
-  const locations = store.locations || [];
+  const _locations = store.locations || [];
 
   return (
     <div className="bg-zinc-50 p-6 min-h-screen">

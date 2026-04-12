@@ -148,7 +148,7 @@ export function MultiLocationDashboard({ store }: { store: LocalStoreData }) {
     }
 
     return locationMetrics;
-  }, [store, dateRange, customStart, customEnd]);
+  }, [getDateRange, store, dateRange, customStart, customEnd]);
 
   const selectedMetrics = Object.values(metrics).filter((m) =>
     selectedLocations.has(m.locationId)

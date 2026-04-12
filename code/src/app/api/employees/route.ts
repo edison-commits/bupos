@@ -318,7 +318,7 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
 
 // PATCH: Toggle active status or reset PIN
 export const PATCH = withAdminAuth('employee.manage', async (request, ctx) => {
-  const { orgId, employee: actor } = ctx;
+  const { orgId, employee: _actor } = ctx;
   try {
     const body = await request.json();
     const v = validateBody(employeePatchSchema, body);

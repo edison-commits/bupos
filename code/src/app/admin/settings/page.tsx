@@ -495,7 +495,7 @@ function LocationSection({
             <option value="">Select city…</option>
             {formData.region && (() => {
               const knownCities = getCitiesForState(formData.region);
-              const cityIsKnown = knownCities.includes(formData.city);
+              const _cityIsKnown = knownCities.includes(formData.city);
               return knownCities.map((city) => (
                 <option key={city} value={city}>{city}</option>
               ));

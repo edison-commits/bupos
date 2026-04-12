@@ -117,7 +117,7 @@ export const POST = withDualAuth("inventory.adjust", async (request, ctx) => {
     const body = await request.json();
     const v = validateBody(receivingCreateSchema, body);
     if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
-    const { items: validatedItems, mode, po_id } = v.data;
+    const { items: _validatedItems, mode, po_id } = v.data;
     const items = body.items as Array<{ product_variant_id: string; quantity: number; po_line_id?: string }>;
 
     // Process receiving in transaction

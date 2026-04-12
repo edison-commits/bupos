@@ -35,7 +35,7 @@ interface ProcessReturnRequest {
  */
 export const POST = withDualAuth('register.open', async (request, ctx) => {
   const idempotencyKey = request.headers.get('Idempotency-Key');
-  const { orgId, employee, registerSession, locationId } = ctx;
+  const { orgId, employee, registerSession: _registerSession, locationId } = ctx;
   const employeeId = employee.id;
 
   const rl = checkRateLimit(`returns:${employeeId}`);
@@ -109,7 +109,7 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
       return NextResponse.json({ error: 'Transaction not found' }, { status: 404 });
     }
 
-    const originalTotal = Number(txnResult.rows[0].grand_total) || 0;
+    const _originalTotal = Number(txnResult.rows[0].grand_total) || 0;
 
     // Sum all prior refunds for this transaction so we don't over-refund
     const priorRefResult = await client.query(

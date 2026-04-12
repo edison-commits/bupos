@@ -17,7 +17,7 @@ import { validateBody, shiftReportSchema } from "@/lib/validation/schemas";
  *   date     — specific date YYYY-MM-DD (defaults to today)
  */
 export const GET = withDualAuth("register.open", async (req, ctx) => {
-  const { orgId, registerSession, locationId: defaultLocationId } = ctx;
+  const { orgId, registerSession: _registerSession, locationId: defaultLocationId } = ctx;
 
   try {
     const sp = req.nextUrl.searchParams;

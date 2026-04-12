@@ -69,9 +69,6 @@ export default function EmployeeManagement() {
     locationIds: ['c57268b3-cb14-4c1a-bda6-55e49ddc6313'],
   });
 
-  useEffect(() => {
-    loadEmployees();
-  }, [pagination.page, search]);
 
   const loadEmployees = async () => {
     setLoading(true);
@@ -107,6 +104,11 @@ export default function EmployeeManagement() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    loadEmployees();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pagination.page, search]);
 
   const resetForm = () => {
     setFormData({

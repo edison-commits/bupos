@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import { hasPermission } from "@/lib/domain/permissions";
-import type { RoleKey } from "@/lib/domain/types";
 
 describe("Permission system", () => {
   it("owner has all permissions", () => {

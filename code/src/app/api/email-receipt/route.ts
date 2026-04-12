@@ -20,7 +20,7 @@ import { validateBody, emailReceiptSchema } from "@/lib/validation/schemas";
  */
 export const POST = withDualAuth("audit.view", async (req, ctx) => {
   try {
-    const { orgId, employee } = ctx;
+    const { orgId, employee: _employee } = ctx;
 
     const body = await req.json();
     const v = validateBody(emailReceiptSchema, body);

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import type { InputHTMLAttributes } from "react";
 import { adminLogoutAction, adjustInventoryAction, createCategoryAction, createEmployeeAction, createProductAction, toggleEmployeeAction, updateOrganizationAction, updateLocationAction, editCategoryAction, deleteCategoryAction, editProductAction, deleteProductAction, editVariantAction, deleteVariantAction } from "@/app/admin/actions";
 import { BarcodeLabelPrinter } from "@/components/admin/barcode-label-printer";

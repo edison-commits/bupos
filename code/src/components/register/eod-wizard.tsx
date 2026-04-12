@@ -34,7 +34,7 @@ const DENOMINATION_BUTTONS = [
 
 export function EODWizard({
   expectedCash,
-  openingFloat,
+  openingFloat: _openingFloat,
   shiftOpenedAt,
   cashierName,
   transactionCount,
@@ -59,7 +59,7 @@ export function EODWizard({
     setDeclaredCash((prev) => parseFloat((prev + value).toFixed(2)));
   };
 
-  const handleDeclaredCashChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const _handleDeclaredCashChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value ? parseFloat(e.target.value) : 0;
     setDeclaredCash(isNaN(val) ? 0 : val);
   };

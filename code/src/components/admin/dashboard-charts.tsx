@@ -1,7 +1,6 @@
 "use client";
 
-import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from "recharts";
-import { LocalStoreData } from "@/lib/persistence/types";
+import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from "recharts";import { LocalStoreData } from "@/lib/persistence/types";
 
 interface DashboardChartsProps {
   store: LocalStoreData;

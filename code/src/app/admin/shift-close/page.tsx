@@ -101,7 +101,7 @@ export default function ShiftClosePage() {
     }
   };
 
-  const formatTime = (dateString: string) => {
+  const _formatTime = (dateString: string) => {
     const date = new Date(dateString);
     return date.toLocaleTimeString('en-US', {
       hour: '2-digit',

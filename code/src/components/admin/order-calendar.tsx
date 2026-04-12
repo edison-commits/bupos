@@ -110,7 +110,7 @@ function getStoreColor(locationId: string, locations: StoreLocation[]) {
   return STORE_COLORS[idx >= 0 ? idx % STORE_COLORS.length : 0];
 }
 
-export function OrderCalendar({ suppliers, purchaseOrders, employees, locations, currentLocationId }: OrderCalendarProps) {
+export function OrderCalendar({ suppliers, purchaseOrders, employees: _employees, locations, currentLocationId }: OrderCalendarProps) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
@@ -265,7 +265,7 @@ export function OrderCalendar({ suppliers, purchaseOrders, employees, locations,
     );
 
     return { thisMonth, upcoming: upcoming.length, overdue: overdue.length };
-  }, [filteredEvents, currentMonth]);
+  }, [filteredEvents, currentMonth, today]);
 
   // Get active shipments
   const activeShipments = useMemo(() => {

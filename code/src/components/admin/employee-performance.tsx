@@ -1,8 +1,7 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
-import { ChevronDown, TrendingUp, TrendingDown, BarChart3, Users, Calendar } from 'lucide-react';
-import {
+import { TrendingUp, TrendingDown, BarChart3, Users } from 'lucide-react';import {
   Employee,
   TransactionEventPlaceholder,
   TransactionTenderPlaceholder,
@@ -183,7 +182,7 @@ export function EmployeePerformance({
       employees
         .filter((e) => e.isActive !== false)
         .map((e) => calculateMetrics(e.id, startDate, endDate)),
-    [employees, transactions, tenders, shifts, timeClockEntries, exceptions, startDate, endDate],
+    [calculateMetrics, employees, transactions, tenders, shifts, timeClockEntries, exceptions, startDate, endDate],
   );
 
   // Filter for selected employee

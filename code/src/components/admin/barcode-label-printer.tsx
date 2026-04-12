@@ -167,7 +167,7 @@ export function BarcodeLabelPrinter({ products, variants }: BarcodeLabelPrinterP
       <script>window.onload=function(){window.print();window.close();}<\/script>
       </body></html>`);
     printWindow.document.close();
-  }, [sizeConfig.w]);
+  }, [labelItems, sizeConfig.w, sizeConfig.bh]);
 
   return (
     <div className="space-y-4">

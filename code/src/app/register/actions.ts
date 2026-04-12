@@ -4,8 +4,7 @@ import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { pool, orgTx } from "@/lib/db";
-import { requireRegisterPermission, requireAdminPermission, hasPermission } from "@/lib/authz";
-import { getRegisterSession, getAdminSession, signInRegister, signOutRegister } from "@/lib/auth/session";
+import { requireRegisterPermission, hasPermission } from "@/lib/authz";import { getRegisterSession, getAdminSession, signInRegister, signOutRegister } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { mutateStore } from "@/lib/persistence/store";
 import {

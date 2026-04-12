@@ -1,8 +1,7 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
-import { ChevronDown, Plus, Trash2, Edit2, Check, X } from 'lucide-react';
-
+import { ChevronDown, Plus, Trash2, Edit2, Check } from 'lucide-react';
 interface Category {
   id: string;
   name: string;

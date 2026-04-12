@@ -92,20 +92,7 @@ export default function AuditPage() {
 
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
-    loadEmployees();
-    loadEventKinds();
-    loadAuditEvents();
-  }, []);
 
-  useEffect(() => {
-    loadAuditEvents();
-  }, [
-    filters.fromDate,
-    filters.toDate,
-    filters.employeeId,
-    filters.eventKind,
-  ]);
 
   const loadEmployees = async () => {
     try {
@@ -196,6 +183,22 @@ export default function AuditPage() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    loadEmployees();
+    loadEventKinds();
+    loadAuditEvents();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    loadAuditEvents();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    filters.fromDate,
+    filters.toDate,
+    filters.employeeId,
+    filters.eventKind,
+  ]);
 
   const handleFilterChange = (key: string, value: string) => {
     setFilters((prev) => ({ ...prev, [key]: value }));

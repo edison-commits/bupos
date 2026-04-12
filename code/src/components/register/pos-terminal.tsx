@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import {
   usePOSTerminal,
   type POSTerminalProps,
@@ -9,14 +8,13 @@ import {
   type VoidState,
   type HeldCart,
 } from "./usePOSTerminal";
-import { setDiscount, computeTotals } from "@/lib/cart/cart";
-import { createCustomerAction } from "@/app/register/actions";
+import { setDiscount } from "@/lib/cart/cart";import { createCustomerAction } from "@/app/register/actions";
 import { ProductGrid } from "./product-grid";
 import { CartSidebar } from "./cart-sidebar";
-import { TenderPanel, type TenderEntry } from "./tender-panel";
+import { TenderPanel } from "./tender-panel";
+import { VoidReasonModal } from "./void-reason-modal";
 import { ReceiptView } from "./receipt-view";
 import { ApprovalModal } from "./approval-modal";
-import { VoidReasonModal, type VoidTarget } from "./void-reason-modal";
 import { CustomerSearchModal } from "./customer-search-modal";
 import { ReturnModal } from "./return-modal";
 import { LayawayModal } from "./layaway-modal";
@@ -58,7 +56,6 @@ export function POSTerminal(props: POSTerminalProps) {
     error,
     setError,
     approvalRequest,
-    approvedExceptions,
     voidState,
     setVoidState,
     priceOverrideLineId,
@@ -91,7 +88,6 @@ export function POSTerminal(props: POSTerminalProps) {
     setShowMoreActions,
     gridItems,
     totals,
-    approvalThresholds,
     isOnline,
     handleAddItem,
     handleUpdateQuantity,

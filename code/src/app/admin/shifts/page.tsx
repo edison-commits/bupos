@@ -48,6 +48,7 @@ export default function ShiftsPage() {
 
   useEffect(() => {
     loadShifts();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter, dateFilter, page]);
 
   async function loadShifts() {

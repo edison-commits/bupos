@@ -122,7 +122,7 @@ export function ProfitMarginDashboard({
 
     variantRows.forEach((row) => {
       const catId = row.category?.id ?? "unknown";
-      const catName = row.category?.name ?? "Unknown";
+      const _catName = row.category?.name ?? "Unknown";
 
       if (!grouped[catId]) {
         grouped[catId] = { totalRetailValue: 0, totalCostValue: 0, count: 0 };

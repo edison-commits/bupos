@@ -399,7 +399,7 @@ export function EmployeeScheduler({ employees }: EmployeeSchedulerProps) {
                 </tr>
               </thead>
               <tbody>
-                {activeEmployees.map((emp, empIdx) => {
+                {activeEmployees.map((emp, _empIdx) => {
                   const color = employeeColorMap.get(emp.id)!;
                   const hours = weeklyHours[emp.id] || 0;
                   const isOvertime = hours > 40;

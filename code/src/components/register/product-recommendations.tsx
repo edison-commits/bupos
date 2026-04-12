@@ -219,7 +219,7 @@ export function ProductRecommendations({
       }
     }
 
-    for (const [productId, count] of categoryProductCount) {
+    for (const [productId, _count] of categoryProductCount) {
       const product = productMap.get(productId);
       if (!product) continue;
 

@@ -8,7 +8,6 @@ import { createCart, addItem, removeItem, updateQuantity, setDiscount, setDiscou
 import { checkoutAction } from "@/app/register/checkout-action";
 import { useOnlineStatus } from "@/lib/offline/use-online-status";
 import { savePendingTransaction, cacheCatalog } from "@/lib/offline/idb-store";
-import { createCustomerAction } from "@/app/register/actions";
 import { logTransactionEvent, type TransactionEventType } from "@/app/register/event-action";
 import type { ProductGridItem } from "./product-grid";
 import type { TenderEntry } from "./tender-panel";
@@ -88,7 +87,7 @@ export function usePOSTerminal({
   // Stable device ID for distributed register locking.
   // Prefer the ID stored in the register session (set at login), otherwise
   // read from localStorage or generate a fresh one and persist it.
-  const [deviceId] = useState<string>(() => {
+  const [_deviceId] = useState<string>(() => {
     if (registerSession.deviceId) return registerSession.deviceId;
     if (typeof window !== "undefined") {
       const stored = localStorage.getItem("pos_device_id");

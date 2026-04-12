@@ -72,7 +72,7 @@ export default function LoyaltyDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [modalMode, setModalMode] = useState<ModalMode>(null);
-  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
+  const [_selectedCustomerId, _setSelectedCustomerId] = useState<string | null>(null);
   const [selectedCustomerDetails, setSelectedCustomerDetails] = useState<DetailedCustomer | null>(null);
   const [recentTransactions, setRecentTransactions] = useState<RecentTransaction[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);

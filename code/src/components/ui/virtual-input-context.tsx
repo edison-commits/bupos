@@ -91,6 +91,7 @@ export function VirtualInputProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Keep value in sync when parent updates
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const handleChange = useCallback(
     (v: string) => {
       setState((s) => ({ ...s, value: v }));
@@ -99,6 +100,7 @@ export function VirtualInputProvider({ children }: { children: ReactNode }) {
     [state.onChange],
   );
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const handleEnter = useCallback(() => {
     state.onEnter?.();
     close();

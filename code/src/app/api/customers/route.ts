@@ -167,7 +167,7 @@ export const GET = withAdminAuth('employee.manage', async (request, ctx) => {
 });
 
 export const POST = withAdminAuth('employee.manage', async (request, ctx) => {
-  const { orgId, employee } = ctx;
+  const { orgId, employee: _employee } = ctx;
   const rl = checkRateLimit(`customers:post:${orgId}`);
   if (!rl.allowed) {
     return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });

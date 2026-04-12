@@ -31,7 +31,7 @@ export default function CashDrawerPage() {
   const router = useRouter();
   const [currentShift, setCurrentShift] = useState<Shift | null>(null);
   const [shiftHistory, setShiftHistory] = useState<Shift[]>([]);
-  const [payInOuts, setPayInOuts] = useState<PayInOut[]>([]);
+  const [_payInOuts, _setPayInOuts] = useState<PayInOut[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 

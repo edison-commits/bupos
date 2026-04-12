@@ -260,7 +260,7 @@ function generateEmailHTML(data: ReportData): string {
     payment_methods,
     top_products,
     employee_performance,
-    shifts,
+    shifts: _shifts,
     low_stock_items,
   } = data;
 

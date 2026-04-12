@@ -65,10 +65,6 @@ export default function CustomerManagement() {
     notes: '',
   });
 
-  useEffect(() => {
-    loadCustomers();
-    loadStats();
-  }, [pagination.pageSize, search]);
 
   const loadCustomers = async () => {
     setLoading(true);
@@ -137,6 +133,12 @@ export default function CustomerManagement() {
       console.error('Failed to load stats:', err);
     }
   };
+
+  useEffect(() => {
+    loadCustomers();
+    loadStats();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pagination.pageSize, search]);
 
   const resetForm = () => {
     setFormData({

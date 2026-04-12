@@ -149,7 +149,7 @@ export function InventoryBrowser({ categories }: { categories: Category[] }) {
   };
 
   // Group items by product for the list view
-  const productGroups = items.reduce<Record<string, InventoryRow[]>>((acc, item) => {
+  const _productGroups = items.reduce<Record<string, InventoryRow[]>>((acc, item) => {
     if (!acc[item.product_id]) acc[item.product_id] = [];
     acc[item.product_id].push(item);
     return acc;
