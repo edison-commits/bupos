@@ -3,7 +3,7 @@
 import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import { useState, useEffect } from 'react';
-import { ChevronLeft, DollarSign, TrendingUp, AlertCircle, CheckCircle2, Plus, Minus } from 'lucide-react';
+import { ChevronLeft, DollarSign, AlertCircle, CheckCircle2, Plus, Minus } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { authFetch } from '@/lib/api/client';
 

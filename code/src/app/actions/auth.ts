@@ -4,7 +4,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { signInAdmin, getAdminSession } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
-import { hashSecret, verifySecret } from "@/lib/auth/crypto";
+import { hashSecret } from "@/lib/auth/crypto";
 import { randomUUID } from "node:crypto";
 import { pgFindCredentialByEmail, pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 

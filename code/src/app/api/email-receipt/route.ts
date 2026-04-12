@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { withDualAuth } from "@/lib/api/with-auth";
 import { orgQuery } from "@/lib/db";
 import { validateBody, emailReceiptSchema } from "@/lib/validation/schemas";

@@ -1,5 +1,5 @@
 import { orgQuery } from '@/lib/db';
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { withDualAuth } from '@/lib/api/with-auth';
 
 export const GET = withDualAuth("catalog.manage", async (request, ctx) => {

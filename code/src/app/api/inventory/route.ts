@@ -2,7 +2,7 @@
  * BuPOS Inventory API
  * @tags inventory
  */
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/db';
 import { withAdminAuth } from '@/lib/api/with-auth';
 

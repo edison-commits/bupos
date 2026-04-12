@@ -4,7 +4,6 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import { useState, useEffect } from 'react';
 import { RoleGate } from '@/components/admin/role-gate';
-import { ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { authFetch } from '@/lib/api/client';
 
 interface AuditEvent {

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
 import { withAdminAuth, withDualAuth } from "@/lib/api/with-auth";
 import { validateBody, eodReportSchema } from "@/lib/validation/schemas";

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import type { Cart, CartTotals } from "@/lib/cart/types";
+import type { Cart } from "@/lib/cart/types";
 import { getRegisterSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/authz";
 import { orgQuery } from "@/lib/db";

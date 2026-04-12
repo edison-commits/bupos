@@ -3,7 +3,6 @@
 import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import { useState, useEffect, useCallback } from 'react';
-import { ChevronDown } from 'lucide-react';
 import { authFetch } from '@/lib/api/client';
 import { DASHBOARD_POLL_INTERVAL_MS } from '@/lib/config/timing';
 import { formatCurrency } from '@/lib/format';

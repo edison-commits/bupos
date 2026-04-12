@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import pool, { orgQuery, orgTx } from '@/lib/db';
 import { validateBody, cashDrawerSchema } from '@/lib/validation/schemas';
 import { withDualAuth } from '@/lib/api/with-auth';

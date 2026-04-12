@@ -2,8 +2,8 @@
 
 import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { Search, Calendar, ChevronDown, ChevronUp, Plus, X, AlertCircle, CheckCircle, Loader } from 'lucide-react';
+import React, { useState, useCallback } from 'react';
+import { Search, Calendar, Plus, X, AlertCircle, CheckCircle, Loader } from 'lucide-react';
 import { authFetch } from '@/lib/api/client';
 import { formatCurrency } from '@/lib/format';
 interface CartItem {
