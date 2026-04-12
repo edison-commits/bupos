@@ -1,7 +1,7 @@
 'use client';
 
+import { useState, useMemo, useCallback } from 'react';
 import type { LocalStoreData } from '@/lib/persistence/types';
-import { useState, useMemo } from 'react';
 
 type DateRange = 'today' | 'week' | 'month' | 'custom';
 
@@ -32,7 +32,7 @@ export function MultiLocationDashboard({ store }: { store: LocalStoreData }) {
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
 
-  const getDateRange = () => {
+  const getDateRange = useCallback(() => {
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     
@@ -52,7 +52,7 @@ export function MultiLocationDashboard({ store }: { store: LocalStoreData }) {
       return { start: monthStart, end: new Date(now.getTime() + 86400000) };
     }
     return { start: today, end: new Date(today.getTime() + 86400000) };
-  };
+  }, [dateRange, customStart, customEnd]);
 
   const metrics = useMemo(() => {
     const { start, end } = getDateRange();
@@ -148,7 +148,7 @@ export function MultiLocationDashboard({ store }: { store: LocalStoreData }) {
     }
 
     return locationMetrics;
-  }, [getDateRange, store, dateRange, customStart, customEnd]);
+  }, [getDateRange, store]);
 
   const selectedMetrics = Object.values(metrics).filter((m) =>
     selectedLocations.has(m.locationId)

@@ -157,7 +157,7 @@ function downloadTemplate() {
   URL.revokeObjectURL(url);
 }
 
-export function BulkProductImport({ categories, onImport }: BulkProductImportProps) {
+export function BulkProductImport({ categories: _categories, onImport }: BulkProductImportProps) {
   const [status, setStatus] = useState<ImportStatus>("idle");
   const [previewRows, setPreviewRows] = useState<ImportRow[]>([]);
   const [totalRows, setTotalRows] = useState(0);

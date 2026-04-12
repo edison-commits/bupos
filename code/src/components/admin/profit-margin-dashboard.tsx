@@ -14,7 +14,7 @@ interface ProfitMarginDashboardProps {
 type SortField = "productName" | "variant" | "sku" | "price" | "cost" | "marginDollar" | "marginPercent" | "onHand" | "potentialRevenue";
 type SortOrder = "asc" | "desc";
 
-interface VariantRow {
+interface _VariantRow {
   variant: ProductVariant;
   product: Product | null;
   category: Category | null;
@@ -76,7 +76,7 @@ export function ProfitMarginDashboard({
   const kpis = useMemo(() => {
     let totalRetailValue = 0;
     let totalCostValue = 0;
-    let totalPotentialRevenue = 0;
+    let _totalPotentialRevenue = 0;
 
     variantRows.forEach((row) => {
       const retailValue = row.onHand * row.variant.price;
@@ -84,7 +84,7 @@ export function ProfitMarginDashboard({
 
       totalRetailValue += retailValue;
       totalCostValue += costValue;
-      totalPotentialRevenue += row.potentialRevenue;
+      _totalPotentialRevenue += row.potentialRevenue;
     });
 
     const overallMarginPercent = totalCostValue > 0 ? ((totalRetailValue - totalCostValue) / totalCostValue) * 100 : 0;

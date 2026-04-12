@@ -1,4 +1,5 @@
 "use client";
+import Image from "next/image";
 
 import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import type { Category, InventoryLevel, Product, ProductVariant } from "@/lib/domain/types";
@@ -345,7 +346,7 @@ export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) 
               {/* Hero image area — 60%+ of card */}
               <div className="relative w-full" style={{ aspectRatio: '4/3' }}>
                 {item.product.imageUrl ? (
-                  <img
+                  <Image
                     src={item.product.imageUrl}
                     alt={item.product.name}
                     className="h-full w-full object-cover"
@@ -415,7 +416,7 @@ export function ProductGrid({ items, categories, onAddItem }: ProductGridProps) 
             <div className="flex items-start justify-between gap-4 mb-6">
               <div className="flex items-center gap-4 flex-1">
                 {variantPickerProduct.product.imageUrl ? (
-                  <img
+                  <Image
                     src={variantPickerProduct.product.imageUrl}
                     alt={variantPickerProduct.product.name}
                     className="h-16 w-16 rounded-xl object-cover shrink-0"

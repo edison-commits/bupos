@@ -171,6 +171,7 @@ export default function ReportsPage() {
 
   useEffect(() => {
     fetchReport(activeReport);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeReport, dateRange, customFrom, customTo]);
 
   const currentReport = reports[activeReport];

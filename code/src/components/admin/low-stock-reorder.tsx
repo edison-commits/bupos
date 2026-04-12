@@ -26,7 +26,7 @@ export function LowStockAutoReorder({
   inventory,
   variants,
   products,
-  suppliers,
+  suppliers: _suppliers,
   onGeneratePO,
 }: LowStockAutoReorderProps) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());

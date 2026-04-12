@@ -12,10 +12,7 @@ interface Supplier {
   email: string | null;
 }
 
-interface Product {
-  id: string;
-  name: string;
-}
+// Product type from domain
 
 interface ProductVariant {
   id: string;

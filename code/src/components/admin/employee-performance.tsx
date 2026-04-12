@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { TrendingUp, TrendingDown, BarChart3, Users } from 'lucide-react';import {
   Employee,
   TransactionEventPlaceholder,
@@ -84,7 +84,7 @@ export function EmployeePerformance({
   };
 
   // Helper: Calculate metrics for a specific employee
-  const calculateMetrics = (employeeId: string, startDate: Date, endDate: Date): PerformanceMetrics => {
+  const calculateMetrics = useCallback((employeeId: string, startDate: Date, endDate: Date): PerformanceMetrics => {
     const employee = employees.find((e) => e.id === employeeId);
     if (!employee) {
       return {
@@ -172,7 +172,7 @@ export function EmployeePerformance({
       cashVariance,
       hoursWorked,
     };
-  };
+  }, [employees, transactions, tenders, shifts, timeClockEntries, exceptions]);
 
   const [startDate, endDate] = getDateRange();
 
@@ -182,7 +182,7 @@ export function EmployeePerformance({
       employees
         .filter((e) => e.isActive !== false)
         .map((e) => calculateMetrics(e.id, startDate, endDate)),
-    [calculateMetrics, employees, transactions, tenders, shifts, timeClockEntries, exceptions, startDate, endDate],
+    [calculateMetrics, employees, startDate, endDate],
   );
 
   // Filter for selected employee

@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, useCallback, type ReactNode } from "react";
+import { createContext, useContext, useState, useCallback, useRef, type ReactNode } from "react";
 import { VirtualNumpad } from "./virtual-numpad";
 import { VirtualKeyboard } from "./virtual-keyboard";
 
@@ -90,21 +90,26 @@ export function VirtualInputProvider({ children }: { children: ReactNode }) {
     setState((s) => ({ ...s, mode: null }));
   }, []);
 
-  // Keep value in sync when parent updates
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Use refs to avoid stale closures while keeping callbacks stable
+  const onChangeRef = useRef(state.onChange);
+  // eslint-disable-next-line react-hooks/refs
+  onChangeRef.current = state.onChange;
+  const onEnterRef = useRef(state.onEnter);
+  // eslint-disable-next-line react-hooks/refs
+  onEnterRef.current = state.onEnter;
+
   const handleChange = useCallback(
     (v: string) => {
       setState((s) => ({ ...s, value: v }));
-      state.onChange(v);
+      onChangeRef.current(v);
     },
-    [state.onChange],
+    [],
   );
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   const handleEnter = useCallback(() => {
-    state.onEnter?.();
+    onEnterRef.current?.();
     close();
-  }, [state.onEnter, close]);
+  }, [close]);
 
   return (
     <VirtualInputCtx.Provider value={{ openNumpad, openKeyboard, close, isOpen: state.mode !== null }}>

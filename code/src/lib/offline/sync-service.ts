@@ -4,7 +4,6 @@ import {
   getPendingTransactions,
   removePendingTransaction,
   savePendingTransaction,
-  type PendingTransaction,
 } from "./idb-store";
 
 const MAX_RETRY_ATTEMPTS = 10;

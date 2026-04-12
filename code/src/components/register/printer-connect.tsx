@@ -12,9 +12,7 @@ export const PrinterConnect = forwardRef<PrinterHandle>(function PrinterConnect(
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const portRef = useRef<any>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const writerRef = useRef<any>(null);
 
   const connect = useCallback(async () => {

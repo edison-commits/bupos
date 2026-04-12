@@ -216,9 +216,11 @@ export function CartSidebar({
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              item.quantity <= 1
-                                ? onRemoveItem(item.id)
-                                : onUpdateQuantity(item.id, item.quantity - 1);
+                              if (item.quantity <= 1) {
+                                onRemoveItem(item.id);
+                              } else {
+                                onUpdateQuantity(item.id, item.quantity - 1);
+                              }
                             }}
                             className="flex h-12 w-14 items-center justify-center rounded-xl bg-white text-2xl font-bold shadow-sm transition-colors hover:bg-zinc-50 active:bg-zinc-100"
                             style={{ color: 'var(--text-primary)' }}

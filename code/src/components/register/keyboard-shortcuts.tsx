@@ -34,7 +34,7 @@ export function useKeyboardShortcuts(config: KeyboardShortcutActions) {
     onPrint,
     onToggleShortcuts,
     screen = 'selling',
-    shiftOpen = false,
+    shiftOpen: _shiftOpen = false,
   } = config;
 
   useEffect(() => {

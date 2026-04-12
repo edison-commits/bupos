@@ -111,7 +111,7 @@ function getStoreColor(locationId: string, locations: StoreLocation[]) {
 }
 
 export function OrderCalendar({ suppliers, purchaseOrders, employees: _employees, locations, currentLocationId }: OrderCalendarProps) {
-  const today = new Date();
+  const today = useMemo(() => new Date(), []);
   today.setHours(0, 0, 0, 0);
 
   const [currentMonth, setCurrentMonth] = useState<Date>(new Date(today));

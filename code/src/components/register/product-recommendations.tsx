@@ -1,4 +1,5 @@
 'use client';
+import Image from "next/image";
 
 import { useMemo } from 'react';
 
@@ -320,7 +321,7 @@ function RecommendationCard({ item, onAdd }: RecommendationCardProps) {
       {/* Product Image */}
       <div className="h-24 bg-zinc-200 overflow-hidden">
         {item.imageUrl ? (
-          <img
+          <Image
             src={item.imageUrl}
             alt={item.productName}
             className="w-full h-full object-cover"

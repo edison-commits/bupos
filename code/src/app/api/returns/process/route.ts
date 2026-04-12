@@ -13,7 +13,7 @@ interface ReturnLineItem {
   unit_price: number;
 }
 
-interface ProcessReturnRequest {
+interface _ProcessReturnRequest {
   transaction_id: string;
   customer_name: string | null;
   reason: string;

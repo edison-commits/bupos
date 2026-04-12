@@ -88,7 +88,7 @@ export function POSTerminal(props: POSTerminalProps) {
     setShowMoreActions,
     gridItems,
     totals,
-    isOnline,
+    
     handleAddItem,
     handleUpdateQuantity,
     handleRemoveItem,

@@ -7,10 +7,7 @@ import Link from 'next/link';
 import { authFetch } from '@/lib/api/client';
 import { SUCCESS_TOAST_MS } from '@/lib/config/timing';
 
-interface Product {
-  id: string;
-  name: string;
-}
+// Product type from domain
 
 interface ProductVariant {
   id: string;

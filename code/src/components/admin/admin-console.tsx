@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
+import Image from "next/image";
 import type { InputHTMLAttributes } from "react";
 import { adminLogoutAction, adjustInventoryAction, createCategoryAction, createEmployeeAction, createProductAction, toggleEmployeeAction, updateOrganizationAction, updateLocationAction, editCategoryAction, deleteCategoryAction, editProductAction, deleteProductAction, editVariantAction, deleteVariantAction } from "@/app/admin/actions";
 import { BarcodeLabelPrinter } from "@/components/admin/barcode-label-printer";
@@ -141,7 +142,7 @@ export function AdminConsole({
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex flex-1 items-start gap-3">
                     {product.imageUrl && (
-                      <img src={product.imageUrl} alt={product.name} className="h-12 w-12 shrink-0 rounded-xl object-cover" />
+                      <Image src={product.imageUrl} alt={product.name} className="h-12 w-12 shrink-0 rounded-xl object-cover" />
                     )}
                     <div>
                       <h3 className="font-semibold">{product.name}</h3>
