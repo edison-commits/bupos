@@ -31,6 +31,11 @@ export default function AdminError({
         <p style={{ color: '#64748b', marginBottom: '1.5rem', fontSize: '0.875rem' }}>
           {error.message || 'Something went wrong in the admin panel.'}
         </p>
+        {error.digest ? (
+          <p style={{ color: '#94a3b8', marginBottom: '1rem', fontSize: '0.75rem', fontFamily: 'monospace' }}>
+            Digest: {error.digest}
+          </p>
+        ) : null}
         <button
           onClick={reset}
           style={{

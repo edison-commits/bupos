@@ -23,7 +23,13 @@ export default async function AdminPage({
     redirect("/?error=Please+sign+in+to+continue");
   }
 
-  const store = await readStore(session.employee.organizationId);
+  let store;
+  try {
+    store = await readStore(session.employee.organizationId);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    redirect(`/?error=${encodeURIComponent('Store load failed: ' + msg)}`);
+  }
   const notice = typeof params.notice === "string" ? params.notice.replaceAll("+", " ") : undefined;
   const error = typeof params.error === "string" ? params.error.replaceAll("+", " ") : undefined;
 
