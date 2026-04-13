@@ -143,7 +143,7 @@ export async function signupAction(_prev: { error: string } | null, formData: Fo
     const locationId = randomUUID();
     const employeeId = randomUUID();
     const slug = storeName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
-    const passwordHash = hashSecret(password);
+    const passwordHash = await hashSecret(password);
 
     // M-07: Wrap org+location+employee+credentials inserts in a single transaction
     const client = await pool.connect();

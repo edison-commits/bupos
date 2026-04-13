@@ -322,15 +322,17 @@ export async function createEmployeeAction(formData: FormData) {
     await pgCreateEmployee({
       id: employeeId, organizationId: orgId, roleKey, firstName, lastName,
       displayName: `${firstName} ${lastName[0] ?? ""}.`.trim(),
-      email, pinHash: hashSecret(pin),
-      passwordHash: password ? hashSecret(password) : undefined,
+      email, pinHash: await hashSecret(pin),
+      passwordHash: password ? await hashSecret(password) : undefined,
       pinHint: `4-digit ${roleKey.replace("_", " ")} PIN`,
       isActive: true, locationIds: employee.locationIds,
     });
     await pgInsertAuditEvent(orgId, null, employee.id, "employee", employeeId, "catalog_update", { action: "created_employee", name: `${firstName} ${lastName}` });
   } else {
+    const timestamp = now();
+    const pinHashVal = await hashSecret(pin);
+    const passwordHashVal = password ? await hashSecret(password) : undefined;
     await mutateStore((store) => {
-      const timestamp = now();
       const employeeId = randomUUID();
       store.employees.push({
         id: employeeId, organizationId: store.organization.id,
@@ -341,8 +343,8 @@ export async function createEmployeeAction(formData: FormData) {
       });
       store.authCredentials.push({
         employeeId, email,
-        passwordHash: password ? hashSecret(password) : undefined,
-        pinHash: hashSecret(pin),
+        passwordHash: passwordHashVal,
+        pinHash: pinHashVal,
         passwordLastRotatedAt: password ? timestamp : undefined,
         pinLastRotatedAt: timestamp,
       });

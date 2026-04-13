@@ -241,7 +241,7 @@ export async function signInAdmin(email: string, password: string) {
       throw new Error("Invalid admin credentials");
     }
 
-    if (!verifySecret(password, credential.passwordHash)) {
+    if (!await verifySecret(password, credential.passwordHash)) {
       throw new Error("Invalid admin credentials");
     }
 
@@ -301,7 +301,7 @@ export async function signInAdmin(email: string, password: string) {
       return null;
     }
 
-    if (!verifySecret(password, credential.passwordHash)) {
+    if (!await verifySecret(password, credential.passwordHash)) {
       return null;
     }
 
@@ -456,7 +456,13 @@ export async function signInRegister(pin: string, locationId: string, deviceId?:
 
   // JSON path
   const session = await mutateStore(async (store) => {
-    const credential = store.authCredentials.find((entry) => entry.pinHash && verifySecret(cleanPin, entry.pinHash));
+    let credential = null;
+    for (const entry of store.authCredentials) {
+      if (entry.pinHash && await verifySecret(cleanPin, entry.pinHash)) {
+        credential = entry;
+        break;
+      }
+    }
     if (!credential) {
       return null;
     }

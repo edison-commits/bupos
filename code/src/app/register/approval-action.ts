@@ -71,13 +71,13 @@ export async function verifyManagerApproval(pin: string, request: ApprovalReques
   // No hardcoded dev PINs; every approver must use their real stored credential.
   let approverEmployee = null;
 
-  const matchedCredential = store.authCredentials.find(
-    (cred) => cred.pinHash && verifySecret(pin, cred.pinHash),
-  );
-  if (matchedCredential) {
-    approverEmployee = store.employees.find(
-      (e) => e.id === matchedCredential.employeeId && e.isActive,
-    );
+  for (const cred of store.authCredentials) {
+    if (cred.pinHash && await verifySecret(pin, cred.pinHash)) {
+      approverEmployee = store.employees.find(
+        (e) => e.id === cred.employeeId && e.isActive,
+      );
+      break;
+    }
   }
 
   if (!approverEmployee) {

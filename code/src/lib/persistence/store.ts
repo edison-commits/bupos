@@ -33,7 +33,7 @@ async function ensureStoreFile() {
     await readFile(storePath, "utf8");
   } catch {
     const { createSeedStore } = await import("@/lib/persistence/seed");
-    const seed = createSeedStore();
+    const seed = await createSeedStore();
     await writeFile(storePath, JSON.stringify(seed, null, 2), "utf8");
   }
 }

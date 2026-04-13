@@ -338,7 +338,13 @@ export async function quickSwitchAction(pin: string): Promise<{ success: boolean
   const { verifySecret } = await import("@/lib/auth/crypto");
   const { readStore } = await import("@/lib/persistence/store");
   const store = await readStore();
-  const credential = store.authCredentials.find((c) => c.pinHash && verifySecret(cleanPin, c.pinHash));
+  let credential = null;
+  for (const c of store.authCredentials) {
+    if (c.pinHash && await verifySecret(cleanPin, c.pinHash)) {
+      credential = c;
+      break;
+    }
+  }
   if (!credential) return { success: false, error: "Invalid PIN" };
 
   const newEmployee = store.employees.find((e) => e.id === credential.employeeId && e.isActive);

@@ -121,7 +121,7 @@ export const POST = withAdminAuth('employee.manage', async (request, ctx) => {
     }
 
     const employeeId = randomUUID();
-    const pinHash = hashSecret(pin);
+    const pinHash = await hashSecret(pin);
     const now = new Date().toISOString();
 
     // Stored PIN hashes are salted, so detect collisions by verifying against each stored hash.
@@ -369,7 +369,7 @@ export const PATCH = withAdminAuth('employee.manage', async (request, ctx) => {
         );
       }
 
-      const pinHash = hashSecret(pin);
+      const pinHash = await hashSecret(pin);
       const now = new Date().toISOString();
 
       // Stored PIN hashes are salted, so detect collisions by verifying against each stored hash.
