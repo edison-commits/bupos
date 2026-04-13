@@ -26,7 +26,13 @@ export default async function RegisterPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const params = await searchParams;
-  const session = await getRegisterSession();
+  let session = null;
+  try {
+    session = await getRegisterSession();
+  } catch (e: unknown) {
+    // Session lookup failed (pool issue on edge) — treat as unauthenticated
+    console.error("[register/page] getRegisterSession failed:", e);
+  }
 
   // Lightweight: only load full store when logged in (RegisterConsole needs it).
   // Unauthenticated: just grab the active location name + id — single cheap query.
