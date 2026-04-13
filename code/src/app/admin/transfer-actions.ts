@@ -5,7 +5,7 @@ import { requireAdminPermission } from "@/lib/authz";
 import { orgQuery, orgTx } from "@/lib/db";
 import type { Transfer, TransferLine } from "@/lib/domain/types";
 import { revalidatePath } from "next/cache";
-import { randomUUID } from "node:crypto";
+import { randomUUID } from "@/lib/uuid";
 
 const isPg = () => !!process.env.USE_POSTGRES;
 

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { randomUUID } from "node:crypto";
+import { randomUUID } from "@/lib/uuid";
 import { orgTx, orgQuery } from "@/lib/db";
 import { withDualAuth } from "@/lib/api/with-auth";
 import { getRegisterConfig } from "@/lib/config/register-config";

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { randomUUID } from "node:crypto";
+import { randomUUID } from "@/lib/uuid";
 import { addDays } from "@/lib/utils/date";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";

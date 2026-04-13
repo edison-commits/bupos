@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { orgQuery, orgTx } from "@/lib/db";
-import { randomUUID } from "node:crypto";
+import { randomUUID } from "@/lib/uuid";
 import { withAdminAuth } from "@/lib/api/with-auth";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";

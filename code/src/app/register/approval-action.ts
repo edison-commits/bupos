@@ -1,6 +1,6 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
+import { randomUUID } from "@/lib/uuid";
 import { readStore, mutateStore } from "@/lib/persistence/store";
 import { hasPermission } from "@/lib/domain/permissions";
 import pool, { orgTx } from "@/lib/db";

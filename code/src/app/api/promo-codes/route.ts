@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { orgQuery, orgTx } from "@/lib/db";
 import { withAdminAuth, withDualAuth } from "@/lib/api/with-auth";
-import { randomUUID } from "node:crypto";
+import { randomUUID } from "@/lib/uuid";
 import { validateBody, promoCodeSchema } from "@/lib/validation/schemas";
 
 

@@ -6,7 +6,7 @@ import { orgTx, orgQuery } from "@/lib/db";
 import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 import type { GiftCard, GiftCardTransaction } from "@/lib/domain/types";
 import { revalidatePath } from "next/cache";
-import { randomUUID } from "node:crypto";
+import { randomUUID } from "@/lib/uuid";
 
 const isPg = () => !!process.env.USE_POSTGRES;
 

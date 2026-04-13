@@ -1,6 +1,6 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
+import { randomUUID } from "@/lib/uuid";
 import { revalidatePath } from "next/cache";
 import { mutateStore } from "@/lib/persistence/store";
 import { requireRegisterPermission } from "@/lib/authz";

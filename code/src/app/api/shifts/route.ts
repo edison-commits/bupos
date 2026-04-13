@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
 import { pgOpenShift } from "@/lib/persistence/postgres-store";
-import { randomUUID } from "node:crypto";
+import { randomUUID } from "@/lib/uuid";
 import { withDualAuth, withAdminAuth } from "@/lib/api/with-auth";
 import { validateBody, shiftCreateSchema } from "@/lib/validation/schemas";
 
