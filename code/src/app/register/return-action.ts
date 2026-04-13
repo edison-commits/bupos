@@ -1,5 +1,6 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { requireRegisterPermission } from "@/lib/authz";
 import { mutateStore } from "@/lib/persistence/store";
@@ -54,7 +55,7 @@ export async function processReturnAction(input: ReturnInput): Promise<ReturnRes
   const refundTax = Number((refundTotal * taxRate).toFixed(2));
   const refundGrandTotal = Number((refundTotal + refundTax).toFixed(2));
 
-  const returnTransactionId = crypto.randomUUID();
+  const returnTransactionId = randomUUID();
 
   if (isPg()) {
     const client = await orgTx(context.employee.organizationId);
@@ -93,7 +94,7 @@ export async function processReturnAction(input: ReturnInput): Promise<ReturnRes
         `INSERT INTO transaction_tenders (id, transaction_id, tender_type, amount, metadata)
          VALUES ($1, $2, $3, $4, $5)`,
         [
-          crypto.randomUUID(), returnTransactionId, input.refundMethod, -refundGrandTotal,
+          randomUUID(), returnTransactionId, input.refundMethod, -refundGrandTotal,
           JSON.stringify({
             original_transaction_id: input.originalTransactionId,
             is_return: "true",
@@ -107,7 +108,7 @@ export async function processReturnAction(input: ReturnInput): Promise<ReturnRes
         `INSERT INTO transaction_events (id, transaction_id, actor_employee_id, event_kind, notes, payload)
          VALUES ($1, $2, $3, 'return_processed', $4, $5)`,
         [
-          crypto.randomUUID(), returnTransactionId, context.employee.id,
+          randomUUID(), returnTransactionId, context.employee.id,
           `Return processed by ${context.employee.displayName}: ${input.items.length} item(s), -$${refundGrandTotal.toFixed(2)} via ${input.refundMethod}`,
           JSON.stringify({
             location_id: context.location.id,
@@ -160,7 +161,7 @@ export async function processReturnAction(input: ReturnInput): Promise<ReturnRes
             `INSERT INTO store_credit_ledger (id, organization_id, customer_id, transaction_type, amount, balance_after, employee_id, transaction_id, reason)
              VALUES ($1, $2, $3, 'refund', $4, $5, $6, $7, $8)`,
             [
-              crypto.randomUUID(), context.employee.organizationId, customerId,
+              randomUUID(), context.employee.organizationId, customerId,
               refundGrandTotal, balRows[0]?.store_credit_balance ?? 0,
               context.employee.id, returnTransactionId, input.reason,
             ],
@@ -182,7 +183,7 @@ export async function processReturnAction(input: ReturnInput): Promise<ReturnRes
         `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
          VALUES ($1, $2, $3, $4, 'transaction', $5, 'return_processed', $6, now())`,
         [
-          crypto.randomUUID(), context.employee.organizationId, context.location.id,
+          randomUUID(), context.employee.organizationId, context.location.id,
           context.employee.id, returnTransactionId,
           JSON.stringify({
             original_transaction_id: input.originalTransactionId,
@@ -205,7 +206,7 @@ export async function processReturnAction(input: ReturnInput): Promise<ReturnRes
 
     // Record the return as a negative tender
     store.transactionTenderPlaceholders.unshift({
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       transactionId: returnTransactionId,
       tenderType: input.refundMethod,
       amount: -refundGrandTotal,
@@ -218,7 +219,7 @@ export async function processReturnAction(input: ReturnInput): Promise<ReturnRes
 
     // Record return event
     store.transactionEventPlaceholders.unshift({
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       transactionId: returnTransactionId,
       eventKind: "transaction_placeholder",
       actorEmployeeId: context.employee.id,

@@ -7,8 +7,6 @@ import { orgQuery } from "@/lib/db";
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api/with-auth";
 
-export const runtime = "edge";
-
 const REPORT_TYPES = new Set(["summary", "category", "employee", "hourly", "tender", "products", "shifts"]);
 
 function isValidDate(str: string): boolean {

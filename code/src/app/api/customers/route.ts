@@ -9,8 +9,6 @@ import { pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
 import { validateBody, customerCreateSchema, customerUpdateSchema } from '@/lib/validation/schemas';
 import { checkRateLimit } from '@/lib/auth/rate-limit';
 
-export const runtime = "edge";
-
 export const GET = withAdminAuth('employee.manage', async (request, ctx) => {
   const { orgId } = ctx;
 
@@ -26,7 +24,7 @@ export const GET = withAdminAuth('employee.manage', async (request, ctx) => {
   let cursorId: string | null = null;
   if (cursorParam) {
     try {
-      const decoded = JSON.parse(atob(cursorParam));
+      const decoded = JSON.parse(Buffer.from(cursorParam, 'base64').toString('utf-8'));
       cursorUpdatedAt = decoded.updated_at ?? null;
       cursorId = decoded.id ?? null;
     } catch {
@@ -154,7 +152,7 @@ export const GET = withAdminAuth('employee.manage', async (request, ctx) => {
     let nextCursor: string | null = null;
     if (hasMore && customers.length > 0) {
       const last = customers[customers.length - 1];
-      nextCursor = btoa(JSON.stringify({ id: last.id, updated_at: last.updated_at }));
+      nextCursor = Buffer.from(JSON.stringify({ id: last.id, updated_at: last.updated_at })).toString("base64");
     }
 
     return NextResponse.json({

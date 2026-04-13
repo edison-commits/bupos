@@ -4,11 +4,11 @@ import type { NextRequest } from 'next/server'
 function generateNonce(): string {
   const bytes = new Uint8Array(16)
   crypto.getRandomValues(bytes)
-  return btoa(String.fromCharCode(...bytes))
+  return Buffer.from(bytes).toString('base64')
 }
 
 export function middleware(request: NextRequest) {
-  const isApiRoute = request.nextUrl.pathname.startsWith('/api/')
+  const nonce = generateNonce()
 
   // Handle CORS preflight
   if (request.method === 'OPTIONS') {
@@ -30,10 +30,7 @@ export function middleware(request: NextRequest) {
 
   // Pass nonce to the app via a custom request header so Next.js can read it
   const requestHeaders = new Headers(request.headers)
-  if (!isApiRoute) {
-    const nonce = generateNonce()
-    requestHeaders.set('x-nonce', nonce)
-  }
+  requestHeaders.set('x-nonce', nonce)
 
   const response = NextResponse.next({
     request: { headers: requestHeaders },
@@ -65,14 +62,11 @@ export function middleware(request: NextRequest) {
   // XSS protection
   response.headers.set('X-XSS-Protection', '1; mode=block')
 
-  // CSP only for page routes — API routes return JSON and don't need nonce-based CSP
-  if (!isApiRoute) {
-    const nonce = requestHeaders.get('x-nonce') ?? ''
-    response.headers.set(
-      'Content-Security-Policy',
-      `default-src 'self'; script-src 'self' 'nonce-${nonce}'; style-src 'self' 'nonce-${nonce}'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' https://*.supabase.co https://*.cloudflare.com; frame-ancestors 'none';`
-    )
-  }
+  // Content Security Policy — nonce-based, no unsafe-inline
+  response.headers.set(
+    'Content-Security-Policy',
+    `default-src 'self'; script-src 'self' 'nonce-${nonce}'; style-src 'self' 'nonce-${nonce}'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' https://*.supabase.co https://*.cloudflare.com; frame-ancestors 'none';`
+  )
 
   // HSTS — force HTTPS (1 year, include subdomains)
   if (process.env.NODE_ENV === 'production') {

@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
 import { pool } from "@/lib/db";
 
-export const runtime = "edge";
-
 /**
  * GET /api/health
  * Lightweight liveness probe — verifies the DB can execute a query under load.

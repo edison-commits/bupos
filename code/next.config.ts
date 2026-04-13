@@ -8,15 +8,6 @@ const nextConfig: NextConfig = {
       { protocol: "https", hostname: "plus.unsplash.com" },
     ],
   },
-  experimental: {
-    optimizePackageImports: ["lucide-react", "recharts"],
-  },
-  compiler: {
-    removeConsole:
-      process.env.NODE_ENV === "production"
-        ? { exclude: ["error", "warn"] }
-        : false,
-  },
 };
 
 export default nextConfig;

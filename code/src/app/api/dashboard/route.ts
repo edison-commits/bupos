@@ -2,8 +2,6 @@ import { NextResponse } from "next/server";
 import { orgQuery } from "@/lib/db";
 import { withAuth } from "@/lib/api/with-auth";
 
-export const runtime = "edge";
-
 
 /**
  * GET /api/dashboard
@@ -137,7 +135,7 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
     total: Number(Number(r.total).toFixed(2)),
   }));
 
-  const response = NextResponse.json({
+  return NextResponse.json({
     range,
     fromDate,
     toDate,
@@ -158,6 +156,4 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
     recentTransactions: recentResult.rows,
     lowStockAlerts: lowStockResult.rows,
   });
-  response.headers.set("Cache-Control", "private, max-age=10, stale-while-revalidate=30");
-  return response;
 });

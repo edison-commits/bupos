@@ -2,7 +2,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useState, memo } from "react";
+import { useState } from "react";
 import type { Cart, CartTotals } from "@/lib/cart/types";
 import type { TenderEntry } from "./tender-panel";
 import { formatReceipt, type ReceiptData } from "@/lib/receipt/format-receipt";
@@ -284,7 +284,7 @@ export function ReceiptView({
   );
 }
 
-const ReceiptRow = memo(function ReceiptRow({
+function ReceiptRow({
   label,
   value,
   bold,
@@ -307,7 +307,7 @@ const ReceiptRow = memo(function ReceiptRow({
       <span>{value < 0 ? "−" : ""}${Math.abs(value).toFixed(2)}</span>
     </div>
   );
-});
+}
 
 function formatTenderLabel(type: string): string {
   const map: Record<string, string> = {

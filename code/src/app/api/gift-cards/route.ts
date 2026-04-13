@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
 import { orgQuery, orgTx } from "@/lib/db";
+import { randomUUID } from "node:crypto";
 import { withAdminAuth } from "@/lib/api/with-auth";
 import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { validateBody, giftCardSchema } from "@/lib/validation/schemas";
-
-export const runtime = "edge";
 
 /**
  * GET /api/gift-cards
@@ -132,7 +131,7 @@ export const POST = withAdminAuth('catalog.manage', async (req, ctx) => {
 
       const client = await orgTx(orgId);
       try {
-        const gcId = crypto.randomUUID();
+        const gcId = randomUUID();
         await client.query(
           `INSERT INTO gift_cards (id, organization_id, code, balance, initial_balance, status, customer_id, activated_by, activated_at, created_at, updated_at)
            VALUES ($1, $2, $3, $4, $4, 'active', $5, $6, now(), now(), now())`,
@@ -142,7 +141,7 @@ export const POST = withAdminAuth('catalog.manage', async (req, ctx) => {
         await client.query(
           `INSERT INTO gift_card_transactions (id, gift_card_id, transaction_type, amount, balance_after, employee_id, reason, created_at)
            VALUES ($1, $2, 'activation', $3, $3, $4, 'New gift card activated', now())`,
-          [crypto.randomUUID(), gcId, amount, employeeId],
+          [randomUUID(), gcId, amount, employeeId],
         );
 
         await client.query("COMMIT");
@@ -188,7 +187,7 @@ export const POST = withAdminAuth('catalog.manage', async (req, ctx) => {
         await client.query(
           `INSERT INTO gift_card_transactions (id, gift_card_id, transaction_type, amount, balance_after, employee_id, reason, created_at)
            VALUES ($1, $2, 'reload', $3, $4, $5, 'Gift card reloaded', now())`,
-          [crypto.randomUUID(), giftCardId, amount, newBalance, employeeId],
+          [randomUUID(), giftCardId, amount, newBalance, employeeId],
         );
 
         await client.query("COMMIT");

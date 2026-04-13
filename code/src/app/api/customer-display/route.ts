@@ -4,8 +4,6 @@ import { hasPermission } from "@/lib/authz";
 import { orgQuery } from "@/lib/db";
 import { validateBody, customerDisplaySchema } from "@/lib/validation/schemas";
 
-export const runtime = "edge";
-
 async function authorizeRegisterSession(registerSessionId: string): Promise<NextResponse | { orgId: string }> {
   const ctx = await getRegisterSession();
   if (!ctx?.employee || !ctx.registerSession) {

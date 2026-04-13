@@ -4,8 +4,6 @@ import { withDualAuth } from '@/lib/api/with-auth';
 import { pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
 import { validateBody, purchaseOrderCreateSchema, purchaseOrderUpdateSchema, purchaseOrderReceiveSchema } from '@/lib/validation/schemas';
 
-export const runtime = "edge";
-
 /**
  * Purchase Orders API
  *

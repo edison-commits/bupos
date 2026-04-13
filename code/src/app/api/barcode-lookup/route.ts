@@ -2,8 +2,6 @@ import { orgQuery } from '@/lib/db';
 import { NextResponse } from 'next/server';
 import { withDualAuth } from '@/lib/api/with-auth';
 
-export const runtime = "edge";
-
 export const GET = withDualAuth("catalog.manage", async (request, ctx) => {
   const { orgId, locationId } = ctx;
   if (!locationId) {

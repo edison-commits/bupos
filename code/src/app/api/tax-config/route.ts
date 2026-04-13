@@ -3,8 +3,6 @@ import { orgQuery } from "@/lib/db";
 import { withDualAuth, withAdminAuth } from "@/lib/api/with-auth";
 import { validateBody, taxConfigUpdateSchema } from "@/lib/validation/schemas";
 
-export const runtime = "edge";
-
 
 /**
  * GET /api/tax-config
@@ -29,12 +27,10 @@ export const GET = withDualAuth("catalog.manage", async (req, ctx) => {
         return NextResponse.json({ error: "Location not found" }, { status: 404 });
       }
       const loc = result.rows[0];
-      const resp = NextResponse.json({
+      return NextResponse.json({
         location: loc,
         taxRatePercent: Number((Number(loc.tax_rate) * 100).toFixed(4)),
       });
-      resp.headers.set("Cache-Control", "private, max-age=30, stale-while-revalidate=120");
-      return resp;
     }
 
     const locations = await orgQuery(
@@ -43,14 +39,12 @@ export const GET = withDualAuth("catalog.manage", async (req, ctx) => {
       [],
     );
 
-    const response = NextResponse.json({
+    return NextResponse.json({
       locations: locations.rows.map((l: Record<string, unknown>) => ({
         ...l,
         taxRatePercent: Number((Number(l.tax_rate) * 100).toFixed(4)),
       })),
     });
-    response.headers.set("Cache-Control", "private, max-age=30, stale-while-revalidate=120");
-    return response;
   } catch (err) {
     console.error("GET /api/tax-config error:", err);
     return NextResponse.json({ error: "Failed to fetch tax config" }, { status: 500 });

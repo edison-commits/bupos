@@ -6,7 +6,7 @@ import type { Cart, CartLineItem, CartTotals, DiscountMode, LineDiscount } from 
 export function createCart(registerSessionId: EntityId, employeeId: EntityId, locationId: EntityId): Cart {
   const ts = new Date().toISOString();
   return {
-    id: crypto.randomUUID(),
+    id: randomUUID(),
     registerSessionId,
     employeeId,
     locationId,
@@ -37,7 +37,7 @@ export function addItem(cart: Cart, item: Omit<CartLineItem, 'id'>): Cart {
   }
   return {
     ...cart,
-    items: [...cart.items, { ...item, id: crypto.randomUUID() }],
+    items: [...cart.items, { ...item, id: randomUUID() }],
     updatedAt: new Date().toISOString(),
   };
 }

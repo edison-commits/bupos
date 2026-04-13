@@ -5,6 +5,7 @@ import { requireAdminPermission } from "@/lib/authz";
 import { orgQuery, orgTx } from "@/lib/db";
 import type { Transfer, TransferLine } from "@/lib/domain/types";
 import { revalidatePath } from "next/cache";
+import { randomUUID } from "node:crypto";
 
 const isPg = () => !!process.env.USE_POSTGRES;
 
@@ -32,7 +33,7 @@ export async function createTransferAction(formData: FormData) {
     const orgId = ctx.employee.organizationId;
     const client = await orgTx(orgId);
     try {
-      const transferId = crypto.randomUUID();
+      const transferId = randomUUID();
       await client.query(
         `INSERT INTO transfers (id, organization_id, source_location_id, destination_location_id, status, requested_by, notes, created_at, updated_at)
          VALUES ($1, $2, $3, $4, 'requested', $5, $6, now(), now())`,
@@ -42,7 +43,7 @@ export async function createTransferAction(formData: FormData) {
         await client.query(
           `INSERT INTO transfer_lines (id, transfer_id, product_variant_id, quantity_requested, created_at)
            VALUES ($1, $2, $3, $4, now())`,
-          [crypto.randomUUID(), transferId, line.productVariantId, line.quantity],
+          [randomUUID(), transferId, line.productVariantId, line.quantity],
         );
       }
       await client.query("COMMIT");
@@ -164,7 +165,7 @@ export async function receiveTransferAction(transferId: string) {
            VALUES ($1, $2, $3, $4, $5, 0, 0, now(), now())
            ON CONFLICT (product_variant_id, location_id)
            DO UPDATE SET on_hand = inventory_levels.on_hand + $5, updated_at = now()`,
-          [crypto.randomUUID(), orgId, line.product_variant_id, transfer.destination_location_id, line.qty],
+          [randomUUID(), orgId, line.product_variant_id, transfer.destination_location_id, line.qty],
         );
       }
       await client.query("COMMIT");

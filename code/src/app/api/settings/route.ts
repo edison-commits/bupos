@@ -3,8 +3,6 @@ import { orgQuery } from '@/lib/db';
 import { withDualAuth, withAdminAuth } from '@/lib/api/with-auth';
 import { validateBody, settingsUpdateSchema } from '@/lib/validation/schemas';
 
-export const runtime = "edge";
-
 export const GET = withDualAuth("catalog.manage", async (req, ctx) => {
   const { orgId, locationId } = ctx;
   if (!locationId) {
@@ -40,7 +38,7 @@ export const GET = withDualAuth("catalog.manage", async (req, ctx) => {
       return NextResponse.json({ error: 'Location not found' }, { status: 404 });
     }
 
-    const response = NextResponse.json({
+    return NextResponse.json({
       store: {
         name: org.name,
         legalName: org.legal_name,
@@ -72,8 +70,6 @@ export const GET = withDualAuth("catalog.manage", async (req, ctx) => {
         storePhone: org.receipt_store_phone || '',
       },
     });
-    response.headers.set("Cache-Control", "private, max-age=30, stale-while-revalidate=120");
-    return response;
   } catch (error) {
     console.error('Settings GET error:', error);
     return NextResponse.json({ error: 'Failed to fetch settings' }, { status: 500 });

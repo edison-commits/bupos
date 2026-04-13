@@ -5,8 +5,6 @@ import { pgCloseShift } from "@/lib/persistence/postgres-store";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { validateBody, shiftCloseSchema } from "@/lib/validation/schemas";
 
-export const runtime = "edge";
-
 /**
  * GET /api/shift-close?shift=<id>
  * Fetch current open shift and Z-report data.

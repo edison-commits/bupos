@@ -1,5 +1,6 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { readStore, mutateStore } from "@/lib/persistence/store";
 import { hasPermission } from "@/lib/domain/permissions";
 import pool, { orgTx } from "@/lib/db";
@@ -70,13 +71,9 @@ export async function verifyManagerApproval(pin: string, request: ApprovalReques
   // No hardcoded dev PINs; every approver must use their real stored credential.
   let approverEmployee = null;
 
-  let matchedCredential = null;
-  for (const cred of store.authCredentials) {
-    if (cred.pinHash && (await verifySecret(pin, cred.pinHash))) {
-      matchedCredential = cred;
-      break;
-    }
-  }
+  const matchedCredential = store.authCredentials.find(
+    (cred) => cred.pinHash && verifySecret(pin, cred.pinHash),
+  );
   if (matchedCredential) {
     approverEmployee = store.employees.find(
       (e) => e.id === matchedCredential.employeeId && e.isActive,
@@ -99,7 +96,7 @@ export async function verifyManagerApproval(pin: string, request: ApprovalReques
   }
 
   // 4. Record the approval as a transaction exception
-  const exceptionId = crypto.randomUUID();
+  const exceptionId = randomUUID();
   const timestamp = new Date().toISOString();
 
   if (isPg()) {
@@ -132,7 +129,7 @@ export async function verifyManagerApproval(pin: string, request: ApprovalReques
         `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
-          crypto.randomUUID(),
+          randomUUID(),
           organizationId,
           locationId,
           approverEmployee.id,
@@ -163,7 +160,7 @@ export async function verifyManagerApproval(pin: string, request: ApprovalReques
       });
 
       s.transactionEventPlaceholders.unshift({
-        id: crypto.randomUUID(),
+        id: randomUUID(),
         transactionId: "pending_" + exceptionId,
         eventKind: "manager_override",
         actorEmployeeId: approverEmployee!.id,

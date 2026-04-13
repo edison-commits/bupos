@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminSession, getRegisterSession } from "@/lib/auth/session";
 import type { PermissionKey } from "@/lib/domain/types";
 import { hasPermission } from "@/lib/domain/permissions";
-import { withLogging } from "@/lib/logger";
 
 interface AdminContext {
   session: NonNullable<Awaited<ReturnType<typeof getAdminSession>>>["session"];
@@ -26,7 +25,7 @@ export function withAdminAuth(
   permission: PermissionKey,
   handler: (req: NextRequest, ctx: AdminContext) => Promise<NextResponse>,
 ) {
-  return withLogging(async (req: NextRequest): Promise<NextResponse> => {
+  return async (req: NextRequest): Promise<NextResponse> => {
     const adminCtx = await getAdminSession();
     if (!adminCtx?.session || !adminCtx?.employee) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -49,7 +48,7 @@ export function withAdminAuth(
       console.error(`[${req.method} ${req.nextUrl.pathname}]`, err);
       return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }
-  });
+  };
 }
 
 /** Backward-compatible alias for existing routes (audit, dashboard, reports) */
@@ -66,7 +65,7 @@ export function withDualAuth(
   permission: PermissionKey,
   handler: (req: NextRequest, ctx: DualContext) => Promise<NextResponse>,
 ) {
-  return withLogging(async (req: NextRequest): Promise<NextResponse> => {
+  return async (req: NextRequest): Promise<NextResponse> => {
     const [adminCtx, registerCtx] = await Promise.all([getAdminSession(), getRegisterSession()]);
     const ctx = adminCtx?.session && adminCtx?.employee ? adminCtx : null;
     const regCtx = registerCtx?.employee ? registerCtx : null;
@@ -87,7 +86,7 @@ export function withDualAuth(
 
     try {
       return await handler(req, {
-        session: ctx?.session ?? null as any,
+        session: ctx!.session,
         employee: ctx?.employee ?? regCtx!.employee,
         orgId,
         locationId: ctx?.employee?.locationIds?.[0] ?? regCtx?.location?.id,
@@ -97,5 +96,5 @@ export function withDualAuth(
       console.error(`[${req.method} ${req.nextUrl.pathname}]`, err);
       return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }
-  });
+  };
 }

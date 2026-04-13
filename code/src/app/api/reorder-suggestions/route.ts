@@ -2,8 +2,6 @@ import { NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/db';
 import { withDualAuth } from '@/lib/api/with-auth';
 
-export const runtime = "edge";
-
 
 /**
  * GET /api/reorder-suggestions
