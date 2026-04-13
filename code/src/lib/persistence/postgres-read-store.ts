@@ -4,23 +4,47 @@ import { roleDefinitions } from '@/lib/domain/permissions';
 import type { LocalStoreData } from '@/lib/persistence/types';
 import type { Organization, Location, ModifierGroup, Modifier, TenderType, Employee, Category, Product, ProductVariant, InventoryLevel, Customer, PromoCode, PromoCodeStatus } from '@/lib/domain/types';
 
-// In-memory cache — shared across all requests on the server process
+// In-memory cache
 const STORE_CACHE_TTL_MS = 30_000;
 const _storeCache = new Map<string, { data: LocalStoreData; expiresAt: number }>();
 
 function _getCachedStore(orgId: string): LocalStoreData | null {
   const cached = _storeCache.get(orgId);
   if (!cached) return null;
-  if (Date.now() > cached.expiresAt) {
-    _storeCache.delete(orgId);
-    return null;
-  }
+  if (Date.now() > cached.expiresAt) { _storeCache.delete(orgId); return null; }
   return cached.data;
 }
 
 export function invalidateStoreCache(orgId?: string): void {
   if (orgId) { _storeCache.delete(orgId); return; }
   _storeCache.clear();
+}
+
+// ── PostgREST HTTP client ────────────────────────────────────────────────────
+
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+async function restGet(table: string, orgId: string, select?: string, extraParams?: string): Promise<Record<string, unknown>[]> {
+  const params = new URLSearchParams({
+    organization_id: `eq.${orgId}`,
+    select: select || '*',
+    ...(extraParams ? Object.fromEntries(new URLSearchParams(extraParams)) : {}),
+  });
+  const url = `${SUPABASE_URL}/rest/v1/${table}?${params}`;
+  const res = await fetch(url, {
+    headers: {
+      apikey: SUPABASE_KEY!,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+      'Content-Type': 'application/json',
+      Prefer: 'return=representation',
+    },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`PostgREST ${table} error: ${res.status} ${text}`);
+  }
+  return res.json();
 }
 
 // ── Row mappers ──────────────────────────────────────────────────────────────
@@ -137,126 +161,115 @@ function toCustomer(r: Record<string, unknown>): Customer {
   };
 }
 
-// ── Query execution ──────────────────────────────────────────────────────────
-
-function parseArray<T>(val: unknown): T[] {
-  if (typeof val === 'string') return JSON.parse(val) as T[];
-  if (Array.isArray(val)) return val as T[];
-  return [];
-}
-
 /**
- * Build the full LocalStoreData from Postgres using a SINGLE query
- * to avoid WebSocket connection exhaustion on Cloudflare Workers.
+ * Build the full LocalStoreData using PostgREST HTTP API.
+ * Parallel fetch requests — no WebSocket connections, no edge issues.
  */
 export async function readStoreFromPg(orgId?: string): Promise<LocalStoreData> {
   if (!orgId) throw new Error("readStoreFromPg requires explicit orgId");
   const cached = _getCachedStore(orgId);
   if (cached) return cached;
 
-  // Use pool for the single combined query — much fewer connections than 15 separate queries
-  const { default: pool } = await import('@/lib/db');
+  // Parallel HTTP requests — all via PostgREST (HTTP, no WebSockets)
+  const [
+    orgRows, locations, employees, categories, products, variants,
+    inventory, customers, promoCodes, modifierGroups, modifiers,
+    authCreds, sessions, shifts, registerSessions, payInOuts,
+  ] = await Promise.all([
+    restGet('organizations', orgId),
+    restGet('locations', orgId, '*', 'is_active=eq.true'),
+    restGet('employees', orgId),
+    restGet('categories', orgId),
+    restGet('products', orgId),
+    restGet('product_variants', orgId),
+    restGet('inventory_levels', orgId),
+    restGet('customers', orgId),
+    restGet('promo_codes', orgId),
+    restGet('modifier_groups', orgId),
+    restGet('modifiers', orgId),
+    restGet('auth_credentials', orgId),
+    restGet('sessions', orgId, '*', 'order=created_at.desc&limit=100'),
+    restGet('shifts', orgId, '*', 'order=opened_at.desc&limit=200'),
+    restGet('register_sessions', orgId, '*', 'order=started_at.desc&limit=200'),
+    restGet('pay_in_outs', orgId, '*', 'order=created_at.desc&limit=500'),
+  ]);
 
-  const { rows } = await pool.query(`
-    SELECT
-      (SELECT row_to_json(o) FROM organizations o WHERE o.id = $1 LIMIT 1) AS org,
-      (SELECT coalesce(json_agg(l.*), '[]') FROM locations l WHERE l.organization_id = $1 AND l.is_active = true) AS locations,
-      (SELECT coalesce(json_agg(e.*), '[]') FROM employees e WHERE e.organization_id = $1) AS employees,
-      (SELECT coalesce(json_agg(c.*), '[]') FROM categories c WHERE c.organization_id = $1) AS categories,
-      (SELECT coalesce(json_agg(DISTINCT (p.*)), '[]') FROM products p WHERE p.organization_id = $1) AS products,
-      (SELECT coalesce(json_agg(v.*), '[]') FROM product_variants v WHERE v.organization_id = $1) AS variants,
-      (SELECT coalesce(json_agg(i.*), '[]') FROM inventory_levels i WHERE i.organization_id = $1) AS inventory,
-      (SELECT coalesce(json_agg(cust.*), '[]') FROM customers cust WHERE cust.organization_id = $1) AS customers,
-      (SELECT coalesce(json_agg(pc.*), '[]') FROM promo_codes pc WHERE pc.organization_id = $1) AS promo_codes,
-      (SELECT coalesce(json_agg(mg.*), '[]') FROM modifier_groups mg WHERE mg.organization_id = $1) AS modifier_groups,
-      (SELECT coalesce(json_agg(m.*), '[]') FROM modifiers m WHERE m.organization_id = $1) AS modifiers,
-      (SELECT coalesce(json_agg(ac.*), '[]') FROM auth_credentials ac JOIN employees e2 ON e2.id = ac.employee_id WHERE e2.organization_id = $1) AS auth_credentials,
-      (SELECT coalesce(json_agg(s.* ORDER BY s.created_at DESC), '[]') FROM (SELECT * FROM sessions WHERE organization_id = $1 ORDER BY created_at DESC LIMIT 100) s) AS sessions,
-      (SELECT coalesce(json_agg(sf.*), '[]') FROM (SELECT sf.* FROM shifts sf JOIN locations loc ON loc.id = sf.location_id WHERE loc.organization_id = $1 ORDER BY sf.opened_at DESC LIMIT 200) sf) AS shifts,
-      (SELECT coalesce(json_agg(rs.*), '[]') FROM (SELECT * FROM register_sessions WHERE organization_id = $1 ORDER BY started_at DESC LIMIT 200) rs) AS register_sessions,
-      (SELECT coalesce(json_agg(pio.*), '[]') FROM (SELECT * FROM pay_in_outs WHERE organization_id = $1 ORDER BY created_at DESC LIMIT 500) pio) AS pay_in_outs
-  `, [orgId]);
-
-  const row = rows[0];
-  if (!row || !row.org) throw new Error(`Organization ${orgId} not found`);
-
-  const org = toOrg(row.org as Record<string, unknown>);
-  const locations = parseArray<Record<string, unknown>>(row.locations).map(toLocation);
-  const employees = parseArray<Record<string, unknown>>(row.employees).map(toEmployee);
-  const categories = parseArray<Record<string, unknown>>(row.categories).map(toCategory);
-  const products = parseArray<Record<string, unknown>>(row.products).map(toProduct);
-  const variants = parseArray<Record<string, unknown>>(row.variants).map(toVariant);
-  const inventory = parseArray<Record<string, unknown>>(row.inventory).map(toInventory);
-  const customers = parseArray<Record<string, unknown>>(row.customers).map(toCustomer);
-  const promoCodes = parseArray<Record<string, unknown>>(row.promo_codes).map((r) => ({
-    id: r.id as string, organizationId: r.organization_id as string,
-    code: r.code as string, description: (r.description as string) ?? '',
-    type: r.type as PromoCode['type'], value: Number(r.value),
-    minimumPurchase: Number(r.minimum_purchase ?? 0), maxRedemptions: Number(r.max_redemptions ?? 0),
-    currentRedemptions: Number(r.current_redemptions ?? 0), status: r.status as PromoCodeStatus,
-    startsAt: String(r.starts_at), expiresAt: r.expires_at ? String(r.expires_at) : undefined,
-    createdAt: String(r.created_at), updatedAt: String(r.updated_at),
-  }));
-  const modifierGroups = parseArray<Record<string, unknown>>(row.modifier_groups).map(toModifierGroup);
-  const modifiers = parseArray<Record<string, unknown>>(row.modifiers).map(toModifier);
-  const authCredentials = parseArray<Record<string, unknown>>(row.auth_credentials).map((r) => ({
-    employeeId: r.employee_id as string, email: (r.email as string) ?? undefined,
-    passwordHash: (r.password_hash as string) ?? undefined, pinHash: (r.pin_hash as string) ?? undefined,
-    passwordLastRotatedAt: r.password_last_rotated_at ? String(r.password_last_rotated_at) : undefined,
-    pinLastRotatedAt: r.pin_last_rotated_at ? String(r.pin_last_rotated_at) : undefined,
-  }));
-  const sessions = parseArray<Record<string, unknown>>(row.sessions).map((r) => ({
-    id: r.id as string, employeeId: r.employee_id as string,
-    organizationId: r.organization_id as string, scope: r.scope as 'admin' | 'register',
-    locationId: (r.location_id as string) ?? undefined, createdAt: String(r.created_at),
-    lastSeenAt: String(r.last_seen_at), expiresAt: String(r.expires_at),
-  }));
-  const shifts = parseArray<Record<string, unknown>>(row.shifts).map((r) => ({
-    id: r.id as string, locationId: r.location_id as string, employeeId: r.employee_id as string,
-    registerSessionId: r.register_session_id as string, status: r.status as 'open' | 'closed',
-    openedAt: String(r.opened_at), openingFloat: Number(r.opening_float),
-    openedNote: (r.opened_note as string) ?? undefined,
-    closedAt: r.closed_at ? String(r.closed_at) : undefined,
-    closingExpectedCash: r.closing_expected_cash != null ? Number(r.closing_expected_cash) : undefined,
-    closingDeclaredCash: r.closing_declared_cash != null ? Number(r.closing_declared_cash) : undefined,
-    closingVariance: r.closing_variance != null ? Number(r.closing_variance) : undefined,
-    closedNote: (r.closed_note as string) ?? undefined, blindClose: (r.blind_close as boolean) ?? undefined,
-  }));
-  const registerSessions = parseArray<Record<string, unknown>>(row.register_sessions).map((r) => ({
-    id: r.id as string, authSessionId: r.auth_session_id as string,
-    employeeId: r.employee_id as string, locationId: r.location_id as string,
-    status: r.status as 'active' | 'ended', startedAt: String(r.started_at),
-    endedAt: r.ended_at ? String(r.ended_at) : undefined,
-    activeShiftId: (r.active_shift_id as string) ?? undefined,
-    lastCartId: (r.last_cart_id as string) ?? undefined,
-    lastTransactionId: (r.last_transaction_id as string) ?? undefined,
-    pendingExceptionIds: (r.pending_exception_ids as string[]) ?? [],
-  }));
-  const payInOuts = parseArray<Record<string, unknown>>(row.pay_in_outs).map((r) => ({
-    id: r.id as string, shiftId: r.shift_id as string, locationId: r.location_id as string,
-    employeeId: r.employee_id as string, direction: r.direction as 'pay_in' | 'pay_out',
-    amount: Number(r.amount), reason: (r.reason as string) ?? '',
-    note: (r.note as string) ?? undefined, createdAt: String(r.created_at),
-  }));
+  const org = toOrg(orgRows[0]);
 
   const result: LocalStoreData = {
-    organization: org, locations, employees, roles: roleDefinitions,
-    categories, modifierGroups, modifiers, products, variants, inventory, customers,
+    organization: org,
+    locations: locations.map(toLocation),
+    employees: employees.map(toEmployee),
+    roles: roleDefinitions,
+    categories: categories.map(toCategory),
+    modifierGroups: modifierGroups.map(toModifierGroup),
+    modifiers: modifiers.map(toModifier),
+    products: products.map(toProduct),
+    variants: variants.map(toVariant),
+    inventory: inventory.map(toInventory),
+    customers: customers.map(toCustomer),
     inventoryAdjustments: [],
     registerConfiguration: {
-      locationId: locations[0]?.id ?? '', noReceiptEnabled: true,
+      locationId: (locations[0] as Record<string, unknown>)?.id as string ?? '',
+      noReceiptEnabled: true,
       receiptMode: 'browser-print' as const,
       supportedTenders: ['cash', 'card', 'store_credit', 'loyalty', 'gift_card', 'split'] as TenderType[],
       approvalThresholds: defaultApprovalThresholds,
       loyalty: { earnRatePerDollar: 1, redemptionValuePerPoint: 0.01, minimumRedemption: 100 },
     },
-    shifts, payInOuts, registerSessions,
+    shifts: shifts.map((r: Record<string, unknown>) => ({
+      id: r.id as string, locationId: r.location_id as string, employeeId: r.employee_id as string,
+      registerSessionId: r.register_session_id as string, status: r.status as 'open' | 'closed',
+      openedAt: String(r.opened_at), openingFloat: Number(r.opening_float),
+      openedNote: (r.opened_note as string) ?? undefined,
+      closedAt: r.closed_at ? String(r.closed_at) : undefined,
+      closingExpectedCash: r.closing_expected_cash != null ? Number(r.closing_expected_cash) : undefined,
+      closingDeclaredCash: r.closing_declared_cash != null ? Number(r.closing_declared_cash) : undefined,
+      closingVariance: r.closing_variance != null ? Number(r.closing_variance) : undefined,
+      closedNote: (r.closed_note as string) ?? undefined, blindClose: (r.blind_close as boolean) ?? undefined,
+    })),
+    payInOuts: payInOuts.map((r: Record<string, unknown>) => ({
+      id: r.id as string, shiftId: r.shift_id as string, locationId: r.location_id as string,
+      employeeId: r.employee_id as string, direction: r.direction as 'pay_in' | 'pay_out',
+      amount: Number(r.amount), reason: (r.reason as string) ?? '',
+      note: (r.note as string) ?? undefined, createdAt: String(r.created_at),
+    })),
+    registerSessions: registerSessions.map((r: Record<string, unknown>) => ({
+      id: r.id as string, authSessionId: r.auth_session_id as string,
+      employeeId: r.employee_id as string, locationId: r.location_id as string,
+      status: r.status as 'active' | 'ended', startedAt: String(r.started_at),
+      endedAt: r.ended_at ? String(r.ended_at) : undefined,
+      activeShiftId: (r.active_shift_id as string) ?? undefined,
+      lastCartId: (r.last_cart_id as string) ?? undefined,
+      lastTransactionId: (r.last_transaction_id as string) ?? undefined,
+      pendingExceptionIds: (r.pending_exception_ids as string[]) ?? [],
+    })),
     transactionTenderPlaceholders: [], transactionEventPlaceholders: [], transactionExceptionPlaceholders: [],
-    authCredentials, sessions,
+    authCredentials: authCreds.map((r: Record<string, unknown>) => ({
+      employeeId: r.employee_id as string, email: (r.email as string) ?? undefined,
+      passwordHash: (r.password_hash as string) ?? undefined, pinHash: (r.pin_hash as string) ?? undefined,
+      passwordLastRotatedAt: r.password_last_rotated_at ? String(r.password_last_rotated_at) : undefined,
+      pinLastRotatedAt: r.pin_last_rotated_at ? String(r.pin_last_rotated_at) : undefined,
+    })),
+    sessions: sessions.map((r: Record<string, unknown>) => ({
+      id: r.id as string, employeeId: r.employee_id as string,
+      organizationId: r.organization_id as string, scope: r.scope as 'admin' | 'register',
+      locationId: (r.location_id as string) ?? undefined, createdAt: String(r.created_at),
+      lastSeenAt: String(r.last_seen_at), expiresAt: String(r.expires_at),
+    })),
+    promoCodes: promoCodes.map((r: Record<string, unknown>) => ({
+      id: r.id as string, organizationId: r.organization_id as string,
+      code: r.code as string, description: (r.description as string) ?? '',
+      type: r.type as PromoCode['type'], value: Number(r.value),
+      minimumPurchase: Number(r.minimum_purchase ?? 0), maxRedemptions: Number(r.max_redemptions ?? 0),
+      currentRedemptions: Number(r.current_redemptions ?? 0), status: r.status as PromoCodeStatus,
+      startsAt: String(r.starts_at), expiresAt: r.expires_at ? String(r.expires_at) : undefined,
+      createdAt: String(r.created_at), updatedAt: String(r.updated_at),
+    })),
     giftCards: [], giftCardTransactions: [], storeCreditLedger: [], behaviorFlags: [],
     layaways: [], layawayPayments: [], stocktakes: [], stocktakeLines: [],
     transfers: [], transferLines: [], timeClockEntries: [],
-    promoCodes, promoRedemptions: [], bundles: [], suppliers: [],
+    promoRedemptions: [], bundles: [], suppliers: [],
     purchaseOrders: [], registers: [], recountSchedules: [],
   };
 
