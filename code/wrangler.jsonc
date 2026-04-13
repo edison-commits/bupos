@@ -13,7 +13,8 @@
   // Environment variables for the Worker
   "vars": {
     "USE_POSTGRES": "true",
-    "NEXT_PUBLIC_SUPABASE_URL": "https://yxzzawwrkzcqqtsbdgzf.supabase.co"
+    "NEXT_PUBLIC_SUPABASE_URL": "https://jkdgdcfpgxjfdlccvqjf.supabase.co",
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImprZGdkY2ZwZ3hqZmRsY2N2cWpmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzMTUxMzIsImV4cCI6MjA4OTg5MTEzMn0.EDjvUob3B6kp2dPMkuNS3xnVTW8Rt43tUHOZm6r4xkg"
   },
 
   // Custom domains configured via Cloudflare dashboard (basicuniformpos.com)

@@ -4,17 +4,14 @@ import { roleDefinitions } from '@/lib/domain/permissions';
 import type { LocalStoreData } from '@/lib/persistence/types';
 import type { Organization, Location, ModifierGroup, Modifier, TenderType, Employee, Category, Product, ProductVariant, InventoryLevel, Customer, PromoCode, PromoCodeStatus } from '@/lib/domain/types';
 
-// In-memory cache — shared across all requests on the server process
+// In-memory cache
 const STORE_CACHE_TTL_MS = 30_000;
 const _storeCache = new Map<string, { data: LocalStoreData; expiresAt: number }>();
 
 function _getCachedStore(orgId: string): LocalStoreData | null {
   const cached = _storeCache.get(orgId);
   if (!cached) return null;
-  if (Date.now() > cached.expiresAt) {
-    _storeCache.delete(orgId);
-    return null;
-  }
+  if (Date.now() > cached.expiresAt) { _storeCache.delete(orgId); return null; }
   return cached.data;
 }
 
@@ -26,118 +23,35 @@ export function invalidateStoreCache(orgId?: string): void {
 // ── Row mappers ──────────────────────────────────────────────────────────────
 
 function toOrg(r: Record<string, unknown>): Organization {
-  return {
-    id: r.id as string, name: r.name as string, slug: r.slug as string,
-    legalName: (r.legal_name as string) ?? undefined, timezone: r.timezone as string,
-    currencyCode: r.currency_code as string, phone: (r.phone as string) ?? '',
-    email: (r.email as string) ?? '', website: (r.website as string) ?? '',
-    receiptHeader: (r.receipt_header as string) ?? '',
-    receiptFooter: (r.receipt_footer as string) ?? 'Thank you for shopping with us!',
-    createdAt: String(r.created_at), updatedAt: String(r.updated_at),
-  };
+  return { id: r.id as string, name: r.name as string, slug: r.slug as string, legalName: (r.legal_name as string) ?? undefined, timezone: r.timezone as string, currencyCode: r.currency_code as string, phone: (r.phone as string) ?? '', email: (r.email as string) ?? '', website: (r.website as string) ?? '', receiptHeader: (r.receipt_header as string) ?? '', receiptFooter: (r.receipt_footer as string) ?? 'Thank you for shopping with us!', createdAt: String(r.created_at), updatedAt: String(r.updated_at) };
 }
-
 function toLocation(r: Record<string, unknown>): Location {
-  return {
-    id: r.id as string, organizationId: r.organization_id as string,
-    name: r.name as string, code: r.code as string,
-    address1: (r.address1 as string) ?? '', city: (r.city as string) ?? '',
-    region: (r.region as string) ?? '', postalCode: (r.postal_code as string) ?? '',
-    phone: (r.phone as string) ?? '', taxRate: Number(r.tax_rate ?? 0.1025),
-    isActive: r.is_active as boolean, createdAt: String(r.created_at), updatedAt: String(r.updated_at),
-  };
+  return { id: r.id as string, organizationId: r.organization_id as string, name: r.name as string, code: r.code as string, address1: (r.address1 as string) ?? '', city: (r.city as string) ?? '', region: (r.region as string) ?? '', postalCode: (r.postal_code as string) ?? '', phone: (r.phone as string) ?? '', taxRate: Number(r.tax_rate ?? 0.1025), isActive: r.is_active as boolean, createdAt: String(r.created_at), updatedAt: String(r.updated_at) };
 }
-
 function toModifierGroup(r: Record<string, unknown>): ModifierGroup {
-  return {
-    id: r.id as string, organizationId: r.organization_id as string, name: r.name as string,
-    selectionMode: r.selection_mode as ModifierGroup['selectionMode'],
-    minSelections: Number(r.min_selections), maxSelections: Number(r.max_selections),
-    createdAt: String(r.created_at), updatedAt: String(r.updated_at),
-  };
+  return { id: r.id as string, organizationId: r.organization_id as string, name: r.name as string, selectionMode: r.selection_mode as ModifierGroup['selectionMode'], minSelections: Number(r.min_selections), maxSelections: Number(r.max_selections), createdAt: String(r.created_at), updatedAt: String(r.updated_at) };
 }
-
 function toModifier(r: Record<string, unknown>): Modifier {
-  return {
-    id: r.id as string, organizationId: r.organization_id as string,
-    modifierGroupId: r.modifier_group_id as string, name: r.name as string,
-    priceDelta: Number(r.price_delta), sortOrder: Number(r.sort_order),
-    createdAt: String(r.created_at), updatedAt: String(r.updated_at),
-  };
+  return { id: r.id as string, organizationId: r.organization_id as string, modifierGroupId: r.modifier_group_id as string, name: r.name as string, priceDelta: Number(r.price_delta), sortOrder: Number(r.sort_order), createdAt: String(r.created_at), updatedAt: String(r.updated_at) };
 }
-
 function toEmployee(r: Record<string, unknown>): Employee {
-  return {
-    id: r.id as string, organizationId: r.organization_id as string,
-    firstName: r.first_name as string, lastName: r.last_name as string,
-    displayName: r.display_name as string, email: (r.email as string) ?? '',
-    roleKey: r.role_key as Employee['roleKey'], isActive: r.is_active as boolean,
-    locationIds: (r.location_ids as string[]) ?? [],
-    pinHint: (r.pin_hint as string) ?? '',
-    createdAt: String(r.created_at), updatedAt: String(r.updated_at),
-  };
+  return { id: r.id as string, organizationId: r.organization_id as string, firstName: r.first_name as string, lastName: r.last_name as string, displayName: r.display_name as string, email: (r.email as string) ?? '', roleKey: r.role_key as Employee['roleKey'], isActive: r.is_active as boolean, locationIds: (r.location_ids as string[]) ?? [], pinHint: (r.pin_hint as string) ?? '', createdAt: String(r.created_at), updatedAt: String(r.updated_at) };
 }
-
 function toCategory(r: Record<string, unknown>): Category {
-  return {
-    id: r.id as string, organizationId: r.organization_id as string,
-    name: r.name as string, slug: r.slug as string,
-    parentCategoryId: (r.parent_category_id as string) ?? undefined,
-    sortOrder: Number(r.sort_order), imageUrl: (r.image_url as string) ?? undefined,
-    createdAt: String(r.created_at), updatedAt: String(r.updated_at),
-  };
+  return { id: r.id as string, organizationId: r.organization_id as string, name: r.name as string, slug: r.slug as string, parentCategoryId: (r.parent_category_id as string) ?? undefined, sortOrder: Number(r.sort_order), imageUrl: (r.image_url as string) ?? undefined, createdAt: String(r.created_at), updatedAt: String(r.updated_at) };
 }
-
 function toProduct(r: Record<string, unknown>): Product {
-  return {
-    id: r.id as string, organizationId: r.organization_id as string,
-    categoryId: r.category_id as string, name: r.name as string,
-    slug: r.slug as string, description: (r.description as string) ?? '',
-    imageUrl: (r.image_url as string) ?? '', isActive: r.is_active as boolean,
-    isTouchFavorite: r.is_touch_favorite as boolean,
-    defaultVariantId: (r.default_variant_id as string) ?? undefined,
-    modifierGroupIds: (r.modifier_group_ids as string[]) ?? [],
-    createdAt: String(r.created_at), updatedAt: String(r.updated_at),
-  };
+  return { id: r.id as string, organizationId: r.organization_id as string, categoryId: r.category_id as string, name: r.name as string, slug: r.slug as string, description: (r.description as string) ?? '', imageUrl: (r.image_url as string) ?? '', isActive: r.is_active as boolean, isTouchFavorite: r.is_touch_favorite as boolean, defaultVariantId: (r.default_variant_id as string) ?? undefined, modifierGroupIds: (r.modifier_group_ids as string[]) ?? [], createdAt: String(r.created_at), updatedAt: String(r.updated_at) };
 }
-
 function toVariant(r: Record<string, unknown>): ProductVariant {
-  return {
-    id: r.id as string, organizationId: r.organization_id as string,
-    productId: r.product_id as string, sku: (r.sku as string) ?? '',
-    barcode: (r.barcode as string) ?? '', name: r.name as string,
-    sizeLabel: (r.size_label as string) ?? '', colorLabel: (r.color_label as string) ?? '',
-    price: Number(r.price),
-    compareAtPrice: r.compare_at_price != null ? Number(r.compare_at_price) : undefined,
-    cost: r.cost != null ? Number(r.cost) : undefined,
-    isActive: r.is_active as boolean,
-    createdAt: String(r.created_at), updatedAt: String(r.updated_at),
-  };
+  return { id: r.id as string, organizationId: r.organization_id as string, productId: r.product_id as string, sku: (r.sku as string) ?? '', barcode: (r.barcode as string) ?? '', name: r.name as string, sizeLabel: (r.size_label as string) ?? '', colorLabel: (r.color_label as string) ?? '', price: Number(r.price), compareAtPrice: r.compare_at_price != null ? Number(r.compare_at_price) : undefined, cost: r.cost != null ? Number(r.cost) : undefined, isActive: r.is_active as boolean, createdAt: String(r.created_at), updatedAt: String(r.updated_at) };
 }
-
 function toInventory(r: Record<string, unknown>): InventoryLevel {
-  return {
-    id: r.id as string, organizationId: r.organization_id as string,
-    locationId: r.location_id as string, productVariantId: r.variant_id as string,
-    onHand: Number(r.quantity_on_hand), reserved: Number(r.quantity_reserved ?? 0),
-    reorderPoint: Number(r.reorder_point ?? 0),
-    createdAt: String(r.created_at), updatedAt: String(r.updated_at),
-  };
+  return { id: r.id as string, organizationId: r.organization_id as string, locationId: r.location_id as string, productVariantId: r.variant_id as string, onHand: Number(r.quantity_on_hand), reserved: Number(r.quantity_reserved ?? 0), reorderPoint: Number(r.reorder_point ?? 0), createdAt: String(r.created_at), updatedAt: String(r.updated_at) };
 }
-
 function toCustomer(r: Record<string, unknown>): Customer {
-  return {
-    id: r.id as string, organizationId: r.organization_id as string,
-    firstName: r.first_name as string, lastName: r.last_name as string,
-    email: (r.email as string) ?? undefined, phone: (r.phone as string) ?? undefined,
-    loyaltyPoints: Number(r.loyalty_points ?? 0), totalSpend: Number(r.total_spend ?? 0),
-    visitCount: Number(r.visit_count ?? 0), storeCreditBalance: Number(r.store_credit_balance ?? 0),
-    isActive: r.is_active as boolean,
-    createdAt: String(r.created_at), updatedAt: String(r.updated_at),
-  };
+  return { id: r.id as string, organizationId: r.organization_id as string, firstName: r.first_name as string, lastName: r.last_name as string, email: (r.email as string) ?? undefined, phone: (r.phone as string) ?? undefined, loyaltyPoints: Number(r.loyalty_points ?? 0), totalSpend: Number(r.total_spend ?? 0), visitCount: Number(r.visit_count ?? 0), storeCreditBalance: Number(r.store_credit_balance ?? 0), isActive: r.is_active as boolean, createdAt: String(r.created_at), updatedAt: String(r.updated_at) };
 }
-
-// ── Query execution ──────────────────────────────────────────────────────────
 
 function parseArray<T>(val: unknown): T[] {
   if (typeof val === 'string') return JSON.parse(val) as T[];
@@ -146,39 +60,37 @@ function parseArray<T>(val: unknown): T[] {
 }
 
 /**
- * Build the full LocalStoreData from Postgres using a SINGLE query
- * to avoid WebSocket connection exhaustion on Cloudflare Workers.
+ * Build full LocalStoreData using Supabase RPC (single HTTP request).
+ * Uses SECURITY DEFINER function that bypasses RLS.
+ * No WebSocket connections — works perfectly on Cloudflare Workers.
  */
 export async function readStoreFromPg(orgId?: string): Promise<LocalStoreData> {
   if (!orgId) throw new Error("readStoreFromPg requires explicit orgId");
   const cached = _getCachedStore(orgId);
   if (cached) return cached;
 
-  // Use pool for the single combined query — much fewer connections than 15 separate queries
-  const { default: pool } = await import('@/lib/db');
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !supabaseKey) throw new Error('Supabase URL/key not configured');
 
-  const { rows } = await pool.query(`
-    SELECT
-      (SELECT row_to_json(o) FROM organizations o WHERE o.id = $1 LIMIT 1) AS org,
-      (SELECT coalesce(json_agg(l.*), '[]') FROM locations l WHERE l.organization_id = $1 AND l.is_active = true) AS locations,
-      (SELECT coalesce(json_agg(e.*), '[]') FROM employees e WHERE e.organization_id = $1) AS employees,
-      (SELECT coalesce(json_agg(c.*), '[]') FROM categories c WHERE c.organization_id = $1) AS categories,
-      (SELECT coalesce(json_agg(DISTINCT (p.*)), '[]') FROM products p WHERE p.organization_id = $1) AS products,
-      (SELECT coalesce(json_agg(v.*), '[]') FROM product_variants v WHERE v.organization_id = $1) AS variants,
-      (SELECT coalesce(json_agg(i.*), '[]') FROM inventory_levels i WHERE i.organization_id = $1) AS inventory,
-      (SELECT coalesce(json_agg(cust.*), '[]') FROM customers cust WHERE cust.organization_id = $1) AS customers,
-      (SELECT coalesce(json_agg(pc.*), '[]') FROM promo_codes pc WHERE pc.organization_id = $1) AS promo_codes,
-      (SELECT coalesce(json_agg(mg.*), '[]') FROM modifier_groups mg WHERE mg.organization_id = $1) AS modifier_groups,
-      (SELECT coalesce(json_agg(m.*), '[]') FROM modifiers m WHERE m.organization_id = $1) AS modifiers,
-      (SELECT coalesce(json_agg(ac.*), '[]') FROM auth_credentials ac JOIN employees e2 ON e2.id = ac.employee_id WHERE e2.organization_id = $1) AS auth_credentials,
-      (SELECT coalesce(json_agg(s.* ORDER BY s.created_at DESC), '[]') FROM (SELECT * FROM sessions WHERE organization_id = $1 ORDER BY created_at DESC LIMIT 100) s) AS sessions,
-      (SELECT coalesce(json_agg(sf.*), '[]') FROM (SELECT sf.* FROM shifts sf JOIN locations loc ON loc.id = sf.location_id WHERE loc.organization_id = $1 ORDER BY sf.opened_at DESC LIMIT 200) sf) AS shifts,
-      (SELECT coalesce(json_agg(rs.*), '[]') FROM (SELECT * FROM register_sessions WHERE organization_id = $1 ORDER BY started_at DESC LIMIT 200) rs) AS register_sessions,
-      (SELECT coalesce(json_agg(pio.*), '[]') FROM (SELECT * FROM pay_in_outs WHERE organization_id = $1 ORDER BY created_at DESC LIMIT 500) pio) AS pay_in_outs
-  `, [orgId]);
+  // Single HTTP POST to Supabase RPC
+  const res = await fetch(`${supabaseUrl}/rest/v1/rpc/get_full_store`, {
+    method: 'POST',
+    headers: {
+      apikey: supabaseKey,
+      Authorization: `Bearer ${supabaseKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ org_id: orgId }),
+  });
 
-  const row = rows[0];
-  if (!row || !row.org) throw new Error(`Organization ${orgId} not found`);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`get_full_store RPC failed: ${res.status} ${text}`);
+  }
+
+  const row = await res.json() as Record<string, unknown>;
+  if (!row.org) throw new Error(`Organization ${orgId} not found`);
 
   const org = toOrg(row.org as Record<string, unknown>);
   const locations = parseArray<Record<string, unknown>>(row.locations).map(toLocation);
@@ -252,11 +164,11 @@ export async function readStoreFromPg(orgId?: string): Promise<LocalStoreData> {
     },
     shifts, payInOuts, registerSessions,
     transactionTenderPlaceholders: [], transactionEventPlaceholders: [], transactionExceptionPlaceholders: [],
-    authCredentials, sessions,
+    authCredentials, sessions, promoCodes,
     giftCards: [], giftCardTransactions: [], storeCreditLedger: [], behaviorFlags: [],
     layaways: [], layawayPayments: [], stocktakes: [], stocktakeLines: [],
     transfers: [], transferLines: [], timeClockEntries: [],
-    promoCodes, promoRedemptions: [], bundles: [], suppliers: [],
+    promoRedemptions: [], bundles: [], suppliers: [],
     purchaseOrders: [], registers: [], recountSchedules: [],
   };
 
