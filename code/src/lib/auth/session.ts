@@ -40,17 +40,70 @@ async function pgGetPool() {
   return pool;
 }
 
+function supabaseHeaders() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !supabaseKey) return null;
+  return {
+    url: supabaseUrl,
+    headers: {
+      apikey: supabaseKey,
+      Authorization: `Bearer ${supabaseKey}`,
+      'Content-Type': 'application/json',
+    } as Record<string, string>,
+  };
+}
+
 async function pgUpdateSessionLastSeen(sessionId: string) {
+  const sb = supabaseHeaders();
+  if (sb) {
+    // Fire-and-forget via REST — no pool needed
+    await fetch(`${sb.url}/rest/v1/sessions?id=eq.${sessionId}`, {
+      method: 'PATCH',
+      headers: { ...sb.headers, Prefer: 'return=minimal' },
+      body: JSON.stringify({ last_seen_at: new Date().toISOString() }),
+    });
+    return;
+  }
   const pool = await pgGetPool();
   await pool.query(`UPDATE sessions SET last_seen_at = NOW() WHERE id = $1`, [sessionId]);
 }
 
 async function pgDeleteSession(sessionId: string) {
+  const sb = supabaseHeaders();
+  if (sb) {
+    await fetch(`${sb.url}/rest/v1/sessions?id=eq.${sessionId}`, {
+      method: 'DELETE',
+      headers: { ...sb.headers, Prefer: 'return=minimal' },
+    });
+    return;
+  }
   const pool = await pgGetPool();
   await pool.query(`DELETE FROM sessions WHERE id = $1`, [sessionId]);
 }
 
 async function pgFindSession(sessionId: string, scope: string): Promise<SessionRecord | null> {
+  const sb = supabaseHeaders();
+  if (sb) {
+    const res = await fetch(
+      `${sb.url}/rest/v1/sessions?id=eq.${sessionId}&scope=eq.${scope}&expires_at=gt.${new Date().toISOString()}&limit=1`,
+      { headers: sb.headers },
+    );
+    if (!res.ok) return null;
+    const rows = await res.json() as Record<string, unknown>[];
+    if (!rows[0]) return null;
+    const r = rows[0];
+    return {
+      id: r.id as string,
+      employeeId: r.employee_id as string,
+      organizationId: r.organization_id as string,
+      scope: r.scope as SessionRecord["scope"],
+      locationId: (r.location_id as string) ?? undefined,
+      createdAt: String(r.created_at),
+      lastSeenAt: String(r.last_seen_at),
+      expiresAt: String(r.expires_at),
+    };
+  }
   const pool = await pgGetPool();
   const { rows } = await pool.query(
     `SELECT * FROM sessions WHERE id = $1 AND scope = $2 AND expires_at > NOW()`,
@@ -118,58 +171,50 @@ async function resolveSession(scope: SessionRecord["scope"], cookieName: string,
   let activeShift: ShiftRecord | null = null;
 
   if (isPg()) {
-    // Query register_sessions and shifts directly from PG
-    const pgPool = await pgGetPool();
+    // Use Supabase RPC when available — single HTTP call, no WebSocket pool.
+    // Falls back to pool queries if Supabase env vars are missing.
+    const sb = supabaseHeaders();
+    if (sb) {
+      const rpcRes = await fetch(`${sb.url}/rest/v1/rpc/resolve_register_session`, {
+        method: 'POST',
+        headers: sb.headers,
+        body: JSON.stringify({ p_session_id: session.id }),
+      });
+      if (!rpcRes.ok) return null;
+      const rpcData = await rpcRes.json() as Record<string, unknown> | null;
+      if (!rpcData || !rpcData.register_session) return null;
 
-    // Abandoned session guard: if the auth session hasn't been seen in > 8 hours,
-    // treat the register session as abandoned and close it automatically.
-    const STALE_HOURS = 8;
-    const { rows: rsRows } = await pgPool.query(
-      `SELECT rs.* FROM register_sessions rs
-       JOIN sessions s ON s.id = rs.auth_session_id
-       WHERE rs.auth_session_id = $1 AND rs.status = 'active'
-         AND (s.last_seen_at IS NULL OR s.last_seen_at > NOW() - INTERVAL '${STALE_HOURS} hours')
-       LIMIT 1`,
-      [session.id],
-    );
-    if (!rsRows[0]) return null;
-    const rs = rsRows[0] as Record<string, unknown>;
+      const rs = rpcData.register_session as Record<string, unknown>;
 
-    // Device ID verification: if a deviceId was provided and it doesn't match,
-    // treat this session as invalid (closed) — another device took over.
-    const sessionDeviceId = (rs.device_id as string) ?? undefined;
-    if (deviceId && sessionDeviceId && sessionDeviceId !== deviceId) {
-      // Close the stale session and return null
-      await pgPool.query(
-        `UPDATE register_sessions SET status = 'ended', ended_at = NOW()
-         WHERE id = $1`,
-        [rs.id],
-      );
-      return null;
-    }
+      // Device ID verification
+      const sessionDeviceId = (rs.device_id as string) ?? undefined;
+      if (deviceId && sessionDeviceId && sessionDeviceId !== deviceId) {
+        // Close stale session via REST
+        await fetch(`${sb.url}/rest/v1/register_sessions?id=eq.${rs.id}`, {
+          method: 'PATCH',
+          headers: { ...sb.headers, Prefer: 'return=minimal' },
+          body: JSON.stringify({ status: 'ended', ended_at: new Date().toISOString() }),
+        });
+        return null;
+      }
 
-    registerSession = {
-      id: rs.id as string,
-      authSessionId: rs.auth_session_id as string,
-      employeeId: rs.employee_id as string,
-      locationId: rs.location_id as string,
-      status: rs.status as "active" | "ended",
-      startedAt: String(rs.started_at),
-      endedAt: rs.ended_at ? String(rs.ended_at) : undefined,
-      activeShiftId: (rs.active_shift_id as string) ?? undefined,
-      lastCartId: (rs.last_cart_id as string) ?? undefined,
-      lastTransactionId: (rs.last_transaction_id as string) ?? undefined,
-      pendingExceptionIds: (rs.pending_exception_ids as string[]) ?? [],
-      deviceId: sessionDeviceId,
-    };
+      registerSession = {
+        id: rs.id as string,
+        authSessionId: rs.auth_session_id as string,
+        employeeId: rs.employee_id as string,
+        locationId: rs.location_id as string,
+        status: rs.status as "active" | "ended",
+        startedAt: String(rs.started_at),
+        endedAt: rs.ended_at ? String(rs.ended_at) : undefined,
+        activeShiftId: (rs.active_shift_id as string) ?? undefined,
+        lastCartId: (rs.last_cart_id as string) ?? undefined,
+        lastTransactionId: (rs.last_transaction_id as string) ?? undefined,
+        pendingExceptionIds: (rs.pending_exception_ids as string[]) ?? [],
+        deviceId: sessionDeviceId,
+      };
 
-    if (registerSession.activeShiftId) {
-      const { rows: shiftRows } = await pgPool.query(
-        `SELECT * FROM shifts WHERE id = $1 AND status = 'open' LIMIT 1`,
-        [registerSession.activeShiftId],
-      );
-      if (shiftRows[0]) {
-        const s = shiftRows[0] as Record<string, unknown>;
+      if (rpcData.shift) {
+        const s = rpcData.shift as Record<string, unknown>;
         activeShift = {
           id: s.id as string,
           locationId: s.location_id as string,
@@ -186,6 +231,72 @@ async function resolveSession(scope: SessionRecord["scope"], cookieName: string,
           closedNote: (s.closed_note as string) ?? undefined,
           blindClose: (s.blind_close as boolean) ?? undefined,
         };
+      }
+    } else {
+      // Fallback: pool queries (for local dev without Supabase)
+      const pgPool = await pgGetPool();
+
+      const STALE_HOURS = 8;
+      const { rows: rsRows } = await pgPool.query(
+        `SELECT rs.* FROM register_sessions rs
+         JOIN sessions s ON s.id = rs.auth_session_id
+         WHERE rs.auth_session_id = $1 AND rs.status = 'active'
+           AND (s.last_seen_at IS NULL OR s.last_seen_at > NOW() - INTERVAL '${STALE_HOURS} hours')
+         LIMIT 1`,
+        [session.id],
+      );
+      if (!rsRows[0]) return null;
+      const rs = rsRows[0] as Record<string, unknown>;
+
+      const sessionDeviceId = (rs.device_id as string) ?? undefined;
+      if (deviceId && sessionDeviceId && sessionDeviceId !== deviceId) {
+        await pgPool.query(
+          `UPDATE register_sessions SET status = 'ended', ended_at = NOW()
+           WHERE id = $1`,
+          [rs.id],
+        );
+        return null;
+      }
+
+      registerSession = {
+        id: rs.id as string,
+        authSessionId: rs.auth_session_id as string,
+        employeeId: rs.employee_id as string,
+        locationId: rs.location_id as string,
+        status: rs.status as "active" | "ended",
+        startedAt: String(rs.started_at),
+        endedAt: rs.ended_at ? String(rs.ended_at) : undefined,
+        activeShiftId: (rs.active_shift_id as string) ?? undefined,
+        lastCartId: (rs.last_cart_id as string) ?? undefined,
+        lastTransactionId: (rs.last_transaction_id as string) ?? undefined,
+        pendingExceptionIds: (rs.pending_exception_ids as string[]) ?? [],
+        deviceId: sessionDeviceId,
+      };
+
+      if (registerSession.activeShiftId) {
+        const { rows: shiftRows } = await pgPool.query(
+          `SELECT * FROM shifts WHERE id = $1 AND status = 'open' LIMIT 1`,
+          [registerSession.activeShiftId],
+        );
+        if (shiftRows[0]) {
+          const s = shiftRows[0] as Record<string, unknown>;
+          activeShift = {
+            id: s.id as string,
+            locationId: s.location_id as string,
+            employeeId: s.employee_id as string,
+            registerSessionId: s.register_session_id as string,
+            status: s.status as "open" | "closed",
+            openedAt: String(s.opened_at),
+            openingFloat: Number(s.opening_float),
+            openedNote: (s.opened_note as string) ?? undefined,
+            closedAt: s.closed_at ? String(s.closed_at) : undefined,
+            closingExpectedCash: s.closing_expected_cash != null ? Number(s.closing_expected_cash) : undefined,
+            closingDeclaredCash: s.closing_declared_cash != null ? Number(s.closing_declared_cash) : undefined,
+            closingVariance: s.closing_variance != null ? Number(s.closing_variance) : undefined,
+            closedNote: (s.closed_note as string) ?? undefined,
+            blindClose: (s.blind_close as boolean) ?? undefined,
+          };
+        }
       }
     }
   } else {

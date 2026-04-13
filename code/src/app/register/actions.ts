@@ -3,7 +3,6 @@
 import { randomUUID } from "@/lib/uuid";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { pool, orgTx } from "@/lib/db";
 import { requireRegisterPermission, hasPermission } from "@/lib/authz";import { getRegisterSession, getAdminSession, signInRegister, signOutRegister } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { mutateStore } from "@/lib/persistence/store";
@@ -150,6 +149,7 @@ export async function adminOpenShiftAction(formData: FormData) {
 
   // Check if employee already has an open shift at this location
   if (isPg()) {
+    const { pool } = await import("@/lib/db");
     const { rows: existing } = await pool.query(
       `SELECT id FROM shifts WHERE employee_id = $1 AND location_id = $2 AND status = 'open' LIMIT 1`,
       [employeeId, locationId],
@@ -298,6 +298,7 @@ export async function quickSwitchAction(pin: string): Promise<{ success: boolean
     }
 
     const timestamp = new Date().toISOString();
+    const { orgTx } = await import("@/lib/db");
     const client = await orgTx(context.employee.organizationId);
     try {
       await client.query(`UPDATE sessions SET employee_id = $1 WHERE id = $2`, [newEmployee.id, context.session.id]);
