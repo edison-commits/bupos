@@ -118,14 +118,13 @@ export async function readStoreFromPg(orgId?: string): Promise<LocalStoreData> {
   }
   const cached = _getCachedStore(orgId);
   if (cached) return cached;
-  // Read path uses pool.query directly — RLS fallback policy allows access
-  // when no org context is set. Write paths use orgTx() for strict isolation.
-  // CRITICAL: Run all queries in parallel to avoid Cloudflare Worker CPU timeouts.
-
-  const { rows: orgRows } = await pool.query('SELECT * FROM organizations WHERE id = $1 LIMIT 1', [orgId]);
+  // CRITICAL: Batch queries to avoid overwhelming neon serverless WebSocket
+  // connections on Cloudflare Workers. Each pool.query opens a new WebSocket;
+  // 15+ simultaneous connections causes "Connection closed" errors on edge.
+  // Batch 1: core entities
+  const { rows: orgRows } = await pool.query('SELECT id, name, slug, legal_name, timezone, currency_code, phone, email, website, receipt_header, receipt_footer, created_at, updated_at FROM organizations WHERE id = $1 LIMIT 1', [orgId]);
   const org = toOrg(orgRows[0]);
 
-  // Run ALL remaining queries in parallel
   const [
     locResult,
     employees,
@@ -135,13 +134,6 @@ export async function readStoreFromPg(orgId?: string): Promise<LocalStoreData> {
     inventory,
     customers,
     promoCodes,
-    mgResult,
-    modResult,
-    authResult,
-    sessResult,
-    shiftResult,
-    rsResult,
-    pioResult,
   ] = await Promise.all([
     pool.query('SELECT * FROM locations WHERE organization_id = $1 AND is_active = true ORDER BY name', [orgId]),
     pgReadEmployees(orgId),
@@ -151,6 +143,18 @@ export async function readStoreFromPg(orgId?: string): Promise<LocalStoreData> {
     pgReadInventory(orgId),
     pgReadCustomers(orgId),
     pgReadPromoCodes(orgId),
+  ]);
+
+  // Batch 2: secondary entities
+  const [
+    mgResult,
+    modResult,
+    authResult,
+    sessResult,
+    shiftResult,
+    rsResult,
+    pioResult,
+  ] = await Promise.all([
     pool.query('SELECT * FROM modifier_groups WHERE organization_id = $1 ORDER BY name', [orgId]),
     pool.query('SELECT * FROM modifiers WHERE organization_id = $1 ORDER BY sort_order', [orgId]),
     pool.query(
@@ -170,10 +174,6 @@ export async function readStoreFromPg(orgId?: string): Promise<LocalStoreData> {
     ),
     pool.query('SELECT * FROM register_sessions WHERE organization_id = $1 ORDER BY started_at DESC LIMIT 200', [orgId]),
     pool.query('SELECT * FROM pay_in_outs WHERE organization_id = $1 ORDER BY created_at DESC LIMIT 500', [orgId]),
-    // NOTE: transaction_tenders, transaction_events, and transaction_exceptions are
-    // intentionally excluded from this initial load. They contain 1000–2500+ historical
-    // rows that are not needed for register-terminal operation. Load them on demand via
-    // a separate historical-data function when viewing reports or transaction history.
   ]);
 
   const locations = locResult.rows.map(toLocation);
