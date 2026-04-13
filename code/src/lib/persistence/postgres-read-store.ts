@@ -165,7 +165,7 @@ export async function readStoreFromPg(orgId?: string): Promise<LocalStoreData> {
       (SELECT coalesce(json_agg(c.*), '[]') FROM categories c WHERE c.organization_id = $1) AS categories,
       (SELECT coalesce(json_agg(DISTINCT (p.*)), '[]') FROM products p WHERE p.organization_id = $1) AS products,
       (SELECT coalesce(json_agg(v.*), '[]') FROM product_variants v WHERE v.organization_id = $1) AS variants,
-      (SELECT coalesce(json_agg(i.*), '[]') FROM inventory_items i WHERE i.organization_id = $1) AS inventory,
+      (SELECT coalesce(json_agg(i.*), '[]') FROM inventory_levels i WHERE i.organization_id = $1) AS inventory,
       (SELECT coalesce(json_agg(cust.*), '[]') FROM customers cust WHERE cust.organization_id = $1) AS customers,
       (SELECT coalesce(json_agg(pc.*), '[]') FROM promo_codes pc WHERE pc.organization_id = $1) AS promo_codes,
       (SELECT coalesce(json_agg(mg.*), '[]') FROM modifier_groups mg WHERE mg.organization_id = $1) AS modifier_groups,
