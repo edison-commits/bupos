@@ -6,6 +6,7 @@ import { registerLoginAction } from "@/app/register/actions";
 import { PinLoginForm } from "@/components/register/pin-login-form";
 import { getRegisterSession } from "@/lib/auth/session";
 import { readStore } from "@/lib/persistence/store";
+import type { LocalStoreData } from "@/lib/persistence/types";
 import pool from "@/lib/db";
 
 export const metadata: Metadata = { title: "Register | BasicUniformPOS" };
@@ -29,7 +30,15 @@ export default async function RegisterPage({
 
   // Lightweight: only load full store when logged in (RegisterConsole needs it).
   // Unauthenticated: just grab the active location name + id — single cheap query.
-  const store = session ? await readStore(session.employee.organizationId) : null;
+  let store: LocalStoreData | null = null;
+  if (session) {
+    try {
+      store = await readStore(session.employee.organizationId);
+    } catch (e: unknown) {
+      console.error("[register/page] readStore failed:", e);
+      throw e;
+    }
+  }
   const location = session
     ? store!.locations[0] ?? session.location
     : await getDefaultLocation();
