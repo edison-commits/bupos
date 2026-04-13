@@ -8,17 +8,22 @@ import { PinLoginForm } from "@/components/register/pin-login-form";
 import { getRegisterSession } from "@/lib/auth/session";
 import { readStore } from "@/lib/persistence/store";
 import type { LocalStoreData } from "@/lib/persistence/types";
-import pool from "@/lib/db";
 
 export const metadata: Metadata = { title: "Register | BasicUniformPOS" };
 
-/** Single-row query — no joins, no full store load. Used only for unauthenticated PIN login. */
+/** Single-row query via Supabase RPC — no pool/WebSocket needed. */
 async function getDefaultLocation() {
-  const { rows } = await pool.query(
-    "SELECT id, name FROM locations WHERE is_active = true LIMIT 1",
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !supabaseKey) return { id: '', name: 'Default Location' };
+  const res = await fetch(
+    `${supabaseUrl}/rest/v1/locations?is_active=eq.true&select=id,name&limit=1`,
+    { headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` } },
   );
-  if (!rows[0]) throw new Error("No active location found");
-  return { id: rows[0].id as string, name: rows[0].name as string };
+  if (!res.ok) return { id: '', name: 'Default Location' };
+  const rows = await res.json() as { id: string; name: string }[];
+  if (!rows[0]) return { id: '', name: 'Default Location' };
+  return rows[0];
 }
 
 export default async function RegisterPage({
