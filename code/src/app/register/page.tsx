@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import { AppNav } from "@/components/layout/app-nav";
 import { PosSidebar } from "@/components/layout/pos-sidebar";
@@ -42,12 +43,18 @@ export default async function RegisterPage({
       store = await readStore(session.employee.organizationId);
     } catch (e: unknown) {
       console.error("[register/page] readStore failed:", e);
-      throw e;
+      // Redirect to clean state instead of crashing
+      redirect("/register");
     }
   }
-  const location = session
-    ? store!.locations[0] ?? session.location
-    : await getDefaultLocation();
+  let location = { id: '', name: 'Default Location' };
+  try {
+    location = session
+      ? store!.locations[0] ?? session.location
+      : await getDefaultLocation();
+  } catch (e: unknown) {
+    console.error('[register/page] location lookup failed:', e);
+  }
 
   const sidebarProps = session
     ? {
