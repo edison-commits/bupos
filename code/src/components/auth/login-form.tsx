@@ -11,9 +11,15 @@ export function LoginForm() {
   const redirected = useRef(false);
 
   useEffect(() => {
-    if (state && "success" in state && !redirected.current) {
+    if (state && "success" in (state as object) && !redirected.current) {
+      const s = state as unknown as { redirect: string; sessionId: string; expiresAt: string };
+      // Set cookie client-side since Workers can't set cookies in server actions
+      if (s.sessionId) {
+        const maxAge = 60 * 60 * 24 * 7; // 7 days
+        document.cookie = `basicuniformpos_admin_session=${s.sessionId}; path=/; max-age=${maxAge}; samesite=lax; secure`;
+      }
       redirected.current = true;
-      router.push((state as unknown as { redirect: string }).redirect);
+      router.push(s.redirect);
     }
   }, [state, router]);
 

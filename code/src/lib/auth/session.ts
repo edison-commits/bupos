@@ -374,15 +374,8 @@ export async function signInAdmin(email: string, password: string) {
       if (!createRes.ok) throw new Error("Failed to create admin session");
 
       invalidateStoreCache();
-      const jar = await cookieStore();
-      jar.set(ADMIN_COOKIE, nextSession.id, {
-        httpOnly: true,
-        sameSite: "lax",
-        secure: process.env.NODE_ENV === "production",
-        path: "/",
-        maxAge: 60 * 60 * 24 * 7, // 7 days
-      });
-      return;
+      // Return session info for client-side cookie setting (Workers can't set cookies in server actions)
+      return { sessionId: nextSession.id, expiresAt: nextSession.expiresAt };
     }
 
     // Pool fallback (local dev without Supabase env vars)

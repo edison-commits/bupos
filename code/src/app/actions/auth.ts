@@ -1,8 +1,8 @@
 "use server";
 
 import { headers } from "next/headers";
-import { redirect } from "next/navigation";
 import { signInAdmin, getAdminSession } from "@/lib/auth/session";
+import { redirect } from "next/navigation";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { hashSecret } from "@/lib/auth/crypto";
 import { randomUUID } from "@/lib/uuid";
@@ -47,7 +47,10 @@ export async function loginAction(_prev: { error: string } | null, formData: For
   }
 
   try {
-    await signInAdmin(email, password);
+  const result = await signInAdmin(email, password) as unknown as { sessionId: string; expiresAt: string } | undefined;
+  if (result?.sessionId) {
+    return { success: true, redirect: "/admin", sessionId: result.sessionId, expiresAt: result.expiresAt } as unknown as null;
+  }
   } catch (err) {
     // Audit: log failed admin login attempt (non-fatal — still return error)
     if (process.env.USE_POSTGRES) {
