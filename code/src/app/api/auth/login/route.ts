@@ -113,8 +113,7 @@ export async function POST(request: Request) {
       // Non-fatal
     }
 
-    // Build redirect response with Set-Cookie header
-    const redirectUrl = new URL("/admin", request.url);
+    // Build success response with Set-Cookie AND session ID in body (belt + suspenders)
     const isSecure = request.url.startsWith("https");
     const cookieValue = [
       `${ADMIN_COOKIE}=${sessionId}`,
@@ -125,13 +124,13 @@ export async function POST(request: Request) {
       ...(isSecure ? ["Secure"] : []),
     ].join("; ");
 
-    return new Response(null, {
-      status: 303,
-      headers: {
-        Location: redirectUrl.toString(),
-        "Set-Cookie": cookieValue,
+    return Response.json(
+      { success: true, redirect: "/admin", sessionId, expiresAt: expiresAt.toISOString() },
+      {
+        status: 200,
+        headers: { "Set-Cookie": cookieValue },
       },
-    });
+    );
   } catch (err) {
     console.error("[api/auth/login] Error:", err);
     return Response.json({ error: "Invalid email or password." }, { status: 401 });

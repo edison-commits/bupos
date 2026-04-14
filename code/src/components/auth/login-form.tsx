@@ -18,20 +18,21 @@ export function LoginForm() {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         body: formData,
-        redirect: "manual",
         credentials: "same-origin",
       });
 
-      // With redirect: "manual", a 303 returns as an opaque redirect (type "opaqueredirect")
-      // The Set-Cookie header is applied to the browser cookie jar in this case.
-      // status is 0 for opaque redirects, or 303 if readable.
-      if (res.status === 303 || res.status === 0 || res.type === "opaqueredirect" || res.redirected) {
-        window.location.href = "/admin";
+      const data = await res.json().catch(() => null) as { success?: boolean; redirect?: string; sessionId?: string; error?: string } | null;
+
+      if (res.ok && data?.success) {
+        // Set cookie client-side as fallback (API route also sets Set-Cookie header)
+        if (data.sessionId) {
+          document.cookie = `basicuniformpos_admin_session=${data.sessionId}; path=/; max-age=${60*60*24*7}; samesite=lax; secure`;
+        }
+        // Full page reload to send cookie with the request
+        window.location.href = data.redirect || "/admin";
         return;
       }
 
-      // Error response
-      const data = await res.json().catch(() => null) as { error?: string } | null;
       setError(data?.error ?? "Login failed. Please try again.");
     } catch {
       setError("Network error. Please try again.");
