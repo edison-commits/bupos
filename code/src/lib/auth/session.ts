@@ -380,7 +380,7 @@ export async function signInAdmin(email: string, password: string) {
         sameSite: "lax",
         secure: process.env.NODE_ENV === "production",
         path: "/",
-        expires: new Date(nextSession.expiresAt),
+        maxAge: 60 * 60 * 24 * 7, // 7 days
       });
       return;
     }

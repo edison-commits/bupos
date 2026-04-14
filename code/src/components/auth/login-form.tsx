@@ -1,10 +1,21 @@
 "use client";
 
 import { useActionState } from "react";
+import { useRouter } from "next/navigation";
 import { loginAction } from "@/app/actions/auth";
+import { useEffect, useRef } from "react";
 
 export function LoginForm() {
   const [state, formAction, isPending] = useActionState(loginAction, null);
+  const router = useRouter();
+  const redirected = useRef(false);
+
+  useEffect(() => {
+    if (state && "success" in state && !redirected.current) {
+      redirected.current = true;
+      router.push((state as unknown as { redirect: string }).redirect);
+    }
+  }, [state, router]);
 
   return (
     <form action={formAction} className="mt-5 grid gap-4">

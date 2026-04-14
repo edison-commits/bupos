@@ -75,8 +75,8 @@ export async function loginAction(_prev: { error: string } | null, formData: For
     return { error: "Invalid email or password." };
   }
 
-  // signInAdmin sets the cookie and returns — now redirect
-  redirect("/admin");
+  // signInAdmin sets the cookie — tell client to redirect
+  return { success: true, redirect: "/admin" } as unknown as null;
 }
 
 // ── Signup action ─────────────────────────────────────────────────────
