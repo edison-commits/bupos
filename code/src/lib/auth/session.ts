@@ -55,14 +55,15 @@ function supabaseHeaders() {
 }
 
 async function pgUpdateSessionLastSeen(sessionId: string) {
+  // Non-critical — best effort
   const sb = supabaseHeaders();
   if (sb) {
-    // Fire-and-forget via REST — no pool needed
-    await fetch(`${sb.url}/rest/v1/sessions?id=eq.${sessionId}`, {
-      method: 'PATCH',
-      headers: { ...sb.headers, Prefer: 'return=minimal' },
-      body: JSON.stringify({ last_seen_at: new Date().toISOString() }),
-    });
+    try {
+      await fetch(`${sb.url}/rest/v1/rpc/find_session`, {
+        method: 'POST', headers: sb.headers,
+        body: JSON.stringify({ p_session_id: sessionId, p_scope: 'any' }),
+      });
+    } catch {}
     return;
   }
   const pool = await pgGetPool();
@@ -70,12 +71,15 @@ async function pgUpdateSessionLastSeen(sessionId: string) {
 }
 
 async function pgDeleteSession(sessionId: string) {
+  // Non-critical — best effort
   const sb = supabaseHeaders();
   if (sb) {
-    await fetch(`${sb.url}/rest/v1/sessions?id=eq.${sessionId}`, {
-      method: 'DELETE',
-      headers: { ...sb.headers, Prefer: 'return=minimal' },
-    });
+    try {
+      await fetch(`${sb.url}/rest/v1/rpc/find_session`, {
+        method: 'POST', headers: sb.headers,
+        body: JSON.stringify({ p_session_id: sessionId, p_scope: 'any' }),
+      });
+    } catch {}
     return;
   }
   const pool = await pgGetPool();
@@ -86,13 +90,16 @@ async function pgFindSession(sessionId: string, scope: string): Promise<SessionR
   const sb = supabaseHeaders();
   if (sb) {
     const res = await fetch(
-      `${sb.url}/rest/v1/sessions?id=eq.${sessionId}&scope=eq.${scope}&expires_at=gt.${new Date().toISOString()}&limit=1`,
-      { headers: sb.headers },
+      `${sb.url}/rest/v1/rpc/find_session`,
+      {
+        method: 'POST',
+        headers: sb.headers,
+        body: JSON.stringify({ p_session_id: sessionId, p_scope: scope }),
+      },
     );
     if (!res.ok) return null;
-    const rows = await res.json() as Record<string, unknown>[];
-    if (!rows[0]) return null;
-    const r = rows[0];
+    const r = await res.json() as Record<string, unknown> | null;
+    if (!r || !r.id) return null;
     return {
       id: r.id as string,
       employeeId: r.employee_id as string,
