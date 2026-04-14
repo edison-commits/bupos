@@ -98,7 +98,8 @@ async function pgFindSession(sessionId: string, scope: string): Promise<SessionR
       },
     );
     if (!res.ok) return null;
-    const r = await res.json() as Record<string, unknown> | null;
+    const raw = await res.json();
+    const r = (Array.isArray(raw) ? raw[0] : raw) as Record<string, unknown> | null;
     if (!r || !r.id) return null;
     return {
       id: r.id as string,
