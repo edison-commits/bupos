@@ -33,15 +33,26 @@ export default async function AdminPage({
   const notice = typeof params.notice === "string" ? params.notice.replaceAll("+", " ") : undefined;
   const error = typeof params.error === "string" ? params.error.replaceAll("+", " ") : undefined;
 
+  // Ensure all arrays exist — RPC may omit empty collections
+  const safeStore = Object.assign({
+    inventoryAdjustments: [], transactionEventPlaceholders: [],
+    transactionTenderPlaceholders: [], transactionExceptionPlaceholders: [],
+    giftCards: [], giftCardTransactions: [], storeCreditLedger: [],
+    behaviorFlags: [], layaways: [], layawayPayments: [],
+    stocktakes: [], stocktakeLines: [], transfers: [], transferLines: [],
+    timeClockEntries: [], promoRedemptions: [], bundles: [],
+    suppliers: [], purchaseOrders: [], registers: [], recountSchedules: [],
+  }, store);
+
   return (
     <PageShell
       eyebrow="Admin"
-      title={store.organization.name}
+      title={safeStore.organization.name}
       description="Manage your store's catalog, inventory, employees, and settings."
     >
       <AppNav />
       <AdminConsole
-        store={store}
+        store={safeStore}
         adminName={session.employee.displayName}
         adminRole={session.employee.roleKey}
         notice={notice}
