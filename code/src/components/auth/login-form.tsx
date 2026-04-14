@@ -5,23 +5,31 @@ import { useRouter } from "next/navigation";
 import { loginAction } from "@/app/actions/auth";
 import { useEffect, useRef } from "react";
 
+interface LoginState {
+  error?: string;
+  success?: boolean;
+  redirect?: string;
+  sessionId?: string;
+  expiresAt?: string;
+}
+
 export function LoginForm() {
-  const [state, formAction, isPending] = useActionState(loginAction, null);
+  const [state, formAction, isPending] = useActionState(loginAction as any, null);
   const router = useRouter();
   const redirected = useRef(false);
 
   useEffect(() => {
-    if (state && "success" in (state as object) && !redirected.current) {
-      const s = state as unknown as { redirect: string; sessionId: string; expiresAt: string };
-      // Set cookie client-side since Workers can't set cookies in server actions
-      if (s.sessionId) {
-        const maxAge = 60 * 60 * 24 * 7; // 7 days
-        document.cookie = `basicuniformpos_admin_session=${s.sessionId}; path=/; max-age=${maxAge}; samesite=lax; secure`;
-      }
+    const s = state as LoginState | null;
+    if (s?.success && s.sessionId && !redirected.current) {
+      const maxAge = 60 * 60 * 24 * 7; // 7 days
+      document.cookie = `basicuniformpos_admin_session=${s.sessionId}; path=/; max-age=${maxAge}; samesite=lax; secure`;
       redirected.current = true;
-      router.push(s.redirect);
+      // Small delay to ensure cookie is set before navigation
+      setTimeout(() => router.push(s.redirect || "/admin"), 100);
     }
   }, [state, router]);
+
+  const s = state as LoginState | null;
 
   return (
     <form action={formAction} className="mt-5 grid gap-4">
@@ -54,8 +62,8 @@ export function LoginForm() {
       >
         {isPending ? "Signing in…" : "Sign in"}
       </button>
-      {state?.error && (
-        <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{state.error}</p>
+      {s?.error && (
+        <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{s.error}</p>
       )}
     </form>
   );

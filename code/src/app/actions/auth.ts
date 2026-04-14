@@ -49,7 +49,7 @@ export async function loginAction(_prev: { error: string } | null, formData: For
   try {
   const result = await signInAdmin(email, password) as unknown as { sessionId: string; expiresAt: string } | undefined;
   if (result?.sessionId) {
-    return { success: true, redirect: "/admin", sessionId: result.sessionId, expiresAt: result.expiresAt } as unknown as null;
+    return { success: true, redirect: "/admin", sessionId: result.sessionId, expiresAt: result.expiresAt } as any;
   }
   } catch (err) {
     // Audit: log failed admin login attempt (non-fatal — still return error)
@@ -78,8 +78,8 @@ export async function loginAction(_prev: { error: string } | null, formData: For
     return { error: "Invalid email or password." };
   }
 
-  // signInAdmin sets the cookie — tell client to redirect
-  return { success: true, redirect: "/admin" } as unknown as null;
+  // Fallback — shouldn't reach here
+  return { error: "Login failed." } as any;
 }
 
 // ── Signup action ─────────────────────────────────────────────────────
