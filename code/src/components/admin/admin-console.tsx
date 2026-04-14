@@ -58,7 +58,7 @@ import {
 } from "@/components/admin/admin-dashboard-widgets";
 
 export function AdminConsole({
-  store,
+  store: rawStore,
   adminName,
   adminRole,
   notice,
@@ -70,6 +70,17 @@ export function AdminConsole({
   notice?: string;
   error?: string;
 }) {
+  // Safety: ensure all array fields exist (RSC serialization may drop undefined)
+  const _defaults: Record<string, unknown[]> = {
+    inventoryAdjustments: [], transactionEventPlaceholders: [],
+    transactionTenderPlaceholders: [], transactionExceptionPlaceholders: [],
+    giftCards: [], giftCardTransactions: [], storeCreditLedger: [],
+    behaviorFlags: [], layaways: [], layawayPayments: [],
+    stocktakes: [], stocktakeLines: [], transfers: [], transferLines: [],
+    timeClockEntries: [], promoRedemptions: [], bundles: [],
+    suppliers: [], purchaseOrders: [], registers: [], recountSchedules: [],
+  };
+  const store = { ..._defaults, ...rawStore } as LocalStoreData;
   const canManageCatalog = hasPermission(adminRole, "catalog.manage");
   const canAdjustInventory = hasPermission(adminRole, "inventory.adjust");
   const canManageEmployees = hasPermission(adminRole, "employee.manage");
