@@ -1,38 +1,46 @@
 "use client";
 
-import { useActionState } from "react";
-import { useRouter } from "next/navigation";
-import { loginAction } from "@/app/actions/auth";
-import { useEffect, useRef } from "react";
-
-interface LoginState {
-  error?: string;
-  success?: boolean;
-  redirect?: string;
-  sessionId?: string;
-  expiresAt?: string;
-}
+import { useState } from "react";
 
 export function LoginForm() {
-  const [state, formAction, isPending] = useActionState(loginAction as any, null);
-  const router = useRouter();
-  const redirected = useRef(false);
+  const [error, setError] = useState<string | null>(null);
+  const [isPending, setIsPending] = useState(false);
 
-  useEffect(() => {
-    const s = state as LoginState | null;
-    if (s?.success && s.sessionId && !redirected.current) {
-      const maxAge = 60 * 60 * 24 * 7; // 7 days
-      document.cookie = `basicuniformpos_admin_session=${s.sessionId}; path=/; max-age=${maxAge}; samesite=lax; secure`;
-      // Force full page reload to ensure cookie is sent with the request
-      redirected.current = true;
-      setTimeout(() => { window.location.href = s.redirect || '/admin'; }, 100);
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setError(null);
+    setIsPending(true);
+
+    const form = e.currentTarget;
+    const formData = new FormData(form);
+
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        body: formData,
+        redirect: "follow",
+        credentials: "same-origin",
+      });
+
+      // If the fetch followed the redirect to /admin successfully,
+      // the Set-Cookie was applied. Do a full page load to /admin.
+      if (res.ok || res.redirected) {
+        window.location.href = "/admin";
+        return;
+      }
+
+      // Error response
+      const data = await res.json().catch(() => null) as { error?: string } | null;
+      setError(data?.error ?? "Login failed. Please try again.");
+    } catch {
+      setError("Network error. Please try again.");
+    } finally {
+      setIsPending(false);
     }
-  }, [state, router]);
-
-  const s = state as LoginState | null;
+  }
 
   return (
-    <form action={formAction} className="mt-5 grid gap-4">
+    <form onSubmit={handleSubmit} className="mt-5 grid gap-4">
       <label className="grid gap-1.5 text-sm font-medium text-zinc-700">
         <span>Email</span>
         <input
@@ -62,8 +70,8 @@ export function LoginForm() {
       >
         {isPending ? "Signing in…" : "Sign in"}
       </button>
-      {s?.error && (
-        <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{s.error}</p>
+      {error && (
+        <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>
       )}
     </form>
   );
