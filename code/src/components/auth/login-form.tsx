@@ -23,9 +23,9 @@ export function LoginForm() {
     if (s?.success && s.sessionId && !redirected.current) {
       const maxAge = 60 * 60 * 24 * 7; // 7 days
       document.cookie = `basicuniformpos_admin_session=${s.sessionId}; path=/; max-age=${maxAge}; samesite=lax; secure`;
+      // Force full page reload to ensure cookie is sent with the request
       redirected.current = true;
-      // Small delay to ensure cookie is set before navigation
-      setTimeout(() => router.push(s.redirect || "/admin"), 100);
+      setTimeout(() => { window.location.href = s.redirect || '/admin'; }, 100);
     }
   }, [state, router]);
 
