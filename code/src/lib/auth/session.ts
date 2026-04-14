@@ -334,9 +334,59 @@ export async function signInAdmin(email: string, password: string) {
   const normalizedEmail = email.trim().toLowerCase();
 
   if (isPg()) {
-    // PG path: query auth_credentials + employees directly
-    const { pgFindCredentialByEmail } = await import("@/lib/persistence/postgres-store");
     const { invalidateStoreCache } = await import("@/lib/persistence/postgres-read-store");
+
+    const sb = supabaseHeaders();
+    if (sb) {
+      // Supabase REST path — no pool, works on Cloudflare Workers
+      const lookupRes = await fetch(`${sb.url}/rest/v1/rpc/admin_login_lookup`, {
+        method: 'POST',
+        headers: sb.headers,
+        body: JSON.stringify({ p_email: normalizedEmail }),
+      });
+      if (!lookupRes.ok) throw new Error("Invalid admin credentials");
+      const lookup = await lookupRes.json() as Record<string, unknown> | null;
+      if (!lookup || !lookup.password_hash || lookup.is_active !== true) {
+        throw new Error("Invalid admin credentials");
+      }
+      if (!["owner", "manager"].includes(lookup.role_key as string)) {
+        throw new Error("Invalid admin credentials");
+      }
+      if (!await verifySecret(password, lookup.password_hash as string)) {
+        throw new Error("Invalid admin credentials");
+      }
+
+      const organizationId = lookup.organization_id as string;
+      const employeeId = lookup.employee_id as string;
+      const nextSession = buildSession("admin", employeeId, organizationId);
+
+      const createRes = await fetch(`${sb.url}/rest/v1/rpc/admin_login_create_session`, {
+        method: 'POST',
+        headers: { ...sb.headers, Prefer: 'return=minimal' },
+        body: JSON.stringify({
+          p_employee_id: employeeId,
+          p_organization_id: organizationId,
+          p_session_id: nextSession.id,
+          p_created_at: nextSession.createdAt,
+          p_expires_at: nextSession.expiresAt,
+        }),
+      });
+      if (!createRes.ok) throw new Error("Failed to create admin session");
+
+      invalidateStoreCache();
+      const jar = await cookieStore();
+      jar.set(ADMIN_COOKIE, nextSession.id, {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: process.env.NODE_ENV === "production",
+        path: "/",
+        expires: new Date(nextSession.expiresAt),
+      });
+      return;
+    }
+
+    // Pool fallback (local dev without Supabase env vars)
+    const { pgFindCredentialByEmail } = await import("@/lib/persistence/postgres-store");
     const credential = await pgFindCredentialByEmail(normalizedEmail);
     if (!credential?.passwordHash) {
       throw new Error("Invalid admin credentials");
@@ -387,7 +437,7 @@ export async function signInAdmin(email: string, password: string) {
     if (!nextSession) {
       throw new Error("Failed to create admin session");
     }
-    invalidateStoreCache(); // ensure next readStore() call picks up fresh data including this session's employee
+    invalidateStoreCache();
 
     const jar = await cookieStore();
     jar.set(ADMIN_COOKIE, nextSession.id, {

@@ -6,7 +6,8 @@ import { signInAdmin, getAdminSession } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { hashSecret } from "@/lib/auth/crypto";
 import { randomUUID } from "@/lib/uuid";
-import { pgFindCredentialByEmail, pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
+// Lazy-import pool-dependent modules to avoid pulling @neondatabase/serverless into the SSR module graph
+// pgFindCredentialByEmail and pgInsertAuditEvent are imported dynamically below
 
 // ── Login action (used by useActionState) ─────────────────────────────
 export async function loginAction(_prev: { error: string } | null, formData: FormData) {
@@ -51,21 +52,22 @@ export async function loginAction(_prev: { error: string } | null, formData: For
     // Audit: log failed admin login attempt (non-fatal — still return error)
     if (process.env.USE_POSTGRES) {
       try {
-        const cred = await pgFindCredentialByEmail(email);
+        const { pgFindCredentialByEmail: findCred, pgInsertAuditEvent: insertAudit } = await import("@/lib/persistence/postgres-store");
+        const cred = await findCred(email);
         let orgId: string | null = null;
         if (cred) {
-          const { pool } = await import("@/lib/db");
+          const { default: pool } = await import("@/lib/db");
           const { rows } = await pool.query(
             `SELECT organization_id FROM employees WHERE id = $1 LIMIT 1`,
             [cred.employeeId],
           );
           orgId = (rows[0]?.organization_id as string) ?? null;
         }
-        pgInsertAuditEvent(
+        insertAudit(
           orgId ?? 'unknown', null, cred?.employeeId ?? null,
           "session", null, "admin_login_failed",
           { email, reason: err instanceof Error ? err.message : "unknown" },
-        ).catch((err) => console.error("[audit] Failed to insert audit event:", err));
+        ).catch((auditErr) => console.error("[audit] Failed to insert audit event:", auditErr));
       } catch {
         // audit lookup failed — skip audit, still return error
       }
