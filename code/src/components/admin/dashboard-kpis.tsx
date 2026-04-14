@@ -18,7 +18,7 @@ export function DashboardKPIs({ store, locationId }: DashboardKPIsProps) {
     const yesterday = yesterdayStr;
 
     // All transaction events (sales)
-    const allTxns = store.transactionEventPlaceholders.filter(
+    const allTxns = (store.transactionEventPlaceholders ?? []).filter(
       (e) =>
         e.eventKind === "transaction_placeholder" &&
         e.payload?.grand_total &&
@@ -43,32 +43,32 @@ export function DashboardKPIs({ store, locationId }: DashboardKPIsProps) {
       : todayGross > 0 ? 100 : 0;
 
     // Shift info
-    const todayShifts = store.shifts.filter((s) => s.openedAt?.startsWith(today));
+    const todayShifts = (store.shifts ?? []).filter((s) => s.openedAt?.startsWith(today));
     const openShifts = todayShifts.filter((s) => s.status === "open");
     const closedShifts = todayShifts.filter((s) => s.status === "closed");
     const totalVariance = closedShifts.reduce((s, sh) => s + Math.abs(sh.closingVariance ?? 0), 0);
 
     // Inventory alerts
-    const lowStockCount = store.inventory.filter((inv) => inv.locationId === locationId && inv.onHand > 0 && inv.onHand <= inv.reorderPoint).length;
-    const outOfStockCount = store.inventory.filter((inv) => inv.locationId === locationId && inv.onHand <= 0).length;
+    const lowStockCount = (store.inventory ?? []).filter((inv) => inv.locationId === locationId && inv.onHand > 0 && inv.onHand <= inv.reorderPoint).length;
+    const outOfStockCount = (store.inventory ?? []).filter((inv) => inv.locationId === locationId && inv.onHand <= 0).length;
 
     // Behavior flags (unreviewed)
-    const unreviewedFlags = store.behaviorFlags.filter((f) => !f.isReviewed).length;
-    const todayFlags = store.behaviorFlags.filter((f) => f.createdAt?.startsWith(today)).length;
+    const unreviewedFlags = (store.behaviorFlags ?? []).filter((f) => !f.isReviewed).length;
+    const todayFlags = (store.behaviorFlags ?? []).filter((f) => f.createdAt?.startsWith(today)).length;
 
     // Active layaways
-    const activeLayaways = store.layaways.filter((l) => l.status === "active" || l.status === "partially_paid").length;
-    const layawayBalance = store.layaways
+    const activeLayaways = (store.layaways ?? []).filter((l) => l.status === "active" || l.status === "partially_paid").length;
+    const layawayBalance = (store.layaways ?? [])
       .filter((l) => l.status === "active" || l.status === "partially_paid")
       .reduce((s, l) => s + l.balanceDue, 0);
 
     // Gift card liability
-    const gcLiability = store.giftCards
+    const gcLiability = (store.giftCards ?? [])
       .filter((g) => g.status === "active")
       .reduce((s, g) => s + g.balance, 0);
 
     // Customer metrics
-    const totalCustomers = store.customers.length;
+    const totalCustomers = (store.customers ?? []).length;
 
     return {
       todayGross,

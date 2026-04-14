@@ -269,8 +269,9 @@ export function InventorySummary({ store }: { store: LocalStoreData }) {
   }, 0);
   const lowStockCount = store.inventory.filter((i) => i.onHand <= i.reorderPoint).length;
   const outOfStockCount = store.inventory.filter((i) => i.onHand === 0).length;
-  const adjustmentCount = store.inventoryAdjustments.length;
-  const netAdjustment = store.inventoryAdjustments.reduce((s, a) => s + a.delta, 0);
+  const adjustments = store.inventoryAdjustments ?? [];
+  const adjustmentCount = adjustments.length;
+  const netAdjustment = adjustments.reduce((s, a) => s + a.delta, 0);
 
   return (
     <div className="space-y-4">

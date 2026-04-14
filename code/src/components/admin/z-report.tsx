@@ -16,7 +16,7 @@ export function ZReport({ store, locationId }: ZReportProps) {
     const today = new Date().toISOString().slice(0, 10);
 
     // Filter today's transaction events (sales + returns)
-    const todayTxns = store.transactionEventPlaceholders.filter((e) => {
+    const todayTxns = (store.transactionEventPlaceholders ?? []).filter((e) => {
       if (e.eventKind !== "transaction_placeholder") return false;
       if (!e.payload?.grand_total) return false;
       if (e.transactionId === "txn_register_shift_placeholder" || e.transactionId === "txn_inventory_placeholder") return false;
@@ -36,7 +36,7 @@ export function ZReport({ store, locationId }: ZReportProps) {
 
     // Tender breakdown (today only)
     const todayTxnIds = new Set(todayTxns.map((e) => e.transactionId));
-    const todayTenders = store.transactionTenderPlaceholders.filter((t) => todayTxnIds.has(t.transactionId));
+    const todayTenders = (store.transactionTenderPlaceholders ?? []).filter((t) => todayTxnIds.has(t.transactionId));
     const tenderMap = new Map<string, { total: number; count: number }>();
     for (const t of todayTenders) {
       const existing = tenderMap.get(t.tenderType) ?? { total: 0, count: 0 };
@@ -46,7 +46,7 @@ export function ZReport({ store, locationId }: ZReportProps) {
     }
 
     // Cash accountability
-    const todayShifts = store.shifts.filter((s) => s.openedAt?.startsWith(today));
+    const todayShifts = (store.shifts ?? []).filter((s) => s.openedAt?.startsWith(today));
     const closedShifts = todayShifts.filter((s) => s.status === "closed");
     const openShifts = todayShifts.filter((s) => s.status === "open");
     const totalOpeningFloat = todayShifts.reduce((s, sh) => s + sh.openingFloat, 0);
@@ -54,17 +54,17 @@ export function ZReport({ store, locationId }: ZReportProps) {
 
     // Pay in/out today
     const todayShiftIds = new Set(todayShifts.map((s) => s.id));
-    const todayPayInOuts = store.payInOuts.filter((p) => todayShiftIds.has(p.shiftId));
+    const todayPayInOuts = (store.payInOuts ?? []).filter((p) => todayShiftIds.has(p.shiftId));
     const totalPayIn = todayPayInOuts.filter((p) => p.direction === "pay_in").reduce((s, p) => s + p.amount, 0);
     const totalPayOut = todayPayInOuts.filter((p) => p.direction === "pay_out").reduce((s, p) => s + p.amount, 0);
 
     // Voids today
-    const todayVoids = store.transactionEventPlaceholders.filter((e) =>
+    const todayVoids = (store.transactionEventPlaceholders ?? []).filter((e) =>
       (e.eventKind === "cart_voided" as string) && e.createdAt?.startsWith(today),
     );
 
     // Exceptions today
-    const todayExceptions = store.transactionExceptionPlaceholders.filter((e) =>
+    const todayExceptions = (store.transactionExceptionPlaceholders ?? []).filter((e) =>
       todayTxnIds.has(e.transactionId) || todayTxnIds.has(e.transactionId.replace("pending_", "")),
     );
 
@@ -83,7 +83,7 @@ export function ZReport({ store, locationId }: ZReportProps) {
     const empSales = new Map<string, { name: string; count: number; total: number }>();
     for (const e of sales) {
       const empId = e.actorEmployeeId;
-      const emp = store.employees.find((em) => em.id === empId);
+      const emp = (store.employees ?? []).find((em) => em.id === empId);
       const existing = empSales.get(empId) ?? { name: emp?.displayName ?? empId.slice(0, 8), count: 0, total: 0 };
       existing.count += 1;
       existing.total += Number(e.payload?.grand_total ?? 0);
@@ -91,19 +91,19 @@ export function ZReport({ store, locationId }: ZReportProps) {
     }
 
     // Gift card activity today
-    const todayGcTxns = store.giftCardTransactions.filter((t) => t.createdAt?.startsWith(today));
+    const todayGcTxns = (store.giftCardTransactions ?? []).filter((t) => t.createdAt?.startsWith(today));
     const gcRedemptions = todayGcTxns.filter((t) => t.transactionType === "redemption");
     const gcActivations = todayGcTxns.filter((t) => t.transactionType === "activation");
     const gcRedeemTotal = gcRedemptions.reduce((s, t) => s + Math.abs(t.amount), 0);
     const gcActivateTotal = gcActivations.reduce((s, t) => s + t.amount, 0);
 
     // Store credit activity today
-    const todayScEntries = store.storeCreditLedger.filter((e) => e.createdAt?.startsWith(today));
+    const todayScEntries = (store.storeCreditLedger ?? []).filter((e) => e.createdAt?.startsWith(today));
     const scIssued = todayScEntries.filter((e) => e.transactionType === "issuance").reduce((s, e) => s + e.amount, 0);
     const scRedeemed = todayScEntries.filter((e) => e.transactionType === "redemption").reduce((s, e) => s + Math.abs(e.amount), 0);
 
     // Behavior flags generated today
-    const todayFlags = store.behaviorFlags.filter((f) => f.createdAt?.startsWith(today));
+    const todayFlags = (store.behaviorFlags ?? []).filter((f) => f.createdAt?.startsWith(today));
 
     return {
       location,

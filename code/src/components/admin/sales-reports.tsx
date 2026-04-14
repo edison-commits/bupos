@@ -30,7 +30,7 @@ export function SalesReports({ store }: { store: LocalStoreData }) {
         break;
     }
 
-    return store.transactionEventPlaceholders.filter((event) => {
+    return (store.transactionEventPlaceholders ?? []).filter((event) => {
       if (event.eventKind !== "transaction_placeholder") return false;
       if (!event.createdAt) return false;
       const eventDate = new Date(event.createdAt);
@@ -45,7 +45,7 @@ export function SalesReports({ store }: { store: LocalStoreData }) {
 
   const tendersByType = useMemo(() => {
     const grouped: Record<string, number> = {};
-    store.transactionTenderPlaceholders.forEach((tender) => {
+    (store.transactionTenderPlaceholders ?? []).forEach((tender) => {
       if (transactionIds.has(tender.transactionId)) {
         grouped[tender.tenderType] = (grouped[tender.tenderType] || 0) + tender.amount;
       }
@@ -111,7 +111,7 @@ export function SalesReports({ store }: { store: LocalStoreData }) {
   // Memoize tenderMap so it's not rebuilt on every render
   const tenderMap = useMemo(() => {
     const m = new Map<string, string[]>();
-    store.transactionTenderPlaceholders.forEach((tender) => {
+    (store.transactionTenderPlaceholders ?? []).forEach((tender) => {
       if (transactionIds.has(tender.transactionId)) {
         if (!m.has(tender.transactionId)) m.set(tender.transactionId, []);
         m.get(tender.transactionId)!.push(tender.tenderType);
@@ -128,7 +128,7 @@ export function SalesReports({ store }: { store: LocalStoreData }) {
       const date = new Date(event.createdAt);
       const dateStr = date.toISOString().split("T")[0];
       const timeStr = date.toTimeString().split(" ")[0];
-      const employee = store.employees.find((e) => e.id === event.actorEmployeeId);
+      const employee = (store.employees ?? []).find((e) => e.id === event.actorEmployeeId);
       const employeeName = employee?.displayName || "Unknown";
       const grand_total = event.payload?.grand_total || "0";
       const tax_total = event.payload?.tax_total || "0";
@@ -219,7 +219,7 @@ export function SalesReports({ store }: { store: LocalStoreData }) {
             <p className="text-sm text-zinc-500">No sales data available</p>
           ) : (
             employeeIds.map((employeeId) => {
-              const employee = store.employees.find((e) => e.id === employeeId);
+              const employee = (store.employees ?? []).find((e) => e.id === employeeId);
               const data = salesByEmployee[employeeId];
               const avgTicket = data.count > 0 ? data.total / data.count : 0;
               return (

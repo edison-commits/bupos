@@ -80,7 +80,9 @@ export function AdminConsole({
     timeClockEntries: [], promoRedemptions: [], bundles: [],
     suppliers: [], purchaseOrders: [], registers: [], recountSchedules: [],
   };
-  const store = { ..._defaults, ...rawStore } as LocalStoreData;
+  // Strip explicit `undefined` values from rawStore so they don't override defaults
+  const cleanRaw = Object.fromEntries(Object.entries(rawStore).filter(([, v]) => v !== undefined));
+  const store = { ..._defaults, ...cleanRaw } as LocalStoreData;
   const canManageCatalog = hasPermission(adminRole, "catalog.manage");
   const canAdjustInventory = hasPermission(adminRole, "inventory.adjust");
   const canManageEmployees = hasPermission(adminRole, "employee.manage");
