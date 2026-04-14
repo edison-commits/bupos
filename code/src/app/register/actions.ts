@@ -6,14 +6,88 @@ import { redirect } from "next/navigation";
 import { requireRegisterPermission, hasPermission } from "@/lib/authz";import { getRegisterSession, getAdminSession, signInRegister, signOutRegister } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { mutateStore } from "@/lib/persistence/store";
-import {
-  pgOpenShift,
-  pgCloseShift,
-  pgInsertAuditEvent,
-} from "@/lib/persistence/postgres-store";
 import type { Customer } from "@/lib/domain/types";
 
 const isPg = () => !!process.env.USE_POSTGRES;
+
+function supabaseHeaders() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !supabaseKey) return null;
+  return {
+    url: supabaseUrl,
+    headers: {
+      apikey: supabaseKey,
+      Authorization: `Bearer ${supabaseKey}`,
+      'Content-Type': 'application/json',
+    } as Record<string, string>,
+  };
+}
+
+async function rpcInsertAudit(
+  orgId: string, locationId: string | null, employeeId: string | null,
+  entityType: string, entityId: string | null, eventKind: string,
+  payload: Record<string, unknown> = {},
+) {
+  const sb = supabaseHeaders();
+  if (sb) {
+    await fetch(`${sb.url}/rest/v1/rpc/register_insert_audit`, {
+      method: 'POST', headers: { ...sb.headers, Prefer: 'return=minimal' },
+      body: JSON.stringify({
+        p_org_id: orgId, p_location_id: locationId, p_employee_id: employeeId,
+        p_entity_type: entityType, p_entity_id: entityId,
+        p_event_kind: eventKind, p_payload: payload,
+      }),
+    });
+    return;
+  }
+  const { pgInsertAuditEvent } = await import("@/lib/persistence/postgres-store");
+  await rpcInsertAudit(orgId, locationId, employeeId, entityType, entityId, eventKind, payload);
+}
+
+async function rpcOpenShift(data: {
+  id: string; organizationId: string; locationId: string; employeeId: string;
+  registerSessionId: string | null; openingFloat: number; openedNote?: string;
+}) {
+  const sb = supabaseHeaders();
+  if (sb) {
+    const res = await fetch(`${sb.url}/rest/v1/rpc/register_open_shift`, {
+      method: 'POST', headers: sb.headers,
+      body: JSON.stringify({
+        p_id: data.id, p_organization_id: data.organizationId,
+        p_location_id: data.locationId, p_employee_id: data.employeeId,
+        p_register_session_id: data.registerSessionId,
+        p_opening_float: data.openingFloat, p_opened_note: data.openedNote ?? null,
+      }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return;
+  }
+  const { pgOpenShift } = await import("@/lib/persistence/postgres-store");
+  await pgOpenShift(data);
+}
+
+async function rpcCloseShift(shiftId: string, registerSessionId: string, data: {
+  closingExpectedCash: number; closingDeclaredCash: number; closedNote?: string;
+}) {
+  const sb = supabaseHeaders();
+  if (sb) {
+    const res = await fetch(`${sb.url}/rest/v1/rpc/register_close_shift`, {
+      method: 'POST', headers: sb.headers,
+      body: JSON.stringify({
+        p_shift_id: shiftId, p_register_session_id: registerSessionId,
+        p_closing_expected_cash: data.closingExpectedCash,
+        p_closing_declared_cash: data.closingDeclaredCash,
+        p_closed_note: data.closedNote ?? null,
+      }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const result = await res.json() as Record<string, unknown>;
+    return { id: result.id as string, closingVariance: Number(result.closing_variance ?? 0) };
+  }
+  const { pgCloseShift } = await import("@/lib/persistence/postgres-store");
+  return pgCloseShift(shiftId, registerSessionId, data);
+}
 
 export async function registerLoginAction(formData: FormData) {
   const locationId = String(formData.get("locationId") ?? "");
@@ -36,7 +110,7 @@ export async function registerLoginAction(formData: FormData) {
 
   // Audit: log register login (non-fatal — shift open and redirect proceed regardless)
   if (isPg()) {
-    pgInsertAuditEvent(
+    rpcInsertAudit(
       employee.organizationId, location.id, employee.id,
       "session", registerSession.id, "register_login",
       { location_id: location.id, register_session_id: registerSession.id },
@@ -44,7 +118,7 @@ export async function registerLoginAction(formData: FormData) {
 
     // Auto-open shift on login — workers clock in by entering their PIN
     const shiftId = randomUUID();
-    await pgOpenShift({
+    await rpcOpenShift({
       id: shiftId,
       organizationId: employee.organizationId,
       locationId: location.id,
@@ -52,7 +126,7 @@ export async function registerLoginAction(formData: FormData) {
       registerSessionId: registerSession.id,
       openingFloat: 0,
     });
-    await pgInsertAuditEvent(
+    await rpcInsertAudit(
       employee.organizationId, location.id, employee.id,
       "shift", shiftId, "shift_opened",
       { register_session_id: registerSession.id, opening_float: "0.00" },
@@ -77,13 +151,13 @@ export async function openShiftAction(formData: FormData) {
       redirect("/register?error=Shift+already+open");
     }
     const shiftId = randomUUID();
-    await pgOpenShift({
+    await rpcOpenShift({
       id: shiftId, organizationId: context.employee.organizationId, locationId: context.location.id,
       employeeId: context.employee.id,
       registerSessionId: context.registerSession.id,
       openingFloat, openedNote: openedNote || undefined,
     });
-    await pgInsertAuditEvent(
+    await rpcInsertAudit(
       context.employee.organizationId, context.location.id, context.employee.id,
       "shift", shiftId, "shift_opened",
       { register_session_id: context.registerSession.id, opening_float: openingFloat.toFixed(2) },
@@ -149,20 +223,34 @@ export async function adminOpenShiftAction(formData: FormData) {
 
   // Check if employee already has an open shift at this location
   if (isPg()) {
-    const { pool } = await import("@/lib/db");
-    const { rows: existing } = await pool.query(
-      `SELECT id FROM shifts WHERE employee_id = $1 AND location_id = $2 AND status = 'open' LIMIT 1`,
-      [employeeId, locationId],
-    );
-    if (existing.length > 0) {
-      redirect("/admin/clock-in?error=Employee+already+has+an+open+shift");
+    const sb = supabaseHeaders();
+    if (sb) {
+      const checkRes = await fetch(`${sb.url}/rest/v1/rpc/register_check_open_shift`, {
+        method: 'POST', headers: sb.headers,
+        body: JSON.stringify({ p_employee_id: employeeId, p_location_id: locationId }),
+      });
+      if (checkRes.ok) {
+        const rows = await checkRes.json() as Array<{ id: string }>;
+        if (Array.isArray(rows) && rows.length > 0) {
+          redirect("/admin/clock-in?error=Employee+already+has+an+open+shift");
+        }
+      }
+    } else {
+      const { pool } = await import("@/lib/db");
+      const { rows: existing } = await pool.query(
+        `SELECT id FROM shifts WHERE employee_id = $1 AND location_id = $2 AND status = 'open' LIMIT 1`,
+        [employeeId, locationId],
+      );
+      if (existing.length > 0) {
+        redirect("/admin/clock-in?error=Employee+already+has+an+open+shift");
+      }
     }
     const shiftId = randomUUID();
-    await (await import("@/lib/persistence/postgres-store")).pgOpenShift({
+    await rpcOpenShift({
       id: shiftId, organizationId: ctx.employee.organizationId, locationId, employeeId, registerSessionId: null,
       openingFloat, openedNote: openedNote || undefined,
     });
-    await (await import("@/lib/persistence/postgres-store")).pgInsertAuditEvent(
+    await rpcInsertAudit(
       ctx.employee.organizationId, locationId, ctx.employee.id,
       "shift", shiftId, "shift_opened",
       { employee_id: employeeId, opening_float: openingFloat.toFixed(2) },
@@ -190,10 +278,10 @@ export async function closeShiftAction(formData: FormData) {
     if (!context.registerSession.activeShiftId) {
       redirect("/register?error=No+active+shift+to+close");
     }
-    const shift = await pgCloseShift(context.registerSession.activeShiftId, context.registerSession.id, {
+    const shift = await rpcCloseShift(context.registerSession.activeShiftId, context.registerSession.id, {
       closingExpectedCash, closingDeclaredCash, closedNote: closedNote || undefined,
     });
-    await pgInsertAuditEvent(
+    await rpcInsertAudit(
       context.employee.organizationId, context.location.id, context.employee.id,
       "shift", shift.id, "shift_closed",
       {
@@ -254,7 +342,7 @@ export async function registerLogoutAction() {
 
   // Audit: log register logout (non-fatal — redirect still proceeds)
   if (isPg()) {
-    pgInsertAuditEvent(
+    rpcInsertAudit(
       employee.organizationId, location.id, employee.id,
       "session", sessionId, "register_logout",
       { register_session_id: registerSession.id },
@@ -282,13 +370,45 @@ export async function quickSwitchAction(pin: string): Promise<{ success: boolean
   if (!cleanPin) return { success: false, error: "PIN is required" };
 
   if (isPg()) {
-    const { pgFindCredentialByPin } = await import("@/lib/persistence/postgres-store");
-    const credential = await pgFindCredentialByPin(cleanPin, context.employee.organizationId);
-    if (!credential) return { success: false, error: "Invalid PIN" };
+    const sb = supabaseHeaders();
+
+    // Resolve PIN to employee — Supabase REST path or pool fallback
+    let credentialEmployeeId: string | null = null;
+    if (sb) {
+      const { scrypt, timingSafeEqual } = await import("node:crypto");
+      const verifyPinAsync = (secret: string, encoded: string): Promise<boolean> => {
+        const [salt, stored] = encoded.split(":");
+        if (!salt || !stored) return Promise.resolve(false);
+        return new Promise((resolve) => {
+          scrypt(secret, salt, 64, (err, derived) => {
+            if (err) return resolve(false);
+            try { resolve(timingSafeEqual(derived, Buffer.from(stored, "hex"))); }
+            catch { resolve(false); }
+          });
+        });
+      };
+      const candidatesRes = await fetch(`${sb.url}/rest/v1/rpc/register_pin_candidates`, {
+        method: 'POST', headers: sb.headers,
+        body: JSON.stringify({ p_location_id: locationId }),
+      });
+      if (candidatesRes.ok) {
+        const candidates = await candidatesRes.json() as Array<{ employee_id: string; pin_hash: string }>;
+        const results = await Promise.all(
+          candidates.map(async (c) => c.pin_hash && (await verifyPinAsync(cleanPin, c.pin_hash)) ? c : null),
+        );
+        const match = results.find((r) => r !== null);
+        credentialEmployeeId = match?.employee_id ?? null;
+      }
+    } else {
+      const { pgFindCredentialByPin } = await import("@/lib/persistence/postgres-store");
+      const credential = await pgFindCredentialByPin(cleanPin, context.employee.organizationId);
+      credentialEmployeeId = credential?.employeeId ?? null;
+    }
+    if (!credentialEmployeeId) return { success: false, error: "Invalid PIN" };
 
     const { readStore } = await import("@/lib/persistence/store");
     const store = await readStore(context.employee.organizationId);
-    const newEmployee = store.employees.find((e) => e.id === credential.employeeId && e.isActive);
+    const newEmployee = store.employees.find((e) => e.id === credentialEmployeeId && e.isActive);
     if (!newEmployee || !newEmployee.locationIds.includes(locationId)) {
       return { success: false, error: "Employee not found or not assigned to this location" };
     }
@@ -297,31 +417,43 @@ export async function quickSwitchAction(pin: string): Promise<{ success: boolean
       return { success: false, error: "Already signed in as this employee" };
     }
 
-    const timestamp = new Date().toISOString();
-    const { orgTx } = await import("@/lib/db");
-    const client = await orgTx(context.employee.organizationId);
-    try {
-      await client.query(`UPDATE sessions SET employee_id = $1 WHERE id = $2`, [newEmployee.id, context.session.id]);
-      await client.query(
-        `UPDATE register_sessions SET employee_id = $1, updated_at = $2 WHERE id = $3`,
-        [newEmployee.id, timestamp, context.registerSession.id],
-      );
-      if (context.registerSession.activeShiftId) {
+    // Switch employee via RPC or pool
+    if (sb) {
+      await fetch(`${sb.url}/rest/v1/rpc/register_quick_switch`, {
+        method: 'POST', headers: { ...sb.headers, Prefer: 'return=minimal' },
+        body: JSON.stringify({
+          p_session_id: context.session.id,
+          p_register_session_id: context.registerSession.id,
+          p_active_shift_id: context.registerSession.activeShiftId ?? null,
+          p_new_employee_id: newEmployee.id,
+        }),
+      });
+    } else {
+      const { orgTx } = await import("@/lib/db");
+      const client = await orgTx(context.employee.organizationId);
+      try {
+        await client.query(`UPDATE sessions SET employee_id = $1 WHERE id = $2`, [newEmployee.id, context.session.id]);
         await client.query(
-          `UPDATE shifts SET employee_id = $1 WHERE id = $2`,
-          [newEmployee.id, context.registerSession.activeShiftId],
+          `UPDATE register_sessions SET employee_id = $1, updated_at = $2 WHERE id = $3`,
+          [newEmployee.id, new Date().toISOString(), context.registerSession.id],
         );
+        if (context.registerSession.activeShiftId) {
+          await client.query(
+            `UPDATE shifts SET employee_id = $1 WHERE id = $2`,
+            [newEmployee.id, context.registerSession.activeShiftId],
+          );
+        }
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
       }
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
     }
 
     // Audit event
-    await pgInsertAuditEvent(
+    await rpcInsertAudit(
       context.employee.organizationId, locationId, newEmployee.id,
       "register_session", context.registerSession.id, "pin_login",
       {

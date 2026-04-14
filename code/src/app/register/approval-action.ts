@@ -3,7 +3,6 @@
 import { randomUUID } from "@/lib/uuid";
 import { readStore, mutateStore } from "@/lib/persistence/store";
 import { hasPermission } from "@/lib/domain/permissions";
-import pool, { orgTx } from "@/lib/db";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { verifySecret } from "@/lib/auth/crypto";
 import { requireRegisterPermission } from "@/lib/authz";
@@ -100,54 +99,63 @@ export async function verifyManagerApproval(pin: string, request: ApprovalReques
   const timestamp = new Date().toISOString();
 
   if (isPg()) {
-    const client = await orgTx(organizationId);
-    try {
-      await client.query(
-        `INSERT INTO transaction_exceptions (id, transaction_id, exception_code, requires_manager_approval, approved_by_employee_id, reason_code, trigger_amount, threshold_amount, resolved_at, details)
-         VALUES ($1, $2, $3, true, $4, $5, $6, $7, $8, $9)`,
-        [
-          exceptionId,
-          "pending_" + exceptionId, // placeholder transaction ref until checkout completes
-          request.actionType,
-          approverEmployee.id,
-          request.reasonCode ?? null,
-          request.triggerAmount,
-          request.thresholdAmount,
-          timestamp,
-          request.details ?? null,
-        ],
-      );
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (supabaseUrl && supabaseKey) {
+      // Supabase REST path — single RPC handles exception + audit atomically
+      const sbHeaders = {
+        apikey: supabaseKey,
+        Authorization: `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=minimal',
+      };
+      await fetch(`${supabaseUrl}/rest/v1/rpc/register_insert_exception`, {
+        method: 'POST', headers: sbHeaders,
+        body: JSON.stringify({
+          p_exception_id: exceptionId,
+          p_action_type: request.actionType,
+          p_approver_id: approverEmployee.id,
+          p_reason_code: request.reasonCode ?? null,
+          p_trigger_amount: request.triggerAmount,
+          p_threshold_amount: request.thresholdAmount,
+          p_details: request.details ?? null,
+          p_org_id: organizationId,
+          p_location_id: locationId,
+          p_cashier_id: cashierEmployeeId,
+        }),
+      });
+    } else {
+      // Pool fallback (local dev)
+      const { orgTx } = await import("@/lib/db");
+      const client = await orgTx(organizationId);
+      try {
+        await client.query(
+          `INSERT INTO transaction_exceptions (id, transaction_id, exception_code, requires_manager_approval, approved_by_employee_id, reason_code, trigger_amount, threshold_amount, resolved_at, details)
+           VALUES ($1, $2, $3, true, $4, $5, $6, $7, $8, $9)`,
+          [exceptionId, "pending_" + exceptionId, request.actionType, approverEmployee.id,
+            request.reasonCode ?? null, request.triggerAmount, request.thresholdAmount, timestamp, request.details ?? null],
+        );
+        await client.query("COMMIT");
+      } finally {
+        client.release();
+      }
 
-      await client.query("COMMIT");
-    } finally {
-      client.release();
-    }
-
-    // Audit event — outside transaction so audit failure doesn't rollback the approval
-    try {
-      await pool.query(
-        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [
-          randomUUID(),
-          organizationId,
-          locationId,
-          approverEmployee.id,
-          "transaction_exception",
-          exceptionId,
-          "manager_override",
-          JSON.stringify({
-            action_type: request.actionType,
-            cashier_employee_id: cashierEmployeeId,
-            approver_employee_id: approverEmployee.id,
-            trigger_amount: request.triggerAmount.toFixed(2),
-            threshold_amount: request.thresholdAmount.toFixed(2),
-            reason_code: request.reasonCode ?? "none",
-          }),
-        ],
-      );
-    } catch (err) {
-      console.error("[approval-action] audit event failed:", err);
+      try {
+        const { default: pool } = await import("@/lib/db");
+        await pool.query(
+          `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [randomUUID(), organizationId, locationId, approverEmployee.id, "transaction_exception", exceptionId,
+            "manager_override", JSON.stringify({
+              action_type: request.actionType, cashier_employee_id: cashierEmployeeId,
+              approver_employee_id: approverEmployee.id,
+              trigger_amount: request.triggerAmount.toFixed(2), threshold_amount: request.thresholdAmount.toFixed(2),
+              reason_code: request.reasonCode ?? "none",
+            })],
+        );
+      } catch (err) {
+        console.error("[approval-action] audit event failed:", err);
+      }
     }
   } else {
     await mutateStore((s) => {

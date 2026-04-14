@@ -498,10 +498,99 @@ export async function signInRegister(pin: string, locationId: string, deviceId?:
   }
 
   if (isPg()) {
+    const sb = supabaseHeaders();
+    if (sb) {
+      // Supabase REST path — no pool, works on Cloudflare Workers
+      const { scrypt, timingSafeEqual } = await import("node:crypto");
+      const verifyPinAsync = (secret: string, encoded: string): Promise<boolean> => {
+        const [salt, stored] = encoded.split(":");
+        if (!salt || !stored) return Promise.resolve(false);
+        return new Promise((resolve) => {
+          scrypt(secret, salt, 64, (err, derived) => {
+            if (err) return resolve(false);
+            try { resolve(timingSafeEqual(derived, Buffer.from(stored, "hex"))); }
+            catch { resolve(false); }
+          });
+        });
+      };
+
+      // Fetch PIN candidates for this location's org
+      const candidatesRes = await fetch(`${sb.url}/rest/v1/rpc/register_pin_candidates`, {
+        method: 'POST', headers: sb.headers,
+        body: JSON.stringify({ p_location_id: locationId }),
+      });
+      if (!candidatesRes.ok) redirect("/register?error=PIN+login+failed");
+      const candidates = await candidatesRes.json() as Array<{
+        employee_id: string; pin_hash: string; organization_id: string;
+        role_key: string; location_ids: string[];
+      }>;
+      if (!candidates.length) redirect("/register?error=PIN+login+failed");
+
+      // Verify PIN in parallel
+      const results = await Promise.all(
+        candidates.map(async (c) => {
+          if (!c.pin_hash) return null;
+          return (await verifyPinAsync(cleanPin, c.pin_hash)) ? c : null;
+        }),
+      );
+      const match = results.find((r) => r !== null);
+      if (!match) redirect("/register?error=PIN+login+failed");
+
+      const roleKey = match.role_key as RoleKey;
+      const locationIds = match.location_ids ?? [];
+      if (!locationIds.includes(locationId)) redirect("/register?error=PIN+login+failed");
+      if (!hasPermission(roleKey, "register.pin_login") || !hasPermission(roleKey, "register.open")) {
+        redirect("/register?error=PIN+login+failed");
+      }
+
+      const employeeId = match.employee_id;
+      const organizationId = match.organization_id;
+      const nextSession = buildSession("register", employeeId, organizationId, locationId);
+      const registerSessionId = randomUUID();
+
+      const createRes = await fetch(`${sb.url}/rest/v1/rpc/register_login_create_session`, {
+        method: 'POST',
+        headers: { ...sb.headers, Prefer: 'return=minimal' },
+        body: JSON.stringify({
+          p_employee_id: employeeId,
+          p_organization_id: organizationId,
+          p_location_id: locationId,
+          p_device_id: deviceId ?? null,
+          p_session_id: nextSession.id,
+          p_register_session_id: registerSessionId,
+          p_created_at: nextSession.createdAt,
+          p_expires_at: nextSession.expiresAt,
+        }),
+      });
+      if (!createRes.ok) throw new Error("Failed to create register session");
+
+      const { invalidateStoreCache } = await import("@/lib/persistence/postgres-read-store");
+      invalidateStoreCache();
+
+      // Return session info — cookie will be set by caller or API route
+      const jar = await cookieStore();
+      jar.set(REGISTER_COOKIE, nextSession.id, {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: process.env.NODE_ENV === "production",
+        path: "/",
+        expires: new Date(nextSession.expiresAt),
+      });
+
+      return {
+        employee: { id: employeeId, organizationId, roleKey },
+        location: { id: locationId, organizationId },
+        registerSession: { id: registerSessionId, deviceId },
+        authSessionId: nextSession.id,
+        authSessionExpiresAt: nextSession.expiresAt,
+        deviceId,
+      };
+    }
+
+    // Pool fallback (local dev without Supabase env vars)
     const { pgFindCredentialByPin } = await import("@/lib/persistence/postgres-store");
     const pool = await pgGetPool();
 
-    // Look up org from location, then scope PIN search to that org
     const locResult = await pool.query(
       `SELECT id, organization_id, is_active FROM locations WHERE id = $1 AND is_active = true LIMIT 1`,
       [locationId],
@@ -509,46 +598,26 @@ export async function signInRegister(pin: string, locationId: string, deviceId?:
     const locOrgId = (locResult.rows[0] as Record<string, unknown>)?.organization_id as string | undefined;
     const credential = await pgFindCredentialByPin(cleanPin, locOrgId);
 
-    if (!credential) {
-      redirect("/register?error=PIN+login+failed");
-    }
-    if (!locResult.rows[0]) {
-      redirect("/register?error=PIN+login+failed");
-    }
+    if (!credential) redirect("/register?error=PIN+login+failed");
+    if (!locResult.rows[0]) redirect("/register?error=PIN+login+failed");
 
-    // Lightweight employee lookup instead of full readStore
     const { rows: empRows } = await pool.query(
       `SELECT id, organization_id, role_key, location_ids, is_active FROM employees WHERE id = $1 AND is_active = true LIMIT 1`,
       [credential.employeeId],
     );
     const emp = empRows[0] as Record<string, unknown> | undefined;
-    if (!emp) {
-      redirect("/register?error=PIN+login+failed");
-    }
+    if (!emp) redirect("/register?error=PIN+login+failed");
 
     const roleKey = emp.role_key as RoleKey;
     const locationIds = (emp.location_ids as string[]) ?? [];
-    if (!locationIds.includes(locationId)) {
-      redirect("/register?error=PIN+login+failed");
-    }
-
+    if (!locationIds.includes(locationId)) redirect("/register?error=PIN+login+failed");
     if (!hasPermission(roleKey, "register.pin_login") || !hasPermission(roleKey, "register.open")) {
-      redirect("/register?error=PIN+login+failed");
-    }
-
-    // Fetch full location for org context
-    const { rows: locRows } = await pool.query(
-      `SELECT id, organization_id FROM locations WHERE id = $1 AND is_active = true LIMIT 1`,
-      [locationId],
-    );
-    if (!locRows[0]) {
       redirect("/register?error=PIN+login+failed");
     }
 
     const timestamp = new Date().toISOString();
     const employeeId = credential.employeeId;
     const organizationId = emp.organization_id as string;
-
     const nextSession = buildSession("register", employeeId, organizationId, locationId);
     const registerSessionId = randomUUID();
 
@@ -573,16 +642,8 @@ export async function signInRegister(pin: string, locationId: string, deviceId?:
       await client.query(
         `INSERT INTO sessions (id, employee_id, organization_id, scope, location_id, created_at, last_seen_at, expires_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [
-          nextSession.id,
-          nextSession.employeeId,
-          nextSession.organizationId,
-          nextSession.scope,
-          nextSession.locationId ?? null,
-          nextSession.createdAt,
-          nextSession.lastSeenAt,
-          nextSession.expiresAt,
-        ],
+        [nextSession.id, nextSession.employeeId, nextSession.organizationId, nextSession.scope,
+          nextSession.locationId ?? null, nextSession.createdAt, nextSession.lastSeenAt, nextSession.expiresAt],
       );
       await client.query(
         `INSERT INTO register_sessions (id, auth_session_id, employee_id, location_id, organization_id, device_id, status, started_at)
@@ -730,52 +791,62 @@ export async function signOutRegister() {
 
   if (sessionId) {
     if (isPg()) {
-      const pool = await pgGetPool();
-      const timestamp = new Date().toISOString();
+      const sb = supabaseHeaders();
+      if (sb) {
+        // Supabase REST path — single RPC handles everything atomically
+        await fetch(`${sb.url}/rest/v1/rpc/register_sign_out`, {
+          method: 'POST',
+          headers: { ...sb.headers, Prefer: 'return=minimal' },
+          body: JSON.stringify({ p_session_id: sessionId }),
+        });
+      } else {
+        // Pool fallback (local dev)
+        const pool = await pgGetPool();
+        const timestamp = new Date().toISOString();
 
-      // Close active register session + auto-close shift
-      const { rows: endedRows } = await pool.query(
-        `UPDATE register_sessions SET status = 'ended', ended_at = $1
-         WHERE auth_session_id = $2 AND status = 'active'
-         RETURNING id, employee_id, active_shift_id`,
-        [timestamp, sessionId],
-      );
-
-      const registerSession = endedRows[0] as
-        | { id: string; employee_id: string; active_shift_id: string | null }
-        | undefined;
-
-      if (registerSession?.active_shift_id) {
-        await pool.query(
-          `UPDATE shifts
-           SET status = 'closed',
-               closed_at = $1,
-               closing_expected_cash = opening_float,
-               closing_declared_cash = opening_float,
-               closing_variance = 0,
-               closed_note = $2
-           WHERE id = $3 AND status = 'open'`,
-          [
-            timestamp,
-            "Auto-closed because register session ended without manual shift close.",
-            registerSession.active_shift_id,
-          ],
+        const { rows: endedRows } = await pool.query(
+          `UPDATE register_sessions SET status = 'ended', ended_at = $1
+           WHERE auth_session_id = $2 AND status = 'active'
+           RETURNING id, employee_id, active_shift_id`,
+          [timestamp, sessionId],
         );
-        await pool.query(
-          `INSERT INTO transaction_events (id, transaction_id, actor_employee_id, event_kind, notes, payload, created_at)
-           VALUES ($1, $2, $3, 'shift_closed', 'Shift auto-closed during register logout', $4, $5)`,
-          [
-            randomUUID(),
-            `txn_${registerSession.active_shift_id}`,
-            registerSession.employee_id,
-            JSON.stringify({ register_session_id: registerSession.id, auto_closed: "true" }),
-            timestamp,
-          ],
-        );
-        await pool.query(`UPDATE register_sessions SET active_shift_id = NULL WHERE id = $1`, [registerSession.id]);
+
+        const registerSession = endedRows[0] as
+          | { id: string; employee_id: string; active_shift_id: string | null }
+          | undefined;
+
+        if (registerSession?.active_shift_id) {
+          await pool.query(
+            `UPDATE shifts
+             SET status = 'closed',
+                 closed_at = $1,
+                 closing_expected_cash = opening_float,
+                 closing_declared_cash = opening_float,
+                 closing_variance = 0,
+                 closed_note = $2
+             WHERE id = $3 AND status = 'open'`,
+            [
+              timestamp,
+              "Auto-closed because register session ended without manual shift close.",
+              registerSession.active_shift_id,
+            ],
+          );
+          await pool.query(
+            `INSERT INTO transaction_events (id, transaction_id, actor_employee_id, event_kind, notes, payload, created_at)
+             VALUES ($1, $2, $3, 'shift_closed', 'Shift auto-closed during register logout', $4, $5)`,
+            [
+              randomUUID(),
+              `txn_${registerSession.active_shift_id}`,
+              registerSession.employee_id,
+              JSON.stringify({ register_session_id: registerSession.id, auto_closed: "true" }),
+              timestamp,
+            ],
+          );
+          await pool.query(`UPDATE register_sessions SET active_shift_id = NULL WHERE id = $1`, [registerSession.id]);
+        }
+
+        await pgDeleteSession(sessionId);
       }
-
-      await pgDeleteSession(sessionId);
     } else {
       await mutateStore((store) => {
         const timestamp = new Date().toISOString();
