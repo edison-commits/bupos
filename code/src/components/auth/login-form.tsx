@@ -24,10 +24,7 @@ export function LoginForm() {
       const data = await res.json().catch(() => null) as { success?: boolean; redirect?: string; sessionId?: string; error?: string } | null;
 
       if (res.ok && data?.success) {
-        // Set cookie client-side as fallback (API route also sets Set-Cookie header)
-        if (data.sessionId) {
-          document.cookie = `basicuniformpos_admin_session=${data.sessionId}; path=/; max-age=${60*60*24*7}; samesite=lax; secure`;
-        }
+        // API route sets HttpOnly cookie via Set-Cookie header
         // Full page reload to send cookie with the request
         window.location.href = data.redirect || "/admin";
         return;
