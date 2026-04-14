@@ -18,13 +18,14 @@ export function LoginForm() {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         body: formData,
-        redirect: "follow",
+        redirect: "manual",
         credentials: "same-origin",
       });
 
-      // If the fetch followed the redirect to /admin successfully,
-      // the Set-Cookie was applied. Do a full page load to /admin.
-      if (res.ok || res.redirected) {
+      // With redirect: "manual", a 303 returns as an opaque redirect (type "opaqueredirect")
+      // The Set-Cookie header is applied to the browser cookie jar in this case.
+      // status is 0 for opaque redirects, or 303 if readable.
+      if (res.status === 303 || res.status === 0 || res.type === "opaqueredirect" || res.redirected) {
         window.location.href = "/admin";
         return;
       }
