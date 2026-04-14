@@ -11,7 +11,7 @@ export function Metric({ label, value }: { label: string; value: string }) {
 }
 
 export function SalesSummary({ store }: { store: LocalStoreData }) {
-  const txnEvents = store.transactionEventPlaceholders.filter(
+  const txnEvents = (store.transactionEventPlaceholders ?? []).filter(
     (e) => e.eventKind === "transaction_placeholder" && e.payload?.grand_total && e.transactionId !== "txn_register_shift_placeholder" && e.transactionId !== "txn_inventory_placeholder",
   );
   const totalSales = txnEvents.filter((e) => !e.payload?.is_return).reduce((s, e) => s + Number(e.payload?.grand_total ?? 0), 0);
@@ -257,18 +257,20 @@ export function DiscrepancyCorrelation({ store }: { store: LocalStoreData }) {
 }
 
 export function InventorySummary({ store }: { store: LocalStoreData }) {
-  const totalOnHand = store.inventory.reduce((s, i) => s + i.onHand, 0);
-  const totalReserved = store.inventory.reduce((s, i) => s + i.reserved, 0);
-  const totalRetailValue = store.inventory.reduce((s, inv) => {
-    const variant = store.variants.find((v) => v.id === inv.productVariantId);
+  const inventory = store.inventory ?? [];
+  const variants = store.variants ?? [];
+  const totalOnHand = inventory.reduce((s, i) => s + i.onHand, 0);
+  const totalReserved = inventory.reduce((s, i) => s + i.reserved, 0);
+  const totalRetailValue = inventory.reduce((s, inv) => {
+    const variant = variants.find((v) => v.id === inv.productVariantId);
     return s + (variant ? variant.price * inv.onHand : 0);
   }, 0);
-  const totalCostValue = store.inventory.reduce((s, inv) => {
-    const variant = store.variants.find((v) => v.id === inv.productVariantId);
+  const totalCostValue = inventory.reduce((s, inv) => {
+    const variant = variants.find((v) => v.id === inv.productVariantId);
     return s + (variant?.cost ? variant.cost * inv.onHand : 0);
   }, 0);
-  const lowStockCount = store.inventory.filter((i) => i.onHand <= i.reorderPoint).length;
-  const outOfStockCount = store.inventory.filter((i) => i.onHand === 0).length;
+  const lowStockCount = inventory.filter((i) => i.onHand <= i.reorderPoint).length;
+  const outOfStockCount = inventory.filter((i) => i.onHand === 0).length;
   const adjustments = store.inventoryAdjustments ?? [];
   const adjustmentCount = adjustments.length;
   const netAdjustment = adjustments.reduce((s, a) => s + a.delta, 0);
