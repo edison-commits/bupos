@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRegisterSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/authz";
-import { orgQuery } from "@/lib/db";
+import { orgQuery } from "@/lib/supabase-rest";
 import { validateBody, customerDisplaySchema } from "@/lib/validation/schemas";
 
 async function authorizeRegisterSession(registerSessionId: string): Promise<NextResponse | { orgId: string }> {

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { orgQuery, orgTx } from "@/lib/db";
+import { orgQuery, orgTx } from "@/lib/supabase-rest";
 import { randomUUID } from "@/lib/uuid";
 import { withAdminAuth } from "@/lib/api/with-auth";
 import { checkRateLimit } from "@/lib/auth/rate-limit";

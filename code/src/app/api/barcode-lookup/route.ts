@@ -1,4 +1,4 @@
-import { orgQuery } from '@/lib/db';
+import { orgQuery } from '@/lib/supabase-rest';
 import { NextResponse } from 'next/server';
 import { withDualAuth } from '@/lib/api/with-auth';
 

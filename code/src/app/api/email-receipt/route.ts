@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { withDualAuth } from "@/lib/api/with-auth";
-import { orgQuery } from "@/lib/db";
+import { orgQuery } from "@/lib/supabase-rest";
 import { validateBody, emailReceiptSchema } from "@/lib/validation/schemas";
 
 /**

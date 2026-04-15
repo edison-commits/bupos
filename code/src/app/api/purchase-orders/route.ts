@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { orgQuery, pool } from '@/lib/db';
+import { orgQuery, getPool } from '@/lib/supabase-rest';
 import { withDualAuth } from '@/lib/api/with-auth';
 import { pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
 import { validateBody, purchaseOrderCreateSchema, purchaseOrderUpdateSchema, purchaseOrderReceiveSchema } from '@/lib/validation/schemas';
@@ -108,6 +108,7 @@ export const POST = withDualAuth("inventory.adjust", async (request, ctx) => {
     const poNumber = `${locCode}-PO-${dateStr}-${String(seq).padStart(3, '0')}`;
 
     // Create PO and lines in a transaction
+    const pool = await getPool();
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -222,7 +223,8 @@ export const PATCH = withDualAuth("inventory.adjust", async (request, ctx) => {
     if (po.status === 'cancelled') return NextResponse.json({ error: 'Cannot receive on a cancelled PO' }, { status: 400 });
     if (po.status === 'received') return NextResponse.json({ error: 'PO is already fully received' }, { status: 400 });
 
-    const client = await pool.connect();
+    const pool2 = await getPool();
+    const client = await pool2.connect();
     try {
       await client.query('BEGIN');
       await client.query(`SET LOCAL app.current_org_id = '${orgId}'`);

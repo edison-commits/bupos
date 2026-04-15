@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { orgQuery } from "@/lib/db";
+import { orgQuery } from "@/lib/supabase-rest";
 import { withAdminAuth } from "@/lib/api/with-auth";
 
 // M-05: Validate date params to prevent Content-Disposition header injection
