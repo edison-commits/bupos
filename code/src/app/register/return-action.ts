@@ -4,7 +4,7 @@ import { randomUUID } from "@/lib/uuid";
 import { revalidatePath } from "next/cache";
 import { requireRegisterPermission } from "@/lib/authz";
 import { mutateStore } from "@/lib/persistence/store";
-import pool, { orgTx } from "@/lib/db";
+import { orgTx, getPool } from "@/lib/supabase-rest";
 import type { TenderType } from "@/lib/domain/types";
 import { registerConfiguration } from "@/lib/data/mock-data";
 
@@ -179,7 +179,7 @@ export async function processReturnAction(input: ReturnInput): Promise<ReturnRes
 
     // Audit event — outside transaction so audit failure doesn't rollback the return
     try {
-      await pool.query(
+      await (await getPool()).query(
         `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
          VALUES ($1, $2, $3, $4, 'transaction', $5, 'return_processed', $6, now())`,
         [

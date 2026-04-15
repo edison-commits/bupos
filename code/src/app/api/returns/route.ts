@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
-import { orgQuery, orgTx } from '@/lib/db';
+import { orgQuery, orgTx } from '@/lib/supabase-rest';
 import { withDualAuth, withAdminAuth } from '@/lib/api/with-auth';
 import { validateBody, returnCreateSchema, returnUpdateSchema } from '@/lib/validation/schemas';
 

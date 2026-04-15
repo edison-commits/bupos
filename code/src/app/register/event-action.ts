@@ -2,7 +2,7 @@
 
 import { randomUUID } from "@/lib/uuid";
 import { mutateStore } from "@/lib/persistence/store";
-import pool, { orgTx } from "@/lib/db";
+import { orgTx, getPool } from "@/lib/supabase-rest";
 import { requireRegisterPermission } from "@/lib/authz";
 
 const isPg = () => !!process.env.USE_POSTGRES;
@@ -76,7 +76,7 @@ export async function logTransactionEvent(input: TransactionEventInput): Promise
 
     // Audit event — outside transaction
     try {
-      await pool.query(
+      await (await getPool()).query(
         `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [

@@ -4,7 +4,7 @@ import { randomUUID } from "@/lib/uuid";
 import { revalidatePath } from "next/cache";
 import { requireRegisterPermission } from "@/lib/authz";
 import { mutateStore } from "@/lib/persistence/store";
-import pool, { orgTx } from "@/lib/db";
+import { orgTx, getPool } from "@/lib/supabase-rest";
 import type { Cart } from "@/lib/cart/types";
 import { computeTotals } from "@/lib/cart/cart";
 
@@ -99,7 +99,7 @@ export async function createLayawayAction(
 
     // Audit event — outside transaction so audit failure doesn't rollback the layaway
     try {
-      await pool.query(
+      await (await getPool()).query(
         `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
          VALUES ($1, $2, $3, $4, 'layaway', $5, 'layaway_created', $6, now())`,
         [

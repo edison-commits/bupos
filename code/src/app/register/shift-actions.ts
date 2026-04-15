@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { requireRegisterPermission } from "@/lib/authz";
 import { mutateStore } from "@/lib/persistence/store";
 import { generateAndPersistFlags } from "@/lib/behavior/flag-engine";
-import { orgTx } from "@/lib/db";
+import { orgTx } from "@/lib/supabase-rest";
 
 const isPg = () => !!process.env.USE_POSTGRES;
 

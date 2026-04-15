@@ -2,7 +2,7 @@
 
 import { mutateStore } from "@/lib/persistence/store";
 import { requireAdminPermission } from "@/lib/authz";
-import { orgTx } from "@/lib/db";
+import { orgTx } from "@/lib/supabase-rest";
 import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 import type { StoreCreditEntry } from "@/lib/domain/types";
 import { revalidatePath } from "next/cache";

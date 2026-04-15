@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "@/lib/uuid";
-import { orgTx, orgQuery } from "@/lib/db";
+import { orgTx, orgQuery } from "@/lib/supabase-rest";
 import { withDualAuth } from "@/lib/api/with-auth";
 import { getRegisterConfig } from "@/lib/config/register-config";
 import { validateBody, offlineSyncSchema } from "@/lib/validation/schemas";

@@ -2,7 +2,7 @@
 
 import { mutateStore } from "@/lib/persistence/store";
 import { requireAdminPermission } from "@/lib/authz";
-import { orgQuery, orgTx } from "@/lib/db";
+import { orgQuery, orgTx } from "@/lib/supabase-rest";
 import type { Transfer, TransferLine } from "@/lib/domain/types";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "@/lib/uuid";

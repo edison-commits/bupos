@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireRegisterPermission } from "@/lib/authz";
 import { mutateStore } from "@/lib/persistence/store";
-import pool, { orgTx } from "@/lib/db";
+import { orgTx, getPool } from "@/lib/supabase-rest";
 import type { Cart, CheckoutResult, TenderLine } from "@/lib/cart/types";
 import { computeTotals, checkOutCart } from "@/lib/cart/cart";
 import { getRegisterConfig } from "@/lib/config/register-config";
@@ -30,7 +30,7 @@ export async function checkoutAction(
 
   // Idempotency: if a key is provided, check for an existing completed transaction
   if (idempotencyKey && isPg()) {
-    const { rows: existing } = await pool.query(
+    const { rows: existing } = await (await getPool()).query(
       `SELECT id, status FROM transactions WHERE idempotency_key = $1 AND organization_id = $2 LIMIT 1`,
       [idempotencyKey, context.employee.organizationId],
     );
@@ -273,7 +273,7 @@ export async function checkoutAction(
       );
 
       // 6. Audit event — fire-and-forget outside the sale transaction
-      pool.query(
+      (await getPool()).query(
         `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
          VALUES ($1, $2, $3, $4, 'transaction', $5, 'transaction_completed', $6, now())`,
         [

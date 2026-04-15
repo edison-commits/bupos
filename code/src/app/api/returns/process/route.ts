@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { randomUUID } from "@/lib/uuid";
-import { orgTx } from '@/lib/db';
+import { orgTx } from '@/lib/supabase-rest';
 import { withDualAuth } from '@/lib/api/with-auth';
 import { checkRateLimit } from '@/lib/auth/rate-limit';
 import { validateBody, returnProcessSchema } from '@/lib/validation/schemas';
