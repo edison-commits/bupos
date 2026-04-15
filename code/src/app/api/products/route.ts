@@ -3,7 +3,7 @@
  * BuPOS Product Catalog API
  * @tags products
  */
-import { orgQuery, pool } from '@/lib/db';
+import { orgQuery, getPool } from '@/lib/supabase-rest';
 import { NextResponse } from 'next/server';
 import { invalidateProductsCache, invalidateVariantsCache, pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
 import { withDualAuth } from '@/lib/api/with-auth';
@@ -222,6 +222,7 @@ export const POST = withDualAuth("catalog.manage", async (request, ctx) => {
   if (!rl.allowed) {
     return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
   }
+  const pool = await getPool();
   const client = await pool.connect();
   try {
     const body = await request.json();
@@ -317,6 +318,7 @@ export const PUT = withDualAuth("catalog.manage", async (request, ctx) => {
   if (!rl.allowed) {
     return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
   }
+  const pool = await getPool();
   const client = await pool.connect();
   try {
     const body = await request.json();
@@ -483,6 +485,7 @@ export const PUT = withDualAuth("catalog.manage", async (request, ctx) => {
 
 export const DELETE = withDualAuth("catalog.manage", async (request, ctx) => {
   const { orgId } = ctx;
+  const pool = await getPool();
   const client = await pool.connect();
   try {
     const body = await request.json();
@@ -516,6 +519,7 @@ export const DELETE = withDualAuth("catalog.manage", async (request, ctx) => {
 
 export const PATCH = withDualAuth("catalog.manage", async (request, ctx) => {
   const { orgId } = ctx;
+  const pool = await getPool();
   const client = await pool.connect();
   try {
     const body = await request.json();

@@ -3,7 +3,7 @@
  * @tags employees
  */
 import { NextResponse } from 'next/server';
-import pool, { orgQuery } from '@/lib/db';
+import { orgQuery, getPool } from '@/lib/supabase-rest';
 import { hashSecret, verifySecret } from '@/lib/auth/crypto';
 import { randomUUID } from 'crypto';
 import { canManageEmployeeRole } from '@/lib/authz';
@@ -19,6 +19,7 @@ import { validateBody, employeeCreateSchema, employeeUpdateSchema, employeePatch
  * permission changes take effect immediately rather than waiting for session expiry.
  */
 async function invalidateEmployeeSessions(employeeId: string): Promise<void> {
+  const pool = await getPool();
   await pool.query(
     `DELETE FROM sessions WHERE employee_id = $1`,
     [employeeId],
@@ -125,6 +126,7 @@ export const POST = withAdminAuth('employee.manage', async (request, ctx) => {
     const now = new Date().toISOString();
 
     // Stored PIN hashes are salted, so detect collisions by verifying against each stored hash.
+    const pool = await getPool();
     const { rows: allCreds } = await pool.query(
       `SELECT employee_id, pin_hash FROM auth_credentials WHERE pin_hash IS NOT NULL`,
     );
@@ -272,6 +274,7 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
     vals.push(id);
     vals.push(orgId);
 
+    const pool = await getPool();
     const { rows } = await pool.query(
       `UPDATE employees SET ${sets.join(', ')}
        WHERE id = $${idx} AND organization_id = $${idx + 1}
@@ -324,6 +327,8 @@ export const PATCH = withAdminAuth('employee.manage', async (request, ctx) => {
     const v = validateBody(employeePatchSchema, body);
     if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
     const { action, id, pin } = v.data;
+
+    const pool = await getPool();
 
     if (action === 'deactivate') {
       // Toggle is_active status

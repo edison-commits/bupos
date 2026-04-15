@@ -3,7 +3,7 @@
  * @tags customers
  */
 import { NextResponse } from 'next/server';
-import { orgQuery } from '@/lib/db';
+import { orgQuery } from '@/lib/supabase-rest';
 import { withAdminAuth } from '@/lib/api/with-auth';
 import { pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
 import { validateBody, customerCreateSchema, customerUpdateSchema } from '@/lib/validation/schemas';

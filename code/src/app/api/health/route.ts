@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { pool } from "@/lib/db";
+import { getPool } from "@/lib/supabase-rest";
 
 /**
  * GET /api/health
@@ -15,6 +15,7 @@ export async function GET() {
     // pg_stat_activity is a heavier but more realistic probe than SELECT 1 —
     // it verifies the DB can actually process a query under load, not just that
     // the connection is alive.
+    const pool = await getPool();
     const { rows } = await pool.query(
       `SELECT 1 AS check, now() AS ts LIMIT 1`
     );
@@ -34,6 +35,7 @@ export async function GET() {
 
 export async function HEAD() {
   try {
+    const pool = await getPool();
     await pool.query("SELECT 1");
     return new NextResponse(null, { status: 200 });
   } catch {
