@@ -1,10 +1,21 @@
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+// Service role key bypasses RLS — use for all server-side API routes.
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || SUPABASE_KEY;
+
+/** Standard headers for server-side Supabase REST calls (service role). */
+function svcHeaders(extra?: Record<string, string>): Record<string, string> {
+  return {
+    apikey: SUPABASE_KEY,
+    Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+    ...extra,
+  };
+}
 
 export async function supabaseRpc(fn: string, params: Record<string, unknown>) {
   const resp = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
     method: "POST",
-    headers: { "apikey": SUPABASE_KEY, "Content-Type": "application/json" },
+    headers: svcHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(params),
   });
   const raw = await resp.json();
@@ -14,14 +25,14 @@ export async function supabaseRpc(fn: string, params: Record<string, unknown>) {
 export async function supabaseQuery(table: string, query: Record<string, string>) {
   const qs = new URLSearchParams(query).toString();
   const url = qs ? `${SUPABASE_URL}/rest/v1/${table}?${qs}` : `${SUPABASE_URL}/rest/v1/${table}`;
-  const resp = await fetch(url, { headers: { "apikey": SUPABASE_KEY } });
+  const resp = await fetch(url, { headers: svcHeaders() });
   return resp.json();
 }
 
 export async function supabaseInsert(table: string, data: Record<string, unknown>) {
   const resp = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
     method: "POST",
-    headers: { "apikey": SUPABASE_KEY, "Content-Type": "application/json", "Prefer": "return=representation" },
+    headers: svcHeaders({ "Content-Type": "application/json", "Prefer": "return=representation" }),
     body: JSON.stringify(data),
   });
   return resp.json();
@@ -31,7 +42,7 @@ export async function supabaseUpdate(table: string, query: Record<string, string
   const qs = new URLSearchParams(query).toString();
   const resp = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${qs}`, {
     method: "PATCH",
-    headers: { "apikey": SUPABASE_KEY, "Content-Type": "application/json", "Prefer": "return=representation" },
+    headers: svcHeaders({ "Content-Type": "application/json", "Prefer": "return=representation" }),
     body: JSON.stringify(data),
   });
   return resp.json();
@@ -41,7 +52,7 @@ export async function supabaseDelete(table: string, query: Record<string, string
   const qs = new URLSearchParams(query).toString();
   const resp = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${qs}`, {
     method: "DELETE",
-    headers: { "apikey": SUPABASE_KEY, "Content-Type": "application/json", "Prefer": "return=representation" },
+    headers: svcHeaders({ "Content-Type": "application/json", "Prefer": "return=representation" }),
   });
   return resp.json();
 }

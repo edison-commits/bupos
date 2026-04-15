@@ -38,6 +38,7 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
     fromDate = `${date}T00:00:00.000Z`;
   }
 
+  try {
   // Run key queries in parallel to minimize Worker CPU time
   const [metricsResult, tenderResult, hourlyResult, employeeResult, lowStockResult, recentResult] = await Promise.all([
     // 1. Key metrics
@@ -156,4 +157,8 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
     recentTransactions: recentResult.rows,
     lowStockAlerts: lowStockResult.rows,
   });
+  } catch (error) {
+    console.error("[dashboard GET]", error);
+    return NextResponse.json({ error: "Failed to load dashboard" }, { status: 500 });
+  }
 });

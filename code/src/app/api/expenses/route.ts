@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { orgQuery } from '@/lib/db';
+import { orgQuery } from '@/lib/supabase-rest';
 import { withDualAuth } from '@/lib/api/with-auth';
 import { validateBody, expenseCreateSchema, expenseDeleteSchema } from '@/lib/validation/schemas';
 

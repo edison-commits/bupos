@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { orgQuery } from "@/lib/db";
+import { orgQuery } from "@/lib/supabase-rest";
 import { withAuth } from "@/lib/api/with-auth";
 
 /**

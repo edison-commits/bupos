@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { orgQuery } from "@/lib/db";
+import { orgQuery } from "@/lib/supabase-rest";
 import { withDualAuth, withAdminAuth } from "@/lib/api/with-auth";
 import { pgCloseShift } from "@/lib/persistence/postgres-store";
 import { checkRateLimit } from "@/lib/auth/rate-limit";

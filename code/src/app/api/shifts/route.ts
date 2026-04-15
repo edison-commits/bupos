@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { orgQuery } from "@/lib/db";
+import { orgQuery } from "@/lib/supabase-rest";
 import { pgOpenShift } from "@/lib/persistence/postgres-store";
 import { randomUUID } from "@/lib/uuid";
 import { withDualAuth, withAdminAuth } from "@/lib/api/with-auth";

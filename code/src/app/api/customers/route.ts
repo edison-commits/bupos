@@ -74,7 +74,7 @@ export const GET = withAdminAuth('employee.manage', async (request, ctx) => {
       const [customerRes, transactionsRes, statsRes] = await Promise.all([
         orgQuery(
           orgId,
-          `SELECT id, organization_id, customer_id, total, subtotal, tax_amount, discount_amount, status, created_at FROM customers WHERE id = $1 AND organization_id = $2`,
+          `SELECT id, first_name, last_name, email, phone, address, notes, loyalty_points, total_spend, visit_count, store_credit_balance, is_active, created_at, updated_at FROM customers WHERE id = $1 AND organization_id = $2`,
           [id, orgId]
         ),
         orgQuery(

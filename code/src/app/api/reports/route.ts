@@ -3,7 +3,7 @@
  * BuPOS Reports API
  * @tags reports
  */
-import { orgQuery } from "@/lib/db";
+import { orgQuery } from "@/lib/supabase-rest";
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api/with-auth";
 
