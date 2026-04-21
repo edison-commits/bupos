@@ -1,9 +1,12 @@
 import { NextResponse } from 'next/server';
 import { orgQuery, getPool } from '@/lib/supabase-rest';
-import { withDualAuth } from '@/lib/api/with-auth';
+import { withDualAuth, withAdminAuth } from '@/lib/api/with-auth';
 import { pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
 import { validateBody, receivingCreateSchema } from '@/lib/validation/schemas';
+import { invalidateInventoryCache } from "@/lib/cache/inventory-cache";
 
+import { safeErr } from "@/lib/logging/safe-err";
+import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
 /**
  * Receiving API
  *
@@ -59,11 +62,12 @@ export const GET = withDualAuth("inventory.adjust", async (request, ctx) => {
           pv.name as variant_name,
           p.name as product_name
         FROM purchase_order_lines pol
-        JOIN product_variants pv ON pol.product_variant_id = pv.id
-        JOIN products p ON pv.product_id = p.id
+        JOIN purchase_orders po ON po.id = pol.purchase_order_id AND po.organization_id = $2
+        JOIN product_variants pv ON pol.product_variant_id = pv.id AND pv.organization_id = $2
+        JOIN products p ON pv.product_id = p.id AND p.organization_id = $2
         WHERE pol.purchase_order_id = $1
         ORDER BY p.name, pv.name`,
-        [poId]
+        [poId, orgId]
       );
 
       return NextResponse.json({ lines });
@@ -75,7 +79,7 @@ export const GET = withDualAuth("inventory.adjust", async (request, ctx) => {
         return NextResponse.json({ variants: [] });
       }
 
-      const searchTerm = `%${q.toUpperCase()}%`;
+      const searchTerm = `%${q.toUpperCase().replace(/[%_\\]/g, '\\$&')}%`;
       const { rows } = await orgQuery(
         orgId,
         `SELECT
@@ -86,9 +90,10 @@ export const GET = withDualAuth("inventory.adjust", async (request, ctx) => {
           p.name as product_name,
           COALESCE(il.on_hand, 0) as on_hand
         FROM product_variants pv
-        JOIN products p ON pv.product_id = p.id
+        JOIN products p ON pv.product_id = p.id AND p.organization_id = $1
         LEFT JOIN inventory_levels il ON pv.id = il.product_variant_id
           AND il.location_id = $2
+          AND il.organization_id = $1
         WHERE pv.organization_id = $1
           AND (UPPER(pv.sku) LIKE $3 OR UPPER(p.name) LIKE $3 OR UPPER(pv.name) LIKE $3)
           AND pv.is_active = true
@@ -101,7 +106,7 @@ export const GET = withDualAuth("inventory.adjust", async (request, ctx) => {
 
     return NextResponse.json({ error: 'Invalid type parameter' }, { status: 400 });
   } catch (error) {
-    console.error('Receiving GET error:', error);
+    console.error('Receiving GET error:', safeErr(error));
     return NextResponse.json(
       { error: 'Failed to fetch receiving data' },
       { status: 500 }
@@ -109,7 +114,9 @@ export const GET = withDualAuth("inventory.adjust", async (request, ctx) => {
   }
 });
 
-export const POST = withDualAuth("inventory.adjust", async (request, ctx) => {
+// R27-H2: receiving writes purchase_order_lines + inventory — back-office
+// flow, not a register terminal action. GET stays dual for clerk UI.
+export const POST = withAdminAuth("inventory.adjust", async (request, ctx) => {
   const { orgId, employee, locationId } = ctx;
   const employeeId = employee.id;
 
@@ -117,8 +124,31 @@ export const POST = withDualAuth("inventory.adjust", async (request, ctx) => {
     const body = await request.json();
     const v = validateBody(receivingCreateSchema, body);
     if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
-    const { items: _validatedItems, mode, po_id } = v.data;
-    const items = body.items as Array<{ product_variant_id: string; quantity: number; po_line_id?: string }>;
+    const { items, mode, po_id } = v.data;
+    // Use validated items from schema, not raw body
+
+    // Cross-location PO guard: the receiving cashier uses ctx.locationId for
+    // the inventory write. If we accept a po_id without verifying the PO
+    // belongs to THIS location (and this org), a cashier at Location A can
+    // submit Location B's open PO — stock lands at A, Loc B's PO is marked
+    // received, the shipment meant for B never appears. Mirrors the check
+    // /api/purchase-orders enforces on its PATCH receive path.
+    if (mode === 'po' && po_id) {
+      const { rows: poRows } = await orgQuery(
+        orgId,
+        `SELECT location_id FROM purchase_orders WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+        [po_id, orgId],
+      );
+      if (poRows.length === 0) {
+        return NextResponse.json({ error: 'Purchase order not found' }, { status: 404 });
+      }
+      if (poRows[0].location_id !== locationId) {
+        return NextResponse.json(
+          { error: 'Purchase order does not belong to your location' },
+          { status: 403 },
+        );
+      }
+    }
 
     // Process receiving in transaction
     const pool = await getPool();
@@ -126,14 +156,39 @@ export const POST = withDualAuth("inventory.adjust", async (request, ctx) => {
     try {
       await client.query('BEGIN');
       await client.query(
-        `SET LOCAL app.current_org_id = '${orgId}'`
+        "SELECT set_config('app.current_org_id', $1, true)", [orgId]
       );
+
+      // R17-M-1: verify every client-supplied product_variant_id belongs to
+      // this org BEFORE any inventory writes. The FK is tenant-agnostic, so
+      // a receiving POST in adhoc mode (no PO) with a foreign variant UUID
+      // would create an inventory_levels row linking caller's org to the
+      // foreign variant. PO mode is already gated via the PO's org_id, but
+      // adhoc mode bypassed it. Same class as R16-L-4 (PO + transfer lines).
+      const variantIds = Array.from(new Set(items.map((i) => i.product_variant_id)));
+      if (variantIds.length > 0) {
+        const { rows: vCheck } = await client.query(
+          `SELECT id FROM product_variants WHERE id = ANY($1::uuid[]) AND organization_id = $2`,
+          [variantIds, orgId],
+        );
+        if (vCheck.length !== variantIds.length) {
+          await client.query('ROLLBACK');
+          return NextResponse.json(
+            { error: 'One or more product_variant_id values do not belong to this organization' },
+            { status: 400 },
+          );
+        }
+      }
 
       for (const item of items) {
         // Get current inventory level
+        // FOR UPDATE locks the row so concurrent receiving POSTs on the same
+        // variant/location serialize correctly. Otherwise two reads both see
+        // on_hand=N and both write N+delta, losing one receipt.
         const levelRes = await client.query(
           `SELECT id, on_hand FROM inventory_levels
-           WHERE product_variant_id = $1 AND location_id = $2 AND organization_id = $3`,
+           WHERE product_variant_id = $1 AND location_id = $2 AND organization_id = $3
+           FOR UPDATE`,
           [item.product_variant_id, locationId, orgId]
         );
 
@@ -156,76 +211,125 @@ export const POST = withDualAuth("inventory.adjust", async (request, ctx) => {
           currentOnHand = 0;
         }
 
-        // Calculate new on_hand
-        const newOnHand = currentOnHand + item.quantity;
+        // Compute the effective received delta. In PO mode, clamp to the PO
+        // line's remaining quantity_ordered so over-receives don't add phantom
+        // inventory beyond what was actually ordered. In adhoc mode, accept
+        // the raw quantity.
+        // R31-H6: FOR UPDATE the PO line so two concurrent receives
+        // on the same line can't both read `quantity_received = 0`,
+        // both clamp to ordered, both UPDATE additively, and
+        // double-credit inventory. Prior shape had no lock here.
+        let effectiveDelta = Number(item.quantity);
+        if (mode === 'po' && item.po_line_id) {
+          // R26-F1: JOIN through purchase_orders for explicit org
+          // scoping. po_line_id + po_id are from the client payload.
+          const lineRes = await client.query(
+            `SELECT pol.quantity_ordered, COALESCE(pol.quantity_received, 0) AS received
+             FROM purchase_order_lines pol
+             JOIN purchase_orders po ON po.id = pol.purchase_order_id
+             WHERE pol.id = $1 AND pol.purchase_order_id = $2
+               AND po.organization_id = $3
+             FOR UPDATE OF pol`,
+            [item.po_line_id, po_id, orgId],
+          );
+          if (lineRes.rows.length === 0) {
+            // Either bad line id or wrong PO — skip silently (defensive) rather than polluting inventory.
+            continue;
+          }
+          const ordered = Number(lineRes.rows[0].quantity_ordered);
+          const alreadyRecv = Number(lineRes.rows[0].received);
+          const remaining = Math.max(0, ordered - alreadyRecv);
+          effectiveDelta = Math.max(0, Math.min(remaining, Number(item.quantity)));
+          if (effectiveDelta === 0) continue;
+        }
 
-        // Update inventory level
+        // Calculate new on_hand using the CLAMPED delta.
+        const newOnHand = currentOnHand + effectiveDelta;
+
+        // Update inventory level. received_at is touched here because this IS
+        // a receiving operation (contrast with refund restocks which should not).
+        // R26-F1: inventoryLevelId was fetched from an org-scoped
+        // SELECT earlier in this handler; explicit filter on UPDATE
+        // for defense-in-depth.
         await client.query(
           `UPDATE inventory_levels
-           SET on_hand = $1, updated_at = NOW()
-           WHERE id = $2`,
-          [newOnHand, inventoryLevelId]
+           SET on_hand = $1, received_at = NOW(), updated_at = NOW()
+           WHERE id = $2 AND organization_id = $3`,
+          [newOnHand, inventoryLevelId, orgId]
         );
 
-        // Create inventory adjustment record
+        // Create inventory adjustment record using the clamped delta.
+        // R32-D6: include organization_id (migration 063).
         await client.query(
           `INSERT INTO inventory_adjustments
-            (inventory_level_id, product_variant_id, location_id, employee_id, reason, delta, resulting_on_hand)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            (organization_id, inventory_level_id, product_variant_id, location_id, employee_id, reason, delta, resulting_on_hand)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
           [
+            orgId,
             inventoryLevelId,
             item.product_variant_id,
             locationId,
             employeeId,
             'received',
-            item.quantity,
+            effectiveDelta,
             newOnHand,
           ]
         );
 
-        // Update PO line if in PO mode
+        // Update PO line with the clamped delta only. line was
+        // verified org-scoped above via the lineRes SELECT.
+        // check-pool-org-filter: scoped-by-prior-fk-verified-select
         if (mode === 'po' && item.po_line_id) {
           await client.query(
             `UPDATE purchase_order_lines
-             SET quantity_received = $1
-             WHERE id = $2`,
-            [item.quantity, item.po_line_id]
+             SET quantity_received = COALESCE(quantity_received, 0) + $1
+             WHERE id = $2 AND purchase_order_id = $3`,
+            [effectiveDelta, item.po_line_id, po_id],
           );
         }
       }
 
-      // Update PO status if in PO mode
+      // Update PO status if in PO mode. po_id was validated via the
+      // earlier line-level JOIN (if we got here with mode='po', the
+      // JOIN-against-organization_id succeeded for at least one line).
       if (mode === 'po' && po_id) {
+        // R26-F1: JOIN to purchase_orders to scope the aggregate.
         const statusRes = await client.query(
           `SELECT
-            COUNT(*) as total,
-            SUM(CASE WHEN quantity_received >= quantity_ordered THEN 1 ELSE 0 END) as completed
-           FROM purchase_order_lines
-           WHERE purchase_order_id = $1`,
-          [po_id]
+            COUNT(*)::int as total,
+            SUM(CASE WHEN pol.quantity_received >= pol.quantity_ordered THEN 1 ELSE 0 END)::int as completed
+           FROM purchase_order_lines pol
+           JOIN purchase_orders po ON po.id = pol.purchase_order_id
+           WHERE pol.purchase_order_id = $1 AND po.organization_id = $2`,
+          [po_id, orgId]
         );
 
-        const { total, completed } = statusRes.rows[0];
+        // Cast to numbers — node-pg returns NUMERIC aggregates as strings, which
+        // would make `completed === total` always false / lexical.
+        const total = Number(statusRes.rows[0].total);
+        const completed = Number(statusRes.rows[0].completed);
         let newStatus = 'partial';
 
         if (completed === total) {
           newStatus = 'received';
         }
 
+        // R26-F1: explicit org filter on PO status update.
         await client.query(
           `UPDATE purchase_orders
            SET status = $1, received_at = NOW(), updated_at = NOW()
-           WHERE id = $2`,
-          [newStatus, po_id]
+           WHERE id = $2 AND organization_id = $3`,
+          [newStatus, po_id, orgId]
         );
       }
 
       await client.query('COMMIT');
-      pgInsertAuditEvent(
+      invalidateInventoryCache(orgId);
+      await waitUntilOrAwait(pgInsertAuditEvent(
         orgId, null, employeeId,
         "inventory", null, "inventory_received",
         { items_count: items.length, mode, po_id: po_id || null, description: `Received ${items.length} item(s)` },
-      ).catch((err) => console.error("[audit] Failed to insert audit event:", err));
+      ).catch((err) => console.error("[audit] Failed to insert audit event:", safeErr(err))));
       return NextResponse.json({
         success: true,
         message: `Successfully received ${items.length} item(s)`,
@@ -237,9 +341,9 @@ export const POST = withDualAuth("inventory.adjust", async (request, ctx) => {
       client.release();
     }
   } catch (error) {
-    console.error('Receiving POST error:', error);
+    console.error('Receiving POST error:', safeErr(error));
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to process receiving' },
+      { error: 'Failed to process receiving' },
       { status: 500 }
     );
   }

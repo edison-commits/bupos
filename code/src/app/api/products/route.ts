@@ -3,37 +3,26 @@
  * BuPOS Product Catalog API
  * @tags products
  */
-import { orgQuery, getPool } from '@/lib/supabase-rest';
+import { orgQuery, orgTx, getPool } from '@/lib/supabase-rest';
 import { NextResponse } from 'next/server';
 import { invalidateProductsCache, invalidateVariantsCache, pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
-import { withDualAuth } from '@/lib/api/with-auth';
+import { withDualAuth, withAdminAuth } from '@/lib/api/with-auth';
 import { validateBody, productCreateSchema, productUpdateSchema, productDeleteSchema, productImportSchema } from '@/lib/validation/schemas';
 import { checkRateLimit } from '@/lib/auth/rate-limit';
 
-// 30-second response cache
-const _productsCache = new Map<string, { data: unknown; expiresAt: number }>();
-const PROD_CACHE_TTL = 30_000;
-const MAX_CACHE_SIZE = 50;
-
-function cacheSet(key: string, value: { data: unknown; expiresAt: number }) {
-  if (_productsCache.size >= MAX_CACHE_SIZE) {
-    // Evict oldest entry
-    const firstKey = _productsCache.keys().next().value;
-    if (firstKey !== undefined) _productsCache.delete(firstKey);
-  }
-  _productsCache.set(key, value);
-}
+import { safeErr } from "@/lib/logging/safe-err";
+import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
+// R14-L-2: the route-level 30s in-memory response cache was removed.
+// Cross-route mutations (inventory adjust, transfer receive, PO receive,
+// bundle admin actions) never invalidated it, so admin UIs saw stale
+// data for up to 30s after legitimate writes. The cross-org cardinality
+// (N orgs × M query strings) also churned past MAX_CACHE_SIZE=50 so the
+// cache mostly thrashed anyway. The underlying store has its own
+// per-org TTL cache (postgres-store.ts invalidateProductsCache) that IS
+// correctly invalidated by every mutating path.
 
 export const GET = withDualAuth("catalog.manage", async (request, ctx) => {
   const { orgId, locationId } = ctx;
-
-  const cacheKey = `${orgId}:${request.nextUrl.toString()}`;
-  const cached = _productsCache.get(cacheKey);
-  if (cached && Date.now() < cached.expiresAt) {
-    const hit = NextResponse.json(cached.data);
-    hit.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
-    return hit;
-  }
 
   try {
     const searchParams = request.nextUrl.searchParams;
@@ -41,34 +30,58 @@ export const GET = withDualAuth("catalog.manage", async (request, ctx) => {
     const category = searchParams.get('category') || '';
     const active = searchParams.get('active');
 
-    // Build WHERE clause conditions
-    const conditions: string[] = [];
-    const params: (string | boolean)[] = [];
+    // R26-F1: explicit organization_id filter. The `postgres` role has
+    // BYPASSRLS in prod, so the RLS policy on products DOES NOT fire.
+    // Without this filter the GET /api/products handler leaks every
+    // product across every org. Same applies to the summary + CSV
+    // paths below — they all MUST include `p.organization_id = $` (or
+    // equivalent) in the WHERE clause, NEVER rely on RLS.
+    //
+    // R30-C3: split extra-filters (`extra`) from the static org + loc
+    // predicates. Prior shape prepended locationId to `[orgId, …]` at
+    // call-site, clashing with `p.organization_id = $1` — the `$1` slot
+    // at runtime actually bound locationId (since it was prepended),
+    // so the org filter failed to match any row and products GET
+    // silently returned empty. Pin slot-ordering explicitly: $1 = orgId,
+    // $2 = locationId, $3+ = extras.
+    const extra: string[] = [];
+    // locationId may be null for admin contexts without a location
+    // attached; cast to string for the slot (LEFT JOIN with
+    // `i.location_id = $2` then never matches — OK, stock returns 0).
+    const params: (string | boolean)[] = [orgId, (locationId ?? "") as string];
 
     if (search) {
-      conditions.push(
+      const escaped = search.replace(/[%_\\]/g, '\\$&');
+      extra.push(
         `(LOWER(p.name) ILIKE $${params.length + 1} OR LOWER(pv.sku) ILIKE $${params.length + 1})`
       );
-      params.push(`%${search}%`);
+      params.push(`%${escaped}%`);
     }
 
     if (category) {
-      conditions.push(`p.category_id = $${params.length + 1}`);
+      extra.push(`p.category_id = $${params.length + 1}`);
       params.push(category);
     }
 
     if (active !== null) {
-      conditions.push(`p.is_active = $${params.length + 1}`);
+      extra.push(`p.is_active = $${params.length + 1}`);
       params.push(active === 'true');
     }
 
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const andClause = extra.length > 0 ? ` AND ${extra.join(' AND ')}` : '';
 
-    // Use Promise.all for parallel queries
-    const [productsResult, categoriesResult, summaryResult] = await Promise.all([
-      // Get products with variants and inventory
-      orgQuery(
-        orgId,
+    // Run all 3 queries on ONE shared Neon client. Parallel orgQuery ×3 was
+    // opening 3 concurrent one-shot pools per request; serialising on a
+    // single orgTx client cuts the handshake count to 1 without materially
+    // increasing wall time (the metadata queries are fast).
+    // R30-M2: defense-in-depth org filters on every LEFT JOIN — categories,
+    // suppliers, product_variants. A cross-tenant category/supplier/variant
+    // FK (shouldn't exist given p.organization_id gate, but cheap insurance)
+    // can't splice foreign rows into this tenant's list.
+    const client = await orgTx(orgId);
+    let productsResult, categoriesResult, summaryResult;
+    try {
+      productsResult = await client.query(
         `
         SELECT
           p.id,
@@ -96,30 +109,23 @@ export const GET = withDualAuth("catalog.manage", async (request, ctx) => {
           pv.updated_at as variant_updated_at,
           COALESCE(i.on_hand, 0) as stock
         FROM products p
-        LEFT JOIN categories c ON p.category_id = c.id
-        LEFT JOIN suppliers s ON p.supplier_id = s.id
-        LEFT JOIN product_variants pv ON p.id = pv.product_id
-        LEFT JOIN inventory_levels i ON pv.id = i.product_variant_id AND i.location_id = $1
-        ${whereClause}
+        LEFT JOIN categories c ON p.category_id = c.id AND c.organization_id = $1
+        LEFT JOIN suppliers s ON p.supplier_id = s.id AND s.organization_id = $1
+        LEFT JOIN product_variants pv ON p.id = pv.product_id AND pv.organization_id = $1
+        LEFT JOIN inventory_levels i ON pv.id = i.product_variant_id AND i.location_id = $2 AND i.organization_id = $1
+        WHERE p.organization_id = $1${andClause}
         ORDER BY p.name, pv.sku
         `,
-        [locationId, ...params]
-      ),
+        params
+      );
 
-      // Get all categories
-      orgQuery(
-        orgId,
-        `
-        SELECT id, name, slug
-        FROM categories
-        ORDER BY name
-        `,
-        []
-      ),
+      // R26-F1: explicit org filters on the metadata queries too.
+      categoriesResult = await client.query(
+        `SELECT id, name, slug FROM categories WHERE organization_id = $1 ORDER BY name`,
+        [orgId]
+      );
 
-      // Get summary statistics
-      orgQuery(
-        orgId,
+      summaryResult = await client.query(
         `
         SELECT
           COUNT(DISTINCT p.id) as total_products,
@@ -129,10 +135,17 @@ export const GET = withDualAuth("catalog.manage", async (request, ctx) => {
         FROM products p
         LEFT JOIN product_variants pv ON p.id = pv.product_id
         LEFT JOIN categories c ON p.category_id = c.id
+        WHERE p.organization_id = $1
         `,
-        []
-      ),
-    ]);
+        [orgId]
+      );
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
 
     // Transform raw rows into product hierarchy
     const productsMap = new Map();
@@ -199,16 +212,11 @@ export const GET = withDualAuth("catalog.manage", async (request, ctx) => {
       categories,
       summary,
     };
-    cacheSet(cacheKey, { data: response, expiresAt: Date.now() + PROD_CACHE_TTL });
-    if (_productsCache.size > MAX_CACHE_SIZE) {
-      const firstKey = _productsCache.keys().next().value;
-      if (firstKey) _productsCache.delete(firstKey);
-    }
     const resp = NextResponse.json(response);
     resp.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
     return resp;
   } catch (error) {
-    console.error('Products GET error:', error);
+    console.error('Products GET error:', safeErr(error));
     return NextResponse.json(
       { error: 'Failed to fetch products' },
       { status: 500, headers: { 'Cache-Control': 'no-store' } }
@@ -216,7 +224,11 @@ export const GET = withDualAuth("catalog.manage", async (request, ctx) => {
   }
 });
 
-export const POST = withDualAuth("catalog.manage", async (request, ctx) => {
+// R27-H2: products mutations are admin-only. A manager-PIN register
+// session should NOT be able to create / update / delete the catalog
+// — those flows belong in the admin panel only. GET stays withDualAuth
+// since the register terminal legitimately renders the catalog.
+export const POST = withAdminAuth("catalog.manage", async (request, ctx) => {
   const { orgId, employee } = ctx;
   const rl = checkRateLimit(`products:post:${orgId}`);
   if (!rl.allowed) {
@@ -229,7 +241,7 @@ export const POST = withDualAuth("catalog.manage", async (request, ctx) => {
 
     // Set RLS context
     await client.query('BEGIN');
-    await client.query(`SET LOCAL app.current_org_id = '${orgId}'`);
+    await client.query("SELECT set_config('app.current_org_id', $1, true)", [orgId]);
 
     // Handle category creation
     if (body.category) {
@@ -255,6 +267,20 @@ export const POST = withDualAuth("catalog.manage", async (request, ctx) => {
       if (typeof price === 'number' && price < 0) {
         await client.query('ROLLBACK');
         return NextResponse.json({ error: 'Price cannot be negative' }, { status: 400 });
+      }
+      // Verify the parent product belongs to THIS org. Without this, an
+      // attacker with catalog.manage on org X who knows (or guesses) a
+      // product UUID from org Y could attach a variant to that foreign
+      // product — the variant's own organization_id stays X, but the FK
+      // dangles a pointer into org Y's catalog, silently polluting any
+      // report that joins product_variants → products.
+      const parentCheck = await client.query(
+        `SELECT 1 FROM products WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+        [body.product_id, orgId],
+      );
+      if (parentCheck.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return NextResponse.json({ error: 'product_id does not exist in this organization' }, { status: 400 });
       }
       // Reject duplicate SKU within this org
       const dupCheck = await client.query(
@@ -293,16 +319,16 @@ export const POST = withDualAuth("catalog.manage", async (request, ctx) => {
     );
     await client.query('COMMIT');
     const newProduct = result.rows[0];
-    pgInsertAuditEvent(
+    await waitUntilOrAwait(pgInsertAuditEvent(
       orgId, null, employee.id,
       "product", newProduct.id, "product_created",
       { id: newProduct.id, name: newProduct.name, slug: newProduct.slug },
-    ).catch((err) => console.error("[audit] Failed to insert audit event:", err));
+    ).catch((err) => console.error("[audit] Failed to insert audit event:", safeErr(err))));
     invalidateProductsCache(orgId);
     return NextResponse.json(newProduct, { status: 201 });
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Products POST error:', error);
+    console.error('Products POST error:', safeErr(error));
     return NextResponse.json(
       { error: 'Failed to create product' },
       { status: 500 }
@@ -312,7 +338,8 @@ export const POST = withDualAuth("catalog.manage", async (request, ctx) => {
   }
 });
 
-export const PUT = withDualAuth("catalog.manage", async (request, ctx) => {
+// R27-H2: admin-only (see POST above).
+export const PUT = withAdminAuth("catalog.manage", async (request, ctx) => {
   const { orgId, employee } = ctx;
   const rl = checkRateLimit(`products:put:${orgId}`);
   if (!rl.allowed) {
@@ -328,7 +355,7 @@ export const PUT = withDualAuth("catalog.manage", async (request, ctx) => {
     const updates = body;
 
     await client.query('BEGIN');
-    await client.query(`SET LOCAL app.current_org_id = '${orgId}'`);
+    await client.query("SELECT set_config('app.current_org_id', $1, true)", [orgId]);
 
     // Handle product update
     if (updates.name || updates.slug || updates.description !== undefined || updates.image_url !== undefined || updates.is_active !== undefined || updates.is_touch_favorite !== undefined) {
@@ -374,17 +401,28 @@ export const PUT = withDualAuth("catalog.manage", async (request, ctx) => {
 
       fields.push('updated_at = NOW()');
 
+      // R26-F1: explicit organization_id filter. Without it, a PATCH
+      // with any product id from another org succeeds (postgres role
+      // bypasses RLS).
+      // R30-C3: the `organization_id = $N` predicate is STATIC in the
+      // SQL below so the guardrail sees it regardless of the dynamic
+      // `${extraWhere}` used for optimistic-locking. Prior shape buried
+      // the org filter inside the dynamic whereClause and the guardrail
+      // couldn't see it.
       // Optimistic locking: check updated_at if expectedUpdatedAt is provided
-      let whereClause = `WHERE id = $${paramIndex}`;
-      const whereValues: unknown[] = [...values, id];
+      const whereValues: unknown[] = [...values, id, orgId];
+      const idSlot = paramIndex;
+      const orgSlot = paramIndex + 1;
+      paramIndex += 2;
+      let extraWhere = '';
       if (updates.expectedUpdatedAt) {
-        paramIndex++;
-        whereClause += ` AND updated_at = $${paramIndex}`;
+        extraWhere = ` AND updated_at = $${paramIndex}`;
         whereValues.push(updates.expectedUpdatedAt);
+        paramIndex++;
       }
 
       const result = await client.query(
-        `UPDATE products SET ${fields.join(', ')} ${whereClause} RETURNING id, name, slug, category_id, description, image_url, is_active, is_touch_favorite, updated_at`,
+        `UPDATE products SET ${fields.join(', ')} WHERE id = $${idSlot} AND organization_id = $${orgSlot}${extraWhere} RETURNING id, name, slug, category_id, description, image_url, is_active, is_touch_favorite, updated_at`,
         whereValues
       );
 
@@ -398,17 +436,33 @@ export const PUT = withDualAuth("catalog.manage", async (request, ctx) => {
 
       await client.query('COMMIT');
       const updatedProduct = result.rows[0];
-      pgInsertAuditEvent(
+      await waitUntilOrAwait(pgInsertAuditEvent(
         orgId, null, employee.id,
         "product", id, "product_updated",
         { id, name: updatedProduct.name, slug: updatedProduct.slug },
-      ).catch((err) => console.error("[audit] Failed to insert audit event:", err));
+      ).catch((err) => console.error("[audit] Failed to insert audit event:", safeErr(err))));
       invalidateProductsCache(orgId);
       return NextResponse.json(updatedProduct);
     }
 
     // Handle variant update
     if (updates.variant_id && (updates.price !== undefined || updates.cost !== undefined)) {
+      // R33-H4: re-gate price/cost mutations on `pricing.manage`.
+      // The route-level gate is `catalog.manage` so inventory_clerk
+      // (who needs catalog CRUD) can POST/PUT product shape. But
+      // `pricing.manage` is separately assigned to owner/manager only
+      // — an inventory_clerk should NOT be able to reprice a variant
+      // to $0.01 and self-check-out. Check at the price/cost branch
+      // rather than at the route level so the non-pricing shape-edit
+      // branches still work for clerks.
+      const { hasPermission } = await import("@/lib/domain/permissions");
+      if (!hasPermission(employee.roleKey, "pricing.manage")) {
+        await client.query('ROLLBACK');
+        return NextResponse.json(
+          { error: 'Pricing changes require pricing.manage permission (owner / manager).' },
+          { status: 403 },
+        );
+      }
       if (typeof updates.price === 'number' && updates.price < 0) {
         await client.query('ROLLBACK');
         return NextResponse.json({ error: 'Price cannot be negative' }, { status: 400 });
@@ -434,17 +488,23 @@ export const PUT = withDualAuth("catalog.manage", async (request, ctx) => {
 
       fields.push('updated_at = NOW()');
 
+      // R26-F1: explicit org filter on variant update.
+      // R30-C3: static org predicate + static id predicate — see
+      // parallel fix in the `products` UPDATE above.
       // Optimistic locking: check updated_at if expectedUpdatedAt is provided
-      let whereClause = `WHERE id = $${paramIndex}`;
-      const whereValues: unknown[] = [...values, updates.variant_id];
+      const whereValues: unknown[] = [...values, updates.variant_id, orgId];
+      const idSlot = paramIndex;
+      const orgSlot = paramIndex + 1;
+      paramIndex += 2;
+      let extraWhere = '';
       if (updates.expectedUpdatedAt) {
-        paramIndex++;
-        whereClause += ` AND updated_at = $${paramIndex}`;
+        extraWhere = ` AND updated_at = $${paramIndex}`;
         whereValues.push(updates.expectedUpdatedAt);
+        paramIndex++;
       }
 
       const result = await client.query(
-        `UPDATE product_variants SET ${fields.join(', ')} ${whereClause} RETURNING id, sku, price, cost, updated_at`,
+        `UPDATE product_variants SET ${fields.join(', ')} WHERE id = $${idSlot} AND organization_id = $${orgSlot}${extraWhere} RETURNING id, sku, price, cost, updated_at`,
         whereValues
       );
 
@@ -458,11 +518,11 @@ export const PUT = withDualAuth("catalog.manage", async (request, ctx) => {
 
       await client.query('COMMIT');
       const updatedVariant = result.rows[0];
-      pgInsertAuditEvent(
+      await waitUntilOrAwait(pgInsertAuditEvent(
         orgId, null, employee.id,
         "product_variant", updates.variant_id, "variant_updated",
         { id: updates.variant_id, sku: updatedVariant.sku },
-      ).catch((err) => console.error("[audit] Failed to insert audit event:", err));
+      ).catch((err) => console.error("[audit] Failed to insert audit event:", safeErr(err))));
       invalidateProductsCache(orgId);
       invalidateVariantsCache(orgId);
       return NextResponse.json(updatedVariant);
@@ -473,7 +533,7 @@ export const PUT = withDualAuth("catalog.manage", async (request, ctx) => {
     return NextResponse.json({ message: 'No updates made' });
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Products PUT error:', error);
+    console.error('Products PUT error:', safeErr(error));
     return NextResponse.json(
       { error: 'Failed to update product' },
       { status: 500 }
@@ -483,7 +543,8 @@ export const PUT = withDualAuth("catalog.manage", async (request, ctx) => {
   }
 });
 
-export const DELETE = withDualAuth("catalog.manage", async (request, ctx) => {
+// R27-H2: admin-only (see POST above).
+export const DELETE = withAdminAuth("catalog.manage", async (request, ctx) => {
   const { orgId } = ctx;
   const pool = await getPool();
   const client = await pool.connect();
@@ -494,12 +555,14 @@ export const DELETE = withDualAuth("catalog.manage", async (request, ctx) => {
     const { product_id: id } = dv.data;
 
     await client.query('BEGIN');
-    await client.query(`SET LOCAL app.current_org_id = '${orgId}'`);
+    await client.query("SELECT set_config('app.current_org_id', $1, true)", [orgId]);
 
+    // R26-F1: explicit org filter on soft-delete.
     // Soft delete: set is_active to false
     const result = await client.query(
-      `UPDATE products SET is_active = false, updated_at = NOW() WHERE id = $1 RETURNING id`,
-      [id]
+      `UPDATE products SET is_active = false, updated_at = NOW()
+       WHERE id = $1 AND organization_id = $2 RETURNING id`,
+      [id, orgId]
     );
 
     await client.query('COMMIT');
@@ -507,7 +570,7 @@ export const DELETE = withDualAuth("catalog.manage", async (request, ctx) => {
     return NextResponse.json({ message: 'Product deleted', id: result.rows[0].id });
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Products DELETE error:', error);
+    console.error('Products DELETE error:', safeErr(error));
     return NextResponse.json(
       { error: 'Failed to delete product' },
       { status: 500 }
@@ -517,7 +580,8 @@ export const DELETE = withDualAuth("catalog.manage", async (request, ctx) => {
   }
 });
 
-export const PATCH = withDualAuth("catalog.manage", async (request, ctx) => {
+// R27-H2: admin-only (see POST above).
+export const PATCH = withAdminAuth("catalog.manage", async (request, ctx) => {
   const { orgId } = ctx;
   const pool = await getPool();
   const client = await pool.connect();
@@ -535,7 +599,7 @@ export const PATCH = withDualAuth("catalog.manage", async (request, ctx) => {
       let skipped = 0;
 
       await client.query('BEGIN');
-      await client.query(`SET LOCAL app.current_org_id = '${orgId}'`);
+      await client.query("SELECT set_config('app.current_org_id', $1, true)", [orgId]);
 
       // Build lookup maps
       const catsResult = await client.query(
@@ -760,7 +824,7 @@ export const PATCH = withDualAuth("catalog.manage", async (request, ctx) => {
     return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Products PATCH error:', error);
+    console.error('Products PATCH error:', safeErr(error));
     return NextResponse.json({ error: 'Failed to process request' }, { status: 500 });
   } finally {
     client.release();

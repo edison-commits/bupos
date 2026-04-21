@@ -1,7 +1,8 @@
 'use client';
-import Image from "next/image";
+/* eslint-disable @next/next/no-img-element -- remote barcode-lookup product thumbs */
 
 import { useState, useRef, useCallback } from 'react';
+import { formatCurrency } from "@/lib/format";
 
 interface Category {
   id: string;
@@ -83,7 +84,10 @@ export function BarcodeLookup({ categories }: { categories: Category[] }) {
     setSaveMessage(null);
 
     try {
-      const res = await fetch(`/api/barcode-lookup?barcode=${encodeURIComponent(trimmed)}`);
+      // Route param is `code`, not `barcode` (R11-L-1). The save-flow
+      // POST to /api/barcode-lookup at line ~152 is still non-functional
+      // (route only exports GET) — tracked as a follow-up.
+      const res = await fetch(`/api/barcode-lookup?code=${encodeURIComponent(trimmed)}`);
       if (!res.ok) throw new Error('Lookup failed');
       const data: LookupResult = await res.json();
       setResult(data);
@@ -253,8 +257,8 @@ export function BarcodeLookup({ categories }: { categories: Category[] }) {
                 <div><span className="text-emerald-700 font-medium">Variant:</span> <span className="text-emerald-900">{result.product.variant_name}</span></div>
                 <div><span className="text-emerald-700 font-medium">SKU:</span> <span className="text-emerald-900 font-mono">{result.product.sku}</span></div>
                 <div><span className="text-emerald-700 font-medium">Barcode:</span> <span className="text-emerald-900 font-mono">{result.product.barcode}</span></div>
-                <div><span className="text-emerald-700 font-medium">Price:</span> <span className="text-emerald-900">${Number(result.product.price).toFixed(2)}</span></div>
-                <div><span className="text-emerald-700 font-medium">Cost:</span> <span className="text-emerald-900">{result.product.cost ? `$${Number(result.product.cost).toFixed(2)}` : '—'}</span></div>
+                <div><span className="text-emerald-700 font-medium">Price:</span> <span className="text-emerald-900">{formatCurrency(Number(result.product.price))}</span></div>
+                <div><span className="text-emerald-700 font-medium">Cost:</span> <span className="text-emerald-900">{result.product.cost ? formatCurrency(Number(result.product.cost)) : '—'}</span></div>
                 <div><span className="text-emerald-700 font-medium">On Hand:</span> <span className="text-emerald-900">{result.product.on_hand ?? 0}</span></div>
                 <div><span className="text-emerald-700 font-medium">Category:</span> <span className="text-emerald-900">{result.product.category_name || '—'}</span></div>
                 {result.product.size_label && <div><span className="text-emerald-700 font-medium">Size:</span> <span className="text-emerald-900">{result.product.size_label}</span></div>}
@@ -263,7 +267,7 @@ export function BarcodeLookup({ categories }: { categories: Category[] }) {
               </div>
             </div>
             {result.product.image_url && (
-              <Image src={result.product.image_url} alt={`Product image for ${result.product.product_name}`} className="w-16 h-16 rounded-lg object-cover flex-shrink-0" />
+              <img src={result.product.image_url} alt={`Product image for ${result.product.product_name}`} className="w-16 h-16 rounded-lg object-cover flex-shrink-0" />
             )}
           </div>
         </div>
@@ -286,12 +290,12 @@ export function BarcodeLookup({ categories }: { categories: Category[] }) {
                 <div><span className="text-blue-700 font-medium">Name:</span> <span className="text-blue-900">{result.product.title}</span></div>
                 {result.product.brand && <div><span className="text-blue-700 font-medium">Brand:</span> <span className="text-blue-900">{result.product.brand}</span></div>}
                 {result.product.category && <div><span className="text-blue-700 font-medium">Category:</span> <span className="text-blue-900">{result.product.category}</span></div>}
-                {result.product.msrp && <div><span className="text-blue-700 font-medium">MSRP:</span> <span className="text-blue-900">${result.product.msrp.toFixed(2)}</span></div>}
+                {result.product.msrp && <div><span className="text-blue-700 font-medium">MSRP:</span> <span className="text-blue-900">{formatCurrency(result.product.msrp)}</span></div>}
                 <div><span className="text-blue-700 font-medium">UPC:</span> <span className="text-blue-900 font-mono">{result.product.upc}</span></div>
               </div>
             </div>
             {result.product.image_url && (
-              <Image src={result.product.image_url} alt={`Product image for ${result.product.title}`} className="w-16 h-16 rounded-lg object-cover flex-shrink-0" />
+              <img src={result.product.image_url} alt={`Product image for ${result.product.title}`} className="w-16 h-16 rounded-lg object-cover flex-shrink-0" />
             )}
           </div>
         </div>

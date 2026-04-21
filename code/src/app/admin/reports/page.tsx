@@ -4,6 +4,7 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import { useState, useEffect } from "react";
 import { authFetch } from '@/lib/api/client';
+import { formatCurrency } from "@/lib/format";
 
 type DateRange = "today" | "week" | "month" | "custom";
 type ReportType = "summary" | "category" | "employee" | "hourly" | "tender" | "products" | "shifts";
@@ -318,14 +319,14 @@ function SalesSummaryReport({ data }: { data: SalesSummaryData | null }) {
 
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-      <MetricCard label="Revenue" value={`$${current.revenue.toFixed(2)}`} delta={revenueDelta} />
+      <MetricCard label="Revenue" value={formatCurrency(current.revenue)} delta={revenueDelta} />
       <MetricCard label="Transactions" value={String(current.transactionCount)} />
-      <MetricCard label="Avg Ticket" value={`$${current.avgTicket.toFixed(2)}`} delta={ticketDelta} />
+      <MetricCard label="Avg Ticket" value={formatCurrency(current.avgTicket)} delta={ticketDelta} />
       <MetricCard label="Items Sold" value={String(current.itemCount)} />
-      <MetricCard label="Tax Collected" value={`$${current.taxTotal.toFixed(2)}`} />
-      <MetricCard label="Discounts" value={`$${current.discountTotal.toFixed(2)}`} />
+      <MetricCard label="Tax Collected" value={formatCurrency(current.taxTotal)} />
+      <MetricCard label="Discounts" value={formatCurrency(current.discountTotal)} />
       <MetricCard label="Refunds" value={String(current.refundCount)} />
-      <MetricCard label="Returns Total" value={`$${current.returnTotal.toFixed(2)}`} />
+      <MetricCard label="Returns Total" value={formatCurrency(current.returnTotal)} />
     </div>
   );
 }
@@ -350,7 +351,7 @@ function CategoryReport({ data }: { data: CategoryReportData | null }) {
             <div className="grid grid-cols-3 gap-2 text-sm">
               <div>
                 <p className="text-zinc-500">Revenue</p>
-                <p className="font-semibold">${cat.revenue.toFixed(2)}</p>
+                <p className="font-semibold">{formatCurrency(cat.revenue)}</p>
               </div>
               <div>
                 <p className="text-zinc-500">Items</p>
@@ -388,8 +389,8 @@ function EmployeeReport({ data }: { data: EmployeeReportData | null }) {
             <tr key={idx} className="border-b border-zinc-100 hover:bg-zinc-50">
               <td className="px-4 py-3 font-medium text-zinc-900">{emp.name}</td>
               <td className="px-4 py-3 text-right text-zinc-600">{emp.transactionCount}</td>
-              <td className="px-4 py-3 text-right font-semibold text-teal-600">${emp.totalSales.toFixed(2)}</td>
-              <td className="px-4 py-3 text-right text-zinc-600">${emp.avgTicket.toFixed(2)}</td>
+              <td className="px-4 py-3 text-right font-semibold text-teal-600">{formatCurrency(emp.totalSales)}</td>
+              <td className="px-4 py-3 text-right text-zinc-600">{formatCurrency(emp.avgTicket)}</td>
               <td className="px-4 py-3 text-right text-red-600">{emp.refundCount}</td>
             </tr>
           ))}
@@ -415,7 +416,7 @@ function HourlyReport({ data }: { data: HourlyReportData | null }) {
             </div>
           </div>
           <div className="text-right">
-            <p className="text-sm font-semibold text-zinc-900">${hour.revenue.toFixed(2)}</p>
+            <p className="text-sm font-semibold text-zinc-900">{formatCurrency(hour.revenue)}</p>
             <p className="text-xs text-zinc-500">{hour.transactionCount} txns</p>
           </div>
         </div>
@@ -443,7 +444,7 @@ function TenderReport({ data }: { data: TenderReportData | null }) {
           <div className="grid grid-cols-2 gap-2 text-sm">
             <div>
               <p className="text-zinc-500">Amount</p>
-              <p className="font-semibold">${tender.amount.toFixed(2)}</p>
+              <p className="font-semibold">{formatCurrency(tender.amount)}</p>
             </div>
             <div>
               <p className="text-zinc-500">Count</p>
@@ -476,7 +477,7 @@ function ProductsReport({ data }: { data: ProductsReportData | null }) {
               {data.byRevenue.map((prod, idx) => (
                 <tr key={idx} className="border-b border-zinc-100 hover:bg-zinc-50">
                   <td className="px-4 py-3 font-medium text-zinc-900">{prod.name}</td>
-                  <td className="px-4 py-3 text-right font-semibold text-teal-600">${prod.revenue.toFixed(2)}</td>
+                  <td className="px-4 py-3 text-right font-semibold text-teal-600">{formatCurrency(prod.revenue)}</td>
                   <td className="px-4 py-3 text-right text-zinc-600">{prod.quantity}</td>
                 </tr>
               ))}
@@ -501,7 +502,7 @@ function ProductsReport({ data }: { data: ProductsReportData | null }) {
                 <tr key={idx} className="border-b border-zinc-100 hover:bg-zinc-50">
                   <td className="px-4 py-3 font-medium text-zinc-900">{prod.name}</td>
                   <td className="px-4 py-3 text-right font-semibold text-emerald-600">{prod.quantity}</td>
-                  <td className="px-4 py-3 text-right text-zinc-600">${prod.revenue.toFixed(2)}</td>
+                  <td className="px-4 py-3 text-right text-zinc-600">{formatCurrency(prod.revenue)}</td>
                 </tr>
               ))}
             </tbody>
@@ -531,24 +532,24 @@ function ShiftsReport({ data }: { data: ShiftsReportData | null }) {
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
             <div>
               <p className="text-zinc-500">Opening Float</p>
-              <p className="font-semibold">${shift.openingFloat.toFixed(2)}</p>
+              <p className="font-semibold">{formatCurrency(shift.openingFloat)}</p>
             </div>
             <div>
               <p className="text-zinc-500">Sales</p>
-              <p className="font-semibold">${shift.sales.toFixed(2)}</p>
+              <p className="font-semibold">{formatCurrency(shift.sales)}</p>
             </div>
             <div>
               <p className="text-zinc-500">Expected Cash</p>
-              <p className="font-semibold">${shift.closingExpectedCash.toFixed(2)}</p>
+              <p className="font-semibold">{formatCurrency(shift.closingExpectedCash)}</p>
             </div>
             <div>
               <p className="text-zinc-500">Declared</p>
-              <p className="font-semibold">${shift.closingDeclaredCash.toFixed(2)}</p>
+              <p className="font-semibold">{formatCurrency(shift.closingDeclaredCash)}</p>
             </div>
             <div>
               <p className="text-zinc-500">Variance</p>
               <p className={`font-semibold ${shift.variance >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                {shift.variance >= 0 ? "+" : ""} ${shift.variance.toFixed(2)}
+                {shift.variance >= 0 ? "+" : ""} {formatCurrency(shift.variance)}
               </p>
             </div>
           </div>

@@ -1,6 +1,8 @@
 "use client";
 
-import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from "recharts";import { LocalStoreData } from "@/lib/persistence/types";
+import { formatCurrency } from "@/lib/format";
+import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from "recharts";
+import { LocalStoreData } from "@/lib/persistence/types";
 
 interface DashboardChartsProps {
   store: LocalStoreData;
@@ -36,7 +38,7 @@ export function DashboardCharts({ store }: DashboardChartsProps) {
               <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" />
               <XAxis dataKey="date" stroke="#71717a" style={{ fontSize: "12px" }} />
               <YAxis stroke="#71717a" style={{ fontSize: "12px" }} tickFormatter={(value) => `$${value}`} />
-              <Tooltip formatter={(value) => `$${Number(value).toFixed(2)}`} />
+              <Tooltip formatter={(value) => formatCurrency(Number(value))} />
               <Area type="monotone" dataKey="total" stroke="#0d9488" strokeWidth={2} fillOpacity={1} fill="url(#colorSales)" />
             </AreaChart>
           </ResponsiveContainer>
@@ -54,7 +56,7 @@ export function DashboardCharts({ store }: DashboardChartsProps) {
               <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" />
               <XAxis dataKey="hour" stroke="#71717a" style={{ fontSize: "12px" }} />
               <YAxis stroke="#71717a" style={{ fontSize: "12px" }} tickFormatter={(value) => `$${value}`} />
-              <Tooltip formatter={(value) => `$${Number(value).toFixed(2)}`} />
+              <Tooltip formatter={(value) => formatCurrency(Number(value))} />
               <Bar dataKey="total" fill="#0d9488" radius={[8, 8, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
@@ -74,7 +76,7 @@ export function DashboardCharts({ store }: DashboardChartsProps) {
                 cx="50%"
                 cy="50%"
                 labelLine={false}
-                label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
+                label={({ name, percent }) => `${name} ${Math.round((percent ?? 0) * 100)}%`}
                 outerRadius={80}
                 fill="#0d9488"
                 dataKey="value"
@@ -83,7 +85,7 @@ export function DashboardCharts({ store }: DashboardChartsProps) {
                   <Cell key={`cell-${index}`} fill={getTenderColor(entry.name, index)} />
                 ))}
               </Pie>
-              <Tooltip formatter={(value) => `$${Number(value).toFixed(2)}`} />
+              <Tooltip formatter={(value) => formatCurrency(Number(value))} />
             </PieChart>
           </ResponsiveContainer>
         ) : (
@@ -104,7 +106,7 @@ export function DashboardCharts({ store }: DashboardChartsProps) {
               <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" />
               <XAxis type="number" stroke="#71717a" style={{ fontSize: "12px" }} tickFormatter={(value) => `$${value}`} />
               <YAxis dataKey="name" type="category" stroke="#71717a" style={{ fontSize: "11px" }} width={145} />
-              <Tooltip formatter={(value) => `$${Number(value).toFixed(2)}`} />
+              <Tooltip formatter={(value) => formatCurrency(Number(value))} />
               <Bar dataKey="total" fill="#0d9488" radius={[0, 8, 8, 0]} />
             </BarChart>
           </ResponsiveContainer>

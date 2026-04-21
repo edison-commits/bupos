@@ -3,6 +3,7 @@ import { orgQuery } from '@/lib/supabase-rest';
 import { withAdminAuth } from '@/lib/api/with-auth';
 
 
+import { safeErr } from "@/lib/logging/safe-err";
 /**
  * GET /api/returns/search
  *
@@ -22,10 +23,22 @@ export const GET = withAdminAuth('audit.view', async (req, ctx) => {
       return NextResponse.json({ error: 'Search query required' }, { status: 400 });
     }
 
-    // Build date filter
+    // Build date filter — wrap search query with ILIKE wildcards (escape special chars)
+    const escapedSearch = searchQuery.replace(/[%_\\]/g, '\\$&');
     let dateCondition = '';
     const now = new Date();
-    const dateParams: unknown[] = [searchQuery, orgId];
+    const dateParams: unknown[] = [`%${escapedSearch}%`, orgId];
+
+    // Location scope for non-managers. Without this, a support-role or
+    // inventory_clerk session at Location A can search a customer's name
+    // and see their purchase at Location B, including the full receipt
+    // (items + tenders are fetched below by txn id). Owners/managers
+    // see everything org-wide for customer-service workflows.
+    const isManager = ctx.employee.roleKey === "owner" || ctx.employee.roleKey === "manager";
+    const allowedLocations = ctx.employee.locationIds ?? [];
+    if (!isManager && allowedLocations.length === 0) {
+      return NextResponse.json({ error: 'Transaction not found' }, { status: 404 });
+    }
 
     if (dateRange === 'today') {
       const startOfDay = new Date(now);
@@ -44,18 +57,36 @@ export const GET = withAdminAuth('audit.view', async (req, ctx) => {
       dateParams.push(monthAgo.toISOString());
     }
 
-    // Find transaction by ID or customer name
+    // Append the location filter AFTER the date params so its $N index lines
+    // up with dateParams.length after all date pushes are done.
+    let locationCondition = "";
+    if (!isManager) {
+      dateParams.push(allowedLocations);
+      locationCondition = ` AND t.location_id = ANY($${dateParams.length}::uuid[])`;
+    }
+
+    // Find transaction by ID or customer name.
+    // R34-D14: select only the fields the UI actually needs — the
+    // prior `SELECT t.*` pulled `idempotency_key` (client-generated,
+    // low-value but not meant to be re-exposed) and `cart_snapshot`
+    // (attacker-controlled pricing metadata). Explicit column list
+    // narrows the leak surface to the receipt-essential fields.
+    // R34-D13: defense-in-depth org filters on employees + customers
+    // JOINs so a crafted FK can't splice foreign names.
     const txnResult = await orgQuery(
       orgId,
-      `SELECT t.*,
+      `SELECT t.id, t.status, t.tender_type, t.subtotal, t.discount_total,
+              t.tax_total, t.grand_total, t.amount_tendered, t.change_due,
+              t.created_at, t.location_id, t.customer_id, t.employee_id,
+              t.register_session_id,
               e.display_name AS employee_name,
               c.first_name || ' ' || c.last_name AS customer_name
        FROM transactions t
-       LEFT JOIN employees e ON e.id = t.employee_id
-       LEFT JOIN customers c ON c.id = t.customer_id
+       LEFT JOIN employees e ON e.id = t.employee_id AND e.organization_id = $2
+       LEFT JOIN customers c ON c.id = t.customer_id AND c.organization_id = $2
        WHERE (t.id::text ILIKE $1 OR e.display_name ILIKE $1 OR COALESCE(c.first_name || ' ' || c.last_name, '') ILIKE $1)
        AND t.organization_id = $2
-       ${dateCondition}
+       ${dateCondition}${locationCondition}
        ORDER BY t.created_at DESC
        LIMIT 1`,
       dateParams
@@ -68,11 +99,20 @@ export const GET = withAdminAuth('audit.view', async (req, ctx) => {
     const transaction = txnResult.rows[0];
     const transactionId = transaction.id;
 
-    // Get tenders
+    // Get tenders. Join through transactions so the tender aggregate is
+    // also org-scoped — defense in depth; the transaction_id was already
+    // verified to live in this org by the prior txnResult query, but
+    // joining prevents a future refactor that reorders the calls from
+    // silently crossing tenants.
+    // check-pool-org-filter: scoped-by-prior-org-verified-transaction-id
     const tendersResult = await orgQuery(
       orgId,
-      `SELECT id, transaction_id, tender_type, amount, reference, created_at FROM transaction_tenders WHERE transaction_id = $1 ORDER BY created_at`,
-      [transactionId]
+      `SELECT tt.id, tt.transaction_id, tt.tender_type, tt.amount, tt.metadata, tt.created_at
+       FROM transaction_tenders tt
+       JOIN transactions t ON t.id = tt.transaction_id AND t.organization_id = $2
+       WHERE tt.transaction_id = $1
+       ORDER BY tt.created_at`,
+      [transactionId, orgId]
     );
 
     // Parse items from cart_snapshot
@@ -82,7 +122,7 @@ export const GET = withAdminAuth('audit.view', async (req, ctx) => {
         const snapshot = JSON.parse(transaction.cart_snapshot as string);
         items = snapshot.items || [];
       } catch (e) {
-        console.error('Failed to parse cart_snapshot:', e);
+        console.error('Failed to parse cart_snapshot:', safeErr(e));
       }
     }
 
@@ -92,7 +132,7 @@ export const GET = withAdminAuth('audit.view', async (req, ctx) => {
       items,
     });
   } catch (error) {
-    console.error('GET /api/returns/search error:', error);
+    console.error('GET /api/returns/search error:', safeErr(error));
     return NextResponse.json({ error: 'Failed to search transaction' }, { status: 500 });
   }
 });

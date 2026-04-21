@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
-import { orgQuery } from "@/lib/supabase-rest";
+import { orgTx } from "@/lib/supabase-rest";
 import { withAuth } from "@/lib/api/with-auth";
 
 
+import { safeErr } from "@/lib/logging/safe-err";
 /**
  * GET /api/dashboard
  *
@@ -16,7 +17,18 @@ import { withAuth } from "@/lib/api/with-auth";
 export const GET = withAuth("audit.view", async (req, ctx) => {
   const orgId = ctx.orgId;
   const sp = req.nextUrl.searchParams;
-  const locationId = sp.get("location") ?? ctx.employee.locationIds?.[0];
+  // Cross-location read guard. audit.view is held by every role (including
+  // inventory_clerk / support), so accepting a client-supplied ?location=
+  // without verifying assignment let those roles read any location's sales,
+  // tender mix, and employee performance. Owners and managers are allowed
+  // to pass ANY location in the org (they see everything); other roles are
+  // restricted to the locations in their assignment.
+  const requestedLocation = sp.get("location");
+  const isManager = ctx.employee.roleKey === "owner" || ctx.employee.roleKey === "manager";
+  if (requestedLocation && !isManager && !(ctx.employee.locationIds ?? []).includes(requestedLocation)) {
+    return NextResponse.json({ error: "Location not assigned to this employee" }, { status: 403 });
+  }
+  const locationId = requestedLocation ?? ctx.employee.locationIds?.[0];
   if (!locationId) {
     return NextResponse.json({ error: 'No location context' }, { status: 400 });
   }
@@ -39,11 +51,35 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
   }
 
   try {
-  // Run key queries in parallel to minimize Worker CPU time
-  const [metricsResult, tenderResult, hourlyResult, employeeResult, lowStockResult, recentResult] = await Promise.all([
-    // 1. Key metrics
-    orgQuery(
-      orgId,
+  // Run all 6 queries on ONE shared Neon client. The frontend polls this
+  // endpoint every 60s, so a 6-way Promise.all of orgQuery() was creating
+  // six concurrent WebSocket handshakes per poll per open tab. A busy back
+  // office with 3 dashboards open = 18 pools per minute just for
+  // this endpoint. Serialising on one orgTx client keeps the handshake
+  // count at 1 without materially slowing the page (queries are fast).
+  const client = await orgTx(orgId);
+  let metricsResult, tenderResult, hourlyResult, employeeResult, lowStockResult, recentResult;
+  try {
+    // R27-C4: verify the requested `locationId` belongs to the caller's
+    // org BEFORE running any dashboard query. Managers/owners bypass the
+    // per-employee allowlist (they see everything in their own org), but
+    // the owner-role check above did NOT block cross-tenant location
+    // UUIDs. Without this, an owner at ORG A could pass ORG B's
+    // location UUID and get ORG B's full revenue dashboard.
+    const locCheck = await client.query(
+      `SELECT 1 FROM locations WHERE id = $1 AND organization_id = $2`,
+      [locationId, orgId],
+    );
+    if (locCheck.rows.length === 0) {
+      await client.query("ROLLBACK").catch(() => {});
+      client.release();
+      return NextResponse.json({ error: "Location not in this organization" }, { status: 403 });
+    }
+
+    // R27-C4: explicit organization_id filter on every query. All of
+    // these had location_id-only scoping before, which matters now
+    // because the postgres role bypasses RLS.
+    metricsResult = await client.query(
       `SELECT
          COUNT(*) FILTER (WHERE status = 'completed')::int AS transaction_count,
          COUNT(*) FILTER (WHERE status = 'voided')::int AS void_count,
@@ -54,78 +90,75 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
          COALESCE(AVG(grand_total) FILTER (WHERE status = 'completed'), 0)::numeric AS avg_ticket,
          COALESCE(MAX(grand_total) FILTER (WHERE status = 'completed'), 0)::numeric AS largest_sale
        FROM transactions
-       WHERE location_id = $1 AND created_at >= $2 AND created_at <= $3`,
-      [locationId, fromDate, toDate],
-    ),
+       WHERE organization_id = $1 AND location_id = $2 AND created_at >= $3 AND created_at <= $4`,
+      [orgId, locationId, fromDate, toDate],
+    );
 
-    // 2. Tender breakdown
-    orgQuery(
-      orgId,
+    tenderResult = await client.query(
       `SELECT tt.tender_type, SUM(tt.amount)::numeric AS total, COUNT(*)::int AS count
        FROM transaction_tenders tt
        JOIN transactions t ON t.id = tt.transaction_id
-       WHERE t.location_id = $1 AND t.created_at >= $2 AND t.created_at <= $3 AND t.status = 'completed'
+       WHERE t.organization_id = $1 AND t.location_id = $2 AND t.created_at >= $3 AND t.created_at <= $4 AND t.status = 'completed'
        GROUP BY tt.tender_type
        ORDER BY total DESC`,
-      [locationId, fromDate, toDate],
-    ),
+      [orgId, locationId, fromDate, toDate],
+    );
 
-    // 3. Hourly breakdown
-    orgQuery(
-      orgId,
+    hourlyResult = await client.query(
       `SELECT
          EXTRACT(HOUR FROM created_at)::int AS hour,
          COUNT(*)::int AS count,
          SUM(grand_total)::numeric AS total
        FROM transactions
-       WHERE location_id = $1 AND created_at >= $2 AND created_at <= $3 AND status = 'completed'
+       WHERE organization_id = $1 AND location_id = $2 AND created_at >= $3 AND created_at <= $4 AND status = 'completed'
        GROUP BY EXTRACT(HOUR FROM created_at)
        ORDER BY hour`,
-      [locationId, fromDate, toDate],
-    ),
+      [orgId, locationId, fromDate, toDate],
+    );
 
-    // 4. Employee performance
-    orgQuery(
-      orgId,
+    employeeResult = await client.query(
       `SELECT t.employee_id, e.display_name,
               COUNT(*)::int AS transaction_count,
               SUM(t.grand_total)::numeric AS total_sales,
               AVG(t.grand_total)::numeric AS avg_ticket
        FROM transactions t
-       LEFT JOIN employees e ON e.id = t.employee_id
-       WHERE t.location_id = $1 AND t.created_at >= $2 AND t.created_at <= $3 AND t.status = 'completed'
+       LEFT JOIN employees e ON e.id = t.employee_id AND e.organization_id = $1
+       WHERE t.organization_id = $1 AND t.location_id = $2 AND t.created_at >= $3 AND t.created_at <= $4 AND t.status = 'completed'
        GROUP BY t.employee_id, e.display_name
        ORDER BY total_sales DESC`,
-      [locationId, fromDate, toDate],
-    ),
+      [orgId, locationId, fromDate, toDate],
+    );
 
-    // 5. Low stock alerts
-    orgQuery(
-      orgId,
+    lowStockResult = await client.query(
       `SELECT il.on_hand, il.reorder_point, pv.sku, pv.barcode, p.name AS product_name,
               pv.size_label AS size, pv.color_label AS color
        FROM inventory_levels il
-       JOIN product_variants pv ON pv.id = il.product_variant_id
-       JOIN products p ON p.id = pv.product_id
-       WHERE il.location_id = $1 AND il.on_hand <= il.reorder_point AND il.reorder_point > 0
+       JOIN product_variants pv ON pv.id = il.product_variant_id AND pv.organization_id = $1
+       JOIN products p ON p.id = pv.product_id AND p.organization_id = $1
+       WHERE il.organization_id = $1 AND il.location_id = $2 AND il.on_hand <= il.reorder_point AND il.reorder_point > 0
        ORDER BY (il.on_hand::float / NULLIF(il.reorder_point, 0)) ASC
        LIMIT 10`,
-      [locationId],
-    ),
+      [orgId, locationId],
+    );
 
-    // 6. Recent transactions
-    orgQuery(
-      orgId,
+    recentResult = await client.query(
       `SELECT t.id, t.grand_total, t.tender_type, t.status, t.created_at,
               e.display_name AS employee_name
        FROM transactions t
-       LEFT JOIN employees e ON e.id = t.employee_id
-       WHERE t.location_id = $1 AND t.created_at >= $2 AND t.created_at <= $3
+       LEFT JOIN employees e ON e.id = t.employee_id AND e.organization_id = $1
+       WHERE t.organization_id = $1 AND t.location_id = $2 AND t.created_at >= $3 AND t.created_at <= $4
        ORDER BY t.created_at DESC
        LIMIT 10`,
-      [locationId, fromDate, toDate],
-    ),
-  ]);
+      [orgId, locationId, fromDate, toDate],
+    );
+
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
 
   const m = metricsResult.rows[0];
 
@@ -144,7 +177,9 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
       grossSales: Number(Number(m.gross_sales).toFixed(2)),
       totalDiscounts: Number(Number(m.total_discounts).toFixed(2)),
       totalTax: Number(Number(m.total_tax).toFixed(2)),
-      netSales: Number((Number(m.gross_sales) - Number(m.total_discounts)).toFixed(2)),
+      // grossSales is SUM(grand_total) which is already post-discount/post-tax.
+      // Net sales = grossSales - totalTax (revenue minus tax collected).
+      netSales: Number((Number(m.gross_sales) - Number(m.total_tax)).toFixed(2)),
       transactionCount: m.transaction_count,
       voidCount: m.void_count,
       refundCount: m.refund_count,
@@ -153,12 +188,17 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
     },
     hourlyBreakdown,
     tenderBreakdown: tenderResult.rows,
-    employeePerformance: employeeResult.rows,
+    // R34-D3: employeePerformance rows contain per-cashier sales /
+    // commission-equivalent data. Strip for non-managers — `support`
+    // + `inventory_clerk` hold `audit.view` but shouldn't see which
+    // cashier moved the most revenue (social-engineering + peer
+    // performance leak). Managers/owners still get full visibility.
+    employeePerformance: isManager ? employeeResult.rows : [],
     recentTransactions: recentResult.rows,
     lowStockAlerts: lowStockResult.rows,
   });
   } catch (error) {
-    console.error("[dashboard GET]", error);
+    console.error("[dashboard GET]", safeErr(error));
     return NextResponse.json({ error: "Failed to load dashboard" }, { status: 500 });
   }
 });

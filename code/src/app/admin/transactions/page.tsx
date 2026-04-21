@@ -6,6 +6,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { ChevronDown, ChevronUp, Search, Download, Calendar, Filter } from 'lucide-react';
 import { authFetch } from '@/lib/api/client';
 import { formatCurrency } from '@/lib/format';
+import { useDebouncedValue } from '@/lib/hooks/use-debounced-value';
+import { safeErr } from "@/lib/logging/safe-err";
 interface Transaction {
   id: string;
   status: 'completed' | 'voided' | 'refunded';
@@ -111,7 +113,7 @@ function DetailPanel({ transaction, tenders, events, onClose }: {
   try {
     items = JSON.parse(transaction.cart_snapshot);
   } catch (e) {
-    console.error('Failed to parse cart_snapshot:', e);
+    console.error('Failed to parse cart_snapshot:', safeErr(e));
   }
 
   return (
@@ -257,6 +259,7 @@ export default function TransactionsPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const debouncedSearchQuery = useDebouncedValue(searchQuery, 300);
   const [statusFilter, setStatusFilter] = useState('all');
   const [dateRange, setDateRange] = useState('all');
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -268,7 +271,7 @@ export default function TransactionsPage() {
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      if (searchQuery) params.append('search', searchQuery);
+      if (debouncedSearchQuery) params.append('search', debouncedSearchQuery);
       if (statusFilter !== 'all') params.append('status', statusFilter);
       if (dateRange !== 'all') params.append('from', dateRange);
       if (cursor) params.append('cursor', cursor);
@@ -281,11 +284,11 @@ export default function TransactionsPage() {
       setNextCursor(data.nextCursor);
       setHasMore(data.hasMore);
     } catch (error) {
-      console.error('Failed to fetch transactions:', error);
+      console.error('Failed to fetch transactions:', safeErr(error));
     } finally {
       setLoading(false);
     }
-  }, [searchQuery, statusFilter, dateRange]);
+  }, [debouncedSearchQuery, statusFilter, dateRange]);
 
   const fetchDetail = useCallback(async (id: string) => {
     try {
@@ -293,7 +296,7 @@ export default function TransactionsPage() {
       const data: DetailResponse = await response.json();
       setDetail(data);
     } catch (error) {
-      console.error('Failed to fetch transaction detail:', error);
+      console.error('Failed to fetch transaction detail:', safeErr(error));
     }
   }, []);
 

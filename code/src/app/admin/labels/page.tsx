@@ -4,7 +4,9 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import { useCallback, useEffect, useState } from 'react';
 import { authFetch } from '@/lib/api/client';
+import { formatCurrency } from "@/lib/format";
 
+import { safeErr } from "@/lib/logging/safe-err";
 interface ProductVariant {
   id: string;
   sku: string;
@@ -132,7 +134,7 @@ export default function LabelsPage() {
       });
       setSearchResults(variants);
     } catch (err) {
-      console.error('Search error:', err);
+      console.error('Search error:', safeErr(err));
       setSearchResults([]);
     } finally {
       setSearchLoading(false);
@@ -277,7 +279,7 @@ export default function LabelsPage() {
                       {variant.color_label && ` (${variant.color_label})`}
                     </div>
                     <div style={{ color: 'var(--text-secondary)' }} className="text-xs">
-                      ${variant.price.toFixed(2)}
+                      {formatCurrency(variant.price)}
                     </div>
                   </button>
                 ))}
@@ -377,7 +379,7 @@ export default function LabelsPage() {
                           {label.color_label && ` (${label.color_label})`}
                         </p>
                         <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-                          ${label.price.toFixed(2)}
+                          {formatCurrency(label.price)}
                         </p>
                       </div>
 
@@ -533,7 +535,7 @@ export default function LabelsPage() {
                             SKU: {label.sku}
                           </div>
                           <div style={{ fontWeight: 'bold', fontSize: labelSize === 'standard' ? '13px' : '16px' }}>
-                            ${label.price.toFixed(2)}
+                            {formatCurrency(label.price)}
                           </div>
                         </div>
 

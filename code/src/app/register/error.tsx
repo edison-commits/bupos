@@ -1,5 +1,7 @@
 'use client';
 
+import { useEffect } from 'react';
+
 export default function RegisterError({
   error,
   reset,
@@ -7,6 +9,10 @@ export default function RegisterError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  useEffect(() => {
+    console.error('[RegisterError]', { message: error.message, digest: error.digest, stack: error.stack });
+  }, [error]);
+
   return (
     <div style={{
       minHeight: '100vh',
@@ -23,7 +29,7 @@ export default function RegisterError({
           Register Error
         </h1>
         <p style={{ color: '#94a3b8', marginBottom: '1.5rem', fontSize: '0.875rem' }}>
-          {error.message || 'The register encountered an error. Please try again.'}
+          The register encountered an error. Please try again.
         </p>
         <button
           onClick={reset}

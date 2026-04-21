@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { AdminTopNav } from "@/components/layout/admin-top-nav";
 import { authFetch } from '@/lib/api/client';
+import { formatCurrency } from '@/lib/format';
 
 interface ProductVariant {
   variant_id: string | null;
@@ -452,10 +453,10 @@ function ProductCard({
                       {variant.sku || '—'}
                     </td>
                     <td className="py-3 px-4 text-right text-slate-900">
-                      ${variant.price?.toFixed(2) || '0.00'}
+                      {formatCurrency(variant.price ?? 0)}
                     </td>
                     <td className="py-3 px-4 text-right text-slate-700">
-                      ${variant.cost?.toFixed(2) || '0.00'}
+                      {formatCurrency(variant.cost ?? 0)}
                     </td>
                     <td className="py-3 px-4 text-right">
                       <span

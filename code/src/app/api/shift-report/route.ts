@@ -5,6 +5,7 @@ import { withAdminAuth, withDualAuth } from "@/lib/api/with-auth";
 import { validateBody, shiftReportSchema } from "@/lib/validation/schemas";
 
 
+import { safeErr } from "@/lib/logging/safe-err";
 /**
  * GET /api/shift-report  [DEPRECATED — not called from any UI component]
  *
@@ -17,11 +18,24 @@ import { validateBody, shiftReportSchema } from "@/lib/validation/schemas";
  *   date     — specific date YYYY-MM-DD (defaults to today)
  */
 export const GET = withDualAuth("register.open", async (req, ctx) => {
-  const { orgId, registerSession: _registerSession, locationId: defaultLocationId } = ctx;
+  const { orgId, registerSession: _registerSession, locationId: defaultLocationId, employee } = ctx;
 
   try {
     const sp = req.nextUrl.searchParams;
-    const locationId = sp.get("location") ?? defaultLocationId;
+    const requestedLocation = sp.get("location");
+    // Z-report includes tenders, variance, cart snapshots — sensitive.
+    // RLS alone only scopes by org, so a cashier at Location A could
+    // read Location B's Z-report via `?location=<other-loc>` without
+    // this gate. Require the requested location to be one of the
+    // employee's assigned locations (or fall back to the employee's
+    // default if no override is sent).
+    const locationId = requestedLocation ?? defaultLocationId;
+    if (requestedLocation) {
+      const employeeLocIds = employee.locationIds ?? [];
+      if (!employeeLocIds.includes(requestedLocation)) {
+        return NextResponse.json({ error: "Location not assigned to this employee" }, { status: 403 });
+      }
+    }
     const date = sp.get("date") || new Date().toISOString().slice(0, 10);
     const shiftId = sp.get("shift");
 
@@ -31,32 +45,43 @@ export const GET = withDualAuth("register.open", async (req, ctx) => {
         orgId,
         `SELECT s.*, e.display_name AS employee_name, l.name AS location_name
          FROM shifts s
-         LEFT JOIN employees e ON e.id = s.employee_id
-         LEFT JOIN locations l ON l.id = s.location_id
-         WHERE s.id = $1`,
-        [shiftId],
+         LEFT JOIN employees e ON e.id = s.employee_id AND e.organization_id = $2
+         LEFT JOIN locations l ON l.id = s.location_id AND l.organization_id = $2
+         WHERE s.id = $1 AND s.organization_id = $2`,
+        [shiftId, orgId],
       );
       if (shift.rows.length === 0) {
         return NextResponse.json({ error: "Shift not found" }, { status: 404 });
       }
       const s = shift.rows[0];
+      // Same defense as the daily-location branch above: a cashier must
+      // be assigned to this shift's location to see its Z-report.
+      const employeeLocIds = employee.locationIds ?? [];
+      if (!employeeLocIds.includes(s.location_id)) {
+        return NextResponse.json({ error: "Shift not at an assigned location" }, { status: 403 });
+      }
       const report = await buildShiftReport(orgId, shiftId, s.location_id, s.opened_at, s.closed_at || new Date().toISOString());
       return NextResponse.json({ shift: s, report });
     }
 
     // ── Daily Z-report for location ──
-    const dayStart = `${date}T00:00:00.000Z`;
-    const dayEnd = `${date}T23:59:59.999Z`;
+    //
+    // R16-L-2 (closed): use org-timezone day boundaries, not UTC. The
+    // helper `buildOrgDayRange` returns [fromTs, toTs) — toTs is the
+    // EXCLUSIVE upper bound (start of next local day), so predicates use
+    // `< $3`, not `<= $3`.
+    const { buildOrgDayRange } = await import("@/lib/reports/day-range");
+    const { fromTs, toTs } = await buildOrgDayRange(orgId, date, date);
 
     // Get all shifts for this location on this date
     const shifts = await orgQuery(
       orgId,
       `SELECT s.*, e.display_name AS employee_name
        FROM shifts s
-       LEFT JOIN employees e ON e.id = s.employee_id
-       WHERE s.location_id = $1 AND s.opened_at >= $2 AND s.opened_at <= $3
+       LEFT JOIN employees e ON e.id = s.employee_id AND e.organization_id = $4
+       WHERE s.location_id = $1 AND s.opened_at >= $2 AND s.opened_at < $3 AND s.organization_id = $4
        ORDER BY s.opened_at`,
-      [locationId, dayStart, dayEnd],
+      [locationId, fromTs, toTs, orgId],
     );
 
     // Transactions for the whole day at this location
@@ -66,9 +91,9 @@ export const GET = withDualAuth("register.open", async (req, ctx) => {
               t.tender_type, t.amount_tendered, t.change_due, t.employee_id, t.customer_id,
               t.created_at, t.cart_snapshot
        FROM transactions t
-       WHERE t.location_id = $1 AND t.created_at >= $2 AND t.created_at <= $3
+       WHERE t.location_id = $1 AND t.created_at >= $2 AND t.created_at < $3 AND t.organization_id = $4
        ORDER BY t.created_at`,
-      [locationId, dayStart, dayEnd],
+      [locationId, fromTs, toTs, orgId],
     );
 
     const completed = txns.rows.filter((t: Record<string, unknown>) => t.status === "completed");
@@ -81,12 +106,13 @@ export const GET = withDualAuth("register.open", async (req, ctx) => {
     if (txnIds.length > 0) {
       const tenders = await orgQuery(
         orgId,
-        `SELECT tender_type, SUM(amount)::numeric AS total, COUNT(*)::int AS count
-         FROM transaction_tenders
-         WHERE transaction_id = ANY($1)
-         GROUP BY tender_type
+        `SELECT tt.tender_type, SUM(tt.amount)::numeric AS total, COUNT(*)::int AS count
+         FROM transaction_tenders tt
+         JOIN transactions t ON t.id = tt.transaction_id AND t.organization_id = $2
+         WHERE tt.transaction_id = ANY($1)
+         GROUP BY tt.tender_type
          ORDER BY total DESC`,
-        [txnIds],
+        [txnIds, orgId],
       );
       tenderBreakdown = tenders.rows;
     }
@@ -96,9 +122,9 @@ export const GET = withDualAuth("register.open", async (req, ctx) => {
       orgId,
       `SELECT direction, SUM(amount)::numeric AS total, COUNT(*)::int AS count
        FROM pay_in_outs
-       WHERE location_id = $1 AND created_at >= $2 AND created_at <= $3
+       WHERE location_id = $1 AND created_at >= $2 AND created_at < $3 AND organization_id = $4
        GROUP BY direction`,
-      [locationId, dayStart, dayEnd],
+      [locationId, fromTs, toTs, orgId],
     );
     const payInTotal = Number(payInOuts.rows.find((r: Record<string, unknown>) => r.direction === "pay_in")?.total ?? 0);
     const payOutTotal = Number(payInOuts.rows.find((r: Record<string, unknown>) => r.direction === "pay_out")?.total ?? 0);
@@ -163,7 +189,7 @@ export const GET = withDualAuth("register.open", async (req, ctx) => {
     let employeeBreakdown: Record<string, unknown>[] = [];
     if (employeeMap.size > 0) {
       const empIds = Array.from(employeeMap.keys());
-      const emps = await orgQuery(orgId, `SELECT id, display_name FROM employees WHERE id = ANY($1)`, [empIds]);
+      const emps = await orgQuery(orgId, `SELECT id, display_name FROM employees WHERE id = ANY($1) AND organization_id = $2`, [empIds, orgId]);
       const empNames = new Map(emps.rows.map((e: Record<string, unknown>) => [e.id, e.display_name]));
       employeeBreakdown = Array.from(employeeMap.values()).map((e) => ({
         ...e,
@@ -188,7 +214,7 @@ export const GET = withDualAuth("register.open", async (req, ctx) => {
       .filter((s: Record<string, unknown>) => s.status === "closed")
       .reduce((sum: number, s: Record<string, unknown>) => sum + Number(s.closing_variance ?? 0), 0);
 
-    const location = await orgQuery(orgId, `SELECT name FROM locations WHERE id = $1`, [locationId]);
+    const location = await orgQuery(orgId, `SELECT name FROM locations WHERE id = $1 AND organization_id = $2`, [locationId, orgId]);
 
     return NextResponse.json({
       date,
@@ -222,7 +248,7 @@ export const GET = withDualAuth("register.open", async (req, ctx) => {
       shifts: shifts.rows,
     });
   } catch (err) {
-    console.error("GET /api/shift-report error:", err);
+    console.error("GET /api/shift-report error:", safeErr(err));
     return NextResponse.json({ error: "Failed to generate shift report" }, { status: 500 });
   }
 });
@@ -243,14 +269,31 @@ export const POST = withAdminAuth("register.open", async (req, ctx) => {
     if (action === "close_shift") {
       if (!shiftId) return NextResponse.json({ error: "shiftId required" }, { status: 400 });
 
+      // R33-H6: step-up auth. Sibling `/api/shift-close` POST has
+      // enforced step-up via R32-X3's inline close; this sister
+      // endpoint writes the SAME row through a parallel code path
+      // and would let a stolen cashier cookie fabricate variance
+      // without re-auth. Same bucket key as the API route so
+      // attempts against either accumulate.
+      const { requireStepUp } = await import('@/lib/auth/step-up');
+      const stepUp = await requireStepUp({
+        actorId: employee.id,
+        orgId,
+        actorPassword: (body as { actorPassword?: string }).actorPassword,
+        bucketKey: 'shift-close-stepup',
+      });
+      if (!stepUp.ok) {
+        return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
+      }
+
       const client = await orgTx(orgId);
       let auditPayload: { expected: number; declared: number; variance: number; blind: boolean; location_id: string; employee_id: string };
       try {
         const shift = await client.query(
           `SELECT s.*, rs.id AS reg_session_id FROM shifts s
-           LEFT JOIN register_sessions rs ON rs.id = s.register_session_id
-           WHERE s.id = $1 AND s.status = 'open' FOR UPDATE`,
-          [shiftId],
+           LEFT JOIN register_sessions rs ON rs.id = s.register_session_id AND rs.organization_id = $2
+           WHERE s.id = $1 AND s.status = 'open' AND s.organization_id = $2 FOR UPDATE`,
+          [shiftId, orgId],
         );
         if (shift.rows.length === 0) {
           await client.query("ROLLBACK");
@@ -258,20 +301,39 @@ export const POST = withAdminAuth("register.open", async (req, ctx) => {
         }
         const s = shift.rows[0];
 
+        // Cross-cashier / cross-location guard (matches /api/shift-close). The
+        // sibling endpoint already enforces this; leaving it off here meant
+        // any cashier with register.open could close another cashier's shift
+        // at another location with a fabricated variance. Managers and owners
+        // retain the ability to close any shift for end-of-day oversight.
+        const isManager = ["owner", "manager"].includes(employee.roleKey);
+        if (!isManager) {
+          const locOk = (employee.locationIds ?? []).includes(s.location_id);
+          const empOk = s.employee_id == null || s.employee_id === employee.id;
+          if (!locOk || !empOk) {
+            await client.query("ROLLBACK");
+            return NextResponse.json(
+              { error: "Cannot close a shift you don't own. Ask a manager." },
+              { status: 403 },
+            );
+          }
+        }
+
         // Calculate expected cash
         const txns = await client.query(
           `SELECT COALESCE(SUM(tt.amount), 0)::numeric AS cash_in
            FROM transaction_tenders tt
-           JOIN transactions t ON t.id = tt.transaction_id
+           JOIN transactions t ON t.id = tt.transaction_id AND t.organization_id = $3
            WHERE t.location_id = $1 AND t.created_at >= $2 AND t.status = 'completed' AND tt.tender_type = 'cash'`,
-          [s.location_id, s.opened_at],
+          [s.location_id, s.opened_at, orgId],
         );
         const changeDue = await client.query(
           `SELECT COALESCE(SUM(t.change_due), 0)::numeric AS total_change
            FROM transactions t
-           WHERE t.location_id = $1 AND t.created_at >= $2 AND t.status = 'completed'`,
-          [s.location_id, s.opened_at],
+           WHERE t.location_id = $1 AND t.created_at >= $2 AND t.status = 'completed' AND t.organization_id = $3`,
+          [s.location_id, s.opened_at, orgId],
         );
+        // check-pool-org-filter: scoped-by-shift-id-verified-in-tx
         const payInOuts = await client.query(
           `SELECT direction, COALESCE(SUM(amount), 0)::numeric AS total
            FROM pay_in_outs WHERE shift_id = $1 GROUP BY direction`,
@@ -289,8 +351,8 @@ export const POST = withAdminAuth("register.open", async (req, ctx) => {
         await client.query(
           `UPDATE shifts SET status = 'closed', closed_at = now(), closing_expected_cash = $1,
            closing_declared_cash = $2, closing_variance = $3, closed_note = $4, blind_close = $5, updated_at = now()
-           WHERE id = $6`,
-          [expectedCash, declared, variance, note || null, blindClose || false, shiftId],
+           WHERE id = $6 AND organization_id = $7`,
+          [expectedCash, declared, variance, note || null, blindClose || false, shiftId, orgId],
         );
 
         // Capture scope-dependent values before transaction block closes
@@ -323,7 +385,7 @@ export const POST = withAdminAuth("register.open", async (req, ctx) => {
           ],
         );
       } catch (err) {
-        console.error("[shift-report] audit event failed:", err);
+        console.error("[shift-report] audit event failed:", safeErr(err));
       }
 
       return NextResponse.json({
@@ -337,7 +399,7 @@ export const POST = withAdminAuth("register.open", async (req, ctx) => {
 
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
   } catch (err) {
-    console.error("POST /api/shift-report error:", err);
+    console.error("POST /api/shift-report error:", safeErr(err));
     return NextResponse.json({ error: "Failed to process shift action" }, { status: 500 });
   }
 });
@@ -349,8 +411,8 @@ async function buildShiftReport(orgId: string, shiftId: string, locationId: stri
     `SELECT t.*, (SELECT json_agg(json_build_object('type', tt.tender_type, 'amount', tt.amount))
        FROM transaction_tenders tt WHERE tt.transaction_id = t.id) AS tenders
      FROM transactions t
-     WHERE t.location_id = $1 AND t.created_at >= $2 AND t.created_at <= $3 AND t.status = 'completed'`,
-    [locationId, openedAt, closedAt],
+     WHERE t.location_id = $1 AND t.created_at >= $2 AND t.created_at <= $3 AND t.status = 'completed' AND t.organization_id = $4`,
+    [locationId, openedAt, closedAt, orgId],
   );
   const grossSales = txns.rows.reduce((s: number, t: Record<string, unknown>) => s + Number(t.grand_total), 0);
   const txnCount = txns.rows.length;

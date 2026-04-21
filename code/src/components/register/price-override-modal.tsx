@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { VirtualNumpad } from "@/components/ui/virtual-numpad";
+import { formatCurrency } from "@/lib/format";
 
 interface PriceOverrideModalProps {
   lineItemId: string;
@@ -42,7 +43,7 @@ export function PriceOverrideModal({
         <div className="space-y-4 px-5 py-4">
           <div className="rounded-2xl bg-zinc-100 px-4 py-3 text-center">
             <p className="text-xs text-zinc-500">Original price</p>
-            <p className="text-xl font-bold">${currentPrice.toFixed(2)}</p>
+            <p className="text-xl font-bold">{formatCurrency(currentPrice)}</p>
           </div>
 
           <label className="block">
@@ -52,7 +53,7 @@ export function PriceOverrideModal({
               onClick={() => setShowNumpad(true)}
               className="mt-1 w-full rounded-2xl border border-zinc-300 bg-white px-4 py-3 text-right text-xl font-bold hover:border-teal-300 transition-colors"
             >
-              {price ? `$${priceNum.toFixed(2)}` : `$${currentPrice.toFixed(2)}`}
+              {price ? `${formatCurrency(priceNum)}` : `${formatCurrency(currentPrice)}`}
             </button>
           </label>
 
@@ -62,7 +63,7 @@ export function PriceOverrideModal({
                 {isDiscount ? "Markdown" : "Markup"}
               </p>
               <p className={`text-lg font-bold ${isDiscount ? "text-red-700" : "text-teal-700"}`}>
-                {isDiscount ? "−" : "+"}${diffAmount.toFixed(2)} ({((diffAmount / currentPrice) * 100).toFixed(0)}%)
+                {isDiscount ? "−" : "+"}{formatCurrency(diffAmount)} ({((diffAmount / currentPrice) * 100).toFixed(0)}%)
               </p>
             </div>
           )}

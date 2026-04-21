@@ -15,11 +15,22 @@ export type PermissionKey =
   | "employee.manage"
   | "audit.view"
   | "reports.export"
+  // Pricing primitives — bundle prices, compare-at prices, anything that
+  // changes what a customer is CHARGED at the register. Kept separate from
+  // `catalog.manage` so that inventory clerks (who need to edit SKUs and
+  // product metadata) can't silently reprice a bundle from $99 → $0.01,
+  // check it out, and raise the price back. Owner + manager only.
+  | "pricing.manage"
   | "approval.discount"
   | "approval.void_item"
   | "approval.void_transaction"
   | "approval.store_credit"
-  | "approval.price_override";
+  | "approval.price_override"
+  // Cash-extraction approvals are distinct from void approvals: a manager
+  // who signs off on voiding a $5 soda shouldn't also be authorizing a
+  // $500 cash pay-out. Giving pay_out its own permission + exception code
+  // prevents approval reuse across unrelated flows.
+  | "approval.cash_payout";
 
 export type TenderType = "cash" | "card" | "store_credit" | "loyalty" | "gift_card" | "split";
 
@@ -368,7 +379,7 @@ export interface TimesheetSummary {
 
 // ── Phase 3: Promo Codes ────────────────────────────────────────────
 
-export type PromoCodeType = "fixed" | "percent" | "bogo";
+export type PromoCodeType = "fixed" | "percent" | "bogo" | "free_item";
 export type PromoCodeStatus = "active" | "expired" | "disabled" | "depleted";
 
 export interface PromoCode extends BaseRecord {
@@ -376,13 +387,19 @@ export interface PromoCode extends BaseRecord {
   code: string;
   description?: string;
   type: PromoCodeType;
-  value: number; // dollar off, percent off, or 0 for BOGO
+  value: number; // dollar off, percent off, 0 for BOGO, or 0 for free_item (variant's price is the "value")
   minimumPurchase: number;
   maxRedemptions: number;
   currentRedemptions: number;
   status: PromoCodeStatus;
   startsAt: string;
   expiresAt?: string;
+  /**
+   * Set iff `type === 'free_item'`. Points at the product_variants row
+   * that gets added to the cart at $0 when this promo is redeemed. The
+   * DB CHECK enforces consistency (see migration 033).
+   */
+  freeVariantId?: EntityId;
 }
 
 export interface PromoRedemption {

@@ -1,0 +1,144 @@
+name: Synthetic health probe
+
+# R25-ops-M-1: external synthetic that hits /api/health every 5
+# minutes and pings Telegram when the endpoint stops being OK.
+#
+# This is the portable tier. A paid Cloudflare plan's Health Checks
+# feature would be more native (sub-minute granularity + multi-region
+# origins), but this workflow works on any GitHub account + doesn't
+# need a third-party uptime service + reuses the Telegram bot already
+# wired for deploy notifs.
+#
+# Alerting shape:
+#   • non-200 response           → Telegram + workflow failure
+#   • 200 with rateLimitKv.bindingAvailable=false → Telegram (R22-H-4:
+#     the 3-layer rate limiter has silently degraded to 2-layer)
+#   • 200 otherwise              → silent success, exit 0
+#
+# State dedup: we do NOT track "was already alerting" state across
+# runs — every failing run Telegrams. The 5-minute cadence means
+# each ongoing incident alerts every 5 minutes until resolved,
+# which is loud but correct. For quieter alerting, extend with
+# a GitHub-cache-based last-state check.
+#
+# DR note: if Cloudflare itself goes down, GitHub Actions is still
+# reachable and keeps trying — the alert arrives even when the
+# Worker/Cloudflare origin is unreachable. If Telegram is also down
+# (rare but possible — Russia/Iran blocks), the workflow failure
+# itself is visible in the Actions UI as a backup signal.
+
+on:
+  schedule:
+    # Every 5 minutes. GitHub cron doesn't guarantee exact timing
+    # (can be several minutes late under GHA load) — that's fine
+    # for a health probe; the alert budget is "minutes not seconds."
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    # Do not block other workflows: this should be cheap + independent.
+    timeout-minutes: 3
+    steps:
+      - name: Hit /api/health and assert the response
+        id: probe
+        env:
+          # R26-F10: default to the canonical production URL, with the
+          # `vars.HEALTH_URL` override for staging/preview probes.
+          HEALTH_URL: ${{ vars.HEALTH_URL || 'https://basicuniformpos.com/api/health' }}
+        run: |
+          set -euo pipefail
+          echo "→ Probing $HEALTH_URL"
+          # R26-F10: raise curl timeout from 15s → 30s. A cold Worker
+          # isolate + fresh Neon WebSocket handshake + tenant-scoped DB
+          # probe can legitimately take 10–20s. 15s was empirically
+          # borderline and produced sporadic false-positive alerts.
+          #
+          # --fail-with-body still prints body on 5xx (useful for the
+          # Telegram payload). --retry 1 smooths over a transient
+          # connection reset without masking a real outage — a genuine
+          # down site will fail the retry too.
+          RESP=$(curl -sS -m 30 --retry 1 --retry-delay 2 \
+                      -w '\n%{http_code}' "$HEALTH_URL" \
+                 || echo -e '\nCONN_ERROR')
+          BODY=$(printf '%s' "$RESP" | sed '$d')
+          STATUS=$(printf '%s' "$RESP" | tail -n1)
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          echo "body<<BODY_EOF" >> "$GITHUB_OUTPUT"
+          echo "$BODY" >> "$GITHUB_OUTPUT"
+          echo "BODY_EOF" >> "$GITHUB_OUTPUT"
+
+          FAIL_REASON=""
+          if [ "$STATUS" = "CONN_ERROR" ]; then
+            FAIL_REASON="connection failure (unreachable / TLS / DNS)"
+          elif [ "$STATUS" != "200" ]; then
+            FAIL_REASON="HTTP $STATUS"
+          else
+            # R26-F10: parse the JSON body with jq rather than
+            # `grep -q '"bindingAvailable":false'`. The grep pattern
+            # was whitespace-sensitive — a future health.ts change
+            # that wraps the field in different JSON spacing (e.g.,
+            # `"bindingAvailable": false` with a space) would silently
+            # turn the check into a no-op. jq extracts the value by
+            # path and compares it exactly.
+            if ! echo "$BODY" | jq empty 2>/dev/null; then
+              FAIL_REASON="health body is not valid JSON"
+            else
+              BINDING=$(echo "$BODY" | jq -r '
+                (.rateLimitKv.bindingAvailable // .bindingAvailable // "missing")
+                | tostring
+              ')
+              if [ "$BINDING" = "false" ]; then
+                FAIL_REASON="KV rate-limit binding missing (3-layer limiter degraded to 2-layer)"
+              elif [ "$BINDING" = "missing" ]; then
+                # Non-fatal — the health endpoint may not expose this
+                # key in all versions. Log but don't alert.
+                echo "::warning::health body lacks bindingAvailable field"
+              fi
+              # Also check the top-level `status` field — schema at
+              # src/app/api/health/route.ts returns "ok" on success,
+              # "degraded" or "unhealthy" on failure.
+              HEALTH_STATUS=$(echo "$BODY" | jq -r '.status // "missing"')
+              if [ "$HEALTH_STATUS" != "ok" ] && [ "$HEALTH_STATUS" != "missing" ]; then
+                FAIL_REASON="health body reports status=$HEALTH_STATUS"
+              fi
+            fi
+          fi
+
+          if [ -n "$FAIL_REASON" ]; then
+            echo "::error::Health probe failed: $FAIL_REASON"
+            echo "reason=$FAIL_REASON" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "✓ Health probe OK"
+
+      - name: Notify Telegram on failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          REASON: ${{ steps.probe.outputs.reason }}
+          STATUS: ${{ steps.probe.outputs.status }}
+          BODY: ${{ steps.probe.outputs.body }}
+        run: |
+          # Truncate body so Telegram doesn't 400 on oversized payload.
+          TRUNC_BODY=$(printf '%s' "$BODY" | head -c 500)
+          MESSAGE="⚠️ bupos health probe FAILED
+          Reason: ${REASON:-unknown}
+          HTTP status: ${STATUS:-unknown}
+          Body: ${TRUNC_BODY}
+          Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          # R26-F10: `|| true` swallowed Telegram failures silently.
+          # Keep that swallow (the workflow is already failing, so the
+          # Actions UI surfaces the outage), but log the Telegram HTTP
+          # response so operators can see WHY the notification didn't
+          # arrive if they chase a missing-alert incident.
+          HTTP_CODE=$(curl -sS -X POST -w '%{http_code}' -o /tmp/tg.out \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="7547010501" \
+            -d text="$MESSAGE" || echo "CURL_ERROR")
+          echo "Telegram notification HTTP: $HTTP_CODE"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::warning::Telegram notify returned $HTTP_CODE — check bot token + chat ID"
+            cat /tmp/tg.out 2>/dev/null || true
+          fi

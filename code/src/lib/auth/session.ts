@@ -9,12 +9,48 @@ import { hasPermission } from "@/lib/domain/permissions";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { mutateStore, readStore } from "@/lib/persistence/store";
 import type { AdminSessionContext, RegisterSessionContext, SessionRecord } from "@/lib/persistence/types";
-import type { RegisterSessionRecord, ShiftRecord, RoleKey } from "@/lib/domain/types";
+import type { RegisterSessionRecord, ShiftRecord, RoleKey, Employee, Location } from "@/lib/domain/types";
+// R35-P3: hoist the hot-path auth modules to static. Each was previously
+// dynamic-imported inside resolveSession / login / register-login — all
+// functions on the auth-gated path that runs on every request. Static
+// imports let the Worker bundler inline them and remove per-call
+// resolver cost (~5-20ms per request). The source modules are lazy
+// internally (pool creation is deferred inside supabase-rest), so
+// hoisting is safe for Workers cold-start.
+import { getPool } from "@/lib/supabase-rest";
+import { verifyDeviceIdCookie, signDeviceId } from "@/lib/auth/device-cookie";
+import { pgFindCredentialByEmail, pgFindCredentialByPin } from "@/lib/persistence/postgres-store";
+import { invalidateStoreCache } from "@/lib/persistence/postgres-read-store";
 
 const isPg = () => !!process.env.USE_POSTGRES;
 
 const ADMIN_COOKIE = "basicuniformpos_admin_session";
 const REGISTER_COOKIE = "basicuniformpos_register_session";
+
+/**
+ * R24-M-3: single source of truth for the cookie `secure` flag.
+ *
+ * Four sites in this file historically hardcoded `secure: true`
+ * ("Cloudflare Workers always serve HTTPS"), two used
+ * `process.env.NODE_ENV === "production"`. That drift meant local
+ * dev via `next dev` + HTTP + a server-action login path dropped
+ * cookies on Chromium (breaks Playwright + breaks manual dev flows).
+ *
+ * New rule:
+ *   - In production (Workers / prod Next): `true`.
+ *   - In non-prod AND request URL is HTTPS: `true`.
+ *   - Else (local HTTP dev + tests): `false`.
+ *
+ * If `req` isn't available at the cookie-set site, we default to
+ * production-only-secure — which lets `next dev` over HTTP work
+ * without weakening prod. The `request.cf` / `request.url` check is
+ * preferred when we have it.
+ */
+function shouldUseSecureCookie(req?: { url?: string }): boolean {
+  if (process.env.NODE_ENV === "production") return true;
+  if (req?.url && req.url.startsWith("https://")) return true;
+  return false;
+}
 
 function buildSession(scope: SessionRecord["scope"], employeeId: string, organizationId: string, locationId?: string): SessionRecord {
   const now = new Date();
@@ -35,101 +71,35 @@ async function cookieStore() {
 }
 
 // ── PG session helpers ──────────────────────────────────────────────
+// IMPORTANT: all session-sensitive DB access goes through getPool() (the
+// per-call facade from supabase-rest.ts) rather than the Supabase REST
+// endpoint. Reasons:
+//   1. REST requires a service-role JWT; falling back to the anon key is how
+//      round 24's auth-bypass bug was reachable. Direct DB access uses the
+//      `postgres` role, which has an explicit EXECUTE grant on these
+//      SECURITY DEFINER RPCs and never depends on anon reachability.
+//   2. The facade creates a one-shot pool per call on Workers, dodging the
+//      "Cannot perform I/O on behalf of a different request" error that
+//      killed the shared pool approach.
 async function pgGetPool() {
-  const { default: pool } = await import("@/lib/db");
-  return pool;
-}
-
-function supabaseHeaders() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !supabaseKey) return null;
-  return {
-    url: supabaseUrl,
-    headers: {
-      apikey: supabaseKey,
-      Authorization: `Bearer ${supabaseKey}`,
-      'Content-Type': 'application/json',
-    } as Record<string, string>,
-  };
-}
-
-async function pgUpdateSessionLastSeen(sessionId: string) {
-  // Non-critical — best effort
-  const sb = supabaseHeaders();
-  if (sb) {
-    try {
-      await fetch(`${sb.url}/rest/v1/rpc/find_session`, {
-        method: 'POST', headers: sb.headers,
-        body: JSON.stringify({ p_session_id: sessionId, p_scope: 'any' }),
-      });
-    } catch {}
-    return;
-  }
-  const pool = await pgGetPool();
-  await pool.query(`UPDATE sessions SET last_seen_at = NOW() WHERE id = $1`, [sessionId]);
+  // R35-P3: getPool is now a static import at the top of this module.
+  // Kept this wrapper for call-site brevity and so future hot-path
+  // perf work can swap implementations without touching every caller.
+  return getPool();
 }
 
 async function pgDeleteSession(sessionId: string) {
   // Non-critical — best effort
-  const sb = supabaseHeaders();
-  if (sb) {
-    try {
-      await fetch(`${sb.url}/rest/v1/rpc/find_session`, {
-        method: 'POST', headers: sb.headers,
-        body: JSON.stringify({ p_session_id: sessionId, p_scope: 'any' }),
-      });
-    } catch {}
-    return;
-  }
-  const pool = await pgGetPool();
-  await pool.query(`DELETE FROM sessions WHERE id = $1`, [sessionId]);
+  try {
+    const pool = await pgGetPool();
+    await pool.query(`DELETE FROM sessions WHERE id = $1`, [sessionId]);
+  } catch {}
 }
 
-async function pgFindSession(sessionId: string, scope: string): Promise<SessionRecord | null> {
-  const sb = supabaseHeaders();
-  if (sb) {
-    const res = await fetch(
-      `${sb.url}/rest/v1/rpc/find_session`,
-      {
-        method: 'POST',
-        headers: sb.headers,
-        body: JSON.stringify({ p_session_id: sessionId, p_scope: scope }),
-      },
-    );
-    if (!res.ok) return null;
-    const raw = await res.json();
-    const r = (Array.isArray(raw) ? raw[0] : raw) as Record<string, unknown> | null;
-    if (!r || !r.id) return null;
-    return {
-      id: r.id as string,
-      employeeId: r.employee_id as string,
-      organizationId: r.organization_id as string,
-      scope: r.scope as SessionRecord["scope"],
-      locationId: (r.location_id as string) ?? undefined,
-      createdAt: String(r.created_at),
-      lastSeenAt: String(r.last_seen_at),
-      expiresAt: String(r.expires_at),
-    };
-  }
-  const pool = await pgGetPool();
-  const { rows } = await pool.query(
-    `SELECT * FROM sessions WHERE id = $1 AND scope = $2 AND expires_at > NOW()`,
-    [sessionId, scope],
-  );
-  if (!rows[0]) return null;
-  const r = rows[0] as Record<string, unknown>;
-  return {
-    id: r.id as string,
-    employeeId: r.employee_id as string,
-    organizationId: r.organization_id as string,
-    scope: r.scope as SessionRecord["scope"],
-    locationId: (r.location_id as string) ?? undefined,
-    createdAt: String(r.created_at),
-    lastSeenAt: String(r.last_seen_at),
-    expiresAt: String(r.expires_at),
-  };
-}
+// pgFindSession + pgUpdateSessionLastSeen used to live here as separate helpers
+// that each opened their own one-shot Pool. Both are now inlined in
+// resolveSession on a shared client so the auth-gated hot path pays ONE
+// WebSocket handshake instead of three.
 
 // ── Resolve session (works for both JSON and PG) ────────────────────
 async function resolveSession(scope: SessionRecord["scope"], cookieName: string, deviceId?: string) {
@@ -140,70 +110,246 @@ async function resolveSession(scope: SessionRecord["scope"], cookieName: string,
     return null;
   }
 
-  // Find the session — PG mode reads sessions into store via readStoreFromPg
-  let session: SessionRecord | null | undefined;
-  if (isPg()) {
-    session = await pgFindSession(sessionId, scope);
-  } else {
-    const store = await readStore();
-    session = store.sessions.find((entry) => entry.id === sessionId && entry.scope === scope);
-    if (session && new Date(session.expiresAt) < new Date()) session = null;
-  }
+  // PERF: In PG mode, open ONE Neon client for the whole resolve so that
+  // find_session + update last_seen_at + (for register) resolve_register_session
+  // share a single TLS+WebSocket handshake. Previously each helper grabbed
+  // its own one-shot Pool via getPool(), paying ~3–4 handshakes per auth-gated
+  // request (~200-800ms of avoidable latency).
+  // The facade returns a pg.PoolClient-shaped object. We don't import the
+  // Neon types here (would pull @neondatabase into the SSR module graph), so
+  // use a structural type that matches what we actually use.
+  type SharedClient = {
+    query: (text: string, values?: unknown[]) => Promise<{ rows: unknown[] }>;
+    release: (err?: Error | boolean) => void;
+  };
+  let pgClient: SharedClient | null = null;
+  try {
+    // Find the session — PG mode reads sessions into store via readStoreFromPg
+    let session: SessionRecord | null | undefined;
+    if (isPg()) {
+      const pool = await pgGetPool();
+      pgClient = (await pool.connect()) as unknown as SharedClient;
+      const { rows } = await pgClient.query(
+        `SELECT * FROM find_session($1::uuid, $2::text) AS result`,
+        [sessionId, scope],
+      );
+      const first = rows[0] as Record<string, unknown> | undefined;
+      const r = ((first?.result as Record<string, unknown> | undefined) ?? first ?? null) as Record<string, unknown> | null;
+      session = r && r.id ? {
+        id: r.id as string,
+        employeeId: r.employee_id as string,
+        organizationId: r.organization_id as string,
+        scope: r.scope as SessionRecord["scope"],
+        locationId: (r.location_id as string) ?? undefined,
+        createdAt: String(r.created_at),
+        lastSeenAt: String(r.last_seen_at),
+        expiresAt: String(r.expires_at),
+      } : null;
+    } else {
+      const store = await readStore();
+      session = store.sessions.find((entry) => entry.id === sessionId && entry.scope === scope);
+      if (session && new Date(session.expiresAt) < new Date()) session = null;
+    }
 
-  if (!session) {
-    return null;
-  }
+    if (!session) {
+      return null;
+    }
 
-  session.lastSeenAt = new Date().toISOString();
-  if (isPg()) {
-    await pgUpdateSessionLastSeen(session.id);
-  }
+    // Admin sessions: enforce 4-hour inactivity timeout (in addition to 7-day expiry)
+    const ADMIN_INACTIVITY_TIMEOUT_MS = 4 * 60 * 60 * 1000;
+    if (scope === "admin" && session.lastSeenAt) {
+      const lastSeen = new Date(session.lastSeenAt).getTime();
+      if (Date.now() - lastSeen > ADMIN_INACTIVITY_TIMEOUT_MS) {
+        return null;
+      }
+    }
 
-  const store = await readStore(isPg() ? session.organizationId : undefined);
+    // R27-M2: absolute session lifetime. Before this check, an admin
+    // cookie stolen via XSS / physical access / shared workstation
+    // could be kept alive indefinitely inside the 7-day `expires_at`
+    // window by pinging any admin route every <4h — idle timeout kept
+    // sliding with `lastSeenAt`. An absolute cap on createdAt closes
+    // that: once a session is 24h old it's gone, period, regardless
+    // of activity. The user must log in again. Aligns with industry
+    // practice (AWS console, Stripe dashboard both cap admin sessions
+    // at 8–24h absolute). Register-scope sessions already have a 1-day
+    // expires_at and don't need a separate absolute check.
+    const ADMIN_ABSOLUTE_LIFETIME_MS = 24 * 60 * 60 * 1000; // 24h
+    if (scope === "admin" && session.createdAt) {
+      const createdAtMs = new Date(session.createdAt).getTime();
+      if (Date.now() - createdAtMs > ADMIN_ABSOLUTE_LIFETIME_MS) {
+        return null;
+      }
+    }
 
-  const employee = store.employees.find((entry) => entry.id === session.employeeId && entry.isActive);
-  if (!employee) {
-    return null;
-  }
+    // R30-M3: DELAY the last_seen_at update for REGISTER scope until
+    // after the device-ID verification below. Prior shape bumped
+    // last_seen_at on every call — including calls from a stolen
+    // cookie that then failed device-match — keeping the sessions
+    // row alive indefinitely (the 8h stale guard in resolve_register_
+    // session never tripped). For admin scope there's no device
+    // binding, so the bump happens inline here.
+    session.lastSeenAt = new Date().toISOString();
+    if (scope === "admin" && isPg() && pgClient) {
+      // Reuse the same client for the last_seen_at bump.
+      try {
+        await pgClient.query(`UPDATE sessions SET last_seen_at = NOW() WHERE id = $1`, [session.id]);
+      } catch {}
+    }
 
-  if (scope === "admin") {
-    return { session, employee } satisfies AdminSessionContext;
-  }
+    // PERF: we used to read the FULL org store here (get_full_store RPC
+    // returns products/variants/inventory/customers/...) just to find ONE
+    // employee by id. On large datasets the JSON parse + object construction
+    // ate enough Worker CPU to trip error 1102 on /api/dashboard and
+    // /api/reports after only ~50 transactions. Fast path: targeted SELECT
+    // on the single employee row (and, for register scope, the single
+    // location row) using the shared pgClient we already have open.
+    let employee: Employee | undefined;
+    let location: Location | undefined;
+    if (isPg() && pgClient) {
+      // check-pool-org-filter: scoped-by-session-cookie-employee-id
+      // session.employeeId came from the cookie-validated sessions row.
+      // The org is RESOLVED from the employee row, not input — no
+      // tenant-enumeration surface.
+      const { rows: empRows } = await pgClient.query(
+        `SELECT id, organization_id, role_key, first_name, last_name, display_name, email,
+                pin_hint, is_active, location_ids, created_at, updated_at
+         FROM employees WHERE id = $1 AND is_active = true LIMIT 1`,
+        [session.employeeId],
+      );
+      const e = empRows[0] as Record<string, unknown> | undefined;
+      if (!e) return null;
+      employee = {
+        id: e.id as string,
+        organizationId: e.organization_id as string,
+        roleKey: e.role_key as Employee["roleKey"],
+        firstName: e.first_name as string,
+        lastName: e.last_name as string,
+        displayName: e.display_name as string,
+        email: (e.email as string) ?? '',
+        pinHint: (e.pin_hint as string) ?? '',
+        isActive: e.is_active as boolean,
+        locationIds: (e.location_ids as string[]) ?? [],
+        createdAt: String(e.created_at),
+        updatedAt: String(e.updated_at),
+      };
 
-  const location = store.locations.find((entry) => entry.id === session.locationId && entry.isActive);
-  if (!location) {
-    return null;
-  }
+      if (scope === "register" && session.locationId) {
+        // check-pool-org-filter: scoped-by-session-cookie-location-id
+        // session.locationId came from the register session row.
+        const { rows: locRows } = await pgClient.query(
+          `SELECT id, organization_id, name, code, address1, city, region, postal_code, phone,
+                  tax_rate, is_active, created_at, updated_at
+           FROM locations WHERE id = $1 AND is_active = true LIMIT 1`,
+          [session.locationId],
+        );
+        const l = locRows[0] as Record<string, unknown> | undefined;
+        if (!l) return null;
+        location = {
+          id: l.id as string,
+          organizationId: l.organization_id as string,
+          name: l.name as string,
+          code: l.code as string,
+          address1: (l.address1 as string) ?? '',
+          city: (l.city as string) ?? '',
+          region: (l.region as string) ?? '',
+          postalCode: (l.postal_code as string) ?? '',
+          phone: (l.phone as string) ?? '',
+          taxRate: Number(l.tax_rate ?? 0.1025),
+          isActive: l.is_active as boolean,
+          createdAt: String(l.created_at),
+          updatedAt: String(l.updated_at),
+        };
+      }
+    } else {
+      // JSON fallback — no PG: use the in-memory store (dev only).
+      const store = await readStore();
+      employee = store.employees.find((entry) => entry.id === session.employeeId && entry.isActive);
+      if (!employee) return null;
+      location = scope === "register"
+        ? store.locations.find((entry) => entry.id === session.locationId && entry.isActive)
+        : undefined;
+      if (scope === "register" && !location) return null;
+    }
 
-  let registerSession: RegisterSessionRecord | undefined;
-  let activeShift: ShiftRecord | null = null;
+    if (scope === "admin") {
+      return { session, employee } satisfies AdminSessionContext;
+    }
 
-  if (isPg()) {
-    // Use Supabase RPC when available — single HTTP call, no WebSocket pool.
-    // Falls back to pool queries if Supabase env vars are missing.
-    const sb = supabaseHeaders();
-    if (sb) {
-      const rpcRes = await fetch(`${sb.url}/rest/v1/rpc/resolve_register_session`, {
-        method: 'POST',
-        headers: sb.headers,
-        body: JSON.stringify({ p_session_id: session.id }),
-      });
-      if (!rpcRes.ok) return null;
-      const rpcData = await rpcRes.json() as Record<string, unknown> | null;
+    if (!location) {
+      return null;
+    }
+
+    let registerSession: RegisterSessionRecord | undefined;
+    let activeShift: ShiftRecord | null = null;
+
+    if (isPg() && pgClient) {
+      // Reuse the same client for the register-session resolve.
+      const { rows: rpcRows } = await pgClient.query(
+        `SELECT * FROM resolve_register_session($1::uuid) AS result`,
+        [session.id],
+      );
+      const first = rpcRows[0] as Record<string, unknown> | undefined;
+      const rpcData = (first?.result ?? first ?? null) as Record<string, unknown> | null;
       if (!rpcData || !rpcData.register_session) return null;
 
       const rs = rpcData.register_session as Record<string, unknown>;
 
-      // Device ID verification
+      // R28-H5: device ID verification — fail-closed.
+      //
+      // Prior check was `if (deviceId && sessionDeviceId && ...)` which
+      // SKIPPED verification when the caller didn't pass `deviceId`.
+      // Since virtually every server-action caller today invokes
+      // getRegisterSession() without an argument, the device_id column
+      // was cosmetic — a stolen register cookie replayed from any
+      // browser passed authentication.
+      //
+      // New shape:
+      //   • session.device_id IS NULL → no enforcement (legacy rows
+      //     created before device binding; behaviour unchanged).
+      //   • session.device_id IS NOT NULL AND request deviceId missing
+      //     OR mismatched → REFUSE + end the session row so a stolen
+      //     cookie goes cold after one attempt.
+      //
+      // The `bupos_register_device` cookie is the companion to
+      // REGISTER_COOKIE; both were Set-Cookie'd atomically at register-
+      // login time. A cookie-theft attacker who steals only the
+      // REGISTER_COOKIE will fail this check.
       const sessionDeviceId = (rs.device_id as string) ?? undefined;
-      if (deviceId && sessionDeviceId && sessionDeviceId !== deviceId) {
-        // Close stale session via REST
-        await fetch(`${sb.url}/rest/v1/register_sessions?id=eq.${rs.id}`, {
-          method: 'PATCH',
-          headers: { ...sb.headers, Prefer: 'return=minimal' },
-          body: JSON.stringify({ status: 'ended', ended_at: new Date().toISOString() }),
-        });
-        return null;
+      if (sessionDeviceId) {
+        if (!deviceId || sessionDeviceId !== deviceId) {
+          // R30-H7: ALSO delete the backing `sessions` row (the cookie's
+          // server-side record). Prior shape only ended the register_
+          // sessions row, leaving the auth-cookie-holder able to keep
+          // the `sessions` entry alive indefinitely via polling (every
+          // resolveSession bumps last_seen_at before this check). A
+          // future dual-auth endpoint that reads `sessions` without
+          // re-running `resolve_register_session` would then accept
+          // the stolen cookie as live. Delete the sessions row AND end
+          // the register_sessions row so both paths go cold.
+          await pgClient.query(
+            `UPDATE register_sessions SET status = 'ended', ended_at = NOW() WHERE id = $1`,
+            [rs.id as string],
+          );
+          if (rs.auth_session_id) {
+            await pgClient.query(
+              `DELETE FROM sessions WHERE id = $1`,
+              [rs.auth_session_id as string],
+            );
+          }
+          return null;
+        }
+      }
+
+      // R30-M3: device match passed — NOW it's safe to bump
+      // last_seen_at on the backing sessions row. Stolen-cookie-only
+      // attackers who never present the device cookie cannot keep
+      // the sessions row alive via polling because the bump never
+      // runs on their failed requests.
+      if (isPg() && pgClient) {
+        try {
+          await pgClient.query(`UPDATE sessions SET last_seen_at = NOW() WHERE id = $1`, [session.id]);
+        } catch {}
       }
 
       registerSession = {
@@ -241,159 +387,181 @@ async function resolveSession(scope: SessionRecord["scope"], cookieName: string,
         };
       }
     } else {
-      // Fallback: pool queries (for local dev without Supabase)
-      const pgPool = await pgGetPool();
-
+      // Abandoned session guard for JSON (non-PG) mode. Load the in-memory
+      // store only on this dev-only branch.
       const STALE_HOURS = 8;
-      const { rows: rsRows } = await pgPool.query(
-        `SELECT rs.* FROM register_sessions rs
-         JOIN sessions s ON s.id = rs.auth_session_id
-         WHERE rs.auth_session_id = $1 AND rs.status = 'active'
-           AND (s.last_seen_at IS NULL OR s.last_seen_at > NOW() - INTERVAL '${STALE_HOURS} hours')
-         LIMIT 1`,
-        [session.id],
+      const staleCutoff = new Date(Date.now() - STALE_HOURS * 3600 * 1000).toISOString();
+      const fallbackStore = await readStore();
+      registerSession = fallbackStore.registerSessions.find(
+        (entry) =>
+          entry.authSessionId === session.id &&
+          entry.status === "active" &&
+          session.lastSeenAt >= staleCutoff,
       );
-      if (!rsRows[0]) return null;
-      const rs = rsRows[0] as Record<string, unknown>;
-
-      const sessionDeviceId = (rs.device_id as string) ?? undefined;
-      if (deviceId && sessionDeviceId && sessionDeviceId !== deviceId) {
-        await pgPool.query(
-          `UPDATE register_sessions SET status = 'ended', ended_at = NOW()
-           WHERE id = $1`,
-          [rs.id],
-        );
+      if (!registerSession) {
         return null;
       }
 
-      registerSession = {
-        id: rs.id as string,
-        authSessionId: rs.auth_session_id as string,
-        employeeId: rs.employee_id as string,
-        locationId: rs.location_id as string,
-        status: rs.status as "active" | "ended",
-        startedAt: String(rs.started_at),
-        endedAt: rs.ended_at ? String(rs.ended_at) : undefined,
-        activeShiftId: (rs.active_shift_id as string) ?? undefined,
-        lastCartId: (rs.last_cart_id as string) ?? undefined,
-        lastTransactionId: (rs.last_transaction_id as string) ?? undefined,
-        pendingExceptionIds: (rs.pending_exception_ids as string[]) ?? [],
-        deviceId: sessionDeviceId,
-      };
+      const shiftId = registerSession.activeShiftId;
+      activeShift = shiftId
+        ? fallbackStore.shifts.find((entry) => entry.id === shiftId && entry.status === "open") ?? null
+        : null;
+    }
 
-      if (registerSession.activeShiftId) {
-        const { rows: shiftRows } = await pgPool.query(
-          `SELECT * FROM shifts WHERE id = $1 AND status = 'open' LIMIT 1`,
-          [registerSession.activeShiftId],
-        );
-        if (shiftRows[0]) {
-          const s = shiftRows[0] as Record<string, unknown>;
-          activeShift = {
-            id: s.id as string,
-            locationId: s.location_id as string,
-            employeeId: s.employee_id as string,
-            registerSessionId: s.register_session_id as string,
-            status: s.status as "open" | "closed",
-            openedAt: String(s.opened_at),
-            openingFloat: Number(s.opening_float),
-            openedNote: (s.opened_note as string) ?? undefined,
-            closedAt: s.closed_at ? String(s.closed_at) : undefined,
-            closingExpectedCash: s.closing_expected_cash != null ? Number(s.closing_expected_cash) : undefined,
-            closingDeclaredCash: s.closing_declared_cash != null ? Number(s.closing_declared_cash) : undefined,
-            closingVariance: s.closing_variance != null ? Number(s.closing_variance) : undefined,
-            closedNote: (s.closed_note as string) ?? undefined,
-            blindClose: (s.blind_close as boolean) ?? undefined,
-          };
+    return { session, employee, location, registerSession, activeShift } satisfies RegisterSessionContext;
+  } finally {
+    // Always release the shared client (if we opened one). The facade's
+    // release() also ends the underlying Pool, so no WS connection leaks.
+    if (pgClient) {
+      try { pgClient.release(); } catch {}
+    }
+  }
+}
+
+// R25-perf-4: request-scoped memoization via React's `cache()`.
+// A single rendered admin page composes layout.tsx + page.tsx + any
+// nested server components, each of which may call getAdminSession /
+// requireAdminPermission. Without memo, each call pays a ~150-300ms
+// resolveSession() round-trip (pool + 3 DB queries). With Next 16's
+// request-scoped cache(), the SAME request re-uses the resolved value.
+//
+// Safety note: the prior attempt at this caused "Cannot perform I/O
+// on behalf of a different request" on Workers. That was a Next 15
+// bug class where cache() occasionally crossed request boundaries.
+// Next 16 App Router scopes cache() strictly per-request across
+// server components, route handlers, and server actions — so the
+// captured Promise never migrates between requests. If a future
+// runtime change reintroduces the regression, the call sites fall
+// back by importing `resolveSession` directly.
+import { cache } from "react";
+
+export const getAdminSession = cache(
+  async () => resolveSession("admin", ADMIN_COOKIE) as Promise<AdminSessionContext | null>,
+);
+
+// Register session lookup varies by deviceId so we can't use a
+// naïve cache() — the param would cause divergent keys. Leave as
+// a plain function.
+//
+// R28-H5: when no explicit deviceId is passed (server-action callers
+// that don't thread it through), pull it from the HttpOnly
+// `bupos_register_device` cookie set at register-login. The cookie
+// is signed-by-possession (HttpOnly, Secure on HTTPS, SameSite=Lax)
+// just like REGISTER_COOKIE itself; treating the two cookies as a
+// matched pair pins the session to the browser that originally paired.
+// `resolveSession`'s device-match check (fail-closed post-R28-H5)
+// refuses to resolve when the session row has a device_id but the
+// request cookie is missing or mismatched.
+export async function getRegisterSession(deviceId?: string) {
+  let effectiveDeviceId = deviceId;
+  if (!effectiveDeviceId) {
+    try {
+      const { cookies } = await import("next/headers");
+      const jar = await cookies();
+      const raw = jar.get("bupos_register_device")?.value;
+      if (raw) {
+        // R29-M3: the cookie is now HMAC-signed. `verifyDeviceIdCookie`
+        // returns the deviceId only if the signature is intact; any
+        // tampered or unsigned value returns null and the session will
+        // fail the fail-closed device-match in resolveSession.
+        // R35-P3: verifyDeviceIdCookie is statically imported at the top.
+        const decoded = decodeURIComponent(raw);
+        const verified = await verifyDeviceIdCookie(decoded);
+        effectiveDeviceId = verified ?? undefined;
+        // R32-D7: if the cookie exists but verification fails (tampered
+        // or legacy-unsigned), clear it so the client doesn't loop-
+        // log-out on every request post-R29-M3 deploy. Next login
+        // writes a fresh signed cookie. Without this, a stale
+        // unsigned cookie stays in the jar forever until the user
+        // manually clears cookies OR goes through signInRegister.
+        if (verified === null) {
+          try {
+            jar.delete("bupos_register_device");
+          } catch {
+            // Cookie-jar writes are unavailable in some RSC contexts;
+            // non-fatal, the next writable handler will drop it.
+          }
         }
       }
+    } catch {
+      // Outside a request context (tests / server-actions that resolve
+      // their own cookies): leave undefined. The fail-closed check in
+      // resolveSession still handles sessions with a non-null device_id
+      // — those won't resolve until the caller threads deviceId in.
     }
-  } else {
-    // Abandoned session guard for JSON (non-PG) mode
-    const STALE_HOURS = 8;
-    const staleCutoff = new Date(Date.now() - STALE_HOURS * 3600 * 1000).toISOString();
-    registerSession = store.registerSessions.find(
-      (entry) =>
-        entry.authSessionId === session.id &&
-        entry.status === "active" &&
-        session.lastSeenAt >= staleCutoff,
-    );
-    if (!registerSession) {
-      return null;
-    }
-
-    const shiftId = registerSession.activeShiftId;
-    activeShift = shiftId
-      ? store.shifts.find((entry) => entry.id === shiftId && entry.status === "open") ?? null
-      : null;
   }
-
-  return { session, employee, location, registerSession, activeShift } satisfies RegisterSessionContext;
-}
-
-export async function getAdminSession() {
-  return resolveSession("admin", ADMIN_COOKIE) as Promise<AdminSessionContext | null>;
-}
-
-export async function getRegisterSession(deviceId?: string) {
-  return resolveSession("register", REGISTER_COOKIE, deviceId) as Promise<RegisterSessionContext | null>;
+  return resolveSession("register", REGISTER_COOKIE, effectiveDeviceId) as Promise<RegisterSessionContext | null>;
 }
 
 export async function signInAdmin(email: string, password: string) {
   const normalizedEmail = email.trim().toLowerCase();
 
   if (isPg()) {
-    const { invalidateStoreCache } = await import("@/lib/persistence/postgres-read-store");
+    // R35-P3: invalidateStoreCache is statically imported at the top.
 
-    const sb = supabaseHeaders();
-    if (sb) {
-      // Supabase REST path — no pool, works on Cloudflare Workers
-      const lookupRes = await fetch(`${sb.url}/rest/v1/rpc/admin_login_lookup`, {
-        method: 'POST',
-        headers: sb.headers,
-        body: JSON.stringify({ p_email: normalizedEmail }),
-      });
-      if (!lookupRes.ok) throw new Error("Invalid admin credentials");
-      const lookup = await lookupRes.json() as Record<string, unknown> | null;
-      if (!lookup || !lookup.password_hash || lookup.is_active !== true) {
-        throw new Error("Invalid admin credentials");
+    // Try the fast RPC path first (direct DB pool — works on Workers, no
+    // service-role-key dependency). If the RPCs aren't provisioned on this
+    // DB, fall through to the column-level pool path below.
+    try {
+      const pool = await pgGetPool();
+      const { rows: lookupRows } = await pool.query(
+        `SELECT * FROM admin_login_lookup($1::text) AS result`,
+        [normalizedEmail],
+      );
+      const lookup = (lookupRows[0]?.result ?? lookupRows[0] ?? null) as Record<string, unknown> | null;
+      if (lookup && lookup.password_hash) {
+        if (lookup.is_active !== true) throw new Error("Invalid admin credentials");
+        if (!["owner", "manager"].includes(lookup.role_key as string)) {
+          throw new Error("Invalid admin credentials");
+        }
+        if (!await verifySecret(password, lookup.password_hash as string)) {
+          throw new Error("Invalid admin credentials");
+        }
+
+        const organizationId = lookup.organization_id as string;
+        const employeeId = lookup.employee_id as string;
+        const nextSession = buildSession("admin", employeeId, organizationId);
+
+        await pool.query(
+          `SELECT admin_login_create_session($1::uuid, $2::uuid, $3::uuid, $4::timestamptz, $5::timestamptz)`,
+          [employeeId, organizationId, nextSession.id, nextSession.createdAt, nextSession.expiresAt],
+        );
+
+        // R32-D2: scope the invalidation to THIS tenant. Prior no-arg
+        // call wiped every other tenant's cache on every admin login.
+        invalidateStoreCache(organizationId);
+
+        // CRITICAL: set the cookie here so server actions that call
+        // signInAdmin (loginAction, signupAction) actually leave the user
+        // authenticated. The /api/auth/login route does its own cookie
+        // handling, but void-returning callers depend on us.
+        const jar = await cookieStore();
+        jar.set(ADMIN_COOKIE, nextSession.id, {
+          httpOnly: true,
+          sameSite: "lax",
+          secure: shouldUseSecureCookie(),
+          path: "/",
+          expires: new Date(nextSession.expiresAt),
+        });
+
+        return { sessionId: nextSession.id, expiresAt: nextSession.expiresAt };
       }
-      if (!["owner", "manager"].includes(lookup.role_key as string)) {
-        throw new Error("Invalid admin credentials");
-      }
-      if (!await verifySecret(password, lookup.password_hash as string)) {
-        throw new Error("Invalid admin credentials");
-      }
-
-      const organizationId = lookup.organization_id as string;
-      const employeeId = lookup.employee_id as string;
-      const nextSession = buildSession("admin", employeeId, organizationId);
-
-      const createRes = await fetch(`${sb.url}/rest/v1/rpc/admin_login_create_session`, {
-        method: 'POST',
-        headers: { ...sb.headers, Prefer: 'return=minimal' },
-        body: JSON.stringify({
-          p_employee_id: employeeId,
-          p_organization_id: organizationId,
-          p_session_id: nextSession.id,
-          p_created_at: nextSession.createdAt,
-          p_expires_at: nextSession.expiresAt,
-        }),
-      });
-      if (!createRes.ok) throw new Error("Failed to create admin session");
-
-      invalidateStoreCache();
-      // Return session info for client-side cookie setting (Workers can't set cookies in server actions)
-      return { sessionId: nextSession.id, expiresAt: nextSession.expiresAt };
+    } catch (err) {
+      // "Invalid admin credentials" is the authentication failure path — re-throw as-is.
+      if (err instanceof Error && err.message === "Invalid admin credentials") throw err;
+      // Any other error (e.g. RPC not provisioned locally) falls through to the column-level pool path.
     }
 
-    // Pool fallback (local dev without Supabase env vars)
-    const { pgFindCredentialByEmail } = await import("@/lib/persistence/postgres-store");
+    // Column-level pool fallback (local dev without the RPCs provisioned)
+    // R35-P3: pgFindCredentialByEmail is statically imported at the top.
     const credential = await pgFindCredentialByEmail(normalizedEmail);
     if (!credential?.passwordHash) {
       throw new Error("Invalid admin credentials");
     }
 
     const pool = await pgGetPool();
+    // check-pool-org-filter: scoped-by-just-looked-up-employee-id
+    // credential.employeeId came from the email→credential lookup.
     const { rows: empRows } = await pool.query(
       `SELECT id, organization_id, role_key, is_active FROM employees WHERE id = $1 LIMIT 1`,
       [credential.employeeId],
@@ -438,13 +606,14 @@ export async function signInAdmin(email: string, password: string) {
     if (!nextSession) {
       throw new Error("Failed to create admin session");
     }
-    invalidateStoreCache();
+    // R32-D2: scope to this tenant.
+    invalidateStoreCache(organizationId);
 
     const jar = await cookieStore();
     jar.set(ADMIN_COOKIE, nextSession.id, {
       httpOnly: true,
       sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
+      secure: shouldUseSecureCookie(),
       path: "/",
       expires: new Date(nextSession.expiresAt),
     });
@@ -481,7 +650,7 @@ export async function signInAdmin(email: string, password: string) {
   jar.set(ADMIN_COOKIE, session.id, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: shouldUseSecureCookie(),
     path: "/",
     expires: new Date(session.expiresAt),
   });
@@ -498,42 +667,33 @@ export async function signInRegister(pin: string, locationId: string, deviceId?:
   }
 
   if (isPg()) {
-    const sb = supabaseHeaders();
-    if (sb) {
-      // Supabase REST path — no pool, works on Cloudflare Workers
-      const { scrypt, timingSafeEqual } = await import("node:crypto");
-      const verifyPinAsync = (secret: string, encoded: string): Promise<boolean> => {
-        const [salt, stored] = encoded.split(":");
-        if (!salt || !stored) return Promise.resolve(false);
-        return new Promise((resolve) => {
-          scrypt(secret, salt, 64, (err, derived) => {
-            if (err) return resolve(false);
-            try { resolve(timingSafeEqual(derived, Buffer.from(stored, "hex"))); }
-            catch { resolve(false); }
-          });
-        });
-      };
+    // Try RPC-on-pool path first (direct DB, no service-role-key dependency).
+    try {
+      const pool = await pgGetPool();
+      // R35-P3: verifySecret is already statically imported at the top (line 7).
+      // Alias preserves the local name used below.
+      const verifyPinAsync = verifySecret;
 
-      // Fetch PIN candidates for this location's org
-      const candidatesRes = await fetch(`${sb.url}/rest/v1/rpc/register_pin_candidates`, {
-        method: 'POST', headers: sb.headers,
-        body: JSON.stringify({ p_location_id: locationId }),
-      });
-      if (!candidatesRes.ok) redirect("/register?error=PIN+login+failed");
-      const candidates = await candidatesRes.json() as Array<{
+      const { rows: candidateRows } = await pool.query(
+        `SELECT * FROM register_pin_candidates($1::text)`,
+        [locationId],
+      );
+      const candidates = candidateRows as Array<{
         employee_id: string; pin_hash: string; organization_id: string;
         role_key: string; location_ids: string[];
       }>;
-      if (!candidates.length) redirect("/register?error=PIN+login+failed");
+      if (candidates.length === 0) redirect("/register?error=PIN+login+failed");
 
-      // Verify PIN in parallel
-      const results = await Promise.all(
-        candidates.map(async (c) => {
-          if (!c.pin_hash) return null;
-          return (await verifyPinAsync(cleanPin, c.pin_hash)) ? c : null;
-        }),
-      );
-      const match = results.find((r) => r !== null);
+      // R15-M-1: serial-with-early-exit; see /api/auth/register-login for
+      // the full rationale. Same DoS-vector + CPU-pool pressure fix.
+      let match: typeof candidates[number] | null = null;
+      for (const c of candidates) {
+        if (!c.pin_hash) continue;
+        if (await verifyPinAsync(cleanPin, c.pin_hash)) {
+          match = c;
+          break;
+        }
+      }
       if (!match) redirect("/register?error=PIN+login+failed");
 
       const roleKey = match.role_key as RoleKey;
@@ -548,34 +708,49 @@ export async function signInRegister(pin: string, locationId: string, deviceId?:
       const nextSession = buildSession("register", employeeId, organizationId, locationId);
       const registerSessionId = randomUUID();
 
-      const createRes = await fetch(`${sb.url}/rest/v1/rpc/register_login_create_session`, {
-        method: 'POST',
-        headers: { ...sb.headers, Prefer: 'return=minimal' },
-        body: JSON.stringify({
-          p_employee_id: employeeId,
-          p_organization_id: organizationId,
-          p_location_id: locationId,
-          p_device_id: deviceId ?? null,
-          p_session_id: nextSession.id,
-          p_register_session_id: registerSessionId,
-          p_created_at: nextSession.createdAt,
-          p_expires_at: nextSession.expiresAt,
-        }),
-      });
-      if (!createRes.ok) throw new Error("Failed to create register session");
+      await pool.query(
+        `SELECT register_login_create_session($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::timestamptz, $8::timestamptz)`,
+        [
+          employeeId,
+          organizationId,
+          locationId,
+          deviceId ?? null,
+          nextSession.id,
+          registerSessionId,
+          nextSession.createdAt,
+          nextSession.expiresAt,
+        ],
+      );
 
-      const { invalidateStoreCache } = await import("@/lib/persistence/postgres-read-store");
-      invalidateStoreCache();
+      // R35-P3: invalidateStoreCache is statically imported at the top.
+      // R32-D2: scope to the caller's org.
+      invalidateStoreCache(organizationId);
 
-      // Return session info — cookie will be set by caller or API route
       const jar = await cookieStore();
       jar.set(REGISTER_COOKIE, nextSession.id, {
         httpOnly: true,
         sameSite: "lax",
-        secure: process.env.NODE_ENV === "production",
+        secure: shouldUseSecureCookie(),
         path: "/",
         expires: new Date(nextSession.expiresAt),
       });
+      // R28-H5: companion device cookie so getRegisterSession() can
+      // verify the browser matches the paired device_id.
+      // R29-M3: HMAC-sign the value so a cookie-write-only XSS (or an
+      // attacker who knows only the session_id) can't fabricate a
+      // matching device_id. `verifyDeviceIdCookie` rejects unsigned or
+      // tampered values.
+      if (deviceId) {
+        // R35-P3: signDeviceId is statically imported at the top.
+        const signed = await signDeviceId(deviceId);
+        jar.set("bupos_register_device", signed, {
+          httpOnly: true,
+          sameSite: "lax",
+          secure: shouldUseSecureCookie(),
+          path: "/",
+          expires: new Date(nextSession.expiresAt),
+        });
+      }
 
       return {
         employee: { id: employeeId, organizationId, roleKey },
@@ -585,12 +760,21 @@ export async function signInRegister(pin: string, locationId: string, deviceId?:
         authSessionExpiresAt: nextSession.expiresAt,
         deviceId,
       };
+    } catch (err) {
+      // Bubble up any Next.js redirect() calls untouched.
+      if (err && typeof err === "object" && "digest" in err) throw err;
+      // RPC not provisioned locally → fall through to column-level path.
     }
 
-    // Pool fallback (local dev without Supabase env vars)
-    const { pgFindCredentialByPin } = await import("@/lib/persistence/postgres-store");
+    // Column-level pool fallback (local dev without the RPCs provisioned)
+    // R35-P3: pgFindCredentialByPin is statically imported at the top.
     const pool = await pgGetPool();
 
+    // check-pool-org-filter: scoped-by-pre-login-location-picker
+    // Pre-login flow — no session yet; the lookup resolves the org
+    // from the location id, which is the tenant identity for this
+    // call. Caller subsequently verifies the PIN against credentials
+    // scoped to that org.
     const locResult = await pool.query(
       `SELECT id, organization_id, is_active FROM locations WHERE id = $1 AND is_active = true LIMIT 1`,
       [locationId],
@@ -601,6 +785,7 @@ export async function signInRegister(pin: string, locationId: string, deviceId?:
     if (!credential) redirect("/register?error=PIN+login+failed");
     if (!locResult.rows[0]) redirect("/register?error=PIN+login+failed");
 
+    // check-pool-org-filter: scoped-by-just-looked-up-credential
     const { rows: empRows } = await pool.query(
       `SELECT id, organization_id, role_key, location_ids, is_active FROM employees WHERE id = $1 AND is_active = true LIMIT 1`,
       [credential.employeeId],
@@ -625,6 +810,9 @@ export async function signInRegister(pin: string, locationId: string, deviceId?:
     try {
       await client.query("BEGIN");
       await client.query(`DELETE FROM sessions WHERE scope = $1 AND employee_id = $2`, ["register", employeeId]);
+      // check-pool-org-filter: scoped-by-just-authenticated-employee-id
+      // employeeId + locationId were both verified as belonging to the
+      // caller's org via the preceding PIN verification.
       await client.query(
         `UPDATE register_sessions SET status = 'ended', ended_at = $1
          WHERE employee_id = $2 AND location_id = $3 AND status = 'active'`,
@@ -662,10 +850,23 @@ export async function signInRegister(pin: string, locationId: string, deviceId?:
     jar.set(REGISTER_COOKIE, nextSession.id, {
       httpOnly: true,
       sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
+      secure: shouldUseSecureCookie(),
       path: "/",
       expires: new Date(nextSession.expiresAt),
     });
+    // R28-H5: companion device cookie (column-level fallback path).
+    // R29-M3: HMAC-signed — see RPC path above for rationale.
+    // R35-P3: signDeviceId is statically imported at the top.
+    if (deviceId) {
+      const signed = await signDeviceId(deviceId);
+      jar.set("bupos_register_device", signed, {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: shouldUseSecureCookie(),
+        path: "/",
+        expires: new Date(nextSession.expiresAt),
+      });
+    }
 
     return {
       employee: { id: employeeId, organizationId, roleKey },
@@ -762,7 +963,7 @@ export async function signInRegister(pin: string, locationId: string, deviceId?:
   jar.set(REGISTER_COOKIE, session.authSessionId, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: shouldUseSecureCookie(),
     path: "/",
     expires: new Date(session.authSessionExpiresAt),
   });
@@ -791,19 +992,18 @@ export async function signOutRegister() {
 
   if (sessionId) {
     if (isPg()) {
-      const sb = supabaseHeaders();
-      if (sb) {
-        // Supabase REST path — single RPC handles everything atomically
-        await fetch(`${sb.url}/rest/v1/rpc/register_sign_out`, {
-          method: 'POST',
-          headers: { ...sb.headers, Prefer: 'return=minimal' },
-          body: JSON.stringify({ p_session_id: sessionId }),
-        });
-      } else {
-        // Pool fallback (local dev)
+      // Single RPC on the direct DB pool (no service-role-key dependency).
+      try {
+        const pool = await pgGetPool();
+        await pool.query(`SELECT register_sign_out($1::text)`, [sessionId]);
+      } catch {
+        // RPC not provisioned locally → column-level fallback below.
         const pool = await pgGetPool();
         const timestamp = new Date().toISOString();
 
+        // check-pool-org-filter: scoped-by-auth-session-cookie
+        // sessionId is the cookie-proven auth session id; the update
+        // is scoped by the session row itself.
         const { rows: endedRows } = await pool.query(
           `UPDATE register_sessions SET status = 'ended', ended_at = $1
            WHERE auth_session_id = $2 AND status = 'active'
@@ -816,6 +1016,9 @@ export async function signOutRegister() {
           | undefined;
 
         if (registerSession?.active_shift_id) {
+          // check-pool-org-filter: scoped-by-just-ended-register-session
+          // active_shift_id came from the just-ended register_sessions
+          // row whose auth_session_id matched the caller's cookie.
           await pool.query(
             `UPDATE shifts
              SET status = 'closed',
@@ -900,4 +1103,7 @@ export async function signOutRegister() {
   }
 
   jar.delete(REGISTER_COOKIE);
+  // R28-H5: clear the companion device cookie too so the next pairing
+  // re-binds cleanly.
+  jar.delete("bupos_register_device");
 }

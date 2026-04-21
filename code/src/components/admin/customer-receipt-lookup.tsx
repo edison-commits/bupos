@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from 'react';
 import type { Customer, TransactionEventPlaceholder, TransactionTenderPlaceholder } from '@/lib/domain/types';
+import { formatCurrency } from "@/lib/format";
 
 interface ReceiptDetailProps {
   transaction: TransactionEventPlaceholder;
@@ -89,7 +90,7 @@ function ReceiptDetail({ transaction, customer, tenders, onClose }: ReceiptDetai
                     )}
                   </div>
                   <p className="text-lg font-semibold text-zinc-900">
-                    ${tender.amount.toFixed(2)}
+                    {formatCurrency(tender.amount)}
                   </p>
                 </div>
               ))}
@@ -100,7 +101,7 @@ function ReceiptDetail({ transaction, customer, tenders, onClose }: ReceiptDetai
           <div className="pt-4 border-t-2 border-zinc-200">
             <div className="flex justify-between items-center">
               <p className="text-lg font-semibold text-zinc-900">Total</p>
-              <p className="text-3xl font-bold text-zinc-900">${totalAmount.toFixed(2)}</p>
+              <p className="text-3xl font-bold text-zinc-900">{formatCurrency(totalAmount)}</p>
             </div>
           </div>
 
@@ -289,7 +290,7 @@ export function CustomerReceiptLookup({
                     )}
                     <div>
                       <p className="text-xs font-medium text-blue-700 uppercase">Total Spend</p>
-                      <p>${selectedCustomer.totalSpend.toFixed(2)}</p>
+                      <p>{formatCurrency(selectedCustomer.totalSpend)}</p>
                     </div>
                     <div>
                       <p className="text-xs font-medium text-blue-700 uppercase">Visits</p>
@@ -344,7 +345,7 @@ export function CustomerReceiptLookup({
                         </div>
                         <div className="text-right ml-4">
                           <p className="text-xl font-bold text-zinc-900">
-                            ${getTransactionTotal(transaction.transactionId).toFixed(2)}
+                            {formatCurrency(getTransactionTotal(transaction.transactionId))}
                           </p>
                           <p className="text-xs text-zinc-500 mt-1 uppercase tracking-wide">
                             View Details

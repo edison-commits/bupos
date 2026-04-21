@@ -1,12 +1,15 @@
-// BasicUniformPOS Service Worker — offline resilience (v2)
-const CACHE_NAME = "basicuniformpos-v2";
-const SHELL_URLS = ["/register", "/admin"];
+// BasicUniformPOS Service Worker — offline resilience (v3).
+// R33-H3: bumped CACHE_NAME to v3 so the `activate` cleanup deletes
+// the v2 cache (which may have auth-page HTML baked in by prior
+// `cache.addAll(SHELL_URLS)` calls that happened while the first
+// user was logged in — R31-M3 stopped NEW caching but couldn't
+// evict existing entries). The fetch handler already skips auth
+// pages (R31-M3), so there's nothing left to pre-cache: drop the
+// SHELL_URLS list entirely and install as a pure bookkeeping step.
+const CACHE_NAME = "basicuniformpos-v3";
 
-// Cache the app shell on install
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL_URLS))
-  );
+  event.waitUntil(caches.open(CACHE_NAME));
   self.skipWaiting();
 });
 
@@ -60,22 +63,45 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Navigation requests — network-first, fallback to cache
+  // Navigation requests — network-first, fallback to cache.
+  // R31-M3: DO NOT cache authenticated pages. /admin/* and /register/*
+  // RSC payloads embed per-user / per-org data inline (customer lists,
+  // transaction totals, employee info). Caching them means a shared
+  // POS tablet can serve user A's rendered HTML to user B after A
+  // logs out + B logs in + network drops. Cache ONLY the public shell
+  // (/, /login, /signup) so the PWA still has offline-first UX for
+  // the entry surfaces.
   if (request.mode === "navigate") {
+    const url = new URL(request.url);
+    const isAuthenticatedPage =
+      url.pathname.startsWith("/admin") ||
+      url.pathname.startsWith("/register") ||
+      url.pathname.startsWith("/pos") ||
+      url.pathname.startsWith("/dashboard") ||
+      url.pathname.startsWith("/customer-display");
     event.respondWith(
       fetch(request)
         .then((response) => {
-          if (response.ok) {
+          if (response.ok && !isAuthenticatedPage) {
             const clone = response.clone();
             caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
           }
           return response;
         })
         .catch(() => {
+          // On network failure, only serve from cache for non-
+          // authenticated pages. For authenticated pages, return a
+          // bare offline page — the user must reconnect + log in
+          // again, not see a stale predecessor's data.
+          if (isAuthenticatedPage) {
+            return new Response(
+              "<html><body style='font-family:sans-serif;padding:2em'><h1>Offline</h1><p>Reconnect and refresh to continue.</p></body></html>",
+              { headers: { "Content-Type": "text/html" } },
+            );
+          }
           return caches.match(request).then((cached) => {
             if (cached) return cached;
-            // Fall back to register page for any navigation
-            return caches.match("/register");
+            return caches.match("/");
           });
         })
     );

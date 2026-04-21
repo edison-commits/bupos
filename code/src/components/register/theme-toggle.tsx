@@ -27,15 +27,34 @@ function applyTheme(next: ThemeMode) {
 }
 
 export function ThemeToggle() {
-  const [theme, setTheme] = useState<ThemeMode>('light');
-  const [mounted, setMounted] = useState(false);
+  // R36-FE5: lazy init reads the DOM so the button renders with the
+  // correct label on first paint. Previously we returned null until
+  // mount then flipped in — that caused a layout shift in the POS
+  // header (focus order and spacing both jumped). The R35-P7 head
+  // script guarantees the html class/data-theme is set pre-hydration,
+  // so the first-paint value is available synchronously; SSR returns
+  // 'light' (the safe default — no localStorage on server).
+  const [theme, setTheme] = useState<ThemeMode>(() => {
+    if (typeof document === 'undefined') return 'light';
+    const root = document.documentElement;
+    return root.classList.contains('dark')
+      ? 'dark'
+      : root.getAttribute('data-theme') === 'high-contrast'
+        ? 'high-contrast'
+        : 'light';
+  });
 
   useEffect(() => {
-    setMounted(true);
-    const saved = localStorage.getItem(STORAGE_KEY) as ThemeMode | null;
-    const initial = saved ?? 'light';
-    applyTheme(initial);
-    setTheme(initial);
+    // Reconcile once after mount. With the lazy init above this is
+    // almost always a no-op (state already matches DOM) but covers
+    // the rare case where the head script was blocked by CSP.
+    const root = document.documentElement;
+    const current: ThemeMode = root.classList.contains('dark')
+      ? 'dark'
+      : root.getAttribute('data-theme') === 'high-contrast'
+        ? 'high-contrast'
+        : 'light';
+    setTheme(current);
   }, []);
 
   const cycleTheme = () => {
@@ -45,10 +64,6 @@ export function ThemeToggle() {
     localStorage.setItem(STORAGE_KEY, next);
     applyTheme(next);
   };
-
-  if (!mounted) {
-    return null;
-  }
 
   const current = themes.find((t) => t.value === theme)!;
 

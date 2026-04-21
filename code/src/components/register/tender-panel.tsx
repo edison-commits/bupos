@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, memo } from "react";
+import { useState, memo, useMemo } from "react";
 import type { TenderType, ApprovalThresholds, LoyaltyConfig, GiftCard } from "@/lib/domain/types";
 import type { CartTotals } from "@/lib/cart/types";
 import { VirtualNumpad } from "@/components/ui/virtual-numpad";
 import { VirtualKeyboard } from "@/components/ui/virtual-keyboard";
+import { formatCurrency } from "@/lib/format";
 
 export interface TenderEntry {
   type: TenderType;
@@ -60,31 +61,56 @@ export const TenderPanel = memo(function TenderPanel({
   type ActiveInput = "cash" | "loyalty" | "gift_card" | "split" | "gift_code" | "tip" | null;
   const [activeInput, setActiveInput] = useState<ActiveInput>(null);
 
-  const tipAmount = showCustomTip ? (Number(customTip) || 0) : (tipPercent != null ? Number((totals.grandTotal * tipPercent / 100).toFixed(2)) : 0);
-  const grandTotal = totals.grandTotal + tipAmount;
+  // R35-P5: memoize derived numeric/array state so inputs that only
+  // touch unrelated slices (e.g. typing the gift card code) don't
+  // re-run these reductions/filters. The deps are narrow — touching
+  // `splitTenders` doesn't re-compute `tipAmount` etc.
+  const tipAmount = useMemo(
+    () => showCustomTip
+      ? (Number(customTip) || 0)
+      : (tipPercent != null ? Number((totals.grandTotal * tipPercent / 100).toFixed(2)) : 0),
+    [showCustomTip, customTip, tipPercent, totals.grandTotal],
+  );
+  const grandTotal = useMemo(
+    () => totals.grandTotal + tipAmount,
+    [totals.grandTotal, tipAmount],
+  );
 
   // Loyalty calculations
   const availablePoints = customerLoyaltyPoints ?? 0;
-  const loyaltyValue = loyaltyConfig
-    ? Number((availablePoints * loyaltyConfig.redemptionValuePerPoint).toFixed(2))
-    : 0;
+  const loyaltyValue = useMemo(
+    () => loyaltyConfig
+      ? Number((availablePoints * loyaltyConfig.redemptionValuePerPoint).toFixed(2))
+      : 0,
+    [loyaltyConfig, availablePoints],
+  );
   const canRedeemLoyalty = loyaltyConfig ? availablePoints >= loyaltyConfig.minimumRedemption : false;
-  const maxLoyaltyRedeem = Math.min(loyaltyValue, grandTotal);
+  const maxLoyaltyRedeem = useMemo(
+    () => Math.min(loyaltyValue, grandTotal),
+    [loyaltyValue, grandTotal],
+  );
   const cashGivenNum = Number(cashGiven) || 0;
   const changeDue = selectedTender === "cash" ? Math.max(0, cashGivenNum - grandTotal) : 0;
   const loyaltyRedeemNum = Number(loyaltyRedeemAmount) || 0;
   const loyaltySufficient = selectedTender !== "loyalty" || (canRedeemLoyalty && loyaltyRedeemNum > 0 && loyaltyRedeemNum <= maxLoyaltyRedeem);
   const cashSufficient = (selectedTender !== "cash" || cashGivenNum >= grandTotal) && (selectedTender !== "loyalty" || loyaltySufficient);
 
-  // Split tender calculations
-  const splitAllocated = splitTenders.reduce((sum, t) => sum + t.amount, 0);
-  const splitRemaining = Math.max(0, Number((grandTotal - splitAllocated).toFixed(2)));
+  // Split tender calculations — memoized because the reduce runs
+  // O(n) and `splitTenders` is a fresh array each parent render.
+  const splitAllocated = useMemo(
+    () => splitTenders.reduce((sum, t) => sum + t.amount, 0),
+    [splitTenders],
+  );
+  const splitRemaining = useMemo(
+    () => Math.max(0, Number((grandTotal - splitAllocated).toFixed(2))),
+    [grandTotal, splitAllocated],
+  );
   const splitComplete = splitRemaining <= 0.005;
 
   // Threshold warnings
   const warnings: string[] = [];
   if (discountAmount > approvalThresholds.discountOver) {
-    warnings.push(`Discount ($${discountAmount.toFixed(2)}) exceeds $${approvalThresholds.discountOver.toFixed(2)} threshold`);
+    warnings.push(`Discount (${formatCurrency(discountAmount)}) exceeds ${formatCurrency(approvalThresholds.discountOver)} threshold`);
   }
 
   // Gift card validation
@@ -134,7 +160,16 @@ export const TenderPanel = memo(function TenderPanel({
     }
   }
 
-  const quickCashAmounts = computeQuickCash(grandTotal);
+  // R35-P5: cache `quickCashAmounts` — the function allocates an
+  // array every call and only changes when `grandTotal` changes.
+  const quickCashAmounts = useMemo(() => computeQuickCash(grandTotal), [grandTotal]);
+  // R35-P5: filter the tender list once — two render sites read
+  // `supportedTenders.filter((t) => t !== "split")` and each previously
+  // created a fresh array on every keystroke into any input.
+  const nonSplitTenders = useMemo(
+    () => supportedTenders.filter((t) => t !== "split"),
+    [supportedTenders],
+  );
   const tenderTypeIcons: Record<string, string> = {
     cash: "💵",
     card: "💳",
@@ -164,7 +199,7 @@ export const TenderPanel = memo(function TenderPanel({
 
           <div className="text-center">
             <p className="text-lg font-semibold text-[var(--text-secondary)] uppercase tracking-wide">Amount due</p>
-            <p className="mt-1 text-5xl font-extrabold text-teal-600">${grandTotal.toFixed(2)}</p>
+            <p className="mt-1 text-5xl font-extrabold text-teal-600">{formatCurrency(grandTotal)}</p>
           </div>
         </div>
 
@@ -185,7 +220,7 @@ export const TenderPanel = memo(function TenderPanel({
                 style={!showCustomTip && tipPercent === pct ? { background: 'var(--surface-accent)' } : undefined}
               >
                 <span className="text-2xl">{pct}%</span>
-                <p className="text-base mt-0.5 opacity-80">${(totals.grandTotal * pct / 100).toFixed(2)}</p>
+                <p className="text-base mt-0.5 opacity-80">{formatCurrency((totals.grandTotal * pct / 100))}</p>
               </button>
             ))}
             <button
@@ -199,7 +234,7 @@ export const TenderPanel = memo(function TenderPanel({
               style={showCustomTip ? { background: 'var(--surface-accent)' } : undefined}
             >
               <span className="text-2xl">Custom</span>
-              {showCustomTip && customTip ? <p className="text-base mt-0.5 opacity-80">${(Number(customTip) || 0).toFixed(2)}</p> : null}
+              {showCustomTip && customTip ? <p className="text-base mt-0.5 opacity-80">{formatCurrency((Number(customTip) || 0))}</p> : null}
             </button>
             {(tipPercent != null || (showCustomTip && Number(customTip) > 0)) && (
               <button
@@ -213,7 +248,7 @@ export const TenderPanel = memo(function TenderPanel({
           </div>
           {tipAmount > 0 && (
             <p className="mt-2 text-lg font-semibold text-center" style={{ color: 'var(--surface-accent)' }}>
-              Tip: ${tipAmount.toFixed(2)} — New total: ${grandTotal.toFixed(2)}
+              Tip: {formatCurrency(tipAmount)} — New total: {formatCurrency(grandTotal)}
             </p>
           )}
         </div>
@@ -262,7 +297,7 @@ export const TenderPanel = memo(function TenderPanel({
                 {/* Tender type selection — large pill buttons */}
                 <div>
                   <div className="flex gap-3 overflow-x-auto">
-                    {supportedTenders.filter((t) => t !== "split").map((t) => (
+                    {nonSplitTenders.map((t) => (
                       <button
                         key={t}
                         type="button"
@@ -291,7 +326,7 @@ export const TenderPanel = memo(function TenderPanel({
                       <div className="rounded-2xl px-4 py-4 text-center border-3 border-teal-400 bg-teal-50/50">
                         <p className="text-base text-[var(--text-secondary)] font-semibold">Cash tendered</p>
                         <p className="text-4xl font-extrabold text-[var(--text-primary)]">
-                          ${cashGivenNum.toFixed(2)}
+                          {formatCurrency(cashGivenNum)}
                         </p>
                       </div>
 
@@ -305,7 +340,7 @@ export const TenderPanel = memo(function TenderPanel({
                               onClick={() => setCashGiven(amt.toFixed(2))}
                               className="touch-button rounded-2xl border-3 border-teal-600 bg-teal-50 px-3 py-7 text-2xl font-bold text-teal-700 hover:bg-teal-100 active:bg-teal-200 transition-colors"
                             >
-                              ${amt.toFixed(2)}
+                              {formatCurrency(amt)}
                             </button>
                           ))}
                         </div>
@@ -315,7 +350,7 @@ export const TenderPanel = memo(function TenderPanel({
                       {cashGivenNum > 0 && (
                         <div className="rounded-2xl bg-emerald-100 px-4 py-4 text-center border-3 border-emerald-400">
                           <p className="text-base font-semibold text-emerald-700">Change due</p>
-                          <p className="text-4xl font-extrabold text-emerald-700">${changeDue.toFixed(2)}</p>
+                          <p className="text-4xl font-extrabold text-emerald-700">{formatCurrency(changeDue)}</p>
                         </div>
                       )}
                     </div>
@@ -351,7 +386,7 @@ export const TenderPanel = memo(function TenderPanel({
                 {selectedTender === "card" && (
                   <div className="rounded-2xl bg-blue-100 px-8 py-8 text-center border-3 border-blue-400">
                     <p className="text-lg font-semibold text-blue-700">Card payment</p>
-                    <p className="text-4xl font-extrabold text-blue-900">${grandTotal.toFixed(2)}</p>
+                    <p className="text-4xl font-extrabold text-blue-900">{formatCurrency(grandTotal)}</p>
                     <p className="mt-2 text-xl text-blue-700">Confirm to record card tender</p>
                   </div>
                 )}
@@ -360,9 +395,9 @@ export const TenderPanel = memo(function TenderPanel({
                 {selectedTender === "store_credit" && (
                   <div className="rounded-2xl bg-purple-100 px-8 py-8 text-center border-3 border-purple-400">
                     <p className="text-lg font-semibold text-purple-700">Store credit</p>
-                    <p className="text-4xl font-extrabold text-purple-900">${grandTotal.toFixed(2)}</p>
+                    <p className="text-4xl font-extrabold text-purple-900">{formatCurrency(grandTotal)}</p>
                     {customerStoreCreditBalance != null && customerStoreCreditBalance > 0 ? (
-                      <p className="mt-2 text-xl text-purple-700">Balance: ${customerStoreCreditBalance.toFixed(2)}</p>
+                      <p className="mt-2 text-xl text-purple-700">Balance: {formatCurrency(customerStoreCreditBalance)}</p>
                     ) : (
                       <p className="mt-2 text-xl text-red-600 font-semibold">
                         {customerStoreCreditBalance === 0 ? "No balance available" : "Attach a customer first"}
@@ -420,7 +455,7 @@ export const TenderPanel = memo(function TenderPanel({
                       <>
                         <div className="rounded-2xl bg-emerald-100 px-8 py-6 text-center border-3 border-emerald-400">
                           <p className="text-lg font-semibold text-emerald-700">Card balance</p>
-                          <p className="mt-1 text-4xl font-extrabold text-emerald-900">${giftCardLookup.balance.toFixed(2)}</p>
+                          <p className="mt-1 text-4xl font-extrabold text-emerald-900">{formatCurrency(giftCardLookup.balance)}</p>
                         </div>
                         <label className="block">
                           <span className="text-lg font-bold text-[var(--text-secondary)] uppercase tracking-wide">Redeem amount</span>
@@ -429,7 +464,7 @@ export const TenderPanel = memo(function TenderPanel({
                             onClick={() => setActiveInput("gift_card")}
                             className="mt-3 w-full rounded-xl border-3 border-[var(--border-subtle)] bg-white px-6 py-5 text-right text-3xl font-bold hover:border-teal-300 transition-colors"
                           >
-                            ${(Number(giftCardRedeemAmount) || 0).toFixed(2)}
+                            {formatCurrency((Number(giftCardRedeemAmount) || 0))}
                           </button>
                         </label>
                         <button
@@ -437,7 +472,7 @@ export const TenderPanel = memo(function TenderPanel({
                           onClick={() => setGiftCardRedeemAmount(Math.min(giftCardLookup.balance, grandTotal).toFixed(2))}
                           className="w-full rounded-xl border-3 border-emerald-400 bg-emerald-50 px-6 py-5 text-xl font-bold text-emerald-700 hover:bg-emerald-100 transition-colors"
                         >
-                          Max: ${Math.min(giftCardLookup.balance, grandTotal).toFixed(2)}
+                          Max: {formatCurrency(Math.min(giftCardLookup.balance, grandTotal))}
                         </button>
                       </>
                     )}
@@ -459,7 +494,7 @@ export const TenderPanel = memo(function TenderPanel({
                       <>
                         <div className="rounded-2xl bg-amber-100 px-8 py-6 text-center border-3 border-amber-400">
                           <p className="text-lg font-semibold text-amber-700">Available points</p>
-                          <p className="mt-1 text-3xl font-extrabold text-amber-900">{availablePoints} pts = ${loyaltyValue.toFixed(2)}</p>
+                          <p className="mt-1 text-3xl font-extrabold text-amber-900">{availablePoints} pts = {formatCurrency(loyaltyValue)}</p>
                         </div>
                         <label className="block">
                           <span className="text-lg font-bold text-[var(--text-secondary)] uppercase tracking-wide">Redeem amount</span>
@@ -468,7 +503,7 @@ export const TenderPanel = memo(function TenderPanel({
                             onClick={() => setActiveInput("loyalty")}
                             className="mt-3 w-full rounded-xl border-3 border-[var(--border-subtle)] bg-white px-6 py-5 text-right text-3xl font-bold hover:border-teal-300 transition-colors"
                           >
-                            {loyaltyRedeemAmount ? `$${(Number(loyaltyRedeemAmount) || 0).toFixed(2)}` : `$${Math.min(loyaltyValue, grandTotal).toFixed(2)}`}
+                            {loyaltyRedeemAmount ? `${formatCurrency((Number(loyaltyRedeemAmount) || 0))}` : `${formatCurrency(Math.min(loyaltyValue, grandTotal))}`}
                           </button>
                         </label>
                         <button
@@ -476,7 +511,7 @@ export const TenderPanel = memo(function TenderPanel({
                           onClick={() => setLoyaltyRedeemAmount(maxLoyaltyRedeem.toFixed(2))}
                           className="w-full rounded-xl border-3 border-amber-400 bg-amber-50 px-6 py-5 text-xl font-bold text-amber-700 hover:bg-amber-100 transition-colors"
                         >
-                          Max: ${maxLoyaltyRedeem.toFixed(2)}
+                          Max: {formatCurrency(maxLoyaltyRedeem)}
                         </button>
                       </>
                     )}
@@ -500,11 +535,11 @@ export const TenderPanel = memo(function TenderPanel({
                               <span className="text-xl font-bold capitalize">
                                 {t.type === "store_credit" ? "Store Credit" : t.type === "loyalty" ? "Loyalty" : t.type === "gift_card" ? "Gift Card" : t.type}
                               </span>
-                              <p className="text-base text-[var(--text-secondary)]">Running: ${runningTotal.toFixed(2)}</p>
+                              <p className="text-base text-[var(--text-secondary)]">Running: {formatCurrency(runningTotal)}</p>
                             </div>
                           </div>
                           <div className="flex items-center gap-4">
-                            <span className="text-2xl font-extrabold text-emerald-700">${t.amount.toFixed(2)}</span>
+                            <span className="text-2xl font-extrabold text-emerald-700">{formatCurrency(t.amount)}</span>
                             <button
                               type="button"
                               onClick={() => handleRemoveSplitTender(i)}
@@ -524,7 +559,7 @@ export const TenderPanel = memo(function TenderPanel({
                   <div className="flex items-center justify-between">
                     <p className="text-lg font-bold text-[var(--text-secondary)] uppercase tracking-wide">Progress</p>
                     <p className="text-xl font-bold text-[var(--text-primary)]">
-                      ${splitAllocated.toFixed(2)} / ${grandTotal.toFixed(2)}
+                      {formatCurrency(splitAllocated)} / {formatCurrency(grandTotal)}
                     </p>
                   </div>
                   <div className="w-full h-6 bg-[var(--surface-panel)] rounded-full overflow-hidden border-3 border-[var(--border-subtle)]">
@@ -543,7 +578,7 @@ export const TenderPanel = memo(function TenderPanel({
                 }`}>
                   <p className="text-lg font-semibold text-[var(--text-secondary)]">Remaining</p>
                   <p className={`mt-1 text-4xl font-extrabold ${splitRemaining <= 0.005 ? "text-emerald-900" : "text-[var(--text-primary)]"}`}>
-                    ${splitRemaining.toFixed(2)}
+                    {formatCurrency(splitRemaining)}
                   </p>
                 </div>
 
@@ -559,7 +594,7 @@ export const TenderPanel = memo(function TenderPanel({
                           onChange={(e) => setSplitType(e.target.value as TenderType)}
                           className="rounded-xl border-3 border-[var(--border-subtle)] bg-white pl-14 pr-6 py-5 text-xl font-semibold appearance-none"
                         >
-                          {supportedTenders.filter((t) => t !== "split").map((t) => (
+                          {nonSplitTenders.map((t) => (
                             <option key={t} value={t}>
                               {t === "store_credit" ? "Store Credit" : t === "loyalty" ? "Loyalty" : t === "gift_card" ? "Gift Card" : t}
                             </option>

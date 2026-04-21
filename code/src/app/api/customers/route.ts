@@ -9,6 +9,8 @@ import { pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
 import { validateBody, customerCreateSchema, customerUpdateSchema } from '@/lib/validation/schemas';
 import { checkRateLimit } from '@/lib/auth/rate-limit';
 
+import { safeErr } from "@/lib/logging/safe-err";
+import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
 export const GET = withAdminAuth('employee.manage', async (request, ctx) => {
   const { orgId } = ctx;
 
@@ -37,17 +39,24 @@ export const GET = withAdminAuth('employee.manage', async (request, ctx) => {
     try {
       const now = new Date();
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      // R13-H-6: the `$3` placeholder for monthStart hard-coded $3 whether
+      // or not `search` was bound. When the admin customers page loads
+      // without a search term it passes only [orgId, monthStart] (2
+      // params), but the SQL reaches for $3 — every stats load 500s and
+      // the client's if-!res.ok swallows it, rendering zero cards. Use a
+      // dynamic placeholder so the bind-count matches the SQL.
       const searchWhere = search
         ? ` AND (first_name ILIKE $2 OR last_name ILIKE $2 OR email ILIKE $2 OR phone ILIKE $2)`
         : '';
       const searchVal = search ? [`%${search}%`] : [];
+      const monthStartIdx = searchVal.length + 2;
 
       const [statsRes] = await Promise.all([
         orgQuery(
           orgId,
           `SELECT
              COUNT(*)::int AS total,
-             COUNT(*) FILTER (WHERE created_at >= $3)::int AS new_this_month,
+             COUNT(*) FILTER (WHERE created_at >= $${monthStartIdx})::int AS new_this_month,
              COALESCE(AVG(total_spend) FILTER (WHERE total_spend IS NOT NULL), 0)::numeric AS avg_spend,
              COALESCE(SUM(loyalty_points), 0)::bigint AS total_points
            FROM customers
@@ -63,7 +72,7 @@ export const GET = withAdminAuth('employee.manage', async (request, ctx) => {
         totalPointsOutstanding: Number(s.total_points) || 0,
       });
     } catch (error) {
-      console.error('Customers stats error:', error);
+      console.error('Customers stats error:', safeErr(error));
       return NextResponse.json({ error: 'Failed to fetch stats' }, { status: 500 });
     }
   }
@@ -114,24 +123,31 @@ export const GET = withAdminAuth('employee.manage', async (request, ctx) => {
     }
 
     // List customers with cursor-based pagination
-    const conditions: string[] = [];
-    const values: unknown[] = [];
-    let idx = 1;
+    // R30-C1: the organization scope is STATIC in the base SQL — the
+    // dynamic `${andClause}` only adds extra AND-predicates. The
+    // guardrail cannot see into dynamic interpolation, so the static
+    // predicate must be present regardless of what `andClause`
+    // contains. Prior shape built the whole WHERE from `conditions`,
+    // which silently returned every tenant's customers when `conditions`
+    // was empty (no search, no cursor). Active cross-tenant PII leak.
+    const extra: string[] = [];
+    const values: unknown[] = [orgId];
+    let idx = 2;
 
     if (search) {
-      conditions.push(`(c.first_name ILIKE $${idx} OR c.last_name ILIKE $${idx} OR c.email ILIKE $${idx} OR c.phone ILIKE $${idx})`);
+      extra.push(`(c.first_name ILIKE $${idx} OR c.last_name ILIKE $${idx} OR c.email ILIKE $${idx} OR c.phone ILIKE $${idx})`);
       values.push(`%${search}%`);
       idx++;
     }
 
     // Cursor: (updated_at, id) < (cursor_updated_at, cursor_id) for descending order
     if (cursorUpdatedAt !== null && cursorId !== null) {
-      conditions.push(`(c.updated_at, c.id) < ($${idx}, $${idx + 1})`);
+      extra.push(`(c.updated_at, c.id) < ($${idx}, $${idx + 1})`);
       values.push(cursorUpdatedAt, cursorId);
       idx += 2;
     }
 
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const andClause = extra.length > 0 ? ` AND ${extra.join(" AND ")}` : "";
 
     // Fetch pageSize + 1 to determine if there's a next page
     const dataRes = await orgQuery(
@@ -140,7 +156,7 @@ export const GET = withAdminAuth('employee.manage', async (request, ctx) => {
         c.loyalty_points, c.total_spend, c.visit_count, c.store_credit_balance,
         c.is_active, c.created_at, c.updated_at
         FROM customers c
-        ${whereClause}
+        WHERE c.organization_id = $1${andClause}
         ORDER BY c.updated_at DESC, c.id DESC
         LIMIT $${idx}`,
       [...values, pageSize + 1],
@@ -161,7 +177,7 @@ export const GET = withAdminAuth('employee.manage', async (request, ctx) => {
       hasMore,
     });
   } catch (error) {
-    console.error('Customers GET error:', error);
+    console.error('Customers GET error:', safeErr(error));
     return NextResponse.json({ error: 'Failed to fetch customers' }, { status: 500 });
   }
 });
@@ -178,16 +194,19 @@ export const POST = withAdminAuth('employee.manage', async (request, ctx) => {
     if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
     const { first_name, last_name, email, phone, address, notes } = v.data;
 
+    // Explicit column list instead of `RETURNING *` so internal fields
+    // (staff notes with fraud flags, future PII columns added by
+    // migrations, etc.) never leak through the create response.
     const { rows } = await orgQuery(
       orgId,
-      `INSERT INTO customers (first_name, last_name, email, phone, address, notes, loyalty_points, total_spend, visit_count, store_credit_balance)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 0, 0, 0)
-       RETURNING *`,
-      [first_name.trim(), last_name.trim(), email?.trim() || null, phone?.trim() || null, address?.trim() || null, notes?.trim() || null],
+      `INSERT INTO customers (organization_id, first_name, last_name, email, phone, address, notes, loyalty_points, total_spend, visit_count, store_credit_balance)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, 0, 0)
+       RETURNING id, first_name, last_name, email, phone, address, loyalty_points, total_spend, visit_count, store_credit_balance, is_active, created_at, updated_at`,
+      [orgId, first_name.trim(), last_name.trim(), email?.trim() || null, phone?.trim() || null, address?.trim() || null, notes?.trim() || null, 0],
     );
     return NextResponse.json({ customer: rows[0] }, { status: 201 });
   } catch (error) {
-    console.error('Customers POST error:', error);
+    console.error('Customers POST error:', safeErr(error));
     return NextResponse.json({ error: 'Failed to create customer' }, { status: 500 });
   }
 });
@@ -204,24 +223,66 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
     if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
     const { id, first_name, last_name, email, phone, address, notes, is_active } = v.data;
 
+    // R36-M8: require step-up when the update touches `is_active` or
+    // `notes`. A stolen cookie with `employee.manage` could otherwise:
+    //   (a) mass-flip `is_active = false`, hiding loyalty history and
+    //       store-credit balance from login flows; or
+    //   (b) wipe `notes` (which include fraud flags / ban markers).
+    // Name/email/phone/address edits stay frictionless. Mirrors the
+    // employees PATCH pattern that gates step-up on role/email/pin
+    // changes but not on display_name edits.
+    const touchesSensitive =
+      is_active !== undefined ||
+      (notes !== undefined && typeof (body as { notes?: unknown }).notes === 'string');
+    if (touchesSensitive) {
+      const { requireStepUp } = await import('@/lib/auth/step-up');
+      const actorPassword = (body && typeof body === 'object')
+        ? (body as { actorPassword?: string }).actorPassword
+        : undefined;
+      const stepUp = await requireStepUp({
+        actorId: employee.id,
+        orgId,
+        actorPassword: typeof actorPassword === 'string' ? actorPassword : undefined,
+        bucketKey: 'customer-update-stepup',
+      });
+      if (!stepUp.ok) {
+        return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
+      }
+    }
+
+    // Build dynamic UPDATE — only set fields that were provided, preserve others
+    const sets: string[] = [];
+    const vals: unknown[] = [];
+    let i = 1;
+    if (first_name !== undefined) { sets.push(`first_name = $${i++}`); vals.push(first_name.trim()); }
+    if (last_name !== undefined) { sets.push(`last_name = $${i++}`); vals.push(last_name.trim()); }
+    if (email !== undefined) { sets.push(`email = $${i++}`); vals.push(email?.trim() || null); }
+    if (phone !== undefined) { sets.push(`phone = $${i++}`); vals.push(phone?.trim() || null); }
+    if (address !== undefined) { sets.push(`address = $${i++}`); vals.push(address?.trim() || null); }
+    if (notes !== undefined) { sets.push(`notes = $${i++}`); vals.push(notes?.trim() || null); }
+    if (is_active !== undefined) { sets.push(`is_active = $${i++}`); vals.push(is_active); }
+    if (sets.length === 0) {
+      return NextResponse.json({ error: 'No fields to update' }, { status: 400 });
+    }
+    sets.push(`updated_at = NOW()`);
+    vals.push(id, orgId);
+    // Explicit column list (see POST) — keeps `notes` server-side.
     const { rows } = await orgQuery(
       orgId,
-      `UPDATE customers
-       SET first_name = $1, last_name = $2, email = $3, phone = $4, address = $5, notes = $6, is_active = $7, updated_at = NOW()
-       WHERE id = $8 AND organization_id = $9
-       RETURNING *`,
-      [first_name?.trim() || null, last_name?.trim() || null, email?.trim() || null, phone?.trim() || null, address?.trim() || null, notes?.trim() || null, is_active ?? true, id, orgId],
+      `UPDATE customers SET ${sets.join(', ')} WHERE id = $${i} AND organization_id = $${i + 1}
+       RETURNING id, first_name, last_name, email, phone, address, loyalty_points, total_spend, visit_count, store_credit_balance, is_active, created_at, updated_at`,
+      vals,
     );
     if (rows.length === 0) return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
     const customer = rows[0];
-    pgInsertAuditEvent(
+    await waitUntilOrAwait(pgInsertAuditEvent(
       orgId, null, employee.id,
       "customer", id, "customer_updated",
       { id, first_name: customer.first_name, last_name: customer.last_name },
-    ).catch((err) => console.error("[audit] Failed to insert audit event:", err));
+    ).catch((err) => console.error("[audit] Failed to insert audit event:", safeErr(err))));
     return NextResponse.json({ customer }, { status: 200 });
   } catch (error) {
-    console.error('Customers PUT error:', error);
+    console.error('Customers PUT error:', safeErr(error));
     return NextResponse.json({ error: 'Failed to update customer' }, { status: 500 });
   }
 });

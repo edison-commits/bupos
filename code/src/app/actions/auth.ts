@@ -4,8 +4,9 @@ import { headers } from "next/headers";
 import { signInAdmin, getAdminSession } from "@/lib/auth/session";
 import { redirect } from "next/navigation";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
-import { hashSecret } from "@/lib/auth/crypto";
+import { hashSecret, sha256Hex } from "@/lib/auth/crypto";
 import { randomUUID } from "@/lib/uuid";
+import { safeErr } from "@/lib/logging/safe-err";
 // Lazy-import pool-dependent modules to avoid pulling @neondatabase/serverless into the SSR module graph
 // pgFindCredentialByEmail and pgInsertAuditEvent are imported dynamically below
 
@@ -18,9 +19,28 @@ export async function loginAction(_prev: { error: string } | null, formData: For
     return { error: "Email and password are required." };
   }
 
-  const rl = checkRateLimit(email);
+  // R27-M5: unify the rate-limit bucket with /api/auth/login. The prior
+  // key was just `email`, which meant an attacker could double the
+  // brute-force budget by rotating between `loginAction` (server action
+  // form POST) and `/api/auth/login` (JSON POST) — each had its own
+  // per-isolate bucket AND its own KV bucket. With the same namespaced
+  // key, both entry points share the bucket.
+  const rl = checkRateLimit(`admin-login:${email}`);
   if (!rl.allowed) {
     return { error: "Too many attempts. Try again shortly." };
+  }
+
+  // R27-M5: add the same KV layer the /api/auth/login route uses so
+  // distributed attacks that span isolates can't double their budget
+  // by hitting both entry points.
+  try {
+    const { checkKvRateLimit } = await import("@/lib/auth/kv-rate-limit");
+    const kvRl = await checkKvRateLimit(`admin-login:${email}`, { maxAttempts: 8, windowMs: 300_000 });
+    if (!kvRl.allowed) {
+      return { error: "Too many attempts. Try again shortly." };
+    }
+  } catch {
+    // Fail-open on KV error — in-memory bucket above still caps.
   }
 
   const requestHeaders = await headers();
@@ -47,14 +67,9 @@ export async function loginAction(_prev: { error: string } | null, formData: For
   }
 
   try {
-  const result = await signInAdmin(email, password) as unknown as { sessionId: string; expiresAt: string } | undefined;
-  console.log('[loginAction] signInAdmin result:', JSON.stringify(result));
-  if (result?.sessionId) {
-    return { success: true, redirect: "/admin", sessionId: result.sessionId, expiresAt: result.expiresAt } as any;
-  }
-  // signInAdmin returned without session info (pool fallback set cookie + returned undefined)
-  // Try redirect anyway — cookie might be set server-side
-  return { success: true, redirect: "/admin", sessionId: "pool-fallback" } as any;
+  await signInAdmin(email, password);
+  // Session cookie is set server-side by signInAdmin. Never return sessionId to client.
+  return { success: true, redirect: "/admin" } as { success: boolean; redirect: string; error?: string };
   } catch (err) {
     // Audit: log failed admin login attempt (non-fatal — still return error)
     if (process.env.USE_POSTGRES) {
@@ -63,18 +78,37 @@ export async function loginAction(_prev: { error: string } | null, formData: For
         const cred = await findCred(email);
         let orgId: string | null = null;
         if (cred) {
-          const { default: pool } = await import("@/lib/db");
+          // Use the per-call Pool facade (getPool) — module-scope pool
+          // binds to the first request and fails on concurrent use.
+          const { getPool } = await import("@/lib/supabase-rest");
+          const pool = await getPool();
+          // check-pool-org-filter: scoped-by-just-looked-up-employee-id
+          // cred.employeeId came from the email→credential lookup above.
           const { rows } = await pool.query(
             `SELECT organization_id FROM employees WHERE id = $1 LIMIT 1`,
             [cred.employeeId],
           );
           orgId = (rows[0]?.organization_id as string) ?? null;
         }
-        insertAudit(
-          orgId ?? 'unknown', null, cred?.employeeId ?? null,
-          "session", null, "admin_login_failed",
-          { email, reason: err instanceof Error ? err.message : "unknown" },
-        ).catch((auditErr) => console.error("[audit] Failed to insert audit event:", auditErr));
+        // R16-L-1: mirror R15-L-3 — skip DB audit when orgId is null.
+        // Passing 'unknown' would fail the `app.current_org_id::uuid` cast
+        // inside orgTx and the insert would be silently swallowed by the
+        // audit helper's own catch. Unknown-email brute-force probes
+        // previously left NO trail. Emit a structured warn log so ops/
+        // log-sink alerting can still pattern-match.
+        if (orgId) {
+          insertAudit(
+            orgId, null, cred?.employeeId ?? null,
+            "session", null, "admin_login_failed",
+            { email, reason: err instanceof Error ? err.message : "unknown" },
+          ).catch((auditErr) => console.error("[audit] Failed to insert audit event:", safeErr(auditErr)));
+        } else {
+          console.warn("[admin_login_failed]", JSON.stringify({
+            email_prefix: email.slice(0, 3) + "***",
+            reason: err instanceof Error ? err.message : "unknown",
+            at: new Date().toISOString(),
+          }));
+        }
       } catch {
         // audit lookup failed — skip audit, still return error
       }
@@ -82,8 +116,6 @@ export async function loginAction(_prev: { error: string } | null, formData: For
     return { error: "Invalid email or password." };
   }
 
-  // Fallback — shouldn't reach here
-  return { error: "Login failed." } as any;
 }
 
 // ── Signup action ─────────────────────────────────────────────────────
@@ -119,6 +151,55 @@ export async function signupAction(_prev: { error: string } | null, formData: Fo
   const referer = requestHeaders.get("referer");
   const allowedOrigin = host ? new RegExp(`^https?://${host.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) : null;
 
+  // Per-IP rate limit so a single attacker can't cycle through fresh emails
+  // to mint unlimited orgs (each signup creates org + location + employee +
+  // auth_credentials rows, which also inflates the pin-collision scan cost
+  // on register-login).
+  //
+  // R22-H-2: prior shape (R21-L-4) randomized the bucket with `unknown-
+  // ${randomUUID()}` when CF headers were absent. That eliminated the
+  // cross-tenant DoS but opened a full rate-limit bypass — strip
+  // `cf-connecting-ip` + `x-forwarded-for` on a direct workers.dev URL
+  // and every request gets a fresh bucket.
+  //
+  // R28-M3: spoof-resistant client IP resolution. Pure XFF is only
+  // trusted when TRUST_FORWARDED_FOR=1 is explicitly set. In prod,
+  // REFUSE signups without a proven client IP.
+  // Non-prod falls back to randomized bucket so dev / tests still work.
+  const { clientIpFrom } = await import("@/lib/net/client-ip");
+  const resolvedIp = clientIpFrom(requestHeaders);
+  const rawIp = resolvedIp === "unknown" ? null : resolvedIp;
+  if (!rawIp && process.env.NODE_ENV === "production") {
+    return { error: "Too many signups from this network. Try again later." };
+  }
+  const clientIp = rawIp ?? `unknown-${randomUUID()}`;
+  const ipRl = checkRateLimit(`signup-ip:${clientIp}`, { maxAttempts: 3, windowMs: 3_600_000 });
+  if (!ipRl.allowed) {
+    return { error: "Too many signups from this network. Try again later." };
+  }
+
+  // R8-M-11: KV layer for cross-isolate coherence. Signups are the
+  // highest-value target for the pin-collision-cost amplification attack
+  // (each new org grows pgFindCredentialByPin's scan cost), so layer
+  // KV on top of the in-memory IP bucket.
+  const { checkKvRateLimit } = await import("@/lib/auth/kv-rate-limit");
+  const kvSignupRl = await checkKvRateLimit(`signup-ip:${clientIp}`, { maxAttempts: 5, windowMs: 3_600_000 });
+  if (!kvSignupRl.allowed) {
+    return { error: "Too many signups from this network. Try again later." };
+  }
+
+  // R27-L4: per-email rate limit. The R23-M-3 atomic INSERT-or-replace-
+  // expired close most of the race, but an attacker can still churn
+  // pending-signup rows on a victim's email faster than the victim can
+  // verify — 3 attempts per 5 min is loose enough that a legitimate
+  // retry after an email-delivery lag works fine, but tight enough that
+  // mass-racing a specific address is infeasible. Keyed on lower(email)
+  // to match the pending_signups unique index.
+  const emailRl = checkRateLimit(`signup-email:${email}`, { maxAttempts: 3, windowMs: 300_000 });
+  if (!emailRl.allowed) {
+    return { error: "Too many signup attempts for this email. Try again shortly." };
+  }
+
   if (!origin || !host || !allowedOrigin?.test(origin)) {
     return { error: "Invalid request origin." };
   }
@@ -135,88 +216,173 @@ export async function signupAction(_prev: { error: string } | null, formData: Fo
     }
   }
 
+  // R8-M-12 + R8-L-5 + R21-H-6 closed: two-step verified signup that
+  // equalizes timing between the "email taken" and "email available"
+  // branches.
+  //
+  // Prior shape (R8): the taken branch skipped the INSERT (~30ms) AND
+  // the Resend send (100-500ms), while the untaken branch did both.
+  // Same response text, but an attacker could time-probe which emails
+  // are registered. R21 audit flagged this as a still-open enumeration
+  // oracle via timing.
+  //
+  // Fix: always do one INSERT-equivalent DB roundtrip, and gate both
+  // branches behind a shared MIN_DURATION_MS floor so the external
+  // observable latency is dominated by the padding, not the branch.
+  //
+  // We intentionally do NOT send a real "your email is already
+  // registered" email on the taken branch — that would send unsolicited
+  // mail to arbitrary-typed addresses (typo of a stranger's email).
+  const MIN_DURATION_MS = 500;
+  const startedAt = Date.now();
   try {
-    const { default: pool } = await import("@/lib/db");
+    const { getPool } = await import("@/lib/supabase-rest");
+    const pool = await getPool();
 
-    // Check if email already exists
-    const { rows: existing } = await pool.query(
-      `SELECT 1 FROM auth_credentials WHERE email = $1 LIMIT 1`,
+    const passwordHash = await hashSecret(password);
+    // 32-byte URL-safe token. Cryptographically random, base64url encoded.
+    const tokenBytes = new Uint8Array(32);
+    crypto.getRandomValues(tokenBytes);
+    const verificationToken = btoa(String.fromCharCode(...tokenBytes))
+      .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    // R32-D3: hash the token at rest. The DB stores only sha256(token);
+    // the raw token lives exclusively in the email we send the user.
+    // A read-only DB compromise / backup leak / log sink can no longer
+    // be turned into working verify links.
+    const verificationTokenHash = await sha256Hex(verificationToken);
+
+    // Check WITHOUT leaking — if email is already in use (either as a
+    // confirmed auth_credentials row OR an unexpired pending_signups
+    // row), we silently skip the pending_signups INSERT. The user still
+    // sees the generic "check your inbox" reply.
+    const { rows: existingCreds } = await pool.query(
+      `SELECT 1 FROM auth_credentials WHERE lower(email) = lower($1) LIMIT 1`,
       [email],
     );
-    if (existing.length > 0) {
-      return { error: "An account with this email already exists." };
-    }
+    const { rows: existingPending } = await pool.query(
+      `SELECT 1 FROM pending_signups
+        WHERE lower(email) = lower($1)
+          AND expires_at > now() LIMIT 1`,
+      [email],
+    );
+    const alreadyTaken = existingCreds.length > 0 || existingPending.length > 0;
 
-    const now = new Date().toISOString();
-    const orgId = randomUUID();
-    const locationId = randomUUID();
-    const employeeId = randomUUID();
-    const slug = storeName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
-    const passwordHash = await hashSecret(password);
+    if (!alreadyTaken) {
+      // R22-H-1 + R23-M-3: the `uniq_pending_signups_email_lower` index
+      // from migration 051 covers ALL rows including expired ones. The
+      // `alreadyTaken` check above only excludes `expires_at > now()`,
+      // so a prior abandoned signup whose TTL lapsed but whose row
+      // hasn't been swept by `cleanup_stale_pending_signups` (retention
+      // is 7 days) would cause the INSERT to 23505. The R22-H-1 fix
+      // pre-deleted expired rows before INSERT — which created a 24-hour
+      // DoS: right after Alice's token expired, attacker could sign up
+      // with Alice's email, DELETE Alice's row, land their own row
+      // under Alice's email, and block Alice from retrying for up to
+      // 24 hours (R23-M-3).
+      //
+      // R23-M-3 fix: use `INSERT ... ON CONFLICT (lower(email)) DO UPDATE`
+      // ONLY when the existing row is expired. That atomically replaces
+      // the victim's dead row with the attacker's — no window where
+      // Alice can retry and find no row to recover. More importantly:
+      // combined with the alreadyTaken check above (which rejects when
+      // a NON-expired row exists), an attacker cannot race the victim
+      // because the only rows reachable by the UPSERT are the ones the
+      // victim already can't verify.
+      //
+      // Implementation: the unique index is on the EXPRESSION
+      // `lower(email)`, not a column, so `ON CONFLICT (lower(email))`
+      // requires the index to be declared with matching predicate.
+      // The partial nature (WHERE email IS NOT NULL on the existing
+      // index) makes ON CONFLICT ambiguous — we use ON CONFLICT ON
+      // CONSTRAINT instead. Actually the easiest path is to target
+      // the constraint by its index name via ON CONFLICT. Tests show
+      // `ON CONFLICT (lower(email))` works with expression indexes
+      // when the predicate matches.
+      //
+      // Safer/simpler variant: do the INSERT inside a single tx that
+      // first DELETEs-if-expired and then INSERTs. If both steps are in
+      // ONE transaction, the attacker's concurrent attempt either loses
+      // to ours (SERIALIZABLE retry) or sees our committed row and
+      // gives up via the 23505 catch below. Either way Alice isn't
+      // wedged.
+      const txClient = await pool.connect();
+      try {
+        await txClient.query("BEGIN");
+        // Lock the potentially-conflicting row so a concurrent delete
+        // can't disappear it between our SELECT and our INSERT.
+        // check-pool-org-filter: scoped-by-pending-signup-auth-flow
+        await txClient.query(
+          `DELETE FROM pending_signups
+             WHERE lower(email) = lower($1)
+               AND expires_at <= now()`,
+          [email],
+        );
+        try {
+          // R32-D3: store the HASH; the raw token travels only in
+          // the verification email.
+          await txClient.query(
+            `INSERT INTO pending_signups (email, store_name, first_name, last_name, password_hash, verification_token_hash)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [email, storeName, firstName, lastName, passwordHash, verificationTokenHash],
+          );
+          await txClient.query("COMMIT");
+        } catch (insertErr) {
+          await txClient.query("ROLLBACK").catch(() => {});
+          const code = (insertErr as { code?: string }).code;
+          if (code !== "23505") throw insertErr; // real error — surface via outer catch
+          // 23505: a truly-concurrent sibling beat us. User sees the
+          // same generic response. Attacker-racing-victim is now
+          // limited to the narrow instant when both signups transact
+          // at the same millisecond — the pre-delete + INSERT
+          // happening atomically eliminates the 24-hour exposure
+          // window R22-H-1 introduced.
+        }
+      } finally {
+        txClient.release();
+      }
 
-    // M-07: Wrap org+location+employee+credentials inserts in a single transaction
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
+      // Send verification email. Dev fallback: logs the link to console
+      // if RESEND_* is not configured.
+      const appUrl = process.env.APP_URL ?? (host ? `${origin?.startsWith("https") ? "https" : "http"}://${host}` : "http://localhost:3000");
+      const verificationUrl = `${appUrl}/api/auth/verify?token=${encodeURIComponent(verificationToken)}`;
 
-      await client.query(
-        `INSERT INTO organizations (id, name, slug, legal_name, timezone, currency_code, plan, is_active, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, 'America/Los_Angeles', 'USD', 'free', true, $5, $5)`,
-        [orgId, storeName, slug || "store", storeName, now],
+      const { sendVerificationEmail } = await import("@/lib/email/send-verification");
+      try {
+        await sendVerificationEmail({ to: email, firstName, verificationUrl });
+      } catch (emailErr) {
+        // R8-L-5: don't distinguish send-failed from email-taken in the
+        // user-facing response. A retry will hit pending_signups via the
+        // alreadyTaken path above. Log for ops visibility.
+        console.error(
+          "[signupAction] verification email failed:",
+          emailErr instanceof Error ? emailErr.message.slice(0, 200) : "unknown",
+        );
+      }
+    } else {
+      // R21-H-6: execute a DB roundtrip of equivalent cost so the two
+      // branches don't differ by the INSERT's ~30ms. The MIN_DURATION
+      // floor below handles the email-send gap.
+      // check-pool-org-filter: scoped-by-pending-signup-auth-flow
+      await pool.query(
+        `SELECT id FROM pending_signups WHERE lower(email) = lower($1) AND false`,
+        [email],
       );
-
-      await client.query(
-        `INSERT INTO locations (id, organization_id, name, code, address1, city, region, postal_code, tax_rate, is_active, created_at, updated_at)
-         VALUES ($1, $2, 'Main Store', 'MAIN', '', '', '', '', 0.0, true, $3, $3)`,
-        [locationId, orgId, now],
-      );
-
-      await client.query(
-        `INSERT INTO employees (id, organization_id, role_key, first_name, last_name, display_name, email, pin_hint, is_active, location_ids, created_at, updated_at)
-         VALUES ($1, $2, 'owner', $3, $4, $5, $6, 'Set in admin', true, ARRAY[$7]::uuid[], $8, $8)`,
-        [employeeId, orgId, firstName, lastName, `${firstName} ${lastName}`, email, locationId, now],
-      );
-
-      await client.query(
-        `INSERT INTO auth_credentials (employee_id, email, password_hash, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $4)`,
-        [employeeId, email, passwordHash, now],
-      );
-
-      await client.query("COMMIT");
-    } catch (txErr) {
-      await client.query("ROLLBACK");
-      throw txErr;
-    } finally {
-      client.release();
-    }
-
-    // Sign them in
-    await signInAdmin(email, password);
-
-    // Audit: log new store/owner signup (non-fatal — redirect still proceeds)
-    const ctx = await getAdminSession();
-    if (ctx) {
-      pool.query(
-        `INSERT INTO audit_events (organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [
-          orgId, locationId, employeeId,
-          "organization", orgId, "store_signup",
-          JSON.stringify({ store_name: storeName, owner_email: email, plan: "free" }),
-          now,
-        ],
-      ).catch((err) => console.error("[audit] Failed to insert audit event:", err));
     }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Signup failed";
-    // Don't expose internal errors
-    if (msg.includes("duplicate key") || msg.includes("unique")) {
-      return { error: "An account with this email already exists." };
-    }
     console.error("Signup error:", msg);
-    return { error: "Something went wrong. Please try again." };
+    // Generic response regardless — don't leak internal errors OR email
+    // existence.
+  } finally {
+    // R21-H-6: equalize timing. Hold the response until MIN_DURATION_MS
+    // elapsed regardless of which branch executed. Attackers measuring
+    // wall-clock latency see the same distribution for taken vs. untaken.
+    const elapsed = Date.now() - startedAt;
+    if (elapsed < MIN_DURATION_MS) {
+      await new Promise((resolve) => setTimeout(resolve, MIN_DURATION_MS - elapsed));
+    }
   }
 
-  redirect("/admin");
+  // ALWAYS the same response. R8-L-5 enumeration oracle closed.
+  return { error: "If that email isn't already registered, check your inbox for a verification link." };
 }

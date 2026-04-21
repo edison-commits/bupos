@@ -5,6 +5,7 @@ import { randomUUID } from "@/lib/uuid";
 import { withDualAuth, withAdminAuth } from "@/lib/api/with-auth";
 import { validateBody, shiftCreateSchema } from "@/lib/validation/schemas";
 
+import { safeErr } from "@/lib/logging/safe-err";
 export const GET = withDualAuth("register.open", async (req, ctx) => {
   const { orgId, locationId } = ctx;
   try {
@@ -14,36 +15,65 @@ export const GET = withDualAuth("register.open", async (req, ctx) => {
     const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
     const pageSize = Number.isFinite(pageSizeRaw) && pageSizeRaw > 0 ? Math.min(100, pageSizeRaw) : 20;
     const status = sp.get("status") ?? "all";
-    const date = sp.get("date");
+    // R30-L3: validate the date format before interpolating into the
+    // ISO-8601 suffix. Prior shape accepted any string and passed
+    // `"${date}T00:00:00.000Z"` to PG, which 500'd on malformed input
+    // instead of returning a clean 400.
+    const dateRaw = sp.get("date");
+    const date = dateRaw && /^\d{4}-\d{2}-\d{2}$/.test(dateRaw) ? dateRaw : null;
+    if (dateRaw && !date) {
+      return NextResponse.json(
+        { error: "Invalid date format. Use YYYY-MM-DD." },
+        { status: 400 },
+      );
+    }
     const offset = (page - 1) * pageSize;
 
-    const conditions: string[] = ["s.location_id = $1"];
-    const params: unknown[] = [locationId];
+    // Non-managers can only see their own shifts. `closing_variance` +
+    // `closing_declared_cash` are performance-review data (variance is used
+    // when deciding termination / coaching); a cashier listing peer
+    // variance is a leak.
+    // R30-M2: `s.organization_id = $1` is STATIC in the base SQL below.
+    // Prior shape built the entire WHERE from `conditions` starting with
+    // only `s.location_id = $1` — the guardrail's dynamic-interpolation
+    // bypass used to auto-pass these. Both count + list queries now
+    // carry the static org predicate and the dynamic clause adds extra
+    // ANDs.
+    const isManager = ctx.employee.roleKey === "owner" || ctx.employee.roleKey === "manager";
+    const extra: string[] = ["s.location_id = $2"];
+    const params: unknown[] = [orgId, locationId];
+    if (!isManager) {
+      params.push(ctx.employee.id);
+      extra.push(`s.employee_id = $${params.length}`);
+    }
 
     if (status === "open") {
-      conditions.push("s.status = 'open'");
+      extra.push("s.status = 'open'");
     } else if (status === "closed") {
-      conditions.push("s.status = 'closed'");
+      extra.push("s.status = 'closed'");
     }
 
     if (date) {
       params.push(`${date}T00:00:00.000Z`);
-      conditions.push(`s.opened_at >= $${params.length}`);
+      extra.push(`s.opened_at >= $${params.length}`);
       params.push(`${date}T23:59:59.999Z`);
-      conditions.push(`s.opened_at <= $${params.length}`);
+      extra.push(`s.opened_at <= $${params.length}`);
     }
 
-    const where = conditions.join(" AND ");
+    const andClause = extra.length > 0 ? ` AND ${extra.join(" AND ")}` : "";
 
     // Total count
     const countResult = await orgQuery(
       orgId,
-      `SELECT COUNT(*)::int AS total FROM shifts s WHERE ${where}`,
+      `SELECT COUNT(*)::int AS total FROM shifts s WHERE s.organization_id = $1${andClause}`,
       params,
     );
     const total = countResult.rows[0]?.total ?? 0;
 
     // Paginated shifts
+    // R30-M2 defense-in-depth: employees JOIN also org-gated so a
+    // cross-tenant employee_id FK (shouldn't exist with the s.org
+    // filter above, but defense-in-depth) can't splice foreign names.
     const shifts = await orgQuery(
       orgId,
       `SELECT
@@ -58,8 +88,8 @@ export const GET = withDualAuth("register.open", async (req, ctx) => {
          s.closing_declared_cash,
          s.closing_variance
        FROM shifts s
-       LEFT JOIN employees e ON e.id = s.employee_id
-       WHERE ${where}
+       LEFT JOIN employees e ON e.id = s.employee_id AND e.organization_id = $1
+       WHERE s.organization_id = $1${andClause}
        ORDER BY s.opened_at DESC
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
       [...params, pageSize, offset],
@@ -85,12 +115,19 @@ export const GET = withDualAuth("register.open", async (req, ctx) => {
       pageSize,
     });
   } catch (error) {
-    console.error("[shifts GET]", error);
+    console.error("[shifts GET]", safeErr(error));
     return NextResponse.json({ error: "Failed to load shifts" }, { status: 500 });
   }
 });
 
-// POST /api/shifts — open a new shift (admin-initiated, no register session required)
+// POST /api/shifts — open a new shift (admin-initiated, no register session required).
+//
+// Gated on `register.open` because that's the baseline permission every
+// cashier already has. The R7-C-2 additions inside the handler further
+// restrict WHO can open a shift FOR WHOM (self-only for non-managers) and
+// WHERE (location must be in the actor's assignment). A future refactor
+// could introduce a dedicated `shift.open_for_self` / `shift.open_for_other`
+// split if permissions grow more granular, but the current gate is safe.
 export const POST = withAdminAuth('register.open', async (req, ctx) => {
   const { orgId } = ctx;
   const idempotencyKey = req.headers.get('Idempotency-Key');
@@ -101,14 +138,70 @@ export const POST = withAdminAuth('register.open', async (req, ctx) => {
     if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
     const { employeeId, locationId, openingFloat, openedNote } = v.data;
 
+    // Target validation. Previously the POST accepted any employeeId +
+    // locationId from the body with no trust-boundary check: a cashier at
+    // Location A could open a shift on behalf of a manager at Location B.
+    // Enforce:
+    //   - caller is opening FOR THEMSELVES (default), OR is owner/manager
+    //   - locationId is in the caller's assignment (owner/manager bypass)
+    //   - target employee exists in caller's org and is active
+    const isManager = ["owner", "manager"].includes(ctx.employee.roleKey);
+    if (!isManager && employeeId !== ctx.employee.id) {
+      return NextResponse.json(
+        { error: "Only owners or managers may open a shift on behalf of another employee" },
+        { status: 403 },
+      );
+    }
+    if (!isManager && !(ctx.employee.locationIds ?? []).includes(locationId)) {
+      return NextResponse.json(
+        { error: "Location not assigned to this employee" },
+        { status: 403 },
+      );
+    }
+    const { rows: targetRows } = await orgQuery(
+      orgId,
+      `SELECT id, is_active FROM employees WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [employeeId, orgId],
+    );
+    if (targetRows.length === 0) {
+      return NextResponse.json({ error: "Target employee not found" }, { status: 404 });
+    }
+    if (!targetRows[0].is_active) {
+      return NextResponse.json({ error: "Target employee is inactive" }, { status: 400 });
+    }
+    const { rows: locRows } = await orgQuery(
+      orgId,
+      `SELECT id FROM locations WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [locationId, orgId],
+    );
+    if (locRows.length === 0) {
+      return NextResponse.json({ error: "Location not found" }, { status: 404 });
+    }
+
     // Idempotency: if key provided, look for an already-succeeded shift
     if (idempotencyKey) {
       const existing = await orgQuery(
         orgId,
-        `SELECT id, employee_id, location_id, status, opened_at FROM shifts WHERE organization_id = $1 AND idempotency_key = $2 LIMIT 1`,
+        `SELECT id, employee_id, location_id, opening_float, status, opened_at FROM shifts WHERE organization_id = $1 AND idempotency_key = $2 LIMIT 1`,
         [orgId, idempotencyKey],
       );
       if (existing.rows.length > 0) {
+        // Payload-match: if the caller retries with the SAME idempotency key
+        // but a different (employee, location, opening_float), reject rather
+        // than echoing the old shift as if the new request succeeded. Stops
+        // idempotency-key replay across payloads.
+        const prior = existing.rows[0];
+        const priorFloat = Number(prior.opening_float);
+        if (
+          prior.employee_id !== employeeId ||
+          prior.location_id !== locationId ||
+          priorFloat !== Number(openingFloat)
+        ) {
+          return NextResponse.json(
+            { error: "Idempotency key reused with a different payload" },
+            { status: 409 },
+          );
+        }
         return NextResponse.json({ shift: existing.rows[0], success: true, _idempotent: true });
       }
     }
@@ -127,7 +220,7 @@ export const POST = withAdminAuth('register.open', async (req, ctx) => {
 
     return NextResponse.json({ shift, success: true }, { status: 201 });
   } catch (error) {
-    console.error("[shifts POST]", error);
+    console.error("[shifts POST]", safeErr(error));
     return NextResponse.json({ error: "Failed to open shift" }, { status: 500 });
   }
 });

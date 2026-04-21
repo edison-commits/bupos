@@ -6,6 +6,7 @@ import { useState, useEffect } from 'react';
 import { Plus, Search, Edit2, Lock, Eye, EyeOff } from 'lucide-react';
 import { authFetch } from '@/lib/api/client';
 import { FETCH_TIMEOUT_MS } from '@/lib/config/timing';
+import { useDebouncedValue } from '@/lib/hooks/use-debounced-value';
 
 const ROLES: Record<string, { label: string; color: string }> = {
   owner: { label: 'Owner', color: 'bg-red-100 text-red-800' },
@@ -40,8 +41,10 @@ type ModalMode = 'create' | 'edit' | 'reset-pin' | null;
 
 export default function EmployeeManagement() {
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [locations, setLocations] = useState<Array<{ id: string; name: string; code?: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search, 300);
   const [pagination, setPagination] = useState<PaginationState>({
     page: 1,
     pageSize: 50,
@@ -66,7 +69,7 @@ export default function EmployeeManagement() {
     roleKey: 'cashier',
     pin: '',
     pinHint: '',
-    locationIds: ['c57268b3-cb14-4c1a-bda6-55e49ddc6313'],
+    locationIds: [] as string[],
   });
 
 
@@ -77,7 +80,7 @@ export default function EmployeeManagement() {
       const params = new URLSearchParams({
         page: pagination.page.toString(),
         pageSize: pagination.pageSize.toString(),
-        ...(search && { search }),
+        ...(debouncedSearch && { search: debouncedSearch }),
       });
 
       const controller = new AbortController();
@@ -108,7 +111,32 @@ export default function EmployeeManagement() {
   useEffect(() => {
     loadEmployees();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pagination.page, search]);
+  }, [pagination.page, debouncedSearch]);
+
+  // Load the org's locations once so "create employee" can assign the
+  // correct location ID instead of a hardcoded UUID.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await authFetch('/api/locations', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        const locs: Array<{ id: string; name: string; code?: string }> = data.locations || [];
+        setLocations(locs);
+        // Default the create-form to all available locations so assignment is explicit
+        setFormData((prev) => (
+          prev.locationIds.length === 0 && locs.length > 0
+            ? { ...prev, locationIds: locs.map((l) => l.id) }
+            : prev
+        ));
+      } catch {
+        // If locations API fails, user can still type — form just has no defaults
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const resetForm = () => {
     setFormData({
@@ -120,7 +148,7 @@ export default function EmployeeManagement() {
       roleKey: 'cashier',
       pin: '',
       pinHint: '',
-      locationIds: ['c57268b3-cb14-4c1a-bda6-55e49ddc6313'],
+      locationIds: [] as string[],
     });
   };
 
@@ -554,6 +582,38 @@ export default function EmployeeManagement() {
                   className="mt-1 w-full rounded border border-slate-300 px-3 py-2 focus:border-emerald-500 focus:outline-none"
                 />
               </div>
+
+              {locations.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700">Assigned Locations *</label>
+                  <div className="mt-1 space-y-1 rounded border border-slate-300 bg-white p-2 max-h-40 overflow-y-auto">
+                    {locations.map((loc) => {
+                      const checked = formData.locationIds.includes(loc.id);
+                      return (
+                        <label key={loc.id} className="flex items-center gap-2 px-2 py-1 hover:bg-slate-50 rounded cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => {
+                              setFormData((prev) => ({
+                                ...prev,
+                                locationIds: e.target.checked
+                                  ? [...prev.locationIds, loc.id]
+                                  : prev.locationIds.filter((id) => id !== loc.id),
+                              }));
+                            }}
+                            className="rounded border-slate-300"
+                          />
+                          <span className="text-sm">{loc.name}{loc.code ? ` (${loc.code})` : ''}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {formData.locationIds.length === 0 && (
+                    <p className="mt-1 text-xs text-rose-600">Select at least one location</p>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="mt-6 flex gap-3">

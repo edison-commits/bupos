@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useMemo, useCallback, useRef, useEffect } from "react";
-import type { Category, Customer, Employee, GiftCard, InventoryLevel, Location, Product, ProductVariant, PromoCode, RegisterConfiguration, RegisterSessionRecord, ShiftRecord } from "@/lib/domain/types";
+import type { Category, Customer, Employee, GiftCard, InventoryLevel, Location, Product, ProductBundle, ProductVariant, PromoCode, RegisterConfiguration, RegisterSessionRecord, ShiftRecord } from "@/lib/domain/types";
 import type { Cart, CartTotals, DiscountMode, LineDiscount, TenderLine } from "@/lib/cart/types";
 import { playCheckoutComplete, playVoid, playApprovalNeeded, playError, speakTotal, speakChange } from "@/lib/audio";
-import { createCart, addItem, removeItem, updateQuantity, setDiscount, setDiscountMode, setLineDiscount, setPriceOverride, computeTotals, voidCart } from "@/lib/cart/cart";
+import { createCart, addItem, addBundle, addFreeItem, removeItem, updateQuantity, setDiscount, setDiscountMode, setLineDiscount, setPriceOverride, computeTotals, voidCart, lineDiscountAmount } from "@/lib/cart/cart";
 import { checkoutAction } from "@/app/register/checkout-action";
 import { useOnlineStatus } from "@/lib/offline/use-online-status";
 import { savePendingTransaction, cacheCatalog } from "@/lib/offline/idb-store";
@@ -17,8 +17,67 @@ import { processReturnAction } from "@/app/register/return-action";
 import { createLayawayAction } from "@/app/register/layaway-action";
 import type { ApprovalRequest, ApprovalResult } from "@/app/register/approval-action";
 import type { TransactionEventPlaceholder, TransactionTenderPlaceholder } from "@/lib/domain/types";
+import { formatCurrency } from "@/lib/format";
 
 // Tax rate is now read from location.taxRate (set in Admin > Settings)
+
+/** Queue an offline transaction and build a receipt object. Extracted to avoid duplication. */
+async function queueOfflineAndBuildReceipt(
+  cart: Cart, tenderLines: TenderLine[], approvedExceptions: string[],
+  totals: CartTotals, tenders: TenderEntry[], employeeName: string,
+) {
+  const offlineId = `offline-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const cashTendered = tenders.filter((t) => t.type === "cash").reduce((s, t) => s + t.amount, 0);
+  const changeDue = Math.max(0, cashTendered - totals.grandTotal);
+  await savePendingTransaction({
+    id: offlineId, cart: cart as unknown, tenders: tenderLines as unknown[],
+    approvedExceptions, totals: totals as unknown,
+    timestamp: new Date().toISOString(), employeeName, attempts: 0,
+  });
+  return {
+    transactionId: offlineId, cart: { ...cart }, totals: { ...totals }, tenders,
+    changeDue, timestamp: new Date().toISOString(),
+    loyaltyPointsEarned: 0, loyaltyPointsRedeemed: 0,
+  };
+}
+
+/**
+ * Safe BroadcastChannel helper.
+ *
+ * Previously opened/closed a channel per postMessage — during barcode bursts
+ * that's dozens of allocations per second. Now we lazily init one module-level
+ * channel and reuse it. The browser GCs channels when the tab closes, so
+ * there's no explicit cleanup needed in an SPA-style POS session.
+ */
+let _customerDisplayChannel: BroadcastChannel | null = null;
+// R34-D10: instead of a permanent-disable flag, back off exponentially
+// on transient failures. Prior shape flipped `_customerDisplayInitFailed
+// = true` on ANY exception (including one-time DataCloneError on a
+// weird payload or a SecurityError during an iframe embed probe) and
+// NEVER reset — the display integration was dead for the rest of
+// the SPA session. Now: track the last-failure timestamp; if a failed
+// try happened recently, skip the attempt; otherwise retry.
+let _customerDisplayLastFailureAt = 0;
+const _CUSTOMER_DISPLAY_BACKOFF_MS = 60_000;
+function broadcastCustomerDisplay(data: Record<string, unknown>) {
+  if (typeof window === "undefined") return;
+  if (_customerDisplayLastFailureAt > 0 &&
+      Date.now() - _customerDisplayLastFailureAt < _CUSTOMER_DISPLAY_BACKOFF_MS) {
+    return;
+  }
+  try {
+    if (!_customerDisplayChannel) {
+      _customerDisplayChannel = new BroadcastChannel("basicuniformpos_customer_display");
+    }
+    _customerDisplayChannel.postMessage(data);
+    // Success — clear the backoff so the next message tries again.
+    _customerDisplayLastFailureAt = 0;
+  } catch {
+    _customerDisplayLastFailureAt = Date.now();
+    try { _customerDisplayChannel?.close(); } catch { /* ignore */ }
+    _customerDisplayChannel = null;
+  }
+}
 
 export interface POSTerminalProps {
   products: Product[];
@@ -26,6 +85,7 @@ export interface POSTerminalProps {
   categories: Category[];
   inventory: InventoryLevel[];
   customers: Customer[];
+  bundles: ProductBundle[];
   transactionEvents: TransactionEventPlaceholder[];
   transactionTenders: TransactionTenderPlaceholder[];
   employee: Employee;
@@ -71,6 +131,7 @@ export function usePOSTerminal({
   categories,
   inventory,
   customers,
+  bundles,
   transactionEvents,
   transactionTenders,
   employee,
@@ -101,7 +162,7 @@ export function usePOSTerminal({
 
   const [cart, setCart] = useState<Cart>(() => {
     const c = createCart(registerSession.id, employee.id, location.id);
-    return { ...c, taxRate: location.taxRate ?? 0.1025 };
+    return { ...c, taxRate: location.taxRate ?? 0 };
   });
   const [screen, setScreen] = useState<Screen>("selling");
   const [processing, setProcessing] = useState(false);
@@ -137,7 +198,15 @@ export function usePOSTerminal({
 
   // Promo code
   const [showPromoModal, setShowPromoModal] = useState(false);
-  const [appliedPromo, setAppliedPromo] = useState<{ code: string; discountAmount: number } | null>(null);
+  // `appliedPromo` tracks the promo for the badge/UI banner. It includes
+  // an optional `id` so `appliedPromoIds` below can be derived from a
+  // SINGLE source of truth (UI state + cart lines together). Without the
+  // id on the state, the dedup guard in PromoCodeModal depends on cart
+  // line `promoCodeId` (only populated for free_item) — fragile if a
+  // fixed/percent promo ever needs to re-check.
+  const [appliedPromo, setAppliedPromo] = useState<
+    { code: string; discountAmount: number; id?: string } | null
+  >(null);
 
   // Customer
   const [showCustomerSearch, setShowCustomerSearch] = useState(false);
@@ -167,43 +236,66 @@ export function usePOSTerminal({
 
   const totals = useMemo(() => computeTotals(cart), [cart]);
 
-  // Cache product catalog to IndexedDB for offline use
+  // Cache product catalog to IndexedDB for offline use.
+  // Debounced because inventory updates (post-checkout) can fire this many
+  // times per second during busy periods — each write is a full IDB transaction.
   useEffect(() => {
     if (typeof window === "undefined" || !("indexedDB" in window)) return;
-    cacheCatalog({
-      products: products as unknown[],
-      variants: variants as unknown[],
-      categories: categories as unknown[],
-      inventory: inventory as unknown[],
-      cachedAt: new Date().toISOString(),
-    }).catch(() => { /* indexedDB not available */ });
+    const handle = setTimeout(() => {
+      cacheCatalog({
+        products: products as unknown[],
+        variants: variants as unknown[],
+        categories: categories as unknown[],
+        inventory: inventory as unknown[],
+        cachedAt: new Date().toISOString(),
+      }).catch(() => { /* indexedDB not available */ });
+    }, 2000);
+    return () => clearTimeout(handle);
   }, [products, variants, categories, inventory]);
 
   // Broadcast cart state to customer-facing display
   useEffect(() => {
     if (typeof window === "undefined") return;
-    try {
-      const channel = new BroadcastChannel("basicuniformpos_customer_display");
-      if (cart.items.length > 0) {
-        channel.postMessage({
-          type: "cart_update",
-          cart,
-          appliedPromo: appliedPromo?.code ?? null,
-          exchangeCredit: exchangeCredit?.creditAmount ?? null,
-        });
-      } else {
-        channel.postMessage({ type: "cart_clear" });
-      }
-      channel.close();
-    } catch {
-      // BroadcastChannel not supported — ignore
+    if (cart.items.length > 0) {
+      broadcastCustomerDisplay({
+        type: "cart_update",
+        cart,
+        appliedPromo: appliedPromo?.code ?? null,
+        exchangeCredit: exchangeCredit?.creditAmount ?? null,
+      });
+    } else {
+      broadcastCustomerDisplay({ type: "cart_clear" });
     }
   }, [cart, appliedPromo, exchangeCredit]);
 
   const freshCart = useCallback((): Cart => {
     const c = createCart(registerSession.id, employee.id, location.id);
-    return { ...c, taxRate: location.taxRate ?? 0.1025 };
+    return { ...c, taxRate: location.taxRate ?? 0 };
   }, [registerSession.id, employee.id, location.id, location.taxRate]);
+
+  // R33-H2: reset cart + approval + receipt state whenever the
+  // employee prop changes. Quick-switch (PIN-swap at the register)
+  // fires `revalidatePath('/register')` which re-renders the
+  // server component with the NEW employee — but client-side
+  // `useState` survives that re-render, so Alice's live cart +
+  // approved exceptions + receipt stay on screen for Bob. Bob
+  // could then confirm tender on a cart Alice built, inheriting
+  // discounts she approved. Explicit reset on employee change
+  // makes quick-switch feel like a fresh login.
+  useEffect(() => {
+    if (cart.employeeId && cart.employeeId !== employee.id) {
+      setCart(freshCart());
+      setApprovedExceptions([]);
+      setReceipt(null);
+      setError(null);
+      setScreen("selling");
+    }
+    // Intentionally scoped to employee.id change: we don't want to
+    // reset on unrelated location.taxRate or registerSession.id
+    // changes. `cart.employeeId` is read to compare but we don't
+    // want to trigger on every cart mutation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employee.id]);
 
   const logEvent = useCallback((eventType: TransactionEventType, referenceId: string, payload: Record<string, string>) => {
     logTransactionEvent({
@@ -218,18 +310,55 @@ export function usePOSTerminal({
   }, [employee.organizationId, employee.id, location.id, registerSession.id]);
 
   // Build product grid items
+  // Pre-build lookup maps once; then gridItems is O(P) instead of O(P * V * I).
+  const variantsByProductId = useMemo(() => {
+    const m = new Map<string, ProductVariant[]>();
+    for (const v of variants) {
+      if (!v.isActive) continue;
+      const arr = m.get(v.productId);
+      if (arr) arr.push(v);
+      else m.set(v.productId, [v]);
+    }
+    return m;
+  }, [variants]);
+
+  const inventoryByVariantId = useMemo(() => {
+    const m = new Map<string, InventoryLevel[]>();
+    for (const inv of inventory) {
+      if (inv.locationId !== location.id) continue;
+      const arr = m.get(inv.productVariantId);
+      if (arr) arr.push(inv);
+      else m.set(inv.productVariantId, [inv]);
+    }
+    return m;
+  }, [inventory, location.id]);
+
+  const categoriesById = useMemo(() => {
+    const m = new Map<string, Category>();
+    for (const c of categories) m.set(c.id, c);
+    return m;
+  }, [categories]);
+
   const gridItems: ProductGridItem[] = useMemo(() => {
-    return products
-      .filter((p) => p.isActive)
-      .map((product) => {
-        const productVariants = variants.filter((v) => v.productId === product.id && v.isActive);
-        const productInventory = inventory.filter(
-          (inv) => inv.locationId === location.id && productVariants.some((v) => v.id === inv.productVariantId),
-        );
-        return { product, variants: productVariants, inventory: productInventory, category: categories.find((c) => c.id === product.categoryId) };
-      })
-      .filter((item) => item.variants.length > 0);
-  }, [products, variants, inventory, categories, location.id]);
+    const out: ProductGridItem[] = [];
+    for (const product of products) {
+      if (!product.isActive) continue;
+      const productVariants = variantsByProductId.get(product.id) ?? [];
+      if (productVariants.length === 0) continue;
+      const productInventory: InventoryLevel[] = [];
+      for (const v of productVariants) {
+        const invs = inventoryByVariantId.get(v.id);
+        if (invs) productInventory.push(...invs);
+      }
+      out.push({
+        product,
+        variants: productVariants,
+        inventory: productInventory,
+        category: categoriesById.get(product.categoryId),
+      });
+    }
+    return out;
+  }, [products, variantsByProductId, inventoryByVariantId, categoriesById]);
 
   // ─── Handlers ────────────────────────────────────────
 
@@ -247,6 +376,19 @@ export function usePOSTerminal({
         modifierTotal: 0,
       });
       logEvent("item_added", prev.id, { variant_id: variant.id, product_name: product.name, price: variant.price.toFixed(2) });
+      return next;
+    });
+  }, [logEvent]);
+
+  const handleAddBundle = useCallback((bundle: ProductBundle) => {
+    setError(null);
+    setCart((prev) => {
+      const next = addBundle(prev, bundle);
+      logEvent("item_added", prev.id, {
+        bundle_id: bundle.id,
+        bundle_name: bundle.name,
+        price: bundle.bundlePrice.toFixed(2),
+      });
       return next;
     });
   }, [logEvent]);
@@ -307,8 +449,16 @@ export function usePOSTerminal({
 
   const handleRemoveItemConfirmed = useCallback((lineItemId: string, reasonCode: string, note: string) => {
     setCart((prev) => {
+      const removed = prev.items.find((i) => i.id === lineItemId);
       const next = removeItem(prev, lineItemId);
       logEvent("item_removed", prev.id, { line_item_id: lineItemId, reason_code: reasonCode, note });
+      // Clear the applied-promo banner if the removed line was the
+      // free-item line backing a free_item promo. Otherwise the PromoCode
+      // button stays gated (`!appliedPromo`) and the cashier can't
+      // re-apply a different code for the rest of the transaction.
+      if (removed?.promoCodeId) {
+        setAppliedPromo(null);
+      }
       return next;
     });
     setVoidState(null);
@@ -352,7 +502,7 @@ export function usePOSTerminal({
         cashierEmployeeId: employee.id,
         locationId: location.id,
         organizationId: employee.organizationId,
-        details: `Line discount on ${item.productName}: ${discount.mode === "percent" ? `${discount.value}%` : `$${discount.value.toFixed(2)}`}`,
+        details: `Line discount on ${item.productName}: ${discount.mode === "percent" ? `${discount.value}%` : `${formatCurrency(discount.value)}`}`,
       });
       return;
     }
@@ -378,19 +528,51 @@ export function usePOSTerminal({
   // ─── Promo Code ────────────────────────────────────
 
   const handlePromoApply = useCallback((promo: PromoCode, discountAmount: number) => {
+    // free_item promos add a $0 cart line for the configured variant
+    // (requires `freeVariantId` set on the promo — DB CHECK enforces
+    // this). Every other type applies as a cart-level fixed discount.
+    if (promo.type === "free_item") {
+      const freeVariantId = promo.freeVariantId;
+      const variant = freeVariantId ? variants.find((v) => v.id === freeVariantId) : undefined;
+      const product = variant ? products.find((p) => p.id === variant.productId) : undefined;
+      if (!variant || !product) {
+        setError("Free-item promo is misconfigured: variant not found");
+        return;
+      }
+      setCart((prev) => addFreeItem(prev, {
+        id: variant.id,
+        name: variant.name,
+        sku: variant.sku,
+        price: variant.price,
+        productName: product.name,
+      }, promo.id));
+      // Track as "applied" so the UI can show the badge, but with
+      // discountAmount = variant.price for receipts / audit. Includes
+      // `id` so the modal dedup guard can read a single source of truth.
+      setAppliedPromo({ code: promo.code, discountAmount: variant.price, id: promo.id });
+      setShowPromoModal(false);
+      logEvent("discount_applied", cart.id, {
+        promo_code: promo.code,
+        promo_type: promo.type,
+        free_variant_id: variant.id,
+        free_variant_price: variant.price.toFixed(2),
+      });
+      return;
+    }
+
     // Apply promo as a cart-level fixed discount
     setCart((prev) => {
       const withDiscount = setDiscount(prev, discountAmount);
       return { ...withDiscount, discountMode: "fixed" as const };
     });
-    setAppliedPromo({ code: promo.code, discountAmount });
+    setAppliedPromo({ code: promo.code, discountAmount, id: promo.id });
     setShowPromoModal(false);
     logEvent("discount_applied", cart.id, {
       promo_code: promo.code,
       promo_type: promo.type,
       discount_amount: discountAmount.toFixed(2),
     });
-  }, [cart.id, logEvent]);
+  }, [cart.id, logEvent, variants, products]);
 
   // ─── Price Override ──────────────────────────────────
 
@@ -414,7 +596,7 @@ export function usePOSTerminal({
         cashierEmployeeId: employee.id,
         locationId: location.id,
         organizationId: employee.organizationId,
-        details: `${item.productName} (${item.variantName}): $${item.unitPrice.toFixed(2)} → $${newPrice.toFixed(2)}`,
+        details: `${item.productName} (${item.variantName}): ${formatCurrency(item.unitPrice)} → ${formatCurrency(newPrice)}`,
       });
       // Store the pending override to apply after approval
       pendingTendersRef.current = null; // clear any pending tenders
@@ -463,7 +645,7 @@ export function usePOSTerminal({
     if (cart.items.length === 0) return;
     const label = cart.items.length === 1
       ? cart.items[0].productName
-      : `${cart.items.length} items · $${computeTotals(cart).grandTotal.toFixed(2)}`;
+      : `${cart.items.length} items · ${formatCurrency(computeTotals(cart).grandTotal)}`;
     setHeldCarts((prev) => [...prev, { cart: { ...cart }, heldAt: new Date().toISOString(), label }]);
     logEvent("cart_held", cart.id, { item_count: String(cart.items.length) });
     setCart(freshCart());
@@ -474,7 +656,7 @@ export function usePOSTerminal({
     const held = heldCarts[index];
     if (!held) return;
     if (cart.items.length > 0) {
-      const label = `${cart.items.length} items · $${computeTotals(cart).grandTotal.toFixed(2)}`;
+      const label = `${cart.items.length} items · ${formatCurrency(computeTotals(cart).grandTotal)}`;
       setHeldCarts((prev) => [...prev.filter((_, i) => i !== index), { cart: { ...cart }, heldAt: new Date().toISOString(), label }]);
     } else {
       setHeldCarts((prev) => prev.filter((_, i) => i !== index));
@@ -497,7 +679,7 @@ export function usePOSTerminal({
   }, []);
 
   const handleClearCustomer = useCallback(() => {
-    setCart((prev) => ({ ...prev, customerId: undefined, customerName: undefined, taxRate: location.taxRate ?? 0.1025 }));
+    setCart((prev) => ({ ...prev, customerId: undefined, customerName: undefined, taxRate: location.taxRate ?? 0 }));
     setShowCustomerSearch(false);
   }, [location.taxRate]);
 
@@ -505,7 +687,13 @@ export function usePOSTerminal({
 
   const handleReturnConfirm = useCallback(async (
     transactionId: string,
-    items: { productVariantId: string; productName: string; variantName: string; sku: string; unitPrice: number; returnQuantity: number }[],
+    items: {
+      productVariantId: string; productName: string; variantName: string;
+      sku: string; unitPrice: number; returnQuantity: number;
+      bundleId?: string;
+      bundleComponents?: { productVariantId: string; quantity: number }[];
+      promoCodeId?: string;
+    }[],
     refundMethod: "cash" | "card" | "store_credit",
     reason: string,
     note: string,
@@ -515,7 +703,17 @@ export function usePOSTerminal({
     try {
       const result = await processReturnAction({
         originalTransactionId: transactionId,
-        items: items.map((i) => ({ ...i, quantity: i.returnQuantity })),
+        items: items.map((i) => ({
+          productVariantId: i.productVariantId,
+          productName: i.productName,
+          variantName: i.variantName,
+          sku: i.sku,
+          unitPrice: i.unitPrice,
+          quantity: i.returnQuantity,
+          ...(i.bundleId ? { bundleId: i.bundleId } : {}),
+          ...(i.bundleComponents ? { bundleComponents: i.bundleComponents } : {}),
+          ...(i.promoCodeId ? { promoCodeId: i.promoCodeId } : {}),
+        })),
         refundMethod,
         reason,
         note,
@@ -533,7 +731,13 @@ export function usePOSTerminal({
 
   const handleExchangeConfirm = useCallback(async (
     originalTransactionId: string,
-    _returnItems: { productVariantId: string; productName: string; variantName: string; sku: string; unitPrice: number; returnQuantity: number }[],
+    _returnItems: {
+      productVariantId: string; productName: string; variantName: string;
+      sku: string; unitPrice: number; returnQuantity: number;
+      bundleId?: string;
+      bundleComponents?: { productVariantId: string; quantity: number }[];
+      promoCodeId?: string;
+    }[],
     returnTotal: number,
     reason: string,
     note: string,
@@ -541,10 +745,22 @@ export function usePOSTerminal({
     setProcessing(true);
     setError(null);
     try {
-      // Process the return first (refund as store credit internally)
+      // Process the return first (refund as store credit internally).
+      // Pass bundle/promo fields through so the server's line-match
+      // logic can identify them correctly in the original transaction.
       await processReturnAction({
         originalTransactionId,
-        items: _returnItems.map((i) => ({ ...i, quantity: i.returnQuantity })),
+        items: _returnItems.map((i) => ({
+          productVariantId: i.productVariantId,
+          productName: i.productName,
+          variantName: i.variantName,
+          sku: i.sku,
+          unitPrice: i.unitPrice,
+          quantity: i.returnQuantity,
+          ...(i.bundleId ? { bundleId: i.bundleId } : {}),
+          ...(i.bundleComponents ? { bundleComponents: i.bundleComponents } : {}),
+          ...(i.promoCodeId ? { promoCodeId: i.promoCodeId } : {}),
+        })),
         refundMethod: "store_credit",
         reason,
         note: `Exchange: ${note}`.trim(),
@@ -584,9 +800,19 @@ export function usePOSTerminal({
 
   const handleCheckout = useCallback(() => {
     const thresholds = registerConfig.approvalThresholds;
-    // Compute effective cart discount for threshold check
+    // Compute effective cart discount for threshold check.
+    //
+    // IMPORTANT: percent base must match server logic in
+    // checkout-action.ts. Server uses (subtotal + modifiers - lineDiscounts)
+    // as the base; this client previously used subtotal only. The mismatch
+    // meant a 10% discount on a cart with heavy modifier upcharges
+    // quietly passed the client pre-check and then tripped server's
+    // threshold redirect mid-checkout — cashier got an unhelpful error
+    // with no approval-request affordance in-app.
+    const lineDiscountsTotal = cart.items.reduce((s, i) => s + lineDiscountAmount(i), 0);
+    const discountBase = Math.max(0, totals.subtotal + totals.modifiersTotal - lineDiscountsTotal);
     const cartDiscountEffective = cart.discountMode === 'percent'
-      ? Number((totals.subtotal * Math.min(100, cart.discountAmount) / 100).toFixed(2))
+      ? Number((discountBase * Math.min(100, cart.discountAmount) / 100).toFixed(2))
       : cart.discountAmount;
     if (cartDiscountEffective > thresholds.discountOver && !approvedExceptions.includes("discount_threshold")) {
       setApprovalRequest({
@@ -602,9 +828,7 @@ export function usePOSTerminal({
     }
     logEvent("payment_started", cart.id, { grand_total: totals.grandTotal.toFixed(2) });
     // Broadcast payment_started to customer display
-    const channel = new BroadcastChannel("basicuniformpos_customer_display");
-    channel.postMessage({ type: "payment_started" });
-    channel.close();
+    broadcastCustomerDisplay({ type: "payment_started" });
     setScreen("tender");
     setError(null);
   }, [cart, totals, registerConfig.approvalThresholds, approvedExceptions, employee, location, logEvent]);
@@ -616,9 +840,7 @@ export function usePOSTerminal({
     setApprovalRequest(null);
     logEvent("payment_started", cart.id, { grand_total: totals.grandTotal.toFixed(2) });
     // Broadcast payment_started to customer display
-    const channel = new BroadcastChannel("basicuniformpos_customer_display");
-    channel.postMessage({ type: "payment_started" });
-    channel.close();
+    broadcastCustomerDisplay({ type: "payment_started" });
     setScreen("tender");
   }, [approvalRequest, cart.id, totals.grandTotal, logEvent]);
 
@@ -627,7 +849,18 @@ export function usePOSTerminal({
     pendingTendersRef.current = null;
   }, []);
 
+  // R31-H7: ref-based re-entry guard. React state updates are async, so
+  // a double-click fires the callback twice BEFORE `processing` reflects
+  // the first call's setState. An attacker (or a shaky tap on a POS
+  // tablet) thus submits two concurrent checkout requests with no
+  // idempotency key, each committing a separate transaction and
+  // decrementing inventory twice. The cart.id advisory lock inside
+  // checkout-action serializes but doesn't dedupe. A synchronous ref
+  // short-circuits before the second call ever hits the server.
+  const checkoutInFlightRef = useRef(false);
   const handleTenderConfirm = useCallback(async (tenders: TenderEntry[]) => {
+    if (checkoutInFlightRef.current) return;
+    checkoutInFlightRef.current = true;
     setProcessing(true);
     setError(null);
     try {
@@ -648,37 +881,12 @@ export function usePOSTerminal({
         });
       } else {
         // Offline — queue transaction for later sync
-        const offlineId = `offline-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        const cashTendered = tenders.filter((t) => t.type === "cash").reduce((s, t) => s + t.amount, 0);
-        const changeDue = Math.max(0, cashTendered - totals.grandTotal);
-
-        await savePendingTransaction({
-          id: offlineId,
-          cart: cart as unknown,
-          tenders: tenderLines as unknown[],
-          approvedExceptions,
-          totals: totals as unknown,
-          timestamp: new Date().toISOString(),
-          employeeName: employee.displayName,
-          attempts: 0,
-        });
-
-        setReceipt({
-          transactionId: offlineId,
-          cart: { ...cart },
-          totals: { ...totals },
-          tenders,
-          changeDue,
-          timestamp: new Date().toISOString(),
-          loyaltyPointsEarned: 0,
-          loyaltyPointsRedeemed: 0,
-        });
+        const offlineReceipt = await queueOfflineAndBuildReceipt(cart, tenderLines, approvedExceptions, totals, tenders, employee.displayName);
+        setReceipt(offlineReceipt);
       }
 
       // Broadcast receipt to customer display
-      const channel = new BroadcastChannel("basicuniformpos_customer_display");
-      channel.postMessage({ type: "receipt", totals });
-      channel.close();
+      broadcastCustomerDisplay({ type: "receipt", totals });
       setScreen("receipt");
 
       // Audio feedback: chime + spoken total
@@ -686,39 +894,31 @@ export function usePOSTerminal({
       speakTotal(totals.grandTotal);
       setApprovedExceptions([]);
     } catch (e) {
-      // If online checkout fails due to network error, try offline queue
-      if (isOnline) {
+      // R33-H1: only fall back to offline queue when the failure was
+      // NETWORK-RELATED (fetch rejection, abort, connection error).
+      // Prior shape caught EVERY error while `isOnline === true`,
+      // including server-side validation failures (threshold
+      // exceeded, stock-out, inactive variant, tender-sum mismatch)
+      // and silently wrote an "offline receipt" — the customer left
+      // with merchandise and a printed receipt while the transaction
+      // never committed. Sync service then rejected it at the
+      // server's retry path, dead-lettering invisibly.
+      //
+      // Distinguish by error kind: TypeError / AbortError / no
+      // `.message` = probably network. Any Error with a useful
+      // message = probably server-side validation → surface to
+      // cashier, keep on selling screen, don't queue.
+      const isLikelyNetworkError =
+        e instanceof TypeError ||
+        (e instanceof Error && e.name === "AbortError") ||
+        !(e instanceof Error);
+      if (isOnline && isLikelyNetworkError) {
         try {
-          const offlineId = `offline-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
           const tenderLines: TenderLine[] = tenders.map((t) => ({ type: t.type, amount: t.amount, ...(t.metadata ? { metadata: t.metadata } : {}) }));
-          const cashTendered = tenders.filter((t) => t.type === "cash").reduce((s, t) => s + t.amount, 0);
-          const changeDue = Math.max(0, cashTendered - totals.grandTotal);
-
-          await savePendingTransaction({
-            id: offlineId,
-            cart: cart as unknown,
-            tenders: tenderLines as unknown[],
-            approvedExceptions,
-            totals: totals as unknown,
-            timestamp: new Date().toISOString(),
-            employeeName: employee.displayName,
-            attempts: 0,
-          });
-
-          setReceipt({
-            transactionId: offlineId,
-            cart: { ...cart },
-            totals: { ...totals },
-            tenders,
-            changeDue,
-            timestamp: new Date().toISOString(),
-            loyaltyPointsEarned: 0,
-            loyaltyPointsRedeemed: 0,
-          });
+          const offlineReceipt = await queueOfflineAndBuildReceipt(cart, tenderLines, approvedExceptions, totals, tenders, employee.displayName);
+          setReceipt(offlineReceipt);
           // Broadcast receipt to customer display
-          const channelError = new BroadcastChannel("basicuniformpos_customer_display");
-          channelError.postMessage({ type: "receipt", totals });
-          channelError.close();
+          broadcastCustomerDisplay({ type: "receipt", totals });
           setScreen("receipt");
           setApprovedExceptions([]);
         } catch {
@@ -727,20 +927,23 @@ export function usePOSTerminal({
           playError();
         }
       } else {
+        // Server rejected the checkout (validation, inventory,
+        // approval, etc.) — show the real error to the cashier so
+        // they can fix the cart BEFORE the customer walks out.
         setError(e instanceof Error ? e.message : "Checkout failed");
         setScreen("selling");
         playError();
       }
     } finally {
+      // R31-H7: release the in-flight flag + loading state together.
+      checkoutInFlightRef.current = false;
       setProcessing(false);
     }
   }, [cart, totals, approvedExceptions, isOnline, employee.displayName]);
 
   const handleNewSale = useCallback(() => {
     // Broadcast cart_clear to customer display
-    const channel = new BroadcastChannel("basicuniformpos_customer_display");
-    channel.postMessage({ type: "cart_clear" });
-    channel.close();
+    broadcastCustomerDisplay({ type: "cart_clear" });
     setCart(freshCart());
     setReceipt(null);
     setScreen("selling");
@@ -748,6 +951,11 @@ export function usePOSTerminal({
     setApprovedExceptions([]);
     setExchangeCredit(null);
     setAppliedPromo(null);
+    // Belt-and-braces: clear any lingering modal/void state so the next
+    // interaction (Log out, etc.) can't accidentally resurface the
+    // previous cart's void prompt.
+    setVoidState(null);
+    setPriceOverrideLineId(null);
   }, [freshCart]);
 
   const handlePrint = useCallback(() => {
@@ -824,8 +1032,11 @@ export function usePOSTerminal({
     isOnline,
     // Refs
     pendingTendersRef,
+    // Data surfaces
+    bundles,
     // Handlers
     handleAddItem,
+    handleAddBundle,
     handleUpdateQuantity,
     handleRemoveItem,
     handleRemoveItemConfirmed,

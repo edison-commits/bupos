@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import type { ProductBundle, Product, ProductVariant } from "@/lib/domain/types";
+import { formatCurrency } from "@/lib/format";
 
 interface BundleManagerProps {
   bundles: ProductBundle[];
@@ -10,6 +12,10 @@ interface BundleManagerProps {
 }
 
 export function BundleManager({ bundles, variants, products }: BundleManagerProps) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
@@ -18,6 +24,17 @@ export function BundleManager({ bundles, variants, products }: BundleManagerProp
     compareAtPrice: "",
     items: [{ variantId: "", quantity: 1 }],
   });
+
+  const resetForm = () => {
+    setFormData({
+      name: "",
+      description: "",
+      bundlePrice: "",
+      compareAtPrice: "",
+      items: [{ variantId: "", quantity: 1 }],
+    });
+    setError(null);
+  };
 
   const handleAddItem = () => {
     setFormData({
@@ -41,15 +58,92 @@ export function BundleManager({ bundles, variants, products }: BundleManagerProp
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // TODO: wire up server action for bundle creation
-    setFormData({
-      name: "",
-      description: "",
-      bundlePrice: "",
-      compareAtPrice: "",
-      items: [{ variantId: "", quantity: 1 }],
+    setError(null);
+
+    // Client-side sanity checks. Server validates again via Zod.
+    const bundlePrice = Number.parseFloat(formData.bundlePrice);
+    const compareAtPrice = formData.compareAtPrice ? Number.parseFloat(formData.compareAtPrice) : undefined;
+    if (!Number.isFinite(bundlePrice) || bundlePrice <= 0) {
+      setError("Bundle price must be greater than $0");
+      return;
+    }
+    if (compareAtPrice !== undefined && (!Number.isFinite(compareAtPrice) || compareAtPrice < bundlePrice)) {
+      setError("Compare-at price must be ≥ bundle price");
+      return;
+    }
+    const items = formData.items
+      .filter((i) => i.variantId && i.quantity > 0)
+      .map((i) => ({ productVariantId: i.variantId, quantity: Math.floor(Number(i.quantity)) }));
+    if (items.length < 2) {
+      setError("Bundle needs at least 2 items");
+      return;
+    }
+
+    const res = await fetch("/api/bundles", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: formData.name.trim(),
+        description: formData.description.trim() || undefined,
+        bundlePrice,
+        compareAtPrice,
+        items,
+      }),
     });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: "Failed to create bundle" }));
+      setError(body.error ?? "Failed to create bundle");
+      return;
+    }
+
+    resetForm();
     setShowCreateForm(false);
+    // `router.refresh()` re-runs the admin server component so store.bundles
+    // picks up the new row. Wrapping in startTransition prevents the revalidation
+    // fetch from blocking the close animation.
+    startTransition(() => router.refresh());
+  };
+
+  const handleToggleActive = async (bundle: ProductBundle, nextActive: boolean) => {
+    setError(null);
+    setBusyId(bundle.id);
+    try {
+      const res = await fetch("/api/bundles", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: bundle.id, isActive: nextActive }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: "Failed to update bundle" }));
+        setError(body.error ?? "Failed to update bundle");
+        return;
+      }
+      startTransition(() => router.refresh());
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleDelete = async (bundle: ProductBundle) => {
+    if (!window.confirm(`Delete bundle "${bundle.name}"? This cannot be undone.`)) return;
+    setError(null);
+    setBusyId(bundle.id);
+    try {
+      const res = await fetch("/api/bundles", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: bundle.id }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: "Failed to delete bundle" }));
+        setError(body.error ?? "Failed to delete bundle");
+        return;
+      }
+      startTransition(() => router.refresh());
+    } finally {
+      setBusyId(null);
+    }
   };
 
   const calculateItemsTotal = (bundle: ProductBundle) => {
@@ -73,6 +167,12 @@ export function BundleManager({ bundles, variants, products }: BundleManagerProp
 
   return (
     <div className="space-y-4">
+      {error ? (
+        <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {error}
+        </div>
+      ) : null}
+
       {bundles.length === 0 ? (
         <p className="text-sm text-zinc-600">No product bundles yet. Create your first bundle to get started.</p>
       ) : (
@@ -93,23 +193,37 @@ export function BundleManager({ bundles, variants, products }: BundleManagerProp
                 </div>
                 <div className="flex flex-col items-end gap-1">
                   <span className="rounded-lg bg-teal-50 px-3 py-1 text-lg font-bold text-teal-700">
-                    ${bundle.bundlePrice.toFixed(2)}
+                    {formatCurrency(bundle.bundlePrice)}
                   </span>
                   {calculateSavings(bundle) > 0 && (
                     <span className="text-xs text-emerald-700">
-                      Save ${calculateSavings(bundle).toFixed(2)}
+                      Save {formatCurrency(calculateSavings(bundle))}
                     </span>
                   )}
                   <span className="text-xs text-zinc-500">
-                    vs ${calculateItemsTotal(bundle).toFixed(2)}
+                    vs {formatCurrency(calculateItemsTotal(bundle))}
                   </span>
                 </div>
               </div>
-              <div className="mt-3 flex items-center gap-2">
+              <div className="mt-3 flex items-center justify-between gap-2">
                 <label className="inline-flex items-center gap-2 text-xs font-medium text-zinc-700">
-                  <input type="checkbox" defaultChecked={bundle.isActive} className="h-4 w-4 rounded border-zinc-300" />
+                  <input
+                    type="checkbox"
+                    checked={bundle.isActive}
+                    disabled={busyId === bundle.id || isPending}
+                    onChange={(e) => handleToggleActive(bundle, e.target.checked)}
+                    className="h-4 w-4 rounded border-zinc-300"
+                  />
                   {bundle.isActive ? "Active" : "Inactive"}
                 </label>
+                <button
+                  type="button"
+                  onClick={() => handleDelete(bundle)}
+                  disabled={busyId === bundle.id || isPending}
+                  className="rounded-lg bg-red-50 px-3 py-1 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50"
+                >
+                  Delete
+                </button>
               </div>
             </div>
           ))}
@@ -150,6 +264,7 @@ export function BundleManager({ bundles, variants, products }: BundleManagerProp
                   <input
                     type="number"
                     step="0.01"
+                    min="0"
                     placeholder="99.99"
                     value={formData.bundlePrice}
                     onChange={(e) => setFormData({ ...formData, bundlePrice: e.target.value })}
@@ -163,6 +278,7 @@ export function BundleManager({ bundles, variants, products }: BundleManagerProp
                   <input
                     type="number"
                     step="0.01"
+                    min="0"
                     placeholder="129.99"
                     value={formData.compareAtPrice}
                     onChange={(e) => setFormData({ ...formData, compareAtPrice: e.target.value })}
@@ -173,7 +289,7 @@ export function BundleManager({ bundles, variants, products }: BundleManagerProp
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-zinc-700">Bundle items</span>
+                  <span className="text-sm font-medium text-zinc-700">Bundle items (at least 2)</span>
                   <button
                     type="button"
                     onClick={handleAddItem}
@@ -231,14 +347,18 @@ export function BundleManager({ bundles, variants, products }: BundleManagerProp
               </div>
 
               <div className="flex gap-2 pt-3">
-                <button type="submit" disabled className="touch-button flex-1 rounded-2xl bg-zinc-400 px-4 py-2 text-sm font-semibold text-white cursor-not-allowed relative">
-                  Create bundle
-                  <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 uppercase">Coming Soon</span>
+                <button
+                  type="submit"
+                  disabled={isPending}
+                  className="touch-button flex-1 rounded-2xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isPending ? "Creating…" : "Create bundle"}
                 </button>
                 <button
                   type="button"
-                  onClick={() => setShowCreateForm(false)}
-                  className="touch-button flex-1 rounded-2xl bg-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-300"
+                  onClick={() => { setShowCreateForm(false); resetForm(); }}
+                  disabled={isPending}
+                  className="touch-button flex-1 rounded-2xl bg-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-300 disabled:opacity-50"
                 >
                   Cancel
                 </button>
@@ -248,7 +368,7 @@ export function BundleManager({ bundles, variants, products }: BundleManagerProp
         ) : (
           <button
             onClick={() => setShowCreateForm(true)}
-            className="touch-button w-full rounded-2xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white"
+            className="touch-button w-full rounded-2xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-800"
           >
             + Create bundle
           </button>

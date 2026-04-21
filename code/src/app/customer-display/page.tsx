@@ -4,14 +4,7 @@ import { useState, useEffect } from "react";
 import type { Cart, CartTotals } from "@/lib/cart/types";
 import { computeTotals } from "@/lib/cart/cart";
 import { CustomerDisplay } from "@/components/register/customer-display";
-
-interface DisplayMessage {
-  type: "cart_update" | "payment_started" | "receipt" | "cart_clear";
-  cart?: Cart;
-  totals?: CartTotals;
-  appliedPromo?: string | null;
-  exchangeCredit?: number | null;
-}
+import { displayMessageSchema } from "@/lib/validation/display-message";
 
 export default function CustomerDisplayPage() {
   const [cart, setCart] = useState<Cart | null>(null);
@@ -22,14 +15,24 @@ export default function CustomerDisplayPage() {
   useEffect(() => {
     const channel = new BroadcastChannel("basicuniformpos_customer_display");
 
-    const handleMessage = (event: MessageEvent<DisplayMessage>) => {
-      const message = event.data;
+    const handleMessage = (event: MessageEvent<unknown>) => {
+      // R27-H7: validate before trusting. `event.data` is attacker-
+      // controllable if the app has any XSS surface elsewhere.
+      const parsed = displayMessageSchema.safeParse(event.data);
+      if (!parsed.success) {
+        console.error(
+          "[customer-display] dropped malformed broadcast:",
+          parsed.error.issues.slice(0, 3),
+        );
+        return;
+      }
+      const message = parsed.data;
 
       switch (message.type) {
         case "cart_update":
           if (message.cart) {
-            setCart(message.cart);
-            const newTotals = computeTotals(message.cart);
+            setCart(message.cart as Cart);
+            const newTotals = computeTotals(message.cart as Cart);
             setTotals(newTotals);
             setAppliedPromo(message.appliedPromo ?? null);
             setExchangeCredit(message.exchangeCredit ?? null);
@@ -41,9 +44,15 @@ export default function CustomerDisplayPage() {
           break;
 
         case "receipt":
-          if (message.totals) {
-            setTotals(message.totals);
-          }
+          // R28-C7: intentional no-op. Prior version set `totals`
+          // directly from `message.totals` WITHOUT recomputation —
+          // any same-origin XSS could post a `receipt` message with
+          // `grandTotal: 0.01` and spoof the customer-facing display
+          // while the cashier's real transaction rang $100. The POS
+          // now re-sends the full `cart_update` when transitioning
+          // into the receipt view, and `cart_update`'s totals are
+          // recomputed server-side via `computeTotals(cart)` which
+          // can't be spoofed through scalar payload values.
           break;
 
         case "cart_clear":
@@ -51,9 +60,6 @@ export default function CustomerDisplayPage() {
           setTotals(null);
           setAppliedPromo(null);
           setExchangeCredit(null);
-          break;
-        default:
-          // Unknown message type — ignore silently to avoid noise from future protocol extensions
           break;
       }
     };

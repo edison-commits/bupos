@@ -7,10 +7,17 @@
  */
 const { chromium } = require('playwright');
 
+// Read all secrets from env. Hardcoding live admin credentials in the repo
+// is a password-rotation trigger — anyone with clone access can take over.
 const BASE = process.env.BASE_URL || 'https://basicuniformpos.com';
-const ADMIN_EMAIL = 'admin@bupos.com';
-const ADMIN_PASSWORD = 'Bupos2026!';
-const EMPLOYEE_PIN = '1111';
+const ADMIN_EMAIL = process.env.SMOKE_ADMIN_EMAIL;
+const ADMIN_PASSWORD = process.env.SMOKE_ADMIN_PASSWORD;
+const EMPLOYEE_PIN = process.env.SMOKE_EMPLOYEE_PIN;
+
+if (!ADMIN_EMAIL || !ADMIN_PASSWORD || !EMPLOYEE_PIN) {
+  console.error('Missing required env vars: SMOKE_ADMIN_EMAIL, SMOKE_ADMIN_PASSWORD, SMOKE_EMPLOYEE_PIN');
+  process.exit(2);
+}
 
 let failures = 0;
 

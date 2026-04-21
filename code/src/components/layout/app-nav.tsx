@@ -5,6 +5,7 @@ import { useState } from "react";
 import { usePathname } from "next/navigation";
 import { formatDateTime } from "@/lib/utils/date";
 import { OfflineStatusBar } from "../register/offline-status-bar";
+import { formatCurrency } from "@/lib/format";
 
 const topLinks = [
   { href: "/", label: "Overview" },
@@ -68,14 +69,14 @@ export function AppNav({ session }: AppNavProps) {
             <span className="text-zinc-400">·</span>
             <span className="text-zinc-500">Shift opened {formatDateTime(session.shiftOpenedAt)}</span>
             <span className="text-zinc-400">·</span>
-            <span className="text-zinc-500">Float ${session.openingFloat.toFixed(2)}</span>
+            <span className="text-zinc-500">Float {formatCurrency(session.openingFloat)}</span>
             {(session.payInTotal > 0 || session.payOutTotal > 0) && (
               <>
                 <span className="text-zinc-400">·</span>
                 <span className="text-zinc-500">
-                  {session.payInTotal > 0 && <span className="text-teal-600">+${session.payInTotal.toFixed(2)} in</span>}
+                  {session.payInTotal > 0 && <span className="text-teal-600">+{formatCurrency(session.payInTotal)} in</span>}
                   {session.payInTotal > 0 && session.payOutTotal > 0 && " / "}
-                  {session.payOutTotal > 0 && <span className="text-amber-600">−${session.payOutTotal.toFixed(2)} out</span>}
+                  {session.payOutTotal > 0 && <span className="text-amber-600">−{formatCurrency(session.payOutTotal)} out</span>}
                 </span>
               </>
             )}

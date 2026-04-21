@@ -8,6 +8,49 @@ import type { TimeClockEventType, TimesheetSummary } from "@/lib/domain/types";
 
 const isPg = () => !!process.env.USE_POSTGRES;
 
+// R13-M-6 + R14-H-1: clock events respect a state machine:
+//   clocked_out  --clock_in-->   clocked_in
+//   clocked_in   --break_start-> on_break | --clock_out-> clocked_out
+//   on_break     --break_end->   clocked_in
+//
+// The "current state" comes from the MOST RECENT clock event within the
+// last 24 hours (rolling window), not a UTC-day partition. The UTC-day
+// bug (R14-H-1): a California employee who clocks in at 3pm PT (23:00 UTC)
+// and clocks out at 9pm PT (05:00 UTC next day) would otherwise see "no
+// entries today" when clocking out, state=clocked_out, and the clock_out
+// gets rejected.
+//
+// We also treat a clock_in older than STALE_CLOCK_IN_HOURS as equivalent
+// to clocked_out (forgotten clock-out from yesterday). Without this, the
+// employee shows up for their next shift and can't clock in — state is
+// still clocked_in with nothing to break_start or clock_out from (their
+// yesterday's shift has no real end time). A synthetic clock_out would
+// be ideal but that's a schema change; for now, just release the lock so
+// they can start a new shift, and rely on admin review of orphan shifts.
+const LOOKBACK_HOURS = 24;
+const STALE_CLOCK_IN_HOURS = 16;
+
+const ALLOWED_TRANSITIONS: Record<string, TimeClockEventType[]> = {
+  // from → allowed next eventType
+  clocked_out: ["clock_in"],
+  clocked_in: ["break_start", "clock_out"],
+  on_break: ["break_end"],
+};
+
+function stateAfter(last: { eventType: TimeClockEventType; createdAt: string } | null): keyof typeof ALLOWED_TRANSITIONS {
+  if (!last) return "clocked_out";
+  // Stale clock_in escape hatch: treat as clocked_out so the employee
+  // can open a new shift.
+  if (last.eventType === "clock_in") {
+    const ageMs = Date.now() - new Date(last.createdAt).getTime();
+    if (ageMs > STALE_CLOCK_IN_HOURS * 3600_000) return "clocked_out";
+    return "clocked_in";
+  }
+  if (last.eventType === "break_end") return "clocked_in";
+  if (last.eventType === "break_start") return "on_break";
+  return "clocked_out"; // clock_out
+}
+
 export async function clockAction(
   _employeeId: string,
   _locationId: string,
@@ -19,6 +62,36 @@ export async function clockAction(
   const employeeId = authCtx.employee.id;
   const locationId = authCtx.location.id;
   const organizationId = authCtx.employee.organizationId;
+
+  // Load the last 24h of entries (rolling window, not UTC-day).
+  const sinceIso = new Date(Date.now() - LOOKBACK_HOURS * 3600_000).toISOString();
+  let lastEvent: { eventType: TimeClockEventType; createdAt: string } | null = null;
+  if (isPg()) {
+    const { pgReadEmployeeTimeClockEntriesSince } = await import("@/lib/persistence/postgres-phase3");
+    const entries = await pgReadEmployeeTimeClockEntriesSince(organizationId, employeeId, sinceIso);
+    if (entries.length > 0) {
+      const last = entries[entries.length - 1];
+      lastEvent = { eventType: last.eventType, createdAt: last.createdAt };
+    }
+  } else {
+    const { readStore } = await import("@/lib/persistence/store");
+    const store = await readStore();
+    const recent = store.timeClockEntries
+      .filter((e) => e.employeeId === employeeId && e.createdAt >= sinceIso)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    if (recent.length > 0) {
+      const last = recent[recent.length - 1];
+      lastEvent = { eventType: last.eventType, createdAt: last.createdAt };
+    }
+  }
+
+  const currentState = stateAfter(lastEvent);
+  const allowed = ALLOWED_TRANSITIONS[currentState] ?? [];
+  if (!allowed.includes(eventType)) {
+    throw new Error(
+      `Cannot ${eventType.replace("_", " ")} from ${currentState.replace("_", " ")}`,
+    );
+  }
 
   if (isPg()) {
     const { pgInsertTimeClockEntry } = await import("@/lib/persistence/postgres-phase3");
@@ -47,9 +120,14 @@ export async function getTimesheetSummaries(
   locationId: string,
   date?: string,
 ): Promise<TimesheetSummary[]> {
+  // Require register session and verify caller can access this location's timesheets
+  const ctx = await requireRegisterPermission("register.open");
+  if (ctx.location.id !== locationId) {
+    throw new Error("Cannot access timesheets for another location");
+  }
   if (isPg()) {
     const { pgGetTimesheetSummaries } = await import("@/lib/persistence/postgres-phase3");
-    return pgGetTimesheetSummaries(locationId, date);
+    return pgGetTimesheetSummaries(ctx.employee.organizationId, locationId, date);
   }
 
   const { readStore } = await import("@/lib/persistence/store");

@@ -9,6 +9,23 @@ import { randomUUID } from "@/lib/uuid";
 
 const isPg = () => !!process.env.USE_POSTGRES;
 
+// Owners and managers can act on any transfer across the org (for oversight
+// and cross-location coordination). inventory_clerk can only act on transfers
+// where at least one endpoint is in their location assignment — stops a clerk
+// at Location A from moving stock between Locations B and C.
+function assertTransferLocationAuthority(
+  roleKey: string | undefined | null,
+  locationIds: string[] | undefined,
+  sourceLocationId: string,
+  destinationLocationId: string,
+): void {
+  if (roleKey === "owner" || roleKey === "manager") return;
+  const assigned = locationIds ?? [];
+  if (!assigned.includes(sourceLocationId) && !assigned.includes(destinationLocationId)) {
+    throw new Error("You must be assigned to either the source or destination location");
+  }
+}
+
 export async function createTransferAction(formData: FormData) {
   const sourceLocationId = formData.get("sourceLocationId") as string;
   const destinationLocationId = formData.get("destinationLocationId") as string;
@@ -22,17 +39,65 @@ export async function createTransferAction(formData: FormData) {
     throw new Error("Source and destination must be different locations");
   }
 
-  let parsedLines: { productVariantId: string; quantity: number }[] = [];
-  try { parsedLines = JSON.parse(lineData || "[]"); } catch { throw new Error("Invalid line data"); }
-  if (parsedLines.length === 0) throw new Error("At least one item is required");
+  // R17-M-2: validate line shape with Zod. The previous `JSON.parse` with
+  // no shape check accepted `{productVariantId: "", quantity: -5}` — a
+  // manager could create a transfer with negative quantity, and
+  // `shipTransferAction` would decrement source on_hand by a negative
+  // (= adding phantom stock) and decrement destination by negative
+  // (= draining). The `/api/transfers POST create` route validates via
+  // `transferSchema`; the server-action equivalent didn't.
+  let parsedLinesRaw: unknown;
+  try { parsedLinesRaw = JSON.parse(lineData || "[]"); } catch { throw new Error("Invalid line data"); }
+  const { z } = await import("zod");
+  const linesSchema = z.array(z.object({
+    productVariantId: z.string().uuid(),
+    quantity: z.number().int().positive().max(1_000_000),
+  })).min(1).max(500); // R19-LOW-2: bound for self-DoS protection
+  const linesResult = linesSchema.safeParse(parsedLinesRaw);
+  if (!linesResult.success) {
+    throw new Error("Invalid line data: each item needs a productVariantId (uuid) and a positive integer quantity");
+  }
+  const parsedLines = linesResult.data;
 
   const ctx = await requireAdminPermission("inventory.adjust");
   if (!ctx) throw new Error("Not authenticated");
+  assertTransferLocationAuthority(
+    ctx.employee.roleKey,
+    ctx.employee.locationIds,
+    sourceLocationId,
+    destinationLocationId,
+  );
 
   if (isPg()) {
     const orgId = ctx.employee.organizationId;
     const client = await orgTx(orgId);
     try {
+      // R16-M-1 + R16-L-4: verify source + destination locations AND every
+      // product_variant_id belong to caller's org. FKs are tenant-agnostic;
+      // without these checks a manager in org X could write a transfer row
+      // referencing foreign locations / variants. Same class as R14-M-3
+      // (API route equivalent) + R15-M-2/H-4 FK-class bugs.
+      const { rows: locCheck } = await client.query(
+        `SELECT id FROM locations WHERE id = ANY($1::uuid[]) AND organization_id = $2`,
+        [[sourceLocationId, destinationLocationId], orgId],
+      );
+      if (locCheck.length !== 2) {
+        await client.query("ROLLBACK");
+        throw new Error("Source or destination location does not belong to this organization");
+      }
+
+      const variantIds = Array.from(new Set(parsedLines.map((l) => l.productVariantId)));
+      if (variantIds.length > 0) {
+        const { rows: vCheck } = await client.query(
+          `SELECT id FROM product_variants WHERE id = ANY($1::uuid[]) AND organization_id = $2`,
+          [variantIds, orgId],
+        );
+        if (vCheck.length !== variantIds.length) {
+          await client.query("ROLLBACK");
+          throw new Error("One or more product variants do not belong to this organization");
+        }
+      }
+
       const transferId = randomUUID();
       await client.query(
         `INSERT INTO transfers (id, organization_id, source_location_id, destination_location_id, status, requested_by, notes, created_at, updated_at)
@@ -83,22 +148,89 @@ export async function shipTransferAction(transferId: string) {
     const orgId = ctx.employee.organizationId;
     const client = await orgTx(orgId);
     try {
-      const t = await client.query(`SELECT * FROM transfers WHERE id = $1 AND status = 'requested' FOR UPDATE`, [transferId]);
+      // R27-C12: explicit organization_id filter on the SELECT. The
+      // owner/manager short-circuit in assertTransferLocationAuthority
+      // meant an owner at ORG A could pass ORG B's transferId and drain
+      // B's inventory on ship. Without the org filter, the status gate
+      // + owner bypass was the only check.
+      const t = await client.query(`SELECT * FROM transfers WHERE id = $1 AND organization_id = $2 AND status = 'requested' FOR UPDATE`, [transferId, orgId]);
       if (t.rows.length === 0) { await client.query("ROLLBACK"); throw new Error("Transfer not found or not in requested status"); }
       const transfer = t.rows[0];
 
-      await client.query(
-        `UPDATE transfers SET status = 'in_transit', shipped_by = $1, shipped_at = now(), updated_at = now() WHERE id = $2`,
-        [ctx.employee.id, transferId],
-      );
-      await client.query(`UPDATE transfer_lines SET quantity_shipped = quantity_requested WHERE transfer_id = $1`, [transferId]);
+      // Same location-authority gate as create. Shipping moves stock OUT
+      // of the source — if the clerk isn't assigned to source or dest,
+      // they shouldn't be able to drain that store's inventory.
+      try {
+        assertTransferLocationAuthority(
+          ctx.employee.roleKey,
+          ctx.employee.locationIds,
+          transfer.source_location_id,
+          transfer.destination_location_id,
+        );
+      } catch (err) {
+        await client.query("ROLLBACK");
+        throw err;
+      }
 
-      const lines = await client.query(`SELECT product_variant_id, quantity_requested FROM transfer_lines WHERE transfer_id = $1`, [transferId]);
-      for (const line of lines.rows) {
+      // Mirror the API route's FOR UPDATE + availability check. The old
+      // code used `GREATEST(0, on_hand - $1)` with no lock and no stock
+      // check, plus unconditionally wrote `quantity_shipped =
+      // quantity_requested`. Shipping 10 units when only 3 were in stock
+      // clamped source to 0 but kept shipped=10 — the receive step then
+      // credited destination +10, creating 7 phantom units out of thin
+      // air. Every shop's inventory accounting assumes this doesn't
+      // happen.
+      // R27-C12: JOIN through transfers for explicit org gate.
+      const lines = await client.query(
+        `SELECT tl.id, tl.product_variant_id, tl.quantity_requested
+           FROM transfer_lines tl
+           JOIN transfers t ON t.id = tl.transfer_id AND t.organization_id = $2
+          WHERE tl.transfer_id = $1`,
+        [transferId, orgId],
+      );
+      const variantIds = lines.rows.map((line: { product_variant_id: string }) => line.product_variant_id);
+      const { rows: lockedInventory } = await client.query(
+        `SELECT product_variant_id, on_hand
+         FROM inventory_levels
+         WHERE organization_id = $3
+           AND location_id = $1
+           AND product_variant_id = ANY($2::uuid[])
+         ORDER BY product_variant_id
+         FOR UPDATE`,
+        [transfer.source_location_id, variantIds, orgId],
+      );
+      const onHandByVariant = new Map<string, number>(
+        lockedInventory.map((row: { product_variant_id: string; on_hand: number }) => [row.product_variant_id, Number(row.on_hand)]),
+      );
+      for (const line of lines.rows as Array<{ product_variant_id: string; quantity_requested: number }>) {
+        const available = onHandByVariant.get(line.product_variant_id) ?? 0;
+        const requested = Number(line.quantity_requested);
+        if (available < requested) {
+          await client.query("ROLLBACK");
+          throw new Error(`Insufficient stock at source for variant ${line.product_variant_id} (have ${available}, need ${requested})`);
+        }
+      }
+
+      // R27-C12: explicit org filter on every write.
+      await client.query(
+        `UPDATE transfers SET status = 'in_transit', shipped_by = $1, shipped_at = now(), updated_at = now() WHERE id = $2 AND organization_id = $3`,
+        [ctx.employee.id, transferId, orgId],
+      );
+      await client.query(
+        `UPDATE transfer_lines tl
+            SET quantity_shipped = tl.quantity_requested
+           FROM transfers t
+          WHERE tl.transfer_id = t.id
+            AND t.id = $1
+            AND t.organization_id = $2`,
+        [transferId, orgId],
+      );
+
+      for (const line of lines.rows as Array<{ product_variant_id: string; quantity_requested: number }>) {
         await client.query(
-          `UPDATE inventory_levels SET on_hand = GREATEST(0, on_hand - $1), updated_at = now()
-           WHERE product_variant_id = $2 AND location_id = $3`,
-          [line.quantity_requested, line.product_variant_id, transfer.source_location_id],
+          `UPDATE inventory_levels SET on_hand = on_hand - $1, updated_at = now()
+           WHERE organization_id = $4 AND product_variant_id = $2 AND location_id = $3`,
+          [line.quantity_requested, line.product_variant_id, transfer.source_location_id, orgId],
         );
       }
       await client.query("COMMIT");
@@ -142,22 +274,45 @@ export async function receiveTransferAction(transferId: string) {
     const orgId = ctx.employee.organizationId;
     const client = await orgTx(orgId);
     try {
-      const t = await client.query(`SELECT * FROM transfers WHERE id = $1 AND status = 'in_transit' FOR UPDATE`, [transferId]);
+      // R27-C12: explicit organization_id filter. Mirrors the ship
+      // handler — owner bypass on the location check made the org
+      // filter mandatory to prevent cross-tenant receive.
+      const t = await client.query(`SELECT * FROM transfers WHERE id = $1 AND organization_id = $2 AND status = 'in_transit' FOR UPDATE`, [transferId, orgId]);
       if (t.rows.length === 0) { await client.query("ROLLBACK"); throw new Error("Transfer not found or not in transit"); }
       const transfer = t.rows[0];
 
+      try {
+        assertTransferLocationAuthority(
+          ctx.employee.roleKey,
+          ctx.employee.locationIds,
+          transfer.source_location_id,
+          transfer.destination_location_id,
+        );
+      } catch (err) {
+        await client.query("ROLLBACK");
+        throw err;
+      }
+
       await client.query(
-        `UPDATE transfers SET status = 'received', received_by = $1, received_at = now(), updated_at = now() WHERE id = $2`,
-        [ctx.employee.id, transferId],
+        `UPDATE transfers SET status = 'received', received_by = $1, received_at = now(), updated_at = now() WHERE id = $2 AND organization_id = $3`,
+        [ctx.employee.id, transferId, orgId],
       );
       await client.query(
-        `UPDATE transfer_lines SET quantity_received = COALESCE(quantity_shipped, quantity_requested) WHERE transfer_id = $1`,
-        [transferId],
+        `UPDATE transfer_lines tl
+            SET quantity_received = COALESCE(tl.quantity_shipped, tl.quantity_requested)
+           FROM transfers t
+          WHERE tl.transfer_id = t.id
+            AND t.id = $1
+            AND t.organization_id = $2`,
+        [transferId, orgId],
       );
 
       const lines = await client.query(
-        `SELECT product_variant_id, COALESCE(quantity_shipped, quantity_requested) AS qty FROM transfer_lines WHERE transfer_id = $1`,
-        [transferId],
+        `SELECT tl.product_variant_id, COALESCE(tl.quantity_shipped, tl.quantity_requested) AS qty
+           FROM transfer_lines tl
+           JOIN transfers t ON t.id = tl.transfer_id AND t.organization_id = $2
+          WHERE tl.transfer_id = $1`,
+        [transferId, orgId],
       );
       for (const line of lines.rows) {
         await client.query(
@@ -213,11 +368,29 @@ export async function cancelTransferAction(transferId: string) {
   if (!ctx) throw new Error("Not authenticated");
 
   if (isPg()) {
+    // Read the source/dest first so the location gate can run. Cancelling
+    // doesn't move stock, but a clerk who isn't assigned to either endpoint
+    // shouldn't be undoing other locations' transfers either.
+    // R27-C12: explicit organization_id filter on SELECT + UPDATE.
+    // Owner bypass of the location check made org scope mandatory.
+    const orgId = ctx.employee.organizationId;
+    const { rows: tRows } = await orgQuery(
+      orgId,
+      `SELECT source_location_id, destination_location_id, status FROM transfers WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [transferId, orgId],
+    );
+    if (tRows.length === 0) throw new Error("Transfer not found");
+    assertTransferLocationAuthority(
+      ctx.employee.roleKey,
+      ctx.employee.locationIds,
+      tRows[0].source_location_id,
+      tRows[0].destination_location_id,
+    );
     const result = await orgQuery(
-      ctx.employee.organizationId,
+      orgId,
       `UPDATE transfers SET status = 'cancelled', cancelled_by = $1, cancelled_at = now(), updated_at = now()
-       WHERE id = $2 AND status = 'requested' RETURNING id`,
-      [ctx.employee.id, transferId],
+       WHERE id = $2 AND organization_id = $3 AND status = 'requested' RETURNING id`,
+      [ctx.employee.id, transferId, orgId],
     );
     if (result.rows.length === 0) throw new Error("Can only cancel requested transfers");
   } else {

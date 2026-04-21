@@ -1,6 +1,7 @@
 "use client";
 import { S } from "./styles";
-import Image from "next/image";
+ 
+
 import { memo } from "react";
 
 import { useState, useMemo, useCallback, useRef, useEffect } from "react";
@@ -9,6 +10,7 @@ import { VirtualKeyboard } from "@/components/ui/virtual-keyboard";
 
 // Audio feedback imported from shared lib
 import { playScanSuccess, playScanFail } from '@/lib/audio';
+import { formatCurrency } from "@/lib/format";
 
 export interface ProductGridItem {
   product: Product;
@@ -57,21 +59,37 @@ function getCategoryChipActive(index: number): string {
 
 export const ProductGrid = memo(function ProductGrid({ items, categories, onAddItem }: ProductGridProps) {
   const [activeCategoryId, setActiveCategoryId] = useState<string | "all" | "favorites">("all");
+  // R36-FE4: lazy init reads the DOM on first client render so a
+  // high-contrast user gets 'lg' tiles immediately on mount — no
+  // layout shift when the post-mount effect would otherwise flip
+  // 'md' → 'lg'. SSR returns 'md' (no document available); client
+  // inspects the `data-theme` attribute set by the R35-P7 head
+  // script. React logs a hydration warning for this node (the text
+  // size class changes) but auto-corrects without crashing; the
+  // user-visible outcome is one stable paint rather than two.
   const [tileSize, setTileSize] = useState<'sm' | 'md' | 'lg'>(() => {
-    if (typeof window !== 'undefined' && document.documentElement.getAttribute('data-theme') === 'high-contrast') return 'lg';
-    return 'md';
+    if (typeof document === 'undefined') return 'md';
+    return document.documentElement.getAttribute('data-theme') === 'high-contrast' ? 'lg' : 'md';
   });
   const [variantPickerProduct, setVariantPickerProduct] = useState<ProductGridItem | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [scanFeedback, setScanFeedback] = useState<string | null>(null);
   const [showKeyboard, setShowKeyboard] = useState(false);
 
-  // Auto-switch to large tiles when high-contrast mode is enabled
+  // Auto-switch to large tiles when high-contrast mode is enabled.
+  // R36-FE4: initial state is already set by the lazy init above, so
+  // this effect only reacts to live toggle of data-theme after mount.
   useEffect(() => {
     const observer = new MutationObserver(() => {
-      if (document.documentElement.getAttribute('data-theme') === 'high-contrast') {
-        setTileSize('lg');
-      }
+      const isHighContrast = document.documentElement.getAttribute('data-theme') === 'high-contrast';
+      // Always reconcile — flip up to 'lg' on high-contrast, flip back
+      // to 'md' if the user leaves high-contrast. Prior shape only
+      // upgraded; leaving HC kept the 'lg' tiles stuck.
+      setTileSize((prev) => {
+        if (isHighContrast) return 'lg';
+        // Don't stomp 'sm' when user has manually zoomed out.
+        return prev === 'lg' ? 'md' : prev;
+      });
     });
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
     return () => observer.disconnect();
@@ -348,7 +366,7 @@ export const ProductGrid = memo(function ProductGrid({ items, categories, onAddI
               {/* Hero image area — 60%+ of card */}
               <div className="relative w-full" style={S.aspect4x3}>
                 {item.product.imageUrl ? (
-                  <Image
+                  <img
                     src={item.product.imageUrl}
                     alt={item.product.name}
                     className="h-full w-full object-cover"
@@ -391,7 +409,7 @@ export const ProductGrid = memo(function ProductGrid({ items, categories, onAddI
                 </div>
                 <div className="mt-1.5 flex items-center justify-between">
                   <span className="text-xl font-bold" style={S.surfaceAccent}>
-                    ${defaultVariant?.price.toFixed(2) ?? "0.00"}
+                    {formatCurrency(defaultVariant?.price ?? 0)}
                   </span>
                 </div>
               </div>
@@ -418,7 +436,7 @@ export const ProductGrid = memo(function ProductGrid({ items, categories, onAddI
             <div className="flex items-start justify-between gap-4 mb-6">
               <div className="flex items-center gap-4 flex-1">
                 {variantPickerProduct.product.imageUrl ? (
-                  <Image
+                  <img
                     src={variantPickerProduct.product.imageUrl}
                     alt={variantPickerProduct.product.name}
                     className="h-16 w-16 rounded-xl object-cover shrink-0"
@@ -474,7 +492,7 @@ export const ProductGrid = memo(function ProductGrid({ items, categories, onAddI
                       <div className="text-right">
                         <span className="text-base text-zinc-700">{stock > 0 ? `${stock} in stock` : "Out"}</span>
                       </div>
-                      <span className="text-2xl font-bold text-teal-600">${v.price.toFixed(2)}</span>
+                      <span className="text-2xl font-bold text-teal-600">{formatCurrency(v.price)}</span>
                     </div>
                   </button>
                 );

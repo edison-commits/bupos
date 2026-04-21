@@ -26,15 +26,18 @@ export function PinLoginForm({ locationId }: { locationId: string }) {
       <input type="hidden" name="locationId" value={locationId} />
       {deviceId ? <input type="hidden" name="deviceId" value={deviceId} /> : null}
       <label className="grid gap-1 text-sm font-medium text-zinc-700">
-        <span>4-digit PIN</span>
+        <span>4-6 digit PIN</span>
         <input
           name="pin"
           inputMode="numeric"
-          maxLength={4}
+          maxLength={6}
           value={pin}
-          onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 4))}
+          onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 6))}
           className="rounded-2xl border border-zinc-300 bg-white px-4 py-4 text-center text-2xl tracking-[0.5em]"
           placeholder="••••"
+          autoComplete="off"
+          autoCorrect="off"
+          spellCheck={false}
         />
       </label>
       <div className="grid grid-cols-3 gap-3">
@@ -52,7 +55,13 @@ export function PinLoginForm({ locationId }: { locationId: string }) {
                 return;
               }
 
-              setPin((current) => `${current}${key}`.slice(0, 4));
+              // R32-X1: accept 4-6 digit PINs. Prior `slice(0, 4)` hard-
+              // capped the input, so any owner/manager with a 6-digit PIN
+              // (required by R27-H1 since migration) could NOT log in
+              // through the register — total register-auth DoS for the
+              // primary back-office role set. Server still enforces
+              // `pinString = /^\d{4,6}$/`.
+              setPin((current) => `${current}${key}`.slice(0, 6));
             }}
             className="touch-button rounded-2xl border border-zinc-200 bg-white text-lg font-semibold shadow-sm transition hover:border-teal-400 hover:bg-teal-50"
           >

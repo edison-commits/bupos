@@ -6,6 +6,8 @@ import { useState, useEffect } from 'react';
 import { Plus, Search, Edit2, Eye, AlertCircle, Loader2, DollarSign, Users, TrendingUp, Award } from 'lucide-react';
 import { authFetch } from '@/lib/api/client';
 import { formatCurrency } from '@/lib/format';
+import { useDebouncedValue } from '@/lib/hooks/use-debounced-value';
+import { safeErr } from "@/lib/logging/safe-err";
 interface Customer {
   id: string;
   first_name: string;
@@ -42,6 +44,7 @@ export default function CustomerManagement() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search, 300);
   const [pagination, setPagination] = useState<PaginationState>({
     pageSize: 50,
     nextCursor: null,
@@ -72,7 +75,7 @@ export default function CustomerManagement() {
     try {
       const params = new URLSearchParams({
         pageSize: pagination.pageSize.toString(),
-        ...(search && { search }),
+        ...(debouncedSearch && { search: debouncedSearch }),
       });
 
       const response = await authFetch(`/api/customers?${params}`);
@@ -130,15 +133,20 @@ export default function CustomerManagement() {
         totalPointsOutstanding: totalPointsOutstanding ?? 0,
       });
     } catch (err) {
-      console.error('Failed to load stats:', err);
+      console.error('Failed to load stats:', safeErr(err));
     }
   };
 
   useEffect(() => {
     loadCustomers();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pagination.pageSize, debouncedSearch]);
+
+  // Stats don't depend on search — load once on mount, not every keystroke.
+  useEffect(() => {
     loadStats();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pagination.pageSize, search]);
+  }, []);
 
   const resetForm = () => {
     setFormData({

@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { issueStoreCreditAction } from "@/app/admin/store-credit-actions";
 import type { Customer, StoreCreditEntry, Employee } from "@/lib/domain/types";
+import { formatCurrency } from "@/lib/format";
 
 export function StoreCreditManager({
   customers,
@@ -30,7 +31,7 @@ export function StoreCreditManager({
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3">
           <p className="text-xs text-zinc-500">Outstanding balance</p>
-          <p className="mt-1 text-2xl font-semibold">${totalOutstanding.toFixed(2)}</p>
+          <p className="mt-1 text-2xl font-semibold">{formatCurrency(totalOutstanding)}</p>
         </div>
         <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3">
           <p className="text-xs text-zinc-500">Customers with credit</p>
@@ -38,11 +39,11 @@ export function StoreCreditManager({
         </div>
         <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3">
           <p className="text-xs text-zinc-500">Total issued</p>
-          <p className="mt-1 text-2xl font-semibold">${totalIssued.toFixed(2)}</p>
+          <p className="mt-1 text-2xl font-semibold">{formatCurrency(totalIssued)}</p>
         </div>
         <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3">
           <p className="text-xs text-zinc-500">Total redeemed</p>
-          <p className="mt-1 text-2xl font-semibold">${totalRedeemed.toFixed(2)}</p>
+          <p className="mt-1 text-2xl font-semibold">{formatCurrency(totalRedeemed)}</p>
         </div>
       </div>
 
@@ -103,7 +104,7 @@ export function StoreCreditManager({
                   className="flex w-full items-center justify-between px-4 py-3 text-left"
                 >
                   <span className="text-sm font-medium">{c.firstName} {c.lastName}</span>
-                  <span className="text-sm font-semibold">${c.storeCreditBalance.toFixed(2)}</span>
+                  <span className="text-sm font-semibold">{formatCurrency(c.storeCreditBalance)}</span>
                 </button>
                 {isExpanded && custLedger.length > 0 && (
                   <div className="border-t border-zinc-100 px-4 py-3 space-y-1">
@@ -117,7 +118,7 @@ export function StoreCreditManager({
                             {emp && <span className="text-zinc-400"> · {emp.displayName}</span>}
                           </div>
                           <span className={`font-medium ${entry.amount >= 0 ? "text-emerald-700" : "text-red-700"}`}>
-                            {entry.amount >= 0 ? "+" : ""}${entry.amount.toFixed(2)}
+                            {entry.amount > 0 ? "+" : ""}{formatCurrency(entry.amount)}
                           </span>
                         </div>
                       );
@@ -150,7 +151,7 @@ export function StoreCreditManager({
                 return (
                   <div key={empId} className="flex items-center justify-between rounded-xl bg-zinc-50 px-4 py-2 text-sm">
                     <span className="font-medium">{emp?.displayName ?? empId}</span>
-                    <span>{data.count} issuances · ${data.total.toFixed(2)}</span>
+                    <span>{data.count} issuances · {formatCurrency(data.total)}</span>
                   </div>
                 );
               });

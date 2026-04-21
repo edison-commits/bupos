@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useMemo, useCallback } from 'react';
+import { formatCurrency } from "@/lib/format";
 import { TrendingUp, TrendingDown, BarChart3, Users } from 'lucide-react';import {
   Employee,
   TransactionEventPlaceholder,
@@ -354,7 +355,7 @@ export function EmployeePerformance({
           <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
             <KPICard
               label="Total Sales"
-              value={`$${currentMetric.totalSales.toFixed(2)}`}
+              value={formatCurrency(currentMetric.totalSales)}
               trend={undefined}
               color="bg-blue-50 text-blue-700"
             />
@@ -366,13 +367,13 @@ export function EmployeePerformance({
             />
             <KPICard
               label="Avg Transaction"
-              value={`$${currentMetric.averageTransaction.toFixed(2)}`}
+              value={formatCurrency(currentMetric.averageTransaction)}
               trend={undefined}
               color="bg-purple-50 text-purple-700"
             />
             <KPICard
               label="Sales Per Hour"
-              value={`$${currentMetric.salesPerHour.toFixed(2)}`}
+              value={formatCurrency(currentMetric.salesPerHour)}
               trend={undefined}
               color="bg-green-50 text-green-700"
             />
@@ -390,7 +391,7 @@ export function EmployeePerformance({
             />
             <KPICard
               label="Cash Variance"
-              value={`$${currentMetric.cashVariance.toFixed(2)}`}
+              value={formatCurrency(currentMetric.cashVariance)}
               trend={undefined}
               color="bg-orange-50 text-orange-700"
             />
@@ -441,22 +442,22 @@ export function EmployeePerformance({
                     <td className="px-4 py-3 font-semibold text-zinc-900">{index + 1}</td>
                     <td className="px-4 py-3 text-zinc-900">{metric.employeeName}</td>
                     <td className={`px-4 py-3 text-right font-medium ${getPerformanceColor('sales', metric.totalSales, salesValues)}`}>
-                      ${metric.totalSales.toFixed(2)}
+                      {formatCurrency(metric.totalSales)}
                     </td>
                     <td className={`px-4 py-3 text-right font-medium ${getPerformanceColor('transactions', metric.transactionCount, transactionValues)}`}>
                       {metric.transactionCount}
                     </td>
                     <td className={`px-4 py-3 text-right font-medium ${getPerformanceColor('avg_transaction', metric.averageTransaction, avgValues)}`}>
-                      ${metric.averageTransaction.toFixed(2)}
+                      {formatCurrency(metric.averageTransaction)}
                     </td>
                     <td className={`px-4 py-3 text-right font-medium ${getPerformanceColor('sales_per_hour', metric.salesPerHour, salesPerHourValues)}`}>
-                      ${metric.salesPerHour.toFixed(2)}
+                      {formatCurrency(metric.salesPerHour)}
                     </td>
                     <td className={`px-4 py-3 text-right font-medium ${getPerformanceColor('sales_per_hour', 100 - metric.voidReturnRate, [100])}`}>
                       {metric.voidReturnRate.toFixed(1)}%
                     </td>
                     <td className={`px-4 py-3 text-right font-medium ${getPerformanceColor('variance', metric.cashVariance, varianceValues)}`}>
-                      ${metric.cashVariance.toFixed(2)}
+                      {formatCurrency(metric.cashVariance)}
                     </td>
                     <td className="px-4 py-3 text-center">
                       <button
@@ -492,13 +493,13 @@ export function EmployeePerformance({
               >
                 <h3 className="text-base font-semibold text-zinc-900">{metric.employeeName}</h3>
                 <div className="space-y-2 text-sm">
-                  <ComparisonRow label="Total Sales" value={`$${metric.totalSales.toFixed(2)}`} />
+                  <ComparisonRow label="Total Sales" value={formatCurrency(metric.totalSales)} />
                   <ComparisonRow label="Transactions" value={metric.transactionCount.toString()} />
-                  <ComparisonRow label="Avg Transaction" value={`$${metric.averageTransaction.toFixed(2)}`} />
-                  <ComparisonRow label="Sales Per Hour" value={`$${metric.salesPerHour.toFixed(2)}`} />
+                  <ComparisonRow label="Avg Transaction" value={formatCurrency(metric.averageTransaction)} />
+                  <ComparisonRow label="Sales Per Hour" value={formatCurrency(metric.salesPerHour)} />
                   <ComparisonRow label="Void/Return Rate" value={`${metric.voidReturnRate.toFixed(1)}%`} />
                   <ComparisonRow label="Exceptions" value={metric.exceptionCount.toString()} />
-                  <ComparisonRow label="Cash Variance" value={`$${metric.cashVariance.toFixed(2)}`} />
+                  <ComparisonRow label="Cash Variance" value={formatCurrency(metric.cashVariance)} />
                   <ComparisonRow label="Hours Worked" value={`${metric.hoursWorked.toFixed(1)}h`} />
                 </div>
               </div>

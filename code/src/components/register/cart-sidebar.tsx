@@ -4,6 +4,7 @@ import { S } from "./styles";
 import type { Cart, CartTotals, DiscountMode } from "@/lib/cart/types";
 import { useState, useRef, useCallback, useEffect, memo } from "react";
 import { VirtualNumpad } from "@/components/ui/virtual-numpad";
+import { formatCurrency } from "@/lib/format";
 
 interface CartSidebarProps {
   cart: Cart;
@@ -110,7 +111,7 @@ export const CartSidebar = memo(function CartSidebar({
         {/* Running total — always visible, prominent */}
         {!isEmpty && (
           <div className="mt-2 text-3xl font-bold tracking-tight" style={S.surfaceAccent}>
-            ${totals.grandTotal.toFixed(2)}
+            {formatCurrency(totals.grandTotal)}
           </div>
         )}
       </div>
@@ -186,25 +187,35 @@ export const CartSidebar = memo(function CartSidebar({
                             <span className="shrink-0 rounded-md bg-teal-100 px-2 py-0.5 text-base font-bold text-teal-700">
                               ×{item.quantity}
                             </span>
+                            {item.bundleId && (
+                              <span className="shrink-0 rounded-md bg-indigo-100 px-2 py-0.5 text-xs font-bold text-indigo-700 uppercase tracking-wide">
+                                Bundle
+                              </span>
+                            )}
                             <p className="truncate text-base font-semibold" style={S.textPrimary}>{item.productName}</p>
                           </div>
                           <p className="mt-1 truncate text-base" style={S.textSecondary}>
                             {item.variantName}
                             {hasOverride && (
                               <span className="ml-1.5 text-amber-600">
-                                <span className="line-through">${item.unitPrice.toFixed(2)}</span> → ${item.overridePrice!.toFixed(2)}
+                                <span className="line-through">{formatCurrency(item.unitPrice)}</span> → {formatCurrency(item.overridePrice!)}
                               </span>
                             )}
                             {item.lineDiscount && (
                               <span className="ml-1.5 text-red-500">
-                                {item.lineDiscount.mode === "percent" ? `−${item.lineDiscount.value}%` : `−$${item.lineDiscount.value.toFixed(2)}`}
+                                {item.lineDiscount.mode === "percent" ? `−${item.lineDiscount.value}%` : `−${formatCurrency(item.lineDiscount.value)}`}
                               </span>
                             )}
                           </p>
+                          {item.bundleId && item.bundleComponents && item.bundleComponents.length > 0 && (
+                            <p className="mt-0.5 truncate text-xs" style={{ color: 'var(--text-secondary)', opacity: 0.8 }}>
+                              {item.bundleComponents.length} items included
+                            </p>
+                          )}
                         </div>
 
                         {/* Line total */}
-                        <span className="shrink-0 text-lg font-bold text-teal-700">${lineTotal.toFixed(2)}</span>
+                        <span className="shrink-0 text-lg font-bold text-teal-700">{formatCurrency(lineTotal)}</span>
                       </div>
                     </button>
 
@@ -247,12 +258,12 @@ export const CartSidebar = memo(function CartSidebar({
                           <div className="mb-3 space-y-1 rounded-lg px-3 py-2 text-sm" style={S.surfacePanelMuted}>
                             <div className="flex justify-between" style={S.textSecondary}>
                               <span>Unit price</span>
-                              <span className="font-medium">${effectivePrice.toFixed(2)}</span>
+                              <span className="font-medium">{formatCurrency(effectivePrice)}</span>
                             </div>
                             {item.modifierTotal > 0 && (
                               <div className="flex justify-between" style={S.textSecondary}>
                                 <span>Modifiers</span>
-                                <span className="font-medium">+${item.modifierTotal.toFixed(2)}</span>
+                                <span className="font-medium">+{formatCurrency(item.modifierTotal)}</span>
                               </div>
                             )}
                             {item.lineDiscount && (
@@ -261,19 +272,26 @@ export const CartSidebar = memo(function CartSidebar({
                                 <span className="font-medium">
                                   {item.lineDiscount.mode === "percent"
                                     ? `−${item.lineDiscount.value}%`
-                                    : `−$${item.lineDiscount.value.toFixed(2)}`}
+                                    : `−${formatCurrency(item.lineDiscount.value)}`}
                                 </span>
                               </div>
                             )}
                           </div>
                         )}
 
-                        {/* Action buttons row */}
+                        {/* Action buttons row — bundles don't support
+                           per-line discount or price override (the bundle
+                           price IS the discount; apply cart-level discount
+                           instead). Server also rejects these at checkout
+                           but disabling here prevents the confusing
+                           post-tender error. */}
                         <div className="grid grid-cols-3 gap-2">
                           <button
                             type="button"
-                            onClick={(e) => { e.stopPropagation(); onLineDiscount(item.id); }}
-                            className="flex flex-col items-center gap-1.5 rounded-xl px-4 py-3 text-base font-medium transition-colors hover:bg-teal-50"
+                            disabled={!!item.bundleId}
+                            title={item.bundleId ? "Bundles are already package-priced — use cart discount" : undefined}
+                            onClick={(e) => { e.stopPropagation(); if (!item.bundleId) onLineDiscount(item.id); }}
+                            className="flex flex-col items-center gap-1.5 rounded-xl px-4 py-3 text-base font-medium transition-colors hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
                             style={{ color: item.lineDiscount ? '#dc2626' : 'var(--text-secondary)' }}
                           >
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
@@ -281,8 +299,10 @@ export const CartSidebar = memo(function CartSidebar({
                           </button>
                           <button
                             type="button"
-                            onClick={(e) => { e.stopPropagation(); onPriceOverride(item.id); }}
-                            className="flex flex-col items-center gap-1.5 rounded-xl px-4 py-3 text-base font-medium transition-colors hover:bg-amber-50"
+                            disabled={!!item.bundleId}
+                            title={item.bundleId ? "Bundle prices cannot be overridden at the register" : undefined}
+                            onClick={(e) => { e.stopPropagation(); if (!item.bundleId) onPriceOverride(item.id); }}
+                            className="flex flex-col items-center gap-1.5 rounded-xl px-4 py-3 text-base font-medium transition-colors hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
                             style={{ color: hasOverride ? '#d97706' : 'var(--text-secondary)' }}
                           >
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
@@ -319,7 +339,7 @@ export const CartSidebar = memo(function CartSidebar({
             <div className="flex items-center gap-1.5">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
               {cart.discountAmount > 0
-                ? `Cart discount: ${cart.discountMode === "percent" ? `${cart.discountAmount}%` : `$${cart.discountAmount.toFixed(2)}`}`
+                ? `Cart discount: ${cart.discountMode === "percent" ? `${cart.discountAmount}%` : `${formatCurrency(cart.discountAmount)}`}`
                 : "Add cart discount"}
             </div>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`transition-transform ${showDiscount ? 'rotate-180' : ''}`}><path d="M6 9l6 6 6-6"/></svg>
@@ -392,7 +412,7 @@ export const CartSidebar = memo(function CartSidebar({
         {!isEmpty && (
           <div className="mb-4 flex items-center justify-between px-1">
             <span className="text-lg font-bold" style={S.textPrimary}>Total</span>
-            <span className="text-3xl font-extrabold tracking-tight text-teal-700">${totals.grandTotal.toFixed(2)}</span>
+            <span className="text-3xl font-extrabold tracking-tight text-teal-700">{formatCurrency(totals.grandTotal)}</span>
           </div>
         )}
 
@@ -426,7 +446,7 @@ export const CartSidebar = memo(function CartSidebar({
             ) : (
               <>
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
-                Charge ${totals.grandTotal.toFixed(2)}
+                Charge {formatCurrency(totals.grandTotal)}
               </>
             )}
           </span>
@@ -455,7 +475,7 @@ function Row({ label, value, highlight }: { label: string; value: number; highli
     <div className="flex items-center justify-between">
       <span style={S.textSecondary} className="text-base">{label}</span>
       <span className={`text-base font-semibold ${highlight ?? ""}`} style={highlight ? undefined : S.textPrimary}>
-        {value < 0 ? "−" : ""}${Math.abs(value).toFixed(2)}
+        {value < 0 ? "−" : ""}{formatCurrency(Math.abs(value))}
       </span>
     </div>
   );

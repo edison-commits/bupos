@@ -36,10 +36,25 @@ export class ESCPOSBuilder {
     return this;
   }
 
-  /** Print text */
+  /** Print text. Uses CP437 (ESC/POS default) for safe character handling.
+   *  Non-ASCII characters are transliterated to ASCII approximations where
+   *  possible (é→e, á→a, etc) and dropped otherwise — never truncated to
+   *  arbitrary bytes which could inject ESC/POS control commands. */
   text(str: string): this {
-    for (let i = 0; i < str.length; i++) {
-      this.commands.push(str.charCodeAt(i) & 0xFF);
+    // Strip any ASCII control characters that could be interpreted as ESC/POS
+    // commands (ESC=0x1B, GS=0x1D, DC=0x10-0x14, etc). Keep \t \n \r harmless.
+    const sanitized = str.replace(/[\x00-\x09\x0B\x0C\x0E-\x1F\x7F]/g, "");
+    // Transliterate non-ASCII to ASCII (handles accents, smart quotes, em-dash)
+    const ascii = sanitized
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "") // strip combining marks (é→e)
+      .replace(/[\u2018\u2019]/g, "'")    // curly single quotes → '
+      .replace(/[\u201C\u201D]/g, '"')    // curly double quotes → "
+      .replace(/[\u2013\u2014]/g, "-")    // en/em dash → -
+      .replace(/\u2026/g, "...")           // ellipsis
+      .replace(/[^\x20-\x7E]/g, "?");     // anything still non-ASCII → ?
+    for (let i = 0; i < ascii.length; i++) {
+      this.commands.push(ascii.charCodeAt(i));
     }
     return this;
   }
@@ -69,7 +84,11 @@ export class ESCPOSBuilder {
   columns(left: string, right: string): this {
     const gap = this.width - left.length - right.length;
     if (gap < 1) {
-      return this.line(left.slice(0, this.width - right.length - 1) + " " + right);
+      // Guard against negative slice: if right is too wide, truncate right first.
+      const maxRight = Math.max(1, this.width - 2);
+      const safeRight = right.length > maxRight ? right.slice(0, maxRight) : right;
+      const leftMax = Math.max(0, this.width - safeRight.length - 1);
+      return this.line(left.slice(0, leftMax) + " " + safeRight);
     }
     return this.line(left + " ".repeat(gap) + right);
   }

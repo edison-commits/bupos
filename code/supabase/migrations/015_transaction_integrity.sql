@@ -24,7 +24,32 @@ CREATE INDEX IF NOT EXISTS idx_transaction_lines_variant ON transaction_lines(pr
 -- =============================================
 -- 2. Prevent negative grand_total (allow 0 for now, app should block zero)
 -- =============================================
-ALTER TABLE transactions ADD CONSTRAINT transactions_grand_total_nonneg CHECK (grand_total >= 0);
+-- R26-F6: idempotency guard. A recovery re-run of this migration
+-- would otherwise raise:
+--   • "constraint already exists" if the CHECK is still present, OR
+--   • "check constraint ... is violated" if migration 023 has since
+--     dropped the constraint AND refund rows (negative grand_total)
+--     have landed — in which case re-adding would fail on existing data.
+-- Skip in BOTH scenarios: the constraint either already stands OR has
+-- been intentionally liberalized by a downstream migration.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+     WHERE constraint_name = 'transactions_grand_total_nonneg'
+       AND table_name = 'transactions'
+  ) THEN
+    -- Already present — nothing to do.
+    RETURN;
+  END IF;
+  IF EXISTS (SELECT 1 FROM transactions WHERE grand_total < 0 LIMIT 1) THEN
+    -- Migration 023 has already dropped this constraint and refund
+    -- data now exists. Re-adding would fail.
+    RETURN;
+  END IF;
+  ALTER TABLE transactions ADD CONSTRAINT transactions_grand_total_nonneg CHECK (grand_total >= 0);
+END
+$$;
 
 -- =============================================
 -- 3. Tender sum validation trigger

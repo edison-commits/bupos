@@ -7,6 +7,7 @@ import { AlertCircle, Check, X } from 'lucide-react';
 import { getTaxRate, getCitiesForState, US_STATES } from '@/lib/tax-rates';
 import { authFetch } from '@/lib/api/client';
 import { FETCH_TIMEOUT_MS } from '@/lib/config/timing';
+import { formatCurrency } from "@/lib/format";
 
 interface StoreSettings {
   store: {
@@ -547,7 +548,7 @@ function LocationSection({
                 type="button"
                 onClick={() => handleChange('taxRate', Math.round(suggestedRate * 10000) / 100)}
                 className="shrink-0 px-3 py-2 text-sm font-semibold bg-teal-50 text-teal-700 rounded-lg hover:bg-teal-100 border border-teal-200 transition-colors"
-                title={`Apply ${(suggestedRate * 100).toFixed(2)}%`}
+                title={`Apply {formatCurrency((suggestedRate * 100))}%`}
               >
                 Apply {(suggestedRate * 100).toFixed(2)}%
               </button>
@@ -556,7 +557,7 @@ function LocationSection({
           {suggestedRate !== null && (
             <p className="text-xs text-zinc-500 mt-1">
               {formData.city && formData.region
-                ? `Suggested combined rate for ${formData.city}, ${formData.region}: ${(suggestedRate * 100).toFixed(2)}%`
+                ? `Suggested combined rate for ${formData.city}, ${formData.region}: {formatCurrency((suggestedRate * 100))}%`
                 : `Select city & state to see suggested rate`}
             </p>
           )}
@@ -682,7 +683,7 @@ function ReceiptPreview({
                 <span className="font-bold">{item.qty}x</span> {item.name}
               </div>
               <div className="text-xs font-bold whitespace-nowrap ml-2" style={{ color: '#374151' }}>
-                ${(item.qty * item.price).toFixed(2)}
+                {formatCurrency((item.qty * item.price))}
               </div>
             </div>
           </div>
@@ -695,19 +696,19 @@ function ReceiptPreview({
         <div className="space-y-1 mb-3">
           <div className="flex justify-between text-xs" style={{ color: '#374151' }}>
             <span>Subtotal</span>
-            <span>${subtotal.toFixed(2)}</span>
+            <span>{formatCurrency(subtotal)}</span>
           </div>
           <div className="flex justify-between text-xs" style={{ color: '#374151' }}>
             <span>Tax (8.75%)</span>
-            <span>${tax.toFixed(2)}</span>
+            <span>{formatCurrency(tax)}</span>
           </div>
           <div className="flex justify-between text-sm font-bold border-t border-gray-200 pt-1 mt-1" style={{ color: '#111827' }}>
             <span>TOTAL</span>
-            <span>${total.toFixed(2)}</span>
+            <span>{formatCurrency(total)}</span>
           </div>
           <div className="flex justify-between text-xs mt-1" style={{ color: '#374151' }}>
             <span>VISA **** 4242</span>
-            <span>${total.toFixed(2)}</span>
+            <span>{formatCurrency(total)}</span>
           </div>
         </div>
 

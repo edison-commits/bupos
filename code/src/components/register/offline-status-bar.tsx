@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useOnlineStatus } from "@/lib/offline/use-online-status";
 import { getPendingCount } from "@/lib/offline/idb-store";
 import { syncPendingTransactions } from "@/lib/offline/sync-service";
@@ -10,6 +10,17 @@ export function OfflineStatusBar() {
   const [pendingCount, setPendingCount] = useState(0);
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<string | null>(null);
+
+  // Defer the first status render until after mount so we don't flash
+  // "Online" on page load for a genuinely-offline client (SSR renders
+  // `isOnline=true` because it can't know the browser state; hydration
+  // starts with that, then the useOnlineStatus effect flips to false ~1
+  // frame later). This `hasMounted` guard lets us render nothing on the
+  // very first paint and the real status on the second — which prevents
+  // the "green dot → amber bar" flicker a cashier would otherwise see
+  // after reloading a disconnected register.
+  const [hasMounted, setHasMounted] = useState(false);
+  useEffect(() => { setHasMounted(true); }, []);
 
   // Poll pending count
   useEffect(() => {
@@ -23,6 +34,25 @@ export function OfflineStatusBar() {
     return () => clearInterval(interval);
   }, []);
 
+  // IMPORTANT: all hooks must be declared before any conditional return.
+  // Previously a `if (!hasMounted) return null` sat between this block and
+  // `useCallback`/`useEffect` below, which meant on the very first render
+  // (hasMounted=false) React saw 6 hooks; on the second (hasMounted=true)
+  // it saw 8 — violating the Rules of Hooks and crashing with "Rendered
+  // more hooks than during the previous render" on hydration.
+  //
+  // R34-D16: track the clear-timeout in a ref so unmount cancels it.
+  // Prior shape fired setTimeout in `finally` with no cleanup —
+  // unmount within the 5s window triggered setState on an
+  // unmounted component.
+  const clearResultTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (clearResultTimeoutRef.current) {
+        clearTimeout(clearResultTimeoutRef.current);
+      }
+    };
+  }, []);
   const handleSync = useCallback(async () => {
     if (syncing) return;
     setSyncing(true);
@@ -43,8 +73,9 @@ export function OfflineStatusBar() {
       setSyncResult("Sync error — will retry");
     } finally {
       setSyncing(false);
-      // Clear result message after 5s
-      setTimeout(() => setSyncResult(null), 5_000);
+      // Clear result message after 5s (R34-D16: canceled on unmount).
+      if (clearResultTimeoutRef.current) clearTimeout(clearResultTimeoutRef.current);
+      clearResultTimeoutRef.current = setTimeout(() => setSyncResult(null), 5_000);
     }
   }, [syncing]);
 
@@ -54,6 +85,11 @@ export function OfflineStatusBar() {
       handleSync();
     }
   }, [isOnline, pendingCount, syncing, handleSync]);
+
+  // Render nothing on first paint to avoid the online→offline flicker.
+  // MUST come after every hook above — conditional early return before any
+  // hook breaks the Rules of Hooks.
+  if (!hasMounted) return null;
 
   // If online and nothing pending, show a minimal green dot
   if (isOnline && pendingCount === 0 && !syncResult) {

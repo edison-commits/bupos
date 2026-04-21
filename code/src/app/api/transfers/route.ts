@@ -3,8 +3,11 @@ import { orgQuery, orgTx } from "@/lib/supabase-rest";
 import { randomUUID } from "@/lib/uuid";
 import { withDualAuth, withAdminAuth } from "@/lib/api/with-auth";
 import { validateBody, transferSchema } from "@/lib/validation/schemas";
+import { invalidateInventoryCache } from "@/lib/cache/inventory-cache";
 
 
+import { safeErr } from "@/lib/logging/safe-err";
+import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
 /**
  * GET /api/transfers
  *
@@ -18,9 +21,20 @@ export const GET = withDualAuth("inventory.adjust", async (req, ctx) => {
   try {
     const sp = req.nextUrl.searchParams;
 
+    // R13-H-1: inventory.adjust is held by inventory_clerk (non-owner/manager).
+    // Without this filter they list every transfer in the org — variant names,
+    // quantities, source-destination, supplier info. R12 hardened the WRITE
+    // paths (ship/cancel/create) but left the READ surface open. Same shape
+    // as the /api/audit + /api/returns retrofit.
+    const allowedLocations = ctx.allowedLocations;
+
     // ── Single transfer detail ──
     const id = sp.get("id");
     if (id) {
+      // R27-C9: explicit organization_id filter. Without it, passing
+      // `?id=<foreign-transfer-UUID>` returned any tenant's transfer
+      // detail. JOINs also gated by org so cross-tenant employee/
+      // location IDs can't splice foreign names in.
       const transfer = await orgQuery(
         orgId,
         `SELECT t.*,
@@ -31,20 +45,32 @@ export const GET = withDualAuth("inventory.adjust", async (req, ctx) => {
                 recv.display_name AS received_by_name,
                 canc.display_name AS cancelled_by_name
          FROM transfers t
-         LEFT JOIN locations sl ON sl.id = t.source_location_id
-         LEFT JOIN locations dl ON dl.id = t.destination_location_id
-         LEFT JOIN employees req ON req.id = t.requested_by
-         LEFT JOIN employees ship ON ship.id = t.shipped_by
-         LEFT JOIN employees recv ON recv.id = t.received_by
-         LEFT JOIN employees canc ON canc.id = t.cancelled_by
-         WHERE t.id = $1`,
-        [id],
+         LEFT JOIN locations sl ON sl.id = t.source_location_id AND sl.organization_id = $2
+         LEFT JOIN locations dl ON dl.id = t.destination_location_id AND dl.organization_id = $2
+         LEFT JOIN employees req ON req.id = t.requested_by AND req.organization_id = $2
+         LEFT JOIN employees ship ON ship.id = t.shipped_by AND ship.organization_id = $2
+         LEFT JOIN employees recv ON recv.id = t.received_by AND recv.organization_id = $2
+         LEFT JOIN employees canc ON canc.id = t.cancelled_by AND canc.organization_id = $2
+         WHERE t.id = $1 AND t.organization_id = $2`,
+        [id, orgId],
       );
 
       if (transfer.rows.length === 0) {
         return NextResponse.json({ error: "Transfer not found" }, { status: 404 });
       }
 
+      // Location membership check on detail path — non-managers can only
+      // see transfers that touch one of their assigned locations.
+      if (allowedLocations !== null) {
+        const row = transfer.rows[0] as { source_location_id: string; destination_location_id: string };
+        if (!allowedLocations.includes(row.source_location_id) && !allowedLocations.includes(row.destination_location_id)) {
+          return NextResponse.json({ error: "Transfer not found" }, { status: 404 });
+        }
+      }
+
+      // R27-C9: transfer_lines is FK-scoped by transfer_id (already
+      // org-verified above). Add JOIN through transfers for explicit
+      // org gate, and gate product/variant JOINs similarly.
       const lines = await orgQuery(
         orgId,
         `SELECT tl.*,
@@ -52,11 +78,12 @@ export const GET = withDualAuth("inventory.adjust", async (req, ctx) => {
                 pv.sku, pv.barcode,
                 pv.size_label AS size, pv.color_label AS color
          FROM transfer_lines tl
-         LEFT JOIN product_variants pv ON pv.id = tl.product_variant_id
-         LEFT JOIN products p ON p.id = pv.product_id
+         JOIN transfers t ON t.id = tl.transfer_id AND t.organization_id = $2
+         LEFT JOIN product_variants pv ON pv.id = tl.product_variant_id AND pv.organization_id = $2
+         LEFT JOIN products p ON p.id = pv.product_id AND p.organization_id = $2
          WHERE tl.transfer_id = $1
          ORDER BY tl.created_at`,
-        [id],
+        [id, orgId],
       );
 
       return NextResponse.json({ transfer: transfer.rows[0], lines: lines.rows });
@@ -66,6 +93,22 @@ export const GET = withDualAuth("inventory.adjust", async (req, ctx) => {
     const conditions: string[] = [];
     const values: unknown[] = [];
     let idx = 0;
+
+    // R27-C9: explicit organization_id filter. Without it, the list
+    // endpoint returned every tenant's transfers.
+    idx++;
+    conditions.push(`t.organization_id = $${idx}`);
+    values.push(orgId);
+
+    // Non-manager location scope.
+    if (allowedLocations !== null) {
+      if (allowedLocations.length === 0) {
+        return NextResponse.json({ transfers: [], page: 1, limit: 50 });
+      }
+      idx++;
+      conditions.push(`(t.source_location_id = ANY($${idx}::uuid[]) OR t.destination_location_id = ANY($${idx}::uuid[]))`);
+      values.push(allowedLocations);
+    }
 
     const status = sp.get("status");
     if (status) {
@@ -83,26 +126,45 @@ export const GET = withDualAuth("inventory.adjust", async (req, ctx) => {
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
+    // Page/limit — previously unbounded and N+1 on per-row subqueries. Replaced
+    // the subqueries with a single LATERAL aggregation so one row per transfer.
+    const page = Math.max(1, Number(sp.get("page")) || 1);
+    const limit = Math.min(200, Math.max(1, Number(sp.get("limit")) || 50));
+    const offset = (page - 1) * limit;
+    const limitIdx = idx + 1;
+    const offsetIdx = idx + 2;
+
+    // R27-C9: JOINs also gated by $1 (orgId) — the list WHERE
+    // already restricts `t.organization_id`, but belt-and-suspenders
+    // on the display-only JOINs prevents a subtle cross-tenant
+    // splice should a foreign FK ever appear.
     const transfers = await orgQuery(
       orgId,
       `SELECT t.*,
               sl.name AS source_location_name,
               dl.name AS destination_location_name,
               req.display_name AS requested_by_name,
-              (SELECT COUNT(*)::int FROM transfer_lines tl WHERE tl.transfer_id = t.id) AS line_count,
-              (SELECT COALESCE(SUM(quantity_requested), 0)::int FROM transfer_lines tl WHERE tl.transfer_id = t.id) AS total_units
+              COALESCE(agg.line_count, 0)::int AS line_count,
+              COALESCE(agg.total_units, 0)::int AS total_units
        FROM transfers t
-       LEFT JOIN locations sl ON sl.id = t.source_location_id
-       LEFT JOIN locations dl ON dl.id = t.destination_location_id
-       LEFT JOIN employees req ON req.id = t.requested_by
+       LEFT JOIN locations sl ON sl.id = t.source_location_id AND sl.organization_id = $1
+       LEFT JOIN locations dl ON dl.id = t.destination_location_id AND dl.organization_id = $1
+       LEFT JOIN employees req ON req.id = t.requested_by AND req.organization_id = $1
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*) AS line_count,
+                COALESCE(SUM(quantity_requested), 0) AS total_units
+         FROM transfer_lines tl
+         WHERE tl.transfer_id = t.id
+       ) agg ON TRUE
        ${where}
-       ORDER BY t.created_at DESC`,
-      values,
+       ORDER BY t.created_at DESC
+       LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+      [...values, limit, offset],
     );
 
-    return NextResponse.json({ transfers: transfers.rows });
+    return NextResponse.json({ transfers: transfers.rows, page, limit });
   } catch (err) {
-    console.error("GET /api/transfers error:", err);
+    console.error("GET /api/transfers error:", safeErr(err));
     return NextResponse.json({ error: "Failed to fetch transfers" }, { status: 500 });
   }
 });
@@ -140,7 +202,11 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
         }
       }
 
-      const { sourceLocationId, destinationLocationId, notes, lines } = body;
+      // R30-L1: destructure from validated `v.data`, not raw `body`.
+      // Prior shape ignored the Zod schema and reached straight into
+      // the request payload — any future schema tightening (.default,
+      // coercion, strict()) would be silently bypassed.
+      const { sourceLocationId, destinationLocationId, notes, lines } = v.data;
 
       if (!sourceLocationId || !destinationLocationId) {
         return NextResponse.json({ error: "Source and destination locations required" }, { status: 400 });
@@ -152,14 +218,99 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
         return NextResponse.json({ error: "At least one line item required" }, { status: 400 });
       }
 
+      // R14-M-3: verify BOTH location UUIDs belong to this tenant. The FK
+      // `transfers.{source,destination}_location_id REFERENCES locations(id)`
+      // doesn't apply RLS to FK checks, so without this gate an attacker
+      // who knows a foreign-tenant location UUID could create a transfer
+      // with `source=B-loc, dest=A-loc`. The `ship` step's FOR UPDATE on
+      // foreign inventory_levels would return 0 (RLS-filtered), blocking
+      // the actual drain — but the `transfers` row lands polluted.
+      const { rows: locCheck } = await orgQuery(
+        orgId,
+        `SELECT id FROM locations WHERE id = ANY($1::uuid[]) AND organization_id = $2`,
+        [[sourceLocationId, destinationLocationId], orgId],
+      );
+      if (locCheck.length !== 2) {
+        return NextResponse.json(
+          { error: "Source or destination location does not belong to this organization" },
+          { status: 400 },
+        );
+      }
+
+      // Cross-location drain prevention. A manager at Store B could
+      // otherwise create a transfer FROM Store A (where they have no
+      // assignment) TO Store B, then ship it themselves via a second
+      // call — draining stock from a store they don't work at. The
+      // source (or destination) must be in the caller's locationIds,
+      // unless they're an owner who by convention sees all locations.
+      const employeeLocIds = ctx.employee.locationIds ?? [];
+      const isOwner = ctx.employee.roleKey === "owner";
+      if (!isOwner) {
+        if (!employeeLocIds.includes(sourceLocationId) && !employeeLocIds.includes(destinationLocationId)) {
+          return NextResponse.json(
+            { error: "You must be assigned to either the source or destination location" },
+            { status: 403 },
+          );
+        }
+      }
+
       const transferId = randomUUID();
       const client = await orgTx(orgId);
       try {
-        await client.query(
-          `INSERT INTO transfers (id, organization_id, source_location_id, destination_location_id, status, requested_by, notes, idempotency_key, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, 'requested', $5, $6, $7, now(), now())`,
-          [transferId, orgId, sourceLocationId, destinationLocationId, employeeId, notes || null, idempotencyKey || null],
-        );
+        // R16-L-4: verify every product_variant_id belongs to caller's org
+        // before writing transfer_lines. FK is tenant-agnostic; without this
+        // check a write could reference foreign variants, polluting admin
+        // list views.
+        const variantIds = Array.from(new Set(lines.map((l: { productVariantId: string }) => l.productVariantId)));
+        if (variantIds.length > 0) {
+          const { rows: vCheck } = await client.query(
+            `SELECT id FROM product_variants WHERE id = ANY($1::uuid[]) AND organization_id = $2`,
+            [variantIds, orgId],
+          );
+          if (vCheck.length !== variantIds.length) {
+            await client.query("ROLLBACK");
+            return NextResponse.json({ error: "One or more product variants do not belong to this organization" }, { status: 400 });
+          }
+        }
+
+        // R31-M5: catch 23505 on idempotency_key so a concurrent
+        // retry-storm sees the winner's transfer_id instead of a 500.
+        // Prior shape let the unique (org, idempotency_key) index
+        // bubble up as a generic catch, returning "Failed to create
+        // transfer" to the retrier while the first call succeeded —
+        // classic idempotency contract violation.
+        let idempotentWinnerId: string | null = null;
+        try {
+          await client.query(
+            `INSERT INTO transfers (id, organization_id, source_location_id, destination_location_id, status, requested_by, notes, idempotency_key, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, 'requested', $5, $6, $7, now(), now())`,
+            [transferId, orgId, sourceLocationId, destinationLocationId, employeeId, notes || null, idempotencyKey || null],
+          );
+        } catch (insertErr) {
+          const err = insertErr as { code?: string; constraint?: string };
+          if (
+            idempotencyKey &&
+            err.code === '23505' &&
+            typeof err.constraint === 'string' &&
+            err.constraint.toLowerCase().includes('idempotency')
+          ) {
+            // Winner already committed. Look up the winner's ID and
+            // return it as the idempotent replay response.
+            await client.query("ROLLBACK");
+            const { rows: winnerRows } = await client.query(
+              `SELECT id FROM transfers WHERE organization_id = $1 AND idempotency_key = $2 LIMIT 1`,
+              [orgId, idempotencyKey],
+            );
+            idempotentWinnerId = (winnerRows[0]?.id as string | null) ?? null;
+          } else {
+            throw insertErr;
+          }
+        }
+
+        if (idempotentWinnerId) {
+          client.release();
+          return NextResponse.json({ id: idempotentWinnerId, status: 'requested', _idempotent: true });
+        }
 
         for (const line of lines) {
           await client.query(
@@ -177,16 +328,16 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
         client.release();
       }
 
-      try {
-        await orgQuery(
-          orgId,
-          `INSERT INTO audit_events (id, organization_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
-           VALUES ($1, $2, $3, 'transfer', $4, 'transfer_created', $5, now())`,
-          [randomUUID(), orgId, employeeId, transferId, JSON.stringify({ source: sourceLocationId, destination: destinationLocationId, line_count: lines.length })],
-        );
-      } catch (err) {
-        console.error("[transfers] audit event failed:", err);
-      }
+      // Route through pgInsertAuditEvent for consistency with the rest of
+      // the codebase. orgQuery here also sets `app.current_org_id` so this
+      // wasn't a security bug, but every other audit-writing path now goes
+      // through the helper — single source of truth.
+      const { pgInsertAuditEvent } = await import("@/lib/persistence/postgres-store");
+      await waitUntilOrAwait(pgInsertAuditEvent(
+        orgId, sourceLocationId, employeeId,
+        "transfer", transferId, "transfer_created",
+        { source: sourceLocationId, destination: destinationLocationId, line_count: lines.length },
+      ).catch((err) => console.error("[transfers] audit event failed:", safeErr(err))));
 
       return NextResponse.json({ id: transferId, status: "requested" }, { status: 201 });
     }
@@ -195,22 +346,37 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
       const { transferId } = body;
       if (!transferId) return NextResponse.json({ error: "transferId required" }, { status: 400 });
 
+      // R13-M-4: the old idempotency check returned `_idempotent: true` to
+      // ANY caller once the transfer moved past status='requested', even
+      // with a different Idempotency-Key. That claimed idempotency on
+      // requests the RPC had never seen. Now we only return `_idempotent`
+      // when the stored key actually matches; otherwise a request
+      // targeting an already-shipped transfer gets the normal "not in
+      // requested status" error below.
       if (idempotencyKey) {
         const existing = await orgQuery(
           orgId,
-          `SELECT id, status FROM transfers WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+          `SELECT id, status, idempotency_key FROM transfers WHERE id = $1 AND organization_id = $2 LIMIT 1`,
           [transferId, orgId],
         );
-        if (existing.rows.length > 0 && existing.rows[0].status !== 'requested') {
+        if (
+          existing.rows.length > 0 &&
+          existing.rows[0].status !== 'requested' &&
+          existing.rows[0].idempotency_key === idempotencyKey
+        ) {
           return NextResponse.json({ id: transferId, status: existing.rows[0].status, _idempotent: true });
         }
       }
 
       const client = await orgTx(orgId);
       try {
+        // R27-C9: explicit org filter on the SELECT. Without it, a
+        // POST with a foreign tenant's transferId passed the status
+        // gate and the owner-bypass location check, draining the
+        // victim's inventory when the UPDATE below fired.
         const t = await client.query(
-          `SELECT id, organization_id, source_location_id, destination_location_id, status, requested_by, shipped_by, received_by, notes, created_at, updated_at FROM transfers WHERE id = $1 AND status = 'requested' FOR UPDATE`,
-          [transferId],
+          `SELECT id, organization_id, source_location_id, destination_location_id, status, requested_by, shipped_by, received_by, notes, created_at, updated_at FROM transfers WHERE id = $1 AND organization_id = $2 AND status = 'requested' FOR UPDATE`,
+          [transferId, orgId],
         );
         if (t.rows.length === 0) {
           await client.query("ROLLBACK");
@@ -218,29 +384,63 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
         }
         const transfer = t.rows[0];
 
+        // R12-M-2: the SHIP step drains inventory at the source location.
+        // Without this check a non-owner catalog.manage holder (inventory_clerk)
+        // at Store B could ship a requested transfer whose source is Store A
+        // — decrementing Store A's stock from a store they don't work at.
+        // The `create` step already enforces source-or-destination membership;
+        // `ship` must enforce SOURCE membership specifically.
+        {
+          const employeeLocIds = ctx.employee.locationIds ?? [];
+          const isOwner = ctx.employee.roleKey === "owner";
+          if (!isOwner && !employeeLocIds.includes(transfer.source_location_id)) {
+            await client.query("ROLLBACK");
+            return NextResponse.json(
+              { error: "You are not assigned to this transfer's source location" },
+              { status: 403 },
+            );
+          }
+        }
+
+        // R27-C9: scope every write by org. The SELECT above verified
+        // the transfer belongs to this org, but the UPDATEs must also
+        // include the filter so a race where `transfer.organization_id`
+        // is corrupt can't widen the blast radius.
         await client.query(
-          `UPDATE transfers SET status = 'in_transit', shipped_by = $1, shipped_at = now(), updated_at = now() WHERE id = $2`,
-          [employeeId || null, transferId],
+          `UPDATE transfers SET status = 'in_transit', shipped_by = $1, shipped_at = now(), updated_at = now() WHERE id = $2 AND organization_id = $3`,
+          [employeeId || null, transferId, orgId],
         );
 
+        // transfer_lines: FK-scoped by transfer_id (already verified).
+        // JOIN through transfers for defense in depth.
         await client.query(
-          `UPDATE transfer_lines SET quantity_shipped = quantity_requested WHERE transfer_id = $1`,
-          [transferId],
+          `UPDATE transfer_lines tl
+              SET quantity_shipped = quantity_requested
+             FROM transfers t
+            WHERE tl.transfer_id = t.id
+              AND t.id = $1
+              AND t.organization_id = $2`,
+          [transferId, orgId],
         );
 
         const lines = await client.query(
-          `SELECT product_variant_id, quantity_requested FROM transfer_lines WHERE transfer_id = $1`,
-          [transferId],
+          `SELECT tl.product_variant_id, tl.quantity_requested
+             FROM transfer_lines tl
+             JOIN transfers t ON t.id = tl.transfer_id AND t.organization_id = $2
+            WHERE tl.transfer_id = $1`,
+          [transferId, orgId],
         );
 
         const variantIds = lines.rows.map((line) => line.product_variant_id as string);
         const { rows: lockedInventory } = await client.query(
           `SELECT product_variant_id, on_hand
            FROM inventory_levels
-           WHERE location_id = $1 AND product_variant_id = ANY($2::uuid[])
+           WHERE organization_id = $3
+             AND location_id = $1
+             AND product_variant_id = ANY($2::uuid[])
            ORDER BY product_variant_id
            FOR UPDATE`,
-          [transfer.source_location_id, variantIds],
+          [transfer.source_location_id, variantIds, orgId],
         );
         const onHandByVariant = new Map(
           lockedInventory.map((row) => [row.product_variant_id as string, Number(row.on_hand)]),
@@ -259,14 +459,17 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
         }
 
         for (const line of lines.rows) {
+          // R27-C9: explicit org filter so a crafted destination row
+          // at a foreign tenant can never be decremented.
           await client.query(
             `UPDATE inventory_levels SET on_hand = on_hand - $1, updated_at = now()
-             WHERE product_variant_id = $2 AND location_id = $3`,
-            [line.quantity_requested, line.product_variant_id, transfer.source_location_id],
+             WHERE organization_id = $4 AND product_variant_id = $2 AND location_id = $3`,
+            [line.quantity_requested, line.product_variant_id, transfer.source_location_id, orgId],
           );
         }
 
         await client.query("COMMIT");
+        invalidateInventoryCache(orgId);
         return NextResponse.json({ id: transferId, status: "in_transit" }, { status: 200 });
       } catch (e) {
         await client.query("ROLLBACK");
@@ -293,9 +496,12 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
 
       const client = await orgTx(orgId);
       try {
+        // R27-C9: explicit org filter. Without it, receiving a foreign
+        // tenant's transfer restocked their destination inventory
+        // under this tenant's org_id — an accounting corruption vector.
         const t = await client.query(
-          `SELECT id, organization_id, source_location_id, destination_location_id, status, requested_by, shipped_by, received_by, notes, created_at, updated_at FROM transfers WHERE id = $1 AND status = 'in_transit' FOR UPDATE`,
-          [transferId],
+          `SELECT id, organization_id, source_location_id, destination_location_id, status, requested_by, shipped_by, received_by, notes, created_at, updated_at FROM transfers WHERE id = $1 AND organization_id = $2 AND status = 'in_transit' FOR UPDATE`,
+          [transferId, orgId],
         );
         if (t.rows.length === 0) {
           await client.query("ROLLBACK");
@@ -303,19 +509,42 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
         }
         const transfer = t.rows[0];
 
-        await client.query(
-          `UPDATE transfers SET status = 'received', received_by = $1, received_at = now(), updated_at = now() WHERE id = $2`,
-          [employeeId || null, transferId],
-        );
+        // Receiving credits destination inventory — the caller must
+        // actually work at that location, or they can forge receipts at
+        // stores they aren't assigned to and pollute that store's
+        // on-hand counts. Owners bypass (multi-location ownership).
+        const employeeLocIds = ctx.employee.locationIds ?? [];
+        const isOwner = ctx.employee.roleKey === "owner";
+        if (!isOwner && !employeeLocIds.includes(transfer.destination_location_id)) {
+          await client.query("ROLLBACK");
+          return NextResponse.json(
+            { error: "You are not assigned to this transfer's destination location" },
+            { status: 403 },
+          );
+        }
 
         await client.query(
-          `UPDATE transfer_lines SET quantity_received = COALESCE(quantity_shipped, quantity_requested) WHERE transfer_id = $1`,
-          [transferId],
+          `UPDATE transfers SET status = 'received', received_by = $1, received_at = now(), updated_at = now() WHERE id = $2 AND organization_id = $3`,
+          [employeeId || null, transferId, orgId],
+        );
+
+        // R27-C9: JOIN through transfers for explicit org gate.
+        await client.query(
+          `UPDATE transfer_lines tl
+              SET quantity_received = COALESCE(tl.quantity_shipped, tl.quantity_requested)
+             FROM transfers t
+            WHERE tl.transfer_id = t.id
+              AND t.id = $1
+              AND t.organization_id = $2`,
+          [transferId, orgId],
         );
 
         const lines = await client.query(
-          `SELECT product_variant_id, COALESCE(quantity_shipped, quantity_requested) AS qty FROM transfer_lines WHERE transfer_id = $1`,
-          [transferId],
+          `SELECT tl.product_variant_id, COALESCE(tl.quantity_shipped, tl.quantity_requested) AS qty
+             FROM transfer_lines tl
+             JOIN transfers t ON t.id = tl.transfer_id AND t.organization_id = $2
+            WHERE tl.transfer_id = $1`,
+          [transferId, orgId],
         );
         for (const line of lines.rows) {
           await client.query(
@@ -328,6 +557,7 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
         }
 
         await client.query("COMMIT");
+        invalidateInventoryCache(orgId);
         return NextResponse.json({ id: transferId, status: "received" }, { status: 200 });
       } catch (e) {
         await client.query("ROLLBACK");
@@ -341,12 +571,41 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
       const { transferId } = body;
       if (!transferId) return NextResponse.json({ error: "transferId required" }, { status: 400 });
 
+      // R12-M-7: like create/ship/receive, restrict cancel to users
+      // assigned to the source or destination. Without this, any
+      // catalog.manage holder (inventory_clerk) in the org can cancel any
+      // store's pending transfers — availability-disruption vector.
+      const employeeLocIds = ctx.employee.locationIds ?? [];
+      const isOwner = ctx.employee.roleKey === "owner";
+      if (!isOwner) {
+        // R27-C9: explicit org filter so cross-tenant transferIds
+        // can't leak location_ids via this pre-check.
+        const existing = await orgQuery(
+          orgId,
+          `SELECT source_location_id, destination_location_id, status FROM transfers WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+          [transferId, orgId],
+        );
+        if (existing.rows.length === 0) {
+          return NextResponse.json({ error: "Transfer not found or not in requested status" }, { status: 400 });
+        }
+        const row = existing.rows[0] as { source_location_id: string; destination_location_id: string };
+        if (!employeeLocIds.includes(row.source_location_id) && !employeeLocIds.includes(row.destination_location_id)) {
+          return NextResponse.json(
+            { error: "You are not assigned to this transfer's source or destination location" },
+            { status: 403 },
+          );
+        }
+      }
+
+      // R27-C9: owner bypass above granted access regardless of
+      // location ownership — it MUST be constrained by organization_id
+      // here so an owner at ORG A can't cancel ORG B's transfers.
       const result = await orgQuery(
         orgId,
         `UPDATE transfers SET status = 'cancelled', cancelled_by = $1, cancelled_at = now(), updated_at = now()
-         WHERE id = $2 AND status = 'requested'
+         WHERE id = $2 AND organization_id = $3 AND status = 'requested'
          RETURNING id`,
-        [employeeId || null, transferId],
+        [employeeId || null, transferId, orgId],
       );
       if (result.rows.length === 0) {
         return NextResponse.json({ error: "Transfer not found or not in requested status" }, { status: 400 });
@@ -356,7 +615,7 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
 
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
   } catch (err) {
-    console.error("POST /api/transfers error:", err);
+    console.error("POST /api/transfers error:", safeErr(err));
     return NextResponse.json({ error: "Failed to process transfer" }, { status: 500 });
   }
 });

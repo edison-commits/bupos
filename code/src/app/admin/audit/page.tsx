@@ -2,10 +2,11 @@
 
 import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, Fragment } from 'react';
 import { RoleGate } from '@/components/admin/role-gate';
 import { authFetch } from '@/lib/api/client';
 
+import { safeErr } from "@/lib/logging/safe-err";
 interface AuditEvent {
   id: string;
   transaction_id: string;
@@ -92,6 +93,12 @@ export default function AuditPage() {
 
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
 
+  // R36-FE13: AbortController per list fetch so rapid filter changes
+  // can't race. A later-fired fetch could otherwise return BEFORE an
+  // earlier one, and setEvents gets clobbered back to stale data.
+  // Matches the pattern customer-database.tsx adopted in R34-D11.
+  const listAbortRef = useRef<AbortController | null>(null);
+
 
 
   const loadEmployees = async () => {
@@ -102,7 +109,7 @@ export default function AuditPage() {
         setEmployees(data.employees || []);
       }
     } catch (err) {
-      console.error('Failed to load employees:', err);
+      console.error('Failed to load employees:', safeErr(err));
     }
   };
 
@@ -118,11 +125,16 @@ export default function AuditPage() {
         setEventKinds(Array.from(kinds).sort());
       }
     } catch (err) {
-      console.error('Failed to load event kinds:', err);
+      console.error('Failed to load event kinds:', safeErr(err));
     }
   };
 
   const loadAuditEvents = async () => {
+    // R36-FE13: cancel any prior in-flight list fetch before starting a new one.
+    listAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    listAbortRef.current = ctrl;
+
     setLoading(true);
     setError(null);
 
@@ -135,20 +147,23 @@ export default function AuditPage() {
         ...(filters.eventKind && { event_kind: filters.eventKind }),
       });
 
-      const response = await authFetch(`/api/audit?${params}`);
+      const response = await authFetch(`/api/audit?${params}`, { signal: ctrl.signal });
+      if (ctrl.signal.aborted) return;
       if (!response.ok) {
         throw new Error('Failed to load audit events');
       }
 
       const data = await response.json();
+      if (ctrl.signal.aborted) return;
       setEvents(data.events || []);
       setPagination({ pageSize: pagination.pageSize, nextCursor: data.nextCursor, hasMore: data.hasMore });
     } catch (err) {
+      if ((err as { name?: string })?.name === 'AbortError') return;
       setError(
         err instanceof Error ? err.message : 'Failed to load audit events'
       );
     } finally {
-      setLoading(false);
+      if (listAbortRef.current === ctrl) setLoading(false);
     }
   };
 
@@ -188,6 +203,8 @@ export default function AuditPage() {
     loadEmployees();
     loadEventKinds();
     loadAuditEvents();
+    // R36-FE13: abort any pending list fetch on unmount.
+    return () => { listAbortRef.current?.abort(); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
@@ -212,7 +229,11 @@ export default function AuditPage() {
       employeeId: '',
       eventKind: '',
     });
-    setPagination((prev) => ({ ...prev, page: 1 }));
+    // R36-FE14: pagination is cursor-based (see PaginationState) — the
+    // old `page: 1` set a non-existent property and was dead code. Reset
+    // the cursor instead so the filter-change effect re-fetches from
+    // the start.
+    setPagination((prev) => ({ ...prev, nextCursor: null, hasMore: true }));
   };
 
   const toggleRowExpansion = (eventId: string) => {
@@ -373,7 +394,13 @@ export default function AuditPage() {
                   </tr>
                 ) : (
                   events.map((event) => (
-                    <tbody key={event.id}>
+                    // R36-FE1: was `<tbody key={...}>` nested inside the
+                    // outer <tbody> — invalid DOM. Browsers auto-close
+                    // the outer tbody and hoist inner ones, which broke
+                    // the `divide-y` class and triggered hydration
+                    // warnings. `<Fragment>` renders both sibling rows
+                    // without adding a wrapper element.
+                    <Fragment key={event.id}>
                       <tr className="hover:bg-slate-50 transition-colors">
                         <td className="px-4 py-3 text-sm whitespace-nowrap">
                           <div className="font-medium text-slate-900">
@@ -438,7 +465,7 @@ export default function AuditPage() {
                           </td>
                         </tr>
                       )}
-                    </tbody>
+                    </Fragment>
                   ))
                 )}
               </tbody>

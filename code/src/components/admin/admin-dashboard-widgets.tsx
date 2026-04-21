@@ -1,5 +1,6 @@
 import type { LocalStoreData } from "@/lib/persistence/types";
 import { formatDateTime } from "@/lib/utils/date";
+import { formatCurrency } from "@/lib/format";
 
 export function Metric({ label, value }: { label: string; value: string }) {
   return (
@@ -34,12 +35,12 @@ export function SalesSummary({ store }: { store: LocalStoreData }) {
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric label="Transactions" value={String(txnCount)} />
-        <Metric label="Total sales" value={`$${totalSales.toFixed(2)}`} />
-        <Metric label="Returns" value={`${returnCount} / $${totalReturns.toFixed(2)}`} />
-        <Metric label="Avg ticket" value={`$${avgTicket.toFixed(2)}`} />
+        <Metric label="Total sales" value={formatCurrency(totalSales)} />
+        <Metric label="Returns" value={`${returnCount} / ${formatCurrency(totalReturns)}`} />
+        <Metric label="Avg ticket" value={formatCurrency(avgTicket)} />
       </div>
       <div className="rounded-2xl bg-zinc-50 px-4 py-3">
-        <p className="text-sm font-semibold text-zinc-600">Net sales: <span className="text-lg text-zinc-900">${netSales.toFixed(2)}</span></p>
+        <p className="text-sm font-semibold text-zinc-600">Net sales: <span className="text-lg text-zinc-900">{formatCurrency(netSales)}</span></p>
       </div>
       {tenderMap.size > 0 && (
         <div className="space-y-1">
@@ -47,7 +48,7 @@ export function SalesSummary({ store }: { store: LocalStoreData }) {
           {Array.from(tenderMap.entries()).map(([type, data]) => (
             <div key={type} className="flex items-center justify-between rounded-xl bg-zinc-50 px-4 py-2 text-sm">
               <span className="capitalize">{type === "store_credit" ? "Store credit" : type}</span>
-              <span className="font-semibold">{data.count} · ${data.total.toFixed(2)}</span>
+              <span className="font-semibold">{data.count} · {formatCurrency(data.total)}</span>
             </div>
           ))}
         </div>
@@ -72,10 +73,10 @@ export function ShiftHistory({ store }: { store: LocalStoreData }) {
               <p className="text-xs text-zinc-500">{formatDateTime(shift.openedAt)} — {shift.closedAt ? formatDateTime(shift.closedAt) : "open"}</p>
             </div>
             <div className="text-right">
-              <p className="text-sm">Float ${shift.openingFloat.toFixed(2)}</p>
+              <p className="text-sm">Float {formatCurrency(shift.openingFloat)}</p>
               {typeof shift.closingVariance === "number" && (
                 <p className={`text-sm font-semibold ${shift.closingVariance === 0 ? "text-emerald-700" : Math.abs(shift.closingVariance) <= 1 ? "text-amber-700" : "text-red-700"}`}>
-                  Variance {shift.closingVariance >= 0 ? "+" : ""}${shift.closingVariance.toFixed(2)}
+                  Variance {shift.closingVariance > 0 ? "+" : ""}{formatCurrency(shift.closingVariance)}
                 </p>
               )}
               {shift.blindClose && <p className="text-xs text-zinc-400">blind close</p>}
@@ -109,7 +110,7 @@ export function EmployeeActivity({ store }: { store: LocalStoreData }) {
             <p className="text-xs text-zinc-500">{stat.employee.roleKey}</p>
           </div>
           <div className="text-right text-sm">
-            <p>{stat.txnCount} sales · ${stat.totalSales.toFixed(2)}</p>
+            <p>{stat.txnCount} sales · {formatCurrency(stat.totalSales)}</p>
             {stat.voidCount > 0 && <p className="text-amber-700">{stat.voidCount} returns</p>}
           </div>
         </div>
@@ -135,7 +136,7 @@ export function CustomerActivity({ customers }: { customers: LocalStoreData["cus
             )}
           </div>
           <div className="text-right text-sm">
-            <p className="font-semibold">${c.totalSpend.toFixed(2)}</p>
+            <p className="font-semibold">{formatCurrency(c.totalSpend)}</p>
             <p className="text-xs text-zinc-500">{c.visitCount} visits · {c.loyaltyPoints} pts</p>
           </div>
         </div>
@@ -245,7 +246,7 @@ export function DiscrepancyCorrelation({ store }: { store: LocalStoreData }) {
         return (
           <div key={row.shift.id} className="grid grid-cols-5 gap-2 rounded-xl bg-zinc-50 px-4 py-2 text-sm items-center">
             <span className="truncate font-medium">{row.emp?.displayName ?? "?"}</span>
-            <span className={`text-right font-semibold ${varColor}`}>{variance >= 0 ? "+" : ""}${variance.toFixed(2)}</span>
+            <span className={`text-right font-semibold ${varColor}`}>{variance > 0 ? "+" : ""}{formatCurrency(variance)}</span>
             <span className="text-right">{row.shiftVoids}</span>
             <span className="text-right">{row.shiftReturns}</span>
             <span className="text-right">{row.shift.blindClose ? "Yes" : "No"}</span>
@@ -280,8 +281,8 @@ export function InventorySummary({ store }: { store: LocalStoreData }) {
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric label="Total on hand" value={String(totalOnHand)} />
         <Metric label="Reserved" value={String(totalReserved)} />
-        <Metric label="Retail value" value={`$${totalRetailValue.toFixed(2)}`} />
-        <Metric label="Cost value" value={`$${totalCostValue.toFixed(2)}`} />
+        <Metric label="Retail value" value={formatCurrency(totalRetailValue)} />
+        <Metric label="Cost value" value={formatCurrency(totalCostValue)} />
       </div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric label="Low stock items" value={String(lowStockCount)} />

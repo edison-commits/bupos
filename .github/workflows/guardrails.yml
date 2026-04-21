@@ -1,0 +1,201 @@
+name: Guardrails
+
+# R25-ops-C-1: this workflow lives at the REPO ROOT
+# (`/.github/workflows/`) because GitHub Actions only reads workflows
+# from there. A prior sub-path location (`code/.github/workflows/`)
+# meant every guardrail across R21-R24 audit rounds was silently
+# decorative — no CI gate ever fired. Moving here restored the
+# protection.
+#
+# All `run:` steps use `working-directory: code` because the app's
+# package.json + scripts live under `code/`.
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+defaults:
+  run:
+    working-directory: code
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: code/package-lock.json
+
+      - name: Install deps
+        run: npm ci
+
+      # Catches the R9-C-2 / R11-C-1 / R11-C-2 shape — code references a
+      # column/table that no migration file ever declared. Fails the PR
+      # BEFORE it ships and crashes at runtime.
+      - name: Schema drift check
+        run: npm run check:schema
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: RLS force-matching check
+        run: npm run check:rls
+
+      - name: No-raw-pool-query check
+        run: npm run check:pool
+
+      # R26-F1: the postgres role has BYPASSRLS, so every raw pool.query
+      # site in the allowlist MUST have an explicit `organization_id =
+      # $N` filter (or join through an org-scoped parent, or invoke a
+      # SECDEF function). RLS + FORCE RLS are COSMETIC at the postgres
+      # role — only the app's WHERE clauses enforce tenancy.
+      - name: Pool-query org-filter check
+        run: npm run check:pool-org-filter
+
+      # R21-H-2 + R22-L-1 + R23-C-2 fix: the safeErr guardrail was
+      # silently unwired from CI for a full round. A parser bug
+      # (R23-C-1) also rendered it a no-op locally. Both now fixed.
+      - name: No-raw-err-log check
+        run: npm run check:logs
+
+      # Meta-guardrail: enforce that every `check:*` script in
+      # package.json is invoked from THIS workflow. R23-C-2 showed
+      # that adding a npm script without wiring it into CI leaves
+      # a placebo guardrail in place. This check is self-referential
+      # (it also verifies its own wiring).
+      - name: CI-wiring meta-check
+        run: npm run check:ci-wiring
+
+      # Meta-meta: enforce every `scripts/check-*.mjs` has a self-test.
+      # A guardrail without a self-test is indistinguishable from a
+      # no-op (see R22-L-1 / R23-C-1 — both were placebo for an entire
+      # audit round).
+      - name: Self-test coverage meta-check
+        run: npm run check:selftest-coverage
+
+      # Workers-runtime smoke tests (R22-M-3 / R23-H-1 prevention).
+      # Validates that waitUntilOrAwait invokes ExecutionContext.
+      # waitUntil AS A METHOD (detached calls throw on Workers); that
+      # probeKvBinding reflects RATE_LIMIT_KV presence correctly; and
+      # that checkKvRateLimit's fail-open logic survives binding
+      # absence. Mocks @opennextjs/cloudflare — no Docker needed.
+      - name: Workers-runtime smoke tests
+        run: npm run test:runtime
+
+      # Adversarial fixture corpus — one permanent test per closed
+      # finding. Prevents fix-reversal regressions (e.g., someone
+      # "refactoring" the display-token to check expiry first would
+      # re-open the timing oracle R21-H-5 closed). Add a test for
+      # every new CRITICAL / HIGH finding going forward.
+      - name: Adversarial fixture corpus
+        run: npm run test:adversarial
+
+  integration:
+    name: PG integration tests
+    runs-on: ubuntu-latest
+    # R8-L-12: spin up Postgres 17, apply every migration, run the
+    # cross-tenant UPDATE regression suite. Adds ~15s cold start + a
+    # few seconds of test runtime — cheap regression insurance for the
+    # RLS + WITH CHECK regime.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: bupos_test
+        ports:
+          - 54329:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d bupos_test"
+          --health-interval 1s
+          --health-timeout 3s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: code/package-lock.json
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Apply migrations + seed
+        run: bash scripts/docker-migrate.sh
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:54329/bupos_test
+
+      - name: Run integration suite
+        run: npm run test:integration
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:54329/bupos_test
+          USE_POSTGRES: "true"
+
+  playwright:
+    name: Playwright e2e
+    runs-on: ubuntu-latest
+    # Unblocked by R24 db/index.ts refactor: the app now detects a
+    # localhost DATABASE_URL and dynamically imports `pg` instead of
+    # `@neondatabase/serverless`, so `next dev` works against the
+    # Docker Postgres service. The Playwright suite catches end-to-end
+    # regressions that unit/integration tests can't (R23-H-2 shape:
+    # admin flow silently 500'd for an unknown number of rounds
+    # because no test exercised the UI).
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: bupos_test
+        ports:
+          - 54329:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d bupos_test"
+          --health-interval 1s
+          --health-timeout 3s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: code/package-lock.json
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Apply migrations + seed
+        run: bash scripts/docker-migrate.sh
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:54329/bupos_test
+
+      - name: Run Playwright e2e
+        run: npm run test:e2e
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:54329/bupos_test
+          USE_POSTGRES: "true"
+          CI: "true"
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: code/playwright-report/
+          retention-days: 7

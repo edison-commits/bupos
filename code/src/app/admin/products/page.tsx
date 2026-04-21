@@ -5,6 +5,7 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 import { useCallback, useEffect, useState } from 'react';
 import { authFetch } from '@/lib/api/client';
 import { formatCurrency } from '@/lib/format';
+import { useDebouncedValue } from '@/lib/hooks/use-debounced-value';
 interface ProductVariant {
   id: string;
   sku: string;
@@ -68,6 +69,7 @@ export default function ProductsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search, 300);
   const [selectedCategory, setSelectedCategory] = useState('');
   const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());
@@ -76,13 +78,13 @@ export default function ProductsPage() {
   const [newCategory, setNewCategory] = useState('');
   const [showCategoryForm, setShowCategoryForm] = useState(false);
 
-  // Fetch products
+  // Fetch products — keyed on debounced search to avoid hitting the API on every keystroke.
   const fetchProducts = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const params = new URLSearchParams();
-      if (search) params.append('search', search);
+      if (debouncedSearch) params.append('search', debouncedSearch);
       if (selectedCategory) params.append('category', selectedCategory);
       if (activeFilter !== 'all') params.append('active', activeFilter === 'active' ? 'true' : 'false');
 
@@ -95,7 +97,7 @@ export default function ProductsPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, selectedCategory, activeFilter]);
+  }, [debouncedSearch, selectedCategory, activeFilter]);
 
   useEffect(() => {
     fetchProducts();

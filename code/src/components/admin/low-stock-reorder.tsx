@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from "react";
 import type { InventoryLevel, ProductVariant, Product, Supplier } from "@/lib/domain/types";
+import { formatCurrency } from "@/lib/format";
 
 interface LowStockAutoReorderProps {
   inventory: InventoryLevel[];
@@ -114,7 +115,7 @@ export function LowStockAutoReorder({
         </div>
         <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3">
           <p className="text-xs text-zinc-500">Estimated order value</p>
-          <p className="mt-1 text-2xl font-semibold">${estimatedOrderValue.toFixed(2)}</p>
+          <p className="mt-1 text-2xl font-semibold">{formatCurrency(estimatedOrderValue)}</p>
         </div>
       </div>
 
@@ -209,7 +210,7 @@ export function LowStockAutoReorder({
 
                     {/* Unit Cost */}
                     <div className="col-span-1 text-right text-xs text-zinc-500">
-                      ${item.unitCost.toFixed(2)}
+                      {formatCurrency(item.unitCost)}
                     </div>
                   </div>
                 );

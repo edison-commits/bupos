@@ -2,6 +2,7 @@
 
 import { useMemo, useRef } from "react";
 import type { LocalStoreData } from "@/lib/persistence/types";
+import { formatCurrency } from "@/lib/format";
 
 interface ZReportProps {
   store: LocalStoreData;
@@ -146,7 +147,7 @@ export function ZReport({ store, locationId }: ZReportProps) {
       ["Metric", "Value"],
       ["Transactions", String(report.txnCount)],
       ["Gross sales", report.grossSales.toFixed(2)],
-      ["Returns", `${report.returnCount} / ${report.totalReturns.toFixed(2)}`],
+      ["Returns", `${report.returnCount} / ${formatCurrency(report.totalReturns)}`],
       ["Net sales", report.netSales.toFixed(2)],
       ["Avg ticket", report.avgTicket.toFixed(2)],
       ["Voids", String(report.todayVoids.length)],
@@ -224,12 +225,12 @@ export function ZReport({ store, locationId }: ZReportProps) {
           <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-zinc-500">Sales Overview</p>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <ZMetric label="Transactions" value={String(report.txnCount)} />
-            <ZMetric label="Gross sales" value={`$${report.grossSales.toFixed(2)}`} />
-            <ZMetric label="Returns" value={`${report.returnCount} / $${report.totalReturns.toFixed(2)}`} />
-            <ZMetric label="Net sales" value={`$${report.netSales.toFixed(2)}`} accent />
+            <ZMetric label="Gross sales" value={formatCurrency(report.grossSales)} />
+            <ZMetric label="Returns" value={`${report.returnCount} / ${formatCurrency(report.totalReturns)}`} />
+            <ZMetric label="Net sales" value={formatCurrency(report.netSales)} accent />
           </div>
           <div className="mt-3 grid grid-cols-2 gap-3">
-            <ZMetric label="Avg ticket" value={`$${report.avgTicket.toFixed(2)}`} />
+            <ZMetric label="Avg ticket" value={formatCurrency(report.avgTicket)} />
             <ZMetric label="Voids" value={String(report.todayVoids.length)} />
           </div>
         </div>
@@ -244,7 +245,7 @@ export function ZReport({ store, locationId }: ZReportProps) {
               {Array.from(report.tenderMap.entries()).map(([type, data]) => (
                 <div key={type} className="flex items-center justify-between rounded-xl bg-zinc-50 px-4 py-2 text-sm">
                   <span>{tenderLabel(type)}</span>
-                  <span className="font-semibold">{data.count} txns · ${data.total.toFixed(2)}</span>
+                  <span className="font-semibold">{data.count} txns · {formatCurrency(data.total)}</span>
                 </div>
               ))}
             </div>
@@ -260,14 +261,14 @@ export function ZReport({ store, locationId }: ZReportProps) {
             {report.openShifts.length > 0 && (
               <ZRow label="Still open" value={String(report.openShifts.length)} warn />
             )}
-            <ZRow label="Total opening floats" value={`$${report.totalOpeningFloat.toFixed(2)}`} />
-            <ZRow label="Cash tendered" value={`$${(report.tenderMap.get("cash")?.total ?? 0).toFixed(2)}`} />
-            <ZRow label="Pay-ins" value={`+$${report.totalPayIn.toFixed(2)}`} />
-            <ZRow label="Pay-outs" value={`−$${report.totalPayOut.toFixed(2)}`} />
+            <ZRow label="Total opening floats" value={formatCurrency(report.totalOpeningFloat)} />
+            <ZRow label="Cash tendered" value={formatCurrency((report.tenderMap.get("cash")?.total ?? 0))} />
+            <ZRow label="Pay-ins" value={`+${formatCurrency(report.totalPayIn)}`} />
+            <ZRow label="Pay-outs" value={`−${formatCurrency(report.totalPayOut)}`} />
             <div className="border-t border-zinc-200 pt-2">
               <ZRow
                 label="Net cash variance"
-                value={`${report.totalVariance >= 0 ? "+" : ""}$${report.totalVariance.toFixed(2)}`}
+                value={`${report.totalVariance >= 0 ? "+" : ""}${formatCurrency(report.totalVariance)}`}
                 warn={Math.abs(report.totalVariance) > 2}
               />
             </div>
@@ -284,7 +285,7 @@ export function ZReport({ store, locationId }: ZReportProps) {
                 .map((emp) => (
                   <div key={emp.name} className="flex items-center justify-between rounded-xl bg-zinc-50 px-4 py-2 text-sm">
                     <span className="font-medium">{emp.name}</span>
-                    <span>{emp.count} sales · ${emp.total.toFixed(2)}</span>
+                    <span>{emp.count} sales · {formatCurrency(emp.total)}</span>
                   </div>
                 ))}
             </div>
@@ -296,10 +297,10 @@ export function ZReport({ store, locationId }: ZReportProps) {
           <div className="rounded-2xl border border-zinc-200 p-4">
             <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-zinc-500">Gift Cards & Store Credit</p>
             <div className="space-y-2 text-sm">
-              {report.gcActivateTotal > 0 && <ZRow label="Gift cards activated" value={`$${report.gcActivateTotal.toFixed(2)}`} />}
-              {report.gcRedeemTotal > 0 && <ZRow label="Gift cards redeemed" value={`$${report.gcRedeemTotal.toFixed(2)}`} />}
-              {report.scIssued > 0 && <ZRow label="Store credit issued" value={`$${report.scIssued.toFixed(2)}`} />}
-              {report.scRedeemed > 0 && <ZRow label="Store credit redeemed" value={`$${report.scRedeemed.toFixed(2)}`} />}
+              {report.gcActivateTotal > 0 && <ZRow label="Gift cards activated" value={formatCurrency(report.gcActivateTotal)} />}
+              {report.gcRedeemTotal > 0 && <ZRow label="Gift cards redeemed" value={formatCurrency(report.gcRedeemTotal)} />}
+              {report.scIssued > 0 && <ZRow label="Store credit issued" value={formatCurrency(report.scIssued)} />}
+              {report.scRedeemed > 0 && <ZRow label="Store credit redeemed" value={formatCurrency(report.scRedeemed)} />}
             </div>
           </div>
         )}

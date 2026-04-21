@@ -1,7 +1,8 @@
 'use client';
-import Image from "next/image";
+/* eslint-disable @next/next/no-img-element -- remote product images, width/height unknown */
 
 import { useMemo } from 'react';
+import { formatCurrency } from "@/lib/format";
 
 interface ProductRecommendationsProps {
   currentCartItems: {
@@ -68,6 +69,15 @@ export function ProductRecommendations({
     // Build a map of variant ID to variant details for quick lookup
     const variantMap = new Map(variants.map((v) => [v.id, v]));
     const productMap = new Map(products.map((p) => [p.id, p]));
+
+    // Pre-bucket active variants by productId so downstream lookups avoid O(V) scans.
+    const activeVariantsByProductId = new Map<string, typeof variants>();
+    for (const v of variants) {
+      if (!v.isActive) continue;
+      const bucket = activeVariantsByProductId.get(v.productId);
+      if (bucket) bucket.push(v);
+      else activeVariantsByProductId.set(v.productId, [v]);
+    }
 
     // Build inventory lookup
     const inventoryMap = new Map(
@@ -167,10 +177,8 @@ export function ProductRecommendations({
       const product = productMap.get(productId);
       if (!product || !product.isActive) continue;
 
-      // Get the best variant (cheapest active variant with stock)
-      const productVariants = variants.filter(
-        (v) => v.productId === productId && v.isActive
-      );
+      // Get the best variant (cheapest active variant with stock) — O(1) lookup
+      const productVariants = activeVariantsByProductId.get(productId) ?? [];
 
       if (productVariants.length === 0) continue;
 
@@ -321,7 +329,7 @@ function RecommendationCard({ item, onAdd }: RecommendationCardProps) {
       {/* Product Image */}
       <div className="h-24 bg-zinc-200 overflow-hidden">
         {item.imageUrl ? (
-          <Image
+          <img
             src={item.imageUrl}
             alt={item.productName}
             className="w-full h-full object-cover"
@@ -347,9 +355,9 @@ function RecommendationCard({ item, onAdd }: RecommendationCardProps) {
           )}
         </div>
 
-        {/* Price */}
+        {/* Price — variant price is already stored in dollars (numeric), not cents */}
         <p className="text-lg font-semibold text-teal-600">
-          ${(item.price / 100).toFixed(2)}
+          {formatCurrency(item.price)}
         </p>
 
         {/* Reason Badge */}

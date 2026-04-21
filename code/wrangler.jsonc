@@ -5,9 +5,33 @@
   "compatibility_date": "2024-12-30",
   "compatibility_flags": ["nodejs_compat", "no_handle_cross_request_promise_resolution"],
 
+  // Per-request CPU budget. The app is on the Workers Paid plan so we can
+  // configure this up to 30s. Most requests are much smaller, but checkout
+  // (/api/offline-sync + /api/checkout) legitimately needs headroom for
+  // Zod validation + ~6 DB queries + inventory math + audit writes on
+  // busy carts. On the previous Free plan (10ms cap) the checkout flow
+  // intermittently tripped Cloudflare error 1102 under load.
+  "limits": {
+    "cpu_ms": 30000
+  },
+
   // Placement hint: run close to Supabase (us-west-2)
   "placement": {
     "mode": "smart"
+  },
+
+  // R25-ops-M-1: enable Workers Logs retention so structured error
+  // lines from with-auth.ts (`event: "api_route_error"`) and
+  // postgres-store.ts (`event: "audit_insert_failed"`) are queryable
+  // from the Cloudflare dashboard (Workers → Logs). `head_sampling_rate: 1`
+  // retains 100% of logs — cheap at our volume (~1000 req/day). Scale
+  // down if volume grows past a free-tier quota.
+  //
+  // Logpush to a durable sink (R2, S3, Honeycomb, Axiom) must be
+  // configured separately in the dashboard — see docs/runbook-alerting.md.
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
   },
 
   // Environment variables for the Worker
@@ -20,6 +44,31 @@
 
   // Custom domains configured via Cloudflare dashboard (basicuniformpos.com)
   // Routes removed to avoid needing Zone:Workers Routes:Edit token permission
+
+  // R33-C1: Cloudflare Worker Cron Triggers invoke the Worker's
+  // `scheduled(event, env, ctx)` export. OpenNext/Next.js App Router
+  // only synthesizes a `fetch` handler, so declaring `triggers.crons`
+  // here produced a scheduled event that never reached any handler
+  // (silent no-op). The nightly cleanup is now driven by Postgres
+  // pg_cron (see migration 065) which calls `run_nightly_cleanup()`
+  // directly — no Worker hop, no scheduled-handler plumbing, works
+  // on every Supabase deploy.
+  //
+  // `/api/internal/run-cleanup` remains as an ops-reachable manual
+  // trigger, gated by OPS_CLEANUP_SECRET. It's NOT the cron path.
+
+  // KV binding for cross-isolate rate limiting (R8-M-11 follow-up).
+  // Every auth attempt increments a bucket keyed by SHA-256 fingerprint;
+  // KV's eventually-consistent model (~60s cross-region) is acceptable
+  // because rate-limit windows are minutes, not seconds. The in-memory
+  // limiter stays as the first gate (catches bursts within an isolate);
+  // KV catches distributed attacks that span isolates.
+  "kv_namespaces": [
+    {
+      "binding": "RATE_LIMIT_KV",
+      "id": "76763261c53b421591bb6e281bb42c48"
+    }
+  ],
 
   // Assets config for OpenNext
   "assets": {

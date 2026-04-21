@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { formatCurrency } from "@/lib/format";
 
 interface Customer {
   id: string; first_name: string; last_name: string; email: string | null; phone: string | null;
@@ -28,17 +29,30 @@ export function CustomerDatabase() {
     return () => { if (timeout.current) clearTimeout(timeout.current); };
   }, [search]);
 
+  // R34-D11: AbortController so rapid typing doesn't race prior
+  // in-flight fetches. Prior shape let an old request resolve after
+  // the newer one, overwriting `customers` with stale results.
+  const fetchAbortRef = useRef<AbortController | null>(null);
   const fetchCustomers = useCallback(async (page: number) => {
+    fetchAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    fetchAbortRef.current = ctrl;
     setLoading(true);
     try {
       const params = new URLSearchParams({ page: String(page), pageSize: '50' });
       if (debouncedSearch) params.set('search', debouncedSearch);
-      const res = await fetch(`/api/customers?${params}`);
+      const res = await fetch(`/api/customers?${params}`, { signal: ctrl.signal });
       if (!res.ok) throw new Error('Failed to load customers');
       const data = await res.json();
-      setCustomers(data.customers || []);
-      setPagination(data.pagination || { page: 1, pageSize: 50, total: 0, totalPages: 0 });
-    } catch { /* */ } finally { setLoading(false); }
+      if (!ctrl.signal.aborted) {
+        setCustomers(data.customers || []);
+        setPagination(data.pagination || { page: 1, pageSize: 50, total: 0, totalPages: 0 });
+      }
+    } catch (err) {
+      if ((err as { name?: string })?.name === 'AbortError') return;
+    } finally {
+      if (!ctrl.signal.aborted) setLoading(false);
+    }
   }, [debouncedSearch]);
 
   useEffect(() => { fetchCustomers(1); }, [fetchCustomers]);
@@ -132,9 +146,9 @@ export function CustomerDatabase() {
                     {c.phone && <div>{c.phone}</div>}
                   </td>
                   <td className="px-3 py-2.5 text-center"><span className="px-2 py-0.5 rounded-full text-xs font-bold bg-violet-100 text-violet-700">{c.loyalty_points}</span></td>
-                  <td className="px-3 py-2.5 text-right font-medium text-zinc-900">${Number(c.total_spend).toFixed(2)}</td>
+                  <td className="px-3 py-2.5 text-right font-medium text-zinc-900">{formatCurrency(Number(c.total_spend))}</td>
                   <td className="px-3 py-2.5 text-center text-zinc-600">{c.visit_count}</td>
-                  <td className="px-3 py-2.5 text-right text-zinc-600">${Number(c.store_credit_balance).toFixed(2)}</td>
+                  <td className="px-3 py-2.5 text-right text-zinc-600">{formatCurrency(Number(c.store_credit_balance))}</td>
                   <td className="px-3 py-2.5 text-center text-xs text-zinc-500">{new Date(c.created_at).toLocaleDateString()}</td>
                   <td className="px-3 py-2.5"><button onClick={() => openEdit(c)} className="touch-button px-2 py-1 rounded text-xs font-medium bg-zinc-100 hover:bg-zinc-200 text-zinc-700">Edit</button></td>
                 </tr>

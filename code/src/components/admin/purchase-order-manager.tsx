@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { formatCurrency } from '@/lib/format';
 
 interface Supplier { id: string; name: string; is_active: boolean; }
 
@@ -257,7 +258,6 @@ export function PurchaseOrderManager() {
   };
 
   const formatDate = (d: string | null) => d ? new Date(d).toLocaleDateString() : '—';
-  const formatCurrency = (v: string | number) => `$${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   // ─── LIST VIEW ───
   if (view === 'list') {

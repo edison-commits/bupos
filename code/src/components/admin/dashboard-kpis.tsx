@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { LocalStoreData } from "@/lib/persistence/types";
+import { formatCurrency } from "@/lib/format";
 
 interface DashboardKPIsProps {
   store: LocalStoreData;
@@ -9,9 +10,15 @@ interface DashboardKPIsProps {
 }
 
 export function DashboardKPIs({ store, locationId }: DashboardKPIsProps) {
-  const now = new Date();
-  const todayStr = now.toISOString().slice(0, 10);
-  const yesterdayStr = new Date(now.getTime() - 86_400_000).toISOString().slice(0, 10);
+  // Use a stable placeholder on first render (matches server) then hydrate
+  // the real "today" on the client to avoid React #418 when the server's
+  // UTC day differs from the client's local day around midnight.
+  const [now, setNow] = useState<Date | null>(null);
+  useEffect(() => { setNow(new Date()); }, []);
+  const todayStr = (now ?? new Date(0)).toISOString().slice(0, 10);
+  const yesterdayStr = new Date((now ?? new Date(0)).getTime() - 86_400_000)
+    .toISOString()
+    .slice(0, 10);
 
   const kpis = useMemo(() => {
     const today = todayStr;
@@ -95,21 +102,31 @@ export function DashboardKPIs({ store, locationId }: DashboardKPIsProps) {
     <div className="space-y-4">
       <div>
         <h3 className="text-lg font-bold">Today at a glance</h3>
-        <p className="text-sm text-zinc-500">{new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</p>
+        <p className="text-sm text-zinc-500" suppressHydrationWarning>
+          {now
+            ? now.toLocaleDateString("en-US", {
+                weekday: "long",
+                year: "numeric",
+                month: "long",
+                day: "numeric",
+                timeZone: "America/Los_Angeles",
+              })
+            : "\u00a0"/* nbsp reserves line height on SSR */}
+        </p>
       </div>
 
       {/* Primary sales KPIs */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <KPICard
           label="Gross sales"
-          value={`$${kpis.todayGross.toFixed(2)}`}
+          value={formatCurrency(kpis.todayGross)}
           delta={kpis.salesDelta}
           deltaLabel="vs yesterday"
           accent="teal"
         />
         <KPICard
           label="Net sales"
-          value={`$${kpis.todayNet.toFixed(2)}`}
+          value={formatCurrency(kpis.todayNet)}
           accent="teal"
         />
         <KPICard
@@ -118,7 +135,7 @@ export function DashboardKPIs({ store, locationId }: DashboardKPIsProps) {
         />
         <KPICard
           label="Avg ticket"
-          value={`$${kpis.todayAvgTicket.toFixed(2)}`}
+          value={formatCurrency(kpis.todayAvgTicket)}
         />
       </div>
 
@@ -126,7 +143,7 @@ export function DashboardKPIs({ store, locationId }: DashboardKPIsProps) {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <KPICard
           label="Returns today"
-          value={`$${kpis.todayReturnTotal.toFixed(2)}`}
+          value={formatCurrency(kpis.todayReturnTotal)}
           warn={kpis.todayReturnTotal > 0}
         />
         <KPICard
@@ -137,7 +154,7 @@ export function DashboardKPIs({ store, locationId }: DashboardKPIsProps) {
         />
         <KPICard
           label="Cash variance"
-          value={`$${kpis.totalVariance.toFixed(2)}`}
+          value={formatCurrency(kpis.totalVariance)}
           warn={kpis.totalVariance > 5}
         />
         <KPICard
@@ -159,11 +176,11 @@ export function DashboardKPIs({ store, locationId }: DashboardKPIsProps) {
         <KPICard
           label="Active layaways"
           value={String(kpis.activeLayaways)}
-          subtext={`$${kpis.layawayBalance.toFixed(2)} outstanding`}
+          subtext={`${formatCurrency(kpis.layawayBalance)} outstanding`}
         />
         <KPICard
           label="Gift card liability"
-          value={`$${kpis.gcLiability.toFixed(2)}`}
+          value={formatCurrency(kpis.gcLiability)}
         />
         <KPICard
           label="Customers"

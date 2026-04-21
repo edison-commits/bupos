@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { formatCurrency } from "@/lib/format";
 
 interface Expense {
   id: string; category: string; description: string; amount: string; expense_date: string;
@@ -85,12 +86,12 @@ export function ExpenseTracker() {
       {/* Summary cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div className="rounded-xl bg-white border border-zinc-200 p-3 text-center">
-          <div className="text-2xl font-bold text-zinc-900">${grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+          <div className="text-2xl font-bold text-zinc-900">{formatCurrency(grandTotal)}</div>
           <div className="text-xs text-zinc-500 mt-1">Total for {month}</div>
         </div>
         {summary.slice(0, 3).map((s) => (
           <div key={s.category} className="rounded-xl bg-white border border-zinc-200 p-3 text-center">
-            <div className="text-lg font-bold text-zinc-900">${Number(s.total).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+            <div className="text-lg font-bold text-zinc-900">{formatCurrency(Number(s.total))}</div>
             <div className="text-xs text-zinc-500 mt-1 capitalize">{s.category} ({s.count})</div>
           </div>
         ))}
@@ -169,7 +170,7 @@ export function ExpenseTracker() {
                   <td className="px-3 py-2.5 text-zinc-600 text-xs">{new Date(e.expense_date).toLocaleDateString()}</td>
                   <td className="px-3 py-2.5"><span className={`px-2 py-0.5 rounded-full text-xs font-bold ${CAT_COLORS[e.category] || CAT_COLORS.other}`}>{e.category}</span></td>
                   <td className="px-3 py-2.5 text-zinc-800">{e.description}{e.notes && <span className="text-xs text-zinc-400 ml-1">— {e.notes}</span>}</td>
-                  <td className="px-3 py-2.5 text-right font-medium text-zinc-900">${Number(e.amount).toFixed(2)}</td>
+                  <td className="px-3 py-2.5 text-right font-medium text-zinc-900">{formatCurrency(Number(e.amount))}</td>
                   <td className="px-3 py-2.5 text-center text-xs text-zinc-500">{e.is_recurring ? e.recurrence_period : '—'}</td>
                   <td className="px-3 py-2.5"><button onClick={() => handleDelete(e.id)} className="text-red-400 hover:text-red-600 text-xs">&times;</button></td>
                 </tr>

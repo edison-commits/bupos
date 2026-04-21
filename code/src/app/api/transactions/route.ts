@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { orgQuery } from "@/lib/supabase-rest";
 import { withAdminAuth } from "@/lib/api/with-auth";
 
+import { safeErr } from "@/lib/logging/safe-err";
 /**
  * BuPOS Transaction History API
  * @tags transactions
@@ -25,52 +26,119 @@ export const GET = withAdminAuth("audit.view", async (req, ctx) => {
   try {
     const sp = req.nextUrl.searchParams;
 
+    // Location scope for non-managers. `audit.view` is held by every role
+    // including inventory_clerk and support — without this filter, they can
+    // page through every sale (with joined customer PII) across every
+    // location in the org. Owners and managers still see everything.
+    // R12-M-8: use `ctx.allowedLocations` not `ctx.employee.locationIds`
+    // so register-scope callers see only their physically-connected
+    // terminal's location.
+    const isManager = ctx.allowedLocations === null;
+    const allowedLocations = ctx.allowedLocations ?? [];
+
     // ── Single transaction detail ──
     const id = sp.get("id");
     if (id) {
-      const txn = await orgQuery(
-        orgId,
-        `SELECT t.*,
-                e.display_name AS employee_name,
-                c.first_name || ' ' || c.last_name AS customer_name,
-                c.email AS customer_email,
-                c.phone AS customer_phone
-         FROM transactions t
-         LEFT JOIN employees e ON e.id = t.employee_id
-         LEFT JOIN customers c ON c.id = t.customer_id
-         WHERE t.id = $1`,
-        [id],
-      );
+      // R25-perf-7: consolidate 4 sequential orgQuery calls onto a
+      // single orgTx client. On remote, each orgQuery opens a fresh
+      // Neon WebSocket pool; previously a transaction-detail open fired
+      // 4 × ~50-150ms handshakes = 200-600ms overhead. Now one
+      // handshake amortized across all reads.
+      const { orgTx } = await import("@/lib/supabase-rest");
+      const client = await orgTx(orgId);
+      let txn, tenders, events, exceptions;
+      try {
+        // R27-C8: explicit organization_id filter. Without it, passing
+        // `?id=<foreign-UUID>` returned any tenant's full transaction
+        // row including cart_snapshot + customer PII.
+        txn = await client.query(
+          `SELECT t.*,
+                  e.display_name AS employee_name,
+                  c.first_name || ' ' || c.last_name AS customer_name,
+                  c.email AS customer_email,
+                  c.phone AS customer_phone
+           FROM transactions t
+           LEFT JOIN employees e ON e.id = t.employee_id AND e.organization_id = $2
+           LEFT JOIN customers c ON c.id = t.customer_id AND c.organization_id = $2
+           WHERE t.id = $1 AND t.organization_id = $2`,
+          [id, orgId],
+        );
 
       if (txn.rows.length === 0) {
+        await client.query("ROLLBACK").catch(() => {});
+        client.release();
         return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
       }
 
-      const tenders = await orgQuery(
-        orgId,
-        `SELECT id, transaction_id, tender_type, amount, reference, created_at FROM transaction_tenders WHERE transaction_id = $1 ORDER BY created_at`,
-        [id],
-      );
+      // Per-record location check on the detail path — returning the row
+      // first and then rejecting means less info leaks than building the
+      // check into the SQL (we don't reveal whether the id exists for a
+      // non-accessible location — still 404).
+      if (!isManager && !allowedLocations.includes(txn.rows[0].location_id)) {
+        await client.query("ROLLBACK").catch(() => {});
+        client.release();
+        return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
+      }
 
-      const events = await orgQuery(
-        orgId,
-        `SELECT te.*, e.display_name AS actor_name
-         FROM transaction_events te
-         LEFT JOIN employees e ON e.id = te.actor_employee_id
-         WHERE te.transaction_id = $1
-         ORDER BY te.created_at`,
-        [id],
-      );
+      // Scrub PII embedded in cart_snapshot for non-manager callers. The
+      // snapshot JSON can include customer email/phone/address/notes that
+      // the cashier typed at checkout; the paired /api/customers endpoint
+      // is gated on employee.manage, so the PII should not leak via the
+      // transaction detail path either.
+      if (!isManager) {
+        try {
+          const raw = txn.rows[0].cart_snapshot;
+          const snap = typeof raw === "string" ? JSON.parse(raw) : raw;
+          if (snap && typeof snap === "object") {
+            delete snap.customerEmail;
+            delete snap.customerPhone;
+            delete snap.customerAddress;
+            delete snap.customerNotes;
+            txn.rows[0].cart_snapshot = snap;
+          }
+          // Also scrub the join-joined columns in the top-level row.
+          txn.rows[0].customer_email = undefined;
+          txn.rows[0].customer_phone = undefined;
+        } catch {
+          // If the snapshot won't parse, leave as-is — the raw JSON shouldn't
+          // be decoded client-side anyway.
+        }
+      }
 
-      const exceptions = await orgQuery(
-        orgId,
-        `SELECT tex.*, e.display_name AS approver_name
-         FROM transaction_exceptions tex
-         LEFT JOIN employees e ON e.id = tex.approved_by
-         WHERE tex.transaction_id = $1
-         ORDER BY tex.created_at`,
-        [id],
-      );
+        // R27-C8: tenders/events/exceptions are FK-scoped by the
+        // already-org-verified transaction_id above. Keeping the
+        // simple WHERE is safe, but JOIN the employees lookup
+        // through org so a cross-tenant actor_employee_id/approved_by
+        // (if one ever sneaks in) can't splice foreign names.
+        // check-pool-org-filter: scoped-by-just-verified-transaction-id
+        tenders = await client.query(
+          `SELECT id, transaction_id, tender_type, amount, metadata, created_at
+             FROM transaction_tenders WHERE transaction_id = $1 ORDER BY created_at`,
+          [id],
+        );
+        events = await client.query(
+          `SELECT te.*, e.display_name AS actor_name
+             FROM transaction_events te
+             LEFT JOIN employees e ON e.id = te.actor_employee_id AND e.organization_id = $2
+            WHERE te.transaction_id = $1 AND te.organization_id = $2
+            ORDER BY te.created_at`,
+          [id, orgId],
+        );
+        exceptions = await client.query(
+          `SELECT tex.*, e.display_name AS approver_name
+             FROM transaction_exceptions tex
+             LEFT JOIN employees e ON e.id = tex.approved_by AND e.organization_id = $2
+            WHERE tex.transaction_id = $1
+            ORDER BY tex.created_at`,
+          [id, orgId],
+        );
+        await client.query("COMMIT");
+      } catch (e) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw e;
+      } finally {
+        client.release();
+      }
 
       return NextResponse.json({
         transaction: txn.rows[0],
@@ -89,8 +157,22 @@ export const GET = withAdminAuth("audit.view", async (req, ctx) => {
     if (cursorParam) {
       try {
         const decoded = JSON.parse(Buffer.from(cursorParam, "base64").toString("utf-8"));
-        cursorId = decoded.id ?? null;
-        cursorCreatedAt = decoded.created_at ?? null;
+        // Validate before pushing — an attacker who crafts a base64 cursor
+        // with `created_at: "not-a-timestamp"` would otherwise trip pg's
+        // timestamp parser on every page turn, serving 500s instead of
+        // paging correctly. Reset to null on bad input.
+        const maybeCreated = decoded?.created_at;
+        const maybeId = decoded?.id;
+        if (typeof maybeCreated === "string" && !Number.isNaN(Date.parse(maybeCreated))) {
+          cursorCreatedAt = maybeCreated;
+        }
+        if (typeof maybeId === "string" && /^[0-9a-f-]{36}$/i.test(maybeId)) {
+          cursorId = maybeId;
+        }
+        if (cursorCreatedAt === null || cursorId === null) {
+          cursorCreatedAt = null;
+          cursorId = null;
+        }
       } catch {
         // Invalid cursor — ignore and start from beginning
       }
@@ -100,11 +182,41 @@ export const GET = withAdminAuth("audit.view", async (req, ctx) => {
     const values: unknown[] = [];
     let idx = 0;
 
+    // R27-C8: explicit organization_id filter. Without it, the list
+    // endpoint returned every tenant's transactions for owner/manager
+    // callers (non-managers were partially gated by location but the
+    // location_id could be a foreign tenant's).
+    idx++;
+    conditions.push(`t.organization_id = $${idx}`);
+    values.push(orgId);
+
+    // Non-managers can only see transactions at their assigned locations.
+    // If they have no locations, return an empty list (no data leak).
+    if (!isManager) {
+      if (allowedLocations.length === 0) {
+        return NextResponse.json({ transactions: [], nextCursor: null, hasMore: false });
+      }
+      idx++;
+      conditions.push(`t.location_id = ANY($${idx}::uuid[])`);
+      values.push(allowedLocations);
+    }
+
     const search = sp.get("search");
     if (search) {
+      const escaped = search.replace(/[%_\\]/g, '\\$&');
       idx++;
-      conditions.push(`(t.id::text ILIKE $${idx} OR e.display_name ILIKE $${idx})`);
-      values.push(`%${search}%`);
+      // UUIDs only match `[0-9a-f-]`. If the search term is clearly NOT a
+      // UUID prefix, skip the `t.id::text ILIKE` branch — that branch forces
+      // a per-row cast + ILIKE scan (no index can serve it), so a short
+      // search like "a" triggered a seq scan over every transaction. Short
+      // alphanumeric matches are now only compared against display_name.
+      const looksLikeUuidPrefix = /^[0-9a-f-]+$/i.test(search);
+      if (looksLikeUuidPrefix) {
+        conditions.push(`(t.id::text ILIKE $${idx} OR e.display_name ILIKE $${idx})`);
+      } else {
+        conditions.push(`e.display_name ILIKE $${idx}`);
+      }
+      values.push(`%${escaped}%`);
     }
 
     const status = sp.get("status");
@@ -137,6 +249,21 @@ export const GET = withAdminAuth("audit.view", async (req, ctx) => {
 
     const customer = sp.get("customer");
     if (customer) {
+      // R29-L2: validate the customer param belongs to this org BEFORE
+      // using it in the WHERE clause. The transactions rows are already
+      // org-filtered (t.organization_id = $1) so a foreign customer
+      // would merely return empty results, but the empty-vs-populated
+      // response still works as a timing-free existence oracle for
+      // other tenants' customer_ids. Return 404 for unknown customers
+      // regardless of tenant — uniform response, no side channel.
+      const { rows: cCheck } = await orgQuery(
+        orgId,
+        `SELECT 1 FROM customers WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+        [customer, orgId],
+      );
+      if (cCheck.length === 0) {
+        return NextResponse.json({ error: "Customer not found" }, { status: 404 });
+      }
       idx++;
       conditions.push(`t.customer_id = $${idx}`);
       values.push(customer);
@@ -145,14 +272,22 @@ export const GET = withAdminAuth("audit.view", async (req, ctx) => {
     // Cursor-based pagination: (created_at, id) < (cursor_created_at, cursor_id)
     // to get rows "before" the cursor in descending order
     if (cursorCreatedAt !== null && cursorId !== null) {
-      idx++;
-      conditions.push(`(t.created_at, t.id) < ($${idx}, $${idx + 1})`);
+      conditions.push(`(t.created_at, t.id) < ($${idx + 1}, $${idx + 2})`);
       values.push(cursorCreatedAt, cursorId);
+      idx += 2;
     }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
-    // Fetch limit + 1 to determine if there's a next page
+    // R25-perf-7: previously `(SELECT COUNT(*) FROM transaction_tenders
+    // WHERE ...) AS tender_count` was a correlated subquery — one
+    // per-row scan per page of 50. Replace with a LEFT JOIN against a
+    // grouped subquery so the planner runs a single hash aggregate.
+    // Fetch limit + 1 to determine if there's a next page.
+    // R27-C8: employee/customer JOINs also org-gated for defense in
+    // depth, so a cross-tenant employee_id/customer_id (shouldn't
+    // exist given the new t.organization_id filter above, but cheap
+    // insurance) can't splice foreign names.
     const rows = await orgQuery(
       orgId,
       `SELECT t.id, t.status, t.tender_type, t.subtotal, t.discount_total, t.tax_total,
@@ -160,10 +295,15 @@ export const GET = withAdminAuth("audit.view", async (req, ctx) => {
               t.customer_id,
               e.display_name AS employee_name,
               c.first_name || ' ' || c.last_name AS customer_name,
-              (SELECT COUNT(*)::int FROM transaction_tenders tt WHERE tt.transaction_id = t.id) AS tender_count
+              COALESCE(tt.tender_count, 0)::int AS tender_count
        FROM transactions t
-       LEFT JOIN employees e ON e.id = t.employee_id
-       LEFT JOIN customers c ON c.id = t.customer_id
+       LEFT JOIN employees e ON e.id = t.employee_id AND e.organization_id = $1
+       LEFT JOIN customers c ON c.id = t.customer_id AND c.organization_id = $1
+       LEFT JOIN (
+         SELECT transaction_id, COUNT(*)::int AS tender_count
+           FROM transaction_tenders
+          GROUP BY transaction_id
+       ) tt ON tt.transaction_id = t.id
        ${whereClause}
        ORDER BY t.created_at DESC, t.id DESC
        LIMIT $${idx + 1}`,
@@ -185,7 +325,7 @@ export const GET = withAdminAuth("audit.view", async (req, ctx) => {
       hasMore,
     });
   } catch (err) {
-    console.error("GET /api/transactions error:", err);
+    console.error("GET /api/transactions error:", safeErr(err));
     return NextResponse.json({ error: "Failed to fetch transactions" }, { status: 500 });
   }
 });

@@ -5,6 +5,7 @@ import { useState, useEffect } from "react";
 import { formatDateTime } from "@/lib/utils/date";
 import Link from "next/link";
 import { authFetch } from '@/lib/api/client';
+import { formatCurrency } from "@/lib/format";
 
 type ShiftStatus = "open" | "closed";
 
@@ -90,7 +91,7 @@ export default function ShiftsPage() {
     if (v === null) return "—";
     if (v === 0) return "$0.00";
     const abs = Math.abs(v);
-    const label = v > 0 ? `over $${abs.toFixed(2)}` : `short $${abs.toFixed(2)}`;
+    const label = v > 0 ? `over ${formatCurrency(abs)}` : `short ${formatCurrency(abs)}`;
     return label;
   }
 
@@ -207,13 +208,13 @@ export default function ShiftsPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right text-zinc-700 whitespace-nowrap">
-                        ${shift.openingFloat.toFixed(2)}
+                        {formatCurrency(shift.openingFloat)}
                       </td>
                       <td className="px-4 py-3 text-right text-zinc-700 whitespace-nowrap">
-                        {shift.expectedCash !== null ? `$${shift.expectedCash.toFixed(2)}` : "—"}
+                        {shift.expectedCash !== null ? formatCurrency(shift.expectedCash) : "—"}
                       </td>
                       <td className="px-4 py-3 text-right text-zinc-700 whitespace-nowrap">
-                        {shift.declaredCash !== null ? `$${shift.declaredCash.toFixed(2)}` : "—"}
+                        {shift.declaredCash !== null ? formatCurrency(shift.declaredCash) : "—"}
                       </td>
                       <td className={`px-4 py-3 text-right whitespace-nowrap ${varianceClass(shift.variance)}`}>
                         {varianceLabel(shift.variance)}

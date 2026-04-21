@@ -2,6 +2,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { ChevronDown, Plus, Trash2, Edit2, Check } from 'lucide-react';
+import { formatCurrency } from "@/lib/format";
 interface Category {
   id: string;
   name: string;
@@ -629,7 +630,7 @@ export function DiscountScheduler({ categories, products }: DiscountSchedulerPro
                             }`}>
                               {discount.discountType === 'percent'
                                 ? `${discount.discountValue}% off`
-                                : `$${discount.discountValue.toFixed(2)} off`}
+                                : `${formatCurrency(discount.discountValue)} off`}
                             </span>
                             {isActive && (
                               <span className="inline-block px-3 py-1 rounded-full text-sm font-medium bg-emerald-100 text-emerald-700">

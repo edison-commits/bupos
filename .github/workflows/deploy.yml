@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [master, main]
 
+defaults:
+  run:
+    working-directory: code
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -20,77 +24,134 @@ jobs:
 
       - name: Install
         run: npm ci
-        working-directory: code
 
-      - name: Run DB migrations
-        run: |
-          psql "${{ secrets.DATABASE_URL }}" \
-            -c "ALTER TABLE products ADD COLUMN IF NOT EXISTS product_brand TEXT DEFAULT '';"
-          psql "${{ secrets.DATABASE_URL }}" \
-            -c "ALTER TABLE products ADD COLUMN IF NOT EXISTS product_type TEXT DEFAULT '';"
-          psql "${{ secrets.DATABASE_URL }}" \
-            -c "CREATE INDEX IF NOT EXISTS idx_products_product_brand ON products(product_brand) WHERE product_brand != '';"
-          psql "${{ secrets.DATABASE_URL }}" \
-            -c "CREATE INDEX IF NOT EXISTS idx_products_product_type ON products(product_type) WHERE product_type != '';"
-          psql "${{ secrets.DATABASE_URL }}" \
-            -c "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS receipt_store_name TEXT DEFAULT '';"
-          psql "${{ secrets.DATABASE_URL }}" \
-            -c "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS receipt_store_address TEXT DEFAULT '';"
-          psql "${{ secrets.DATABASE_URL }}" \
-            -c "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS receipt_store_city TEXT DEFAULT '';"
-          psql "${{ secrets.DATABASE_URL }}" \
-            -c "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS receipt_store_region TEXT DEFAULT '';"
-          psql "${{ secrets.DATABASE_URL }}" \
-            -c "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS receipt_store_postal_code TEXT DEFAULT '';"
-          psql "${{ secrets.DATABASE_URL }}" \
-            -c "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS receipt_store_phone TEXT DEFAULT '';"
-          psql "${{ secrets.DATABASE_URL }}" \
-            -c "CREATE TABLE IF NOT EXISTS audit_events (id UUID DEFAULT gen_random_uuid(), organization_id UUID NOT NULL, location_id UUID, actor_employee_id UUID, entity_type TEXT NOT NULL, entity_id UUID, event_kind TEXT NOT NULL, payload JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT NOW());"
-          psql "${{ secrets.DATABASE_URL }}" \
-            -c "CREATE INDEX IF NOT EXISTS idx_audit_events_org ON audit_events(organization_id);"
-          psql "${{ secrets.DATABASE_URL }}" \
-            -c "CREATE INDEX IF NOT EXISTS idx_audit_events_entity ON audit_events(entity_type, entity_id);"
-          psql "${{ secrets.DATABASE_URL }}" \
-            -c "CREATE INDEX IF NOT EXISTS idx_audit_events_created ON audit_events(created_at DESC);"
-
-          # Scheduled shifts
-          psql "${{ secrets.DATABASE_URL }}" \
-            -c "CREATE TABLE IF NOT EXISTS scheduled_shifts (id UUID DEFAULT gen_random_uuid() PRIMARY KEY, organization_id UUID NOT NULL, location_id UUID NOT NULL, employee_id UUID NOT NULL, shift_date DATE NOT NULL, start_time TIME NOT NULL, end_time TIME NOT NULL, notes TEXT DEFAULT '', created_at TIMESTAMPTZ DEFAULT NOW(), created_by UUID, UNIQUE(location_id, employee_id, shift_date, start_time));"
-          psql "${{ secrets.DATABASE_URL }}" \
-            -c "CREATE INDEX IF NOT EXISTS idx_scheduled_shifts_loc_date ON scheduled_shifts(location_id, shift_date);"
-          psql "${{ secrets.DATABASE_URL }}" \
-            -c "CREATE INDEX IF NOT EXISTS idx_scheduled_shifts_employee ON scheduled_shifts(employee_id);"
-
-          # Time-off requests
-          psql "${{ secrets.DATABASE_URL }}" \
-            -c "CREATE TABLE IF NOT EXISTS time_off_requests (id UUID DEFAULT gen_random_uuid() PRIMARY KEY, organization_id UUID NOT NULL, employee_id UUID NOT NULL, request_type TEXT NOT NULL CHECK (request_type IN ('vacation','sick','personal','bereavement','jury_duty','other')), start_date DATE NOT NULL, end_date DATE NOT NULL, status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected')), notes TEXT DEFAULT '', requested_at TIMESTAMPTZ DEFAULT NOW(), reviewed_by UUID, reviewed_at TIMESTAMPTZ);"
-          psql "${{ secrets.DATABASE_URL }}" \
-            -c "CREATE INDEX IF NOT EXISTS idx_time_off_requests_org_employee ON time_off_requests(organization_id, employee_id);"
-
-          # Scheduled shifts
-          psql "${{ secrets.DATABASE_URL }}" \
-            -c "CREATE TABLE IF NOT EXISTS scheduled_shifts (id UUID DEFAULT gen_random_uuid() PRIMARY KEY, organization_id UUID NOT NULL, location_id UUID NOT NULL, employee_id UUID NOT NULL, shift_date DATE NOT NULL, start_time TIME NOT NULL, end_time TIME NOT NULL, notes TEXT DEFAULT '', created_at TIMESTAMPTZ DEFAULT NOW(), created_by UUID, UNIQUE(location_id, employee_id, shift_date, start_time));"
-          psql "${{ secrets.DATABASE_URL }}" \
-            -c "CREATE INDEX IF NOT EXISTS idx_scheduled_shifts_loc_date ON scheduled_shifts(location_id, shift_date);"
-          psql "${{ secrets.DATABASE_URL }}" \
-            -c "CREATE INDEX IF NOT EXISTS idx_scheduled_shifts_employee ON scheduled_shifts(employee_id);"
-
-          # Time-off requests
-          psql "${{ secrets.DATABASE_URL }}" \
-            -c "CREATE TABLE IF NOT EXISTS time_off_requests (id UUID DEFAULT gen_random_uuid() PRIMARY KEY, organization_id UUID NOT NULL, employee_id UUID NOT NULL, request_type TEXT NOT NULL CHECK (request_type IN ('vacation','sick','personal','bereavement','jury_duty','other')), start_date DATE NOT NULL, end_date DATE NOT NULL, status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected')), notes TEXT DEFAULT '', requested_at TIMESTAMPTZ DEFAULT NOW(), reviewed_by UUID, reviewed_at TIMESTAMPTZ);"
-          psql "${{ secrets.DATABASE_URL }}" \
-            -c "CREATE INDEX IF NOT EXISTS idx_time_off_requests_org_employee ON time_off_requests(organization_id, employee_id);"
-
-          # Optimistic locking: add updated_at to products and product_variants
-          psql "${{ secrets.DATABASE_URL }}" \
-            -c "ALTER TABLE products ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();"
-          psql "${{ secrets.DATABASE_URL }}" \
-            -c "ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();"
+      # R25-ops-M-2: assert every secret the Worker needs at runtime is
+      # actually configured. Without this, a missing CUSTOMER_DISPLAY_
+      # SECRET / RESEND_API_KEY / RESEND_FROM silently breaks the
+      # customer-display + signup-verification features in prod.
+      #
+      # Runs only on push to master (not PR) because PRs don't deploy
+      # and shouldn't gate on secret presence. `wrangler secret list`
+      # prints NAMES only, never values.
+      - name: Assert required Worker secrets are configured
         if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          # R26-F7: parse wrangler's JSON output with jq rather than
+          # substring-grep. The prior grep pattern
+          # (`grep -q "\"name\": \"$secret\""`) was brittle for several
+          # reasons:
+          #   • Whitespace-sensitive: `"name":"X"` (no space after colon)
+          #     would false-negative. wrangler formatting can flip with a
+          #     version bump.
+          #   • Substring matching: a secret named "DB" would match a row
+          #     with "DB_URL", yielding a false OK.
+          #   • Output prefix from npx/wrangler (warnings, deprecation
+          #     banners) mixed into stdout breaks the later grep.
+          # jq exits 2 on invalid JSON, so a wrangler auth failure fails
+          # the step instead of being swallowed by `|| echo '[]'`.
+          REQUIRED=(CUSTOMER_DISPLAY_SECRET RESEND_API_KEY RESEND_FROM DATABASE_URL)
+          echo "→ Listing Worker secrets..."
+          # Split stderr (warnings) from stdout (JSON payload). Some
+          # wrangler versions emit a deprecation notice on stderr that
+          # jq would otherwise reject.
+          SECRETS_JSON=$(npx wrangler secret list 2>/dev/null)
+          if [ -z "$SECRETS_JSON" ]; then
+            echo "::error::wrangler secret list produced no output — auth may be misconfigured"
+            echo "Verify CLOUDFLARE_API_TOKEN has Worker:Edit + Account:Read scope"
+            exit 1
+          fi
+          if ! echo "$SECRETS_JSON" | jq -e 'type == "array"' >/dev/null; then
+            echo "::error::wrangler secret list output is not a JSON array:"
+            echo "$SECRETS_JSON" | head -20
+            exit 1
+          fi
+          # Pull out just the names into a newline-separated list.
+          PRESENT=$(echo "$SECRETS_JSON" | jq -r '.[].name')
+          MISSING=()
+          for secret in "${REQUIRED[@]}"; do
+            if ! echo "$PRESENT" | grep -Fxq "$secret"; then
+              MISSING+=("$secret")
+            fi
+          done
+          if [ ${#MISSING[@]} -gt 0 ]; then
+            echo "::error::Required Worker secret(s) not configured: ${MISSING[*]}"
+            echo "Set via: wrangler secret put <NAME>"
+            exit 1
+          fi
+          echo "✓ All required Worker secrets present"
+
+      # R25-ops-C-2: previously this step ran ~25 hand-rolled
+      # `ALTER TABLE IF NOT EXISTS` statements inline and NEVER
+      # iterated `code/supabase/migrations/*.sql`. Result: migrations
+      # 040-053 (RPC codification, RLS hardening, unique constraints
+      # from R21-C-1 / R22-C-1 / R22-H-4 / R22-H-3) may never have
+      # reached prod unless someone ran `psql` manually.
+      #
+      # New shape: iterate every file under
+      # `code/supabase/migrations/*.sql` in sorted order, tracking
+      # applied migrations in a `_migrations` table. Idempotent —
+      # every migration uses `IF NOT EXISTS` / `CREATE OR REPLACE` /
+      # guarded `DO` blocks so re-running a committed migration is
+      # a no-op.
+      #
+      # Safety: `ON_ERROR_STOP=1` ensures a genuine migration failure
+      # aborts the deploy (prior inline approach silently continued
+      # past failures).
+      - name: Run DB migrations
+        if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+        working-directory: .
+        run: |
+          set -euo pipefail
+          DB_URL="${{ secrets.DATABASE_URL }}"
+          MIG_DIR="code/supabase/migrations"
+
+          echo "→ Ensuring _migrations tracker table exists"
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -c "
+            CREATE TABLE IF NOT EXISTS _migrations (
+              filename TEXT PRIMARY KEY,
+              applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+          " >/dev/null
+
+          echo "→ Iterating migrations in $MIG_DIR"
+          # R27-M14: migration filenames are now regex-validated BEFORE
+          # being concatenated into any SQL string. A malicious PR
+          # landing a file named e.g. `054_x';DROP TABLE _migrations;--.sql`
+          # was otherwise interpolated as `WHERE filename='054_x';DROP TABLE
+          # _migrations;--.sql'` — the `psql -c` statement separator honors
+          # semicolons, which means the DROP runs as the `postgres` role.
+          # The regex rejects anything outside the canonical migration
+          # naming pattern. Even with the regex, we also pass filename
+          # via psql's `-v` binding so SQL syntax can't escape anyway.
+          for f in $(ls "$MIG_DIR"/*.sql | sort); do
+            basename=$(basename "$f")
+            if [[ "$basename" =~ ^_ ]]; then continue; fi
+            if ! [[ "$basename" =~ ^[0-9]{3}_[a-z0-9_]+\.sql$ ]]; then
+              echo "::error::Migration filename fails naming policy: $basename"
+              echo "Expected ^[0-9]{3}_[a-z0-9_]+\.sql\$"
+              exit 1
+            fi
+            applied=$(psql "$DB_URL" -tAc \
+              "SELECT COUNT(*) FROM _migrations WHERE filename = :'mig'" \
+              -v mig="$basename")
+            if [ "$applied" = "0" ]; then
+              echo "→ Applying $basename"
+              psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$f" >/dev/null
+              psql "$DB_URL" -v ON_ERROR_STOP=1 \
+                -c "INSERT INTO _migrations (filename) VALUES (:'mig')" \
+                -v mig="$basename" >/dev/null
+            else
+              echo "   Skipping $basename (already applied)"
+            fi
+          done
+          echo "✓ All migrations applied"
 
       - name: Build & Deploy
         run: npm run deploy
-        working-directory: code
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           USE_POSTGRES: true
@@ -105,19 +166,31 @@ jobs:
         run: |
           npx playwright install chromium --with-deps
           node scripts/smoke-test.js
-        working-directory: code
 
+      # R27-M14: Telegram bot token moves to env so it's not substituted
+      # into the shell line by GitHub Actions. `${{ secrets.X }}` in a
+      # `run:` string is literally expanded before the shell sees it —
+      # a malicious workflow edit could swap the URL to `evil.com/{{ TOKEN }}`
+      # and exfiltrate the token on the next successful deploy. With the
+      # env-var form, GitHub redacts the value from logs AND shell-level
+      # parameter expansion prevents the substitution trick.
       - name: Notify on success
         if: success() && github.ref == 'refs/heads/master' && github.event_name == 'push'
+        working-directory: .
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             -d chat_id="7547010501" \
             -d text="✅ bupos deployed to basicuniformpos.com (${{ github.sha }})" \
             -d disable_notification=true
 
       - name: Notify on failure
         if: failure() && github.ref == 'refs/heads/master' && github.event_name == 'push'
+        working-directory: .
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             -d chat_id="7547010501" \
             -d text="❌ bupos deploy FAILED (${{ github.sha }}) — check https://github.com/edison-commits/bupos/actions"

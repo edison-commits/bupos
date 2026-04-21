@@ -5,6 +5,7 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 import { useCallback, useEffect, useState } from 'react';
 import { authFetch } from '@/lib/api/client';
 import { formatCurrency } from '@/lib/format';
+import { safeErr } from "@/lib/logging/safe-err";
 interface Supplier {
   id: string;
   name: string;
@@ -146,7 +147,7 @@ export default function PurchaseOrdersPage() {
       const data = await res.json();
       setSuppliers(data.suppliers || []);
     } catch (err) {
-      console.error('Failed to fetch suppliers:', err);
+      console.error('Failed to fetch suppliers:', safeErr(err));
     }
   }, []);
 
@@ -158,7 +159,7 @@ export default function PurchaseOrdersPage() {
       const data = await res.json();
       setSelectedOrder(data);
     } catch (err) {
-      console.error('Failed to fetch PO details:', err);
+      console.error('Failed to fetch PO details:', safeErr(err));
     }
   }, []);
 
@@ -192,7 +193,7 @@ export default function PurchaseOrdersPage() {
       });
       setSearchResults(variants);
     } catch (err) {
-      console.error('Search error:', err);
+      console.error('Search error:', safeErr(err));
       setSearchResults([]);
     } finally {
       setSearchLoading(false);

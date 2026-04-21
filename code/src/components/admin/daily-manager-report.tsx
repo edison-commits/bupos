@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { LocalStoreData } from '@/lib/persistence/types';
+import { formatCurrency } from "@/lib/format";
 
 interface DailyStats {
   date: Date;
@@ -612,7 +613,7 @@ export function DailyManagerReport({ store }: { store: LocalStoreData }) {
         <div className="grid grid-cols-4 gap-4">
           <div>
             <p className="text-zinc-600 text-sm font-medium">Net Sales</p>
-            <p className="text-2xl font-bold text-zinc-900">${stats.salesTotal.toFixed(2)}</p>
+            <p className="text-2xl font-bold text-zinc-900">{formatCurrency(stats.salesTotal)}</p>
           </div>
           <div>
             <p className="text-zinc-600 text-sm font-medium">Transactions</p>
@@ -620,12 +621,12 @@ export function DailyManagerReport({ store }: { store: LocalStoreData }) {
           </div>
           <div>
             <p className="text-zinc-600 text-sm font-medium">Avg Ticket</p>
-            <p className="text-2xl font-bold text-zinc-900">${stats.averageTicket.toFixed(2)}</p>
+            <p className="text-2xl font-bold text-zinc-900">{formatCurrency(stats.averageTicket)}</p>
           </div>
           <div>
             <p className="text-zinc-600 text-sm font-medium">Returns</p>
             <p className="text-2xl font-bold text-red-600">
-              {stats.returnCount} (${stats.returnTotal.toFixed(2)})
+              {stats.returnCount} ({formatCurrency(stats.returnTotal)})
             </p>
           </div>
         </div>
@@ -698,7 +699,7 @@ export function DailyManagerReport({ store }: { store: LocalStoreData }) {
                     )}
                   </div>
                   <div className="w-16 text-right text-xs font-medium text-zinc-700">
-                    ${value.toFixed(0)}
+                    {formatCurrency(value, 'USD', { fractionDigits: 0 })}
                   </div>
                 </div>
               );
@@ -709,7 +710,7 @@ export function DailyManagerReport({ store }: { store: LocalStoreData }) {
             <span className="text-xs font-semibold text-zinc-500">
               Total ({formatHourLabel(hourStart)} – {formatHourLabel(hourEnd)})
             </span>
-            <span className="text-sm font-bold text-teal-700">${filteredHourlyTotal.toFixed(2)}</span>
+            <span className="text-sm font-bold text-teal-700">{formatCurrency(filteredHourlyTotal)}</span>
           </div>
         </div>
 
@@ -723,7 +724,7 @@ export function DailyManagerReport({ store }: { store: LocalStoreData }) {
                 <div key={tender}>
                   <div className="flex justify-between items-center mb-1">
                     <span className="text-zinc-700 font-medium capitalize">{tender}</span>
-                    <span className="text-zinc-900 font-bold">${data.amount.toFixed(2)}</span>
+                    <span className="text-zinc-900 font-bold">{formatCurrency(data.amount)}</span>
                   </div>
                   <div className="w-full h-2 bg-zinc-100 rounded-full overflow-hidden">
                     <div className="h-full bg-teal-600" style={{ width: `${percentage}%` }} />
@@ -768,7 +769,7 @@ export function DailyManagerReport({ store }: { store: LocalStoreData }) {
                   </div>
                   <div className="text-right">
                     <p className="text-sm font-bold text-zinc-900">{emp.transactionCount} sales</p>
-                    <p className="text-xs text-zinc-500">${emp.salesTotal.toFixed(0)}</p>
+                    <p className="text-xs text-zinc-500">{formatCurrency(emp.salesTotal, 'USD', { fractionDigits: 0 })}</p>
                   </div>
                 </div>
               );
@@ -929,14 +930,14 @@ export function DailyManagerReport({ store }: { store: LocalStoreData }) {
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="font-bold text-zinc-900">${emp.salesTotal.toFixed(2)}</p>
-                    <p className="text-xs text-zinc-600">Avg: ${(emp.salesTotal / Math.max(emp.transactionCount, 1)).toFixed(2)}</p>
+                    <p className="font-bold text-zinc-900">{formatCurrency(emp.salesTotal)}</p>
+                    <p className="text-xs text-zinc-600">Avg: {formatCurrency((emp.salesTotal / Math.max(emp.transactionCount, 1)))}</p>
                   </div>
                 </div>
                 <div className="flex gap-4 text-sm">
                   <span className="text-zinc-700">Voids: {emp.voidCount}</span>
                   <span className={varianceColor}>
-                    Cash Var: ${(emp.cashVariance || 0).toFixed(2)}
+                    Cash Var: {formatCurrency((emp.cashVariance || 0))}
                   </span>
                   {emp.exceptionCount > 0 && (
                     <span className="text-red-600 font-medium">{emp.exceptionCount} exceptions</span>
@@ -965,20 +966,20 @@ export function DailyManagerReport({ store }: { store: LocalStoreData }) {
                 <div className="grid grid-cols-4 gap-4 text-sm">
                   <div>
                     <p className="text-zinc-600 text-xs">Opening Float</p>
-                    <p className="font-bold text-zinc-900">${shift.openingFloat.toFixed(2)}</p>
+                    <p className="font-bold text-zinc-900">{formatCurrency(shift.openingFloat)}</p>
                   </div>
                   <div>
                     <p className="text-zinc-600 text-xs">Expected</p>
-                    <p className="font-bold text-zinc-900">${shift.expectedCash.toFixed(2)}</p>
+                    <p className="font-bold text-zinc-900">{formatCurrency(shift.expectedCash)}</p>
                   </div>
                   <div>
                     <p className="text-zinc-600 text-xs">Declared</p>
-                    <p className="font-bold text-zinc-900">${shift.declaredCash.toFixed(2)}</p>
+                    <p className="font-bold text-zinc-900">{formatCurrency(shift.declaredCash)}</p>
                   </div>
                   <div>
                     <p className="text-zinc-600 text-xs">Variance</p>
                     <p className={`font-bold ${varianceTextColor}`}>
-                      {shift.variance >= 0 ? '+' : ''} ${shift.variance.toFixed(2)}
+                      {shift.variance >= 0 ? '+' : ''} {formatCurrency(shift.variance)}
                     </p>
                   </div>
                 </div>
@@ -988,7 +989,7 @@ export function DailyManagerReport({ store }: { store: LocalStoreData }) {
           {stats.shiftData.length > 0 && (
             <div className={`border-t-2 pt-3 mt-3 ${totalCashVariance >= 0 ? 'text-green-700' : 'text-red-700'}`}>
               <p className="text-sm font-bold">
-                Total Variance: {totalCashVariance >= 0 ? '+' : ''} ${totalCashVariance.toFixed(2)}
+                Total Variance: {totalCashVariance >= 0 ? '+' : ''} {formatCurrency(totalCashVariance)}
               </p>
             </div>
           )}
@@ -1036,7 +1037,7 @@ export function DailyManagerReport({ store }: { store: LocalStoreData }) {
               {stats.topCustomer ? stats.topCustomer.name : 'N/A'}
             </p>
             {stats.topCustomer && (
-              <p className="text-xs text-zinc-600">${stats.topCustomer.spend.toFixed(2)}</p>
+              <p className="text-xs text-zinc-600">{formatCurrency(stats.topCustomer.spend)}</p>
             )}
           </div>
         </div>

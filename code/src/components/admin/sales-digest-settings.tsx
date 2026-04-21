@@ -3,6 +3,7 @@
 import { useState, useMemo } from 'react';
 import { LocalStoreData } from '@/lib/persistence/types';
 import { Mail, Clock, CheckCircle2, AlertCircle } from 'lucide-react';
+import { formatCurrency } from "@/lib/format";
 
 interface DigestSettings {
   dailyEnabled: boolean;
@@ -128,12 +129,13 @@ export function SalesDigestSettings({ store }: { store: LocalStoreData }) {
     }));
   };
 
+  // NOTE: the sales-digest backend is not yet implemented. These handlers
+  // previously faked a save via setTimeout, misleading users into thinking
+  // their settings were persisted. Until a real /api/sales-digest endpoint
+  // exists, set the status to 'error' so users know the setting isn't saved.
   const handleSaveSettings = () => {
-    setSaveStatus('saving');
-    setTimeout(() => {
-      setSaveStatus('success');
-      setTimeout(() => setSaveStatus('idle'), 3000);
-    }, 800);
+    setSaveStatus('error');
+    setTimeout(() => setSaveStatus('idle'), 4000);
   };
 
   const handleSendTestEmail = () => {
@@ -142,12 +144,8 @@ export function SalesDigestSettings({ store }: { store: LocalStoreData }) {
       setTimeout(() => setTestEmailStatus('idle'), 3000);
       return;
     }
-
-    setTestEmailStatus('sending');
-    setTimeout(() => {
-      setTestEmailStatus('success');
-      setTimeout(() => setTestEmailStatus('idle'), 3000);
-    }, 1200);
+    setTestEmailStatus('error');
+    setTimeout(() => setTestEmailStatus('idle'), 4000);
   };
 
   const isConfigured = settings.dailyEnabled || settings.weeklyEnabled;
@@ -272,7 +270,7 @@ export function SalesDigestSettings({ store }: { store: LocalStoreData }) {
               <span className="text-sm font-medium">
                 {saveStatus === 'success' && 'Settings saved successfully'}
                 {saveStatus === 'saving' && 'Saving settings...'}
-                {saveStatus === 'error' && 'Failed to save settings'}
+                {saveStatus === 'error' && 'Sales digest is not yet implemented — settings are not saved.'}
               </span>
             </div>
           )}
@@ -329,7 +327,7 @@ export function SalesDigestSettings({ store }: { store: LocalStoreData }) {
             <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-4 border border-blue-200">
               <p className="text-sm font-medium text-blue-900 mb-1">Total Sales</p>
               <p className="text-2xl font-bold text-blue-700">
-                ${metrics.totalSales.toFixed(2)}
+                {formatCurrency(metrics.totalSales)}
               </p>
             </div>
             <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-4 border border-purple-200">
@@ -339,7 +337,7 @@ export function SalesDigestSettings({ store }: { store: LocalStoreData }) {
             <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-xl p-4 border border-green-200">
               <p className="text-sm font-medium text-green-900 mb-1">Avg Ticket</p>
               <p className="text-2xl font-bold text-green-700">
-                ${metrics.averageTicket.toFixed(2)}
+                {formatCurrency(metrics.averageTicket)}
               </p>
             </div>
             <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-xl p-4 border border-orange-200">
@@ -361,7 +359,7 @@ export function SalesDigestSettings({ store }: { store: LocalStoreData }) {
                       <p className="font-medium text-zinc-900">{item.name}</p>
                       <p className="text-sm text-zinc-600">{item.quantity} unit{item.quantity !== 1 ? 's' : ''}</p>
                     </div>
-                    <p className="font-semibold text-teal-700">${item.sales.toFixed(2)}</p>
+                    <p className="font-semibold text-teal-700">{formatCurrency(item.sales)}</p>
                   </div>
                 ))}
               </div>
@@ -378,7 +376,7 @@ export function SalesDigestSettings({ store }: { store: LocalStoreData }) {
                 {Object.entries(metrics.tenderBreakdown).map(([type, amount]) => (
                   <div key={type} className="flex items-center justify-between p-3 bg-zinc-50 rounded-lg border border-zinc-200">
                     <p className="font-medium text-zinc-900">{type}</p>
-                    <p className="font-semibold text-zinc-700">${amount.toFixed(2)}</p>
+                    <p className="font-semibold text-zinc-700">{formatCurrency(amount)}</p>
                   </div>
                 ))}
               </div>
@@ -391,7 +389,7 @@ export function SalesDigestSettings({ store }: { store: LocalStoreData }) {
               <h4 className="font-semibold text-amber-900 mb-2">Returns Summary</h4>
               <p className="text-sm text-amber-800">
                 {metrics.returnsCount} return{metrics.returnsCount !== 1 ? 's' : ''} totaling{' '}
-                <span className="font-semibold">${metrics.returnsAmount.toFixed(2)}</span>
+                <span className="font-semibold">{formatCurrency(metrics.returnsAmount)}</span>
               </p>
             </div>
           )}
@@ -430,7 +428,7 @@ export function SalesDigestSettings({ store }: { store: LocalStoreData }) {
               }`}>
                 Total variance across {metrics.shiftCount} shift{metrics.shiftCount !== 1 ? 's' : ''}:{' '}
                 <span className="font-semibold">
-                  ${metrics.cashVariance.toFixed(2)}
+                  {formatCurrency(metrics.cashVariance)}
                 </span>
               </p>
             </div>

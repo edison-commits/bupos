@@ -1,0 +1,35 @@
+# R8-L-12 closed: PG-backed integration test harness.
+#
+# Spins up a plain Postgres 17 matching the prod Supabase engine version.
+# Migrations from `supabase/migrations/*.sql` are applied on container
+# start. Seed data loads from `src/__tests__/integration/seed.sql`.
+#
+# Tests run against this via `npm run test:integration`, which sets
+# `DATABASE_URL` + `USE_POSTGRES=true`. The vitest config at
+# `vitest.integration.config.ts` points at `src/__tests__/integration/`.
+#
+# Not Supabase-local — the extra services (gotrue, storage, studio) aren't
+# needed for the integration spec. RLS is a plain PG feature and works
+# identically here.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: bupos_test
+    ports:
+      - "54329:5432"
+    # Health check so `npm run test:integration` can wait for readiness
+    # without racing the first query.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d bupos_test"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+    # Mount migrations as read-only so `scripts/docker-migrate.sh` can
+    # psql them into place from the host.
+    volumes:
+      - ./supabase/migrations:/migrations:ro
+      - ./src/__tests__/integration:/seed:ro

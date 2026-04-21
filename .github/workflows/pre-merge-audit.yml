@@ -1,0 +1,103 @@
+name: Pre-merge adversarial audit
+
+# R25-ops-C-1: this workflow lives at the REPO ROOT. A prior sub-path
+# location silently disabled it — see note on guardrails.yml.
+#
+# Runs on every PR + manual dispatch. Assembles a Claude-ready audit
+# prompt from the diff + recent closure notes (KNOWN_ISSUES.md), calls
+# the Messages API, and fails the check on CRITICAL/HIGH findings.
+#
+# Requires ANTHROPIC_API_KEY as a repo or org secret. If absent the
+# workflow skips cleanly — guardrails + tests still run; only the
+# agent-assisted review is gated.
+#
+# R27-H5: the `audit` job handles `secrets.ANTHROPIC_API_KEY`. Without
+# a fork-PR gate, any external attacker who opens a PR from a fork
+# could modify `scripts/pre-merge-audit.mjs` (which runs with the API
+# key injected via env) to exfiltrate the key to their server. Add a
+# job-level `if:` that runs this workflow ONLY when the PR originates
+# from the same repository — fork PRs still get the cheap guardrails/
+# tests via guardrails.yml, they just don't get the agent-assisted
+# audit (which is fine; the audit is a convenience, not a gate).
+
+on:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: code
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    # R27-H5: fork-PR gate. The same-repo check below keeps the
+    # ANTHROPIC_API_KEY out of fork CI environments where the PR
+    # author can modify the script that consumes it.
+    # `github.event.pull_request.head.repo.full_name == github.repository`
+    # is the canonical GitHub idiom for "this PR is from within our
+    # own repo" — fork PRs set `head.repo` to the fork's full name,
+    # so the comparison fails and the whole job is skipped.
+    # Manual `workflow_dispatch` runs pass through (no PR context).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need master to diff against
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: code/package-lock.json
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Skip if ANTHROPIC_API_KEY not configured
+        if: env.ANTHROPIC_API_KEY == ''
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          echo "::notice::ANTHROPIC_API_KEY not configured; adversarial audit skipped."
+          echo "SKIP_AUDIT=1" >> "$GITHUB_ENV"
+
+      - name: Run adversarial audit
+        if: env.SKIP_AUDIT != '1'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BASE_REF: origin/${{ github.base_ref }}
+        run: node scripts/pre-merge-audit.mjs | tee audit-output.txt
+
+      - name: Post audit summary as PR comment
+        if: env.SKIP_AUDIT != '1' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // github-script runs at the checkout root (repo root).
+            // The audit step wrote `audit-output.txt` inside the
+            // code/ directory because that step had working-directory:
+            // code (via defaults.run). Read from code/audit-output.txt.
+            const fs = require('fs');
+            const auditPath = 'code/audit-output.txt';
+            if (!fs.existsSync(auditPath)) return;
+            const body = fs.readFileSync(auditPath, 'utf8').slice(0, 60000);
+            const commentBody = [
+              '## 🧪 Pre-merge adversarial audit',
+              '',
+              '```',
+              body,
+              '```',
+            ].join('\n');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: commentBody,
+            });

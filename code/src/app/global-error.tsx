@@ -1,5 +1,7 @@
 'use client';
 
+import { useEffect } from 'react';
+
 export default function GlobalError({
   error,
   reset,
@@ -7,6 +9,11 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  useEffect(() => {
+    // Log error for debugging — replace with Sentry/DataDog when configured
+    console.error('[GlobalError]', { message: error.message, digest: error.digest, stack: error.stack });
+  }, [error]);
+
   return (
     <html lang="en">
       <body style={{
@@ -22,7 +29,7 @@ export default function GlobalError({
         <div style={{ textAlign: 'center', padding: '2rem' }}>
           <h1 style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>Something went wrong</h1>
           <p style={{ color: '#7f1d1d', marginBottom: '1.5rem' }}>
-            {error.message || 'An unexpected error occurred.'}
+            An unexpected error occurred. Please try again.
           </p>
           <button
             onClick={reset}

@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from "react";
 import type { Customer, TransactionEventPlaceholder, TransactionTenderPlaceholder } from "@/lib/domain/types";
+import { formatCurrency } from "@/lib/format";
 
 interface CustomerSearchModalProps {
   customers: Customer[];
@@ -203,7 +204,7 @@ export function CustomerSearchModal({
                           <div key={txn.transactionId} className="flex justify-between text-xs text-zinc-600">
                             <span>{new Date(txn.date).toLocaleDateString()}</span>
                             <span className="capitalize">{txn.tenderType}</span>
-                            <span className="font-semibold">${txn.total.toFixed(2)}</span>
+                            <span className="font-semibold">{formatCurrency(txn.total)}</span>
                           </div>
                         ))}
                       </div>

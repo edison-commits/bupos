@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { NumpadInput } from "./numpad-input";
+import { formatCurrency } from "@/lib/format";
 
 interface DenominationRow {
   label: string;
@@ -90,8 +91,8 @@ export function ShiftCloseModal({
             {/* Shift stats */}
             <div className="grid grid-cols-3 gap-3">
               <StatCard label="Transactions" value={String(transactionCount)} />
-              <StatCard label="Sales total" value={`$${salesTotal.toFixed(2)}`} />
-              <StatCard label="Expected cash" value={`$${expectedCash.toFixed(2)}`} />
+              <StatCard label="Sales total" value={`${formatCurrency(salesTotal)}`} />
+              <StatCard label="Expected cash" value={`${formatCurrency(expectedCash)}`} />
             </div>
 
             {/* Tender breakdown */}
@@ -102,7 +103,7 @@ export function ShiftCloseModal({
                   {tenderBreakdown.map((t) => (
                     <div key={t.type} className="flex items-center justify-between rounded-xl bg-zinc-50 px-4 py-2 text-sm">
                       <span className="capitalize">{t.type === "store_credit" ? "Store credit" : t.type}</span>
-                      <span className="font-semibold">{t.count} txn · ${t.total.toFixed(2)}</span>
+                      <span className="font-semibold">{t.count} txn · {formatCurrency(t.total)}</span>
                     </div>
                   ))}
                 </div>
@@ -111,7 +112,7 @@ export function ShiftCloseModal({
 
             {/* Opening float reminder */}
             <div className="mt-5 rounded-xl bg-blue-50 px-4 py-3 text-sm text-blue-800">
-              Opening float: <span className="font-semibold">${openingFloat.toFixed(2)}</span>
+              Opening float: <span className="font-semibold">{formatCurrency(openingFloat)}</span>
             </div>
           </div>
 
@@ -209,7 +210,7 @@ export function ShiftCloseModal({
                       </button>
                     </div>
                     <span className="ml-auto text-sm font-semibold text-zinc-700">
-                      ${(d.value * d.count).toFixed(2)}
+                      {formatCurrency((d.value * d.count))}
                     </span>
                   </div>
                 ))}
@@ -222,11 +223,11 @@ export function ShiftCloseModal({
             <div className="mb-3 grid grid-cols-3 gap-3 text-sm">
               <div className="rounded-xl bg-zinc-50 px-3 py-2 text-center">
                 <p className="text-zinc-500">Counted</p>
-                <p className="text-lg font-bold">${countedTotal.toFixed(2)}</p>
+                <p className="text-lg font-bold">{formatCurrency(countedTotal)}</p>
               </div>
               <div className="rounded-xl bg-zinc-50 px-3 py-2 text-center">
                 <p className="text-zinc-500">Expected</p>
-                <p className="text-lg font-bold">${expectedCash.toFixed(2)}</p>
+                <p className="text-lg font-bold">{formatCurrency(expectedCash)}</p>
               </div>
               <div className={`rounded-xl px-3 py-2 text-center ${
                 variance === 0
@@ -243,7 +244,7 @@ export function ShiftCloseModal({
                       ? "text-amber-700"
                       : "text-red-700"
                 }`}>
-                  {variance >= 0 ? "+" : ""}${variance.toFixed(2)}
+                  {variance >= 0 ? "+" : ""}{formatCurrency(variance)}
                 </p>
               </div>
             </div>
@@ -287,17 +288,17 @@ export function ShiftCloseModal({
         <div className="px-6 py-5 space-y-4">
           {blindClose ? (
             <div className="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800">
-              Blind close skips the drawer count. The expected cash amount (<span className="font-semibold">${expectedCash.toFixed(2)}</span>) will be recorded as the declared amount. Variance will be $0.00.
+              Blind close skips the drawer count. The expected cash amount (<span className="font-semibold">{formatCurrency(expectedCash)}</span>) will be recorded as the declared amount. Variance will be $0.00.
             </div>
           ) : (
             <div className="grid grid-cols-3 gap-3 text-sm">
               <div className="rounded-xl bg-zinc-50 px-3 py-2 text-center">
                 <p className="text-zinc-500">Counted</p>
-                <p className="text-lg font-bold">${countedTotal.toFixed(2)}</p>
+                <p className="text-lg font-bold">{formatCurrency(countedTotal)}</p>
               </div>
               <div className="rounded-xl bg-zinc-50 px-3 py-2 text-center">
                 <p className="text-zinc-500">Expected</p>
-                <p className="text-lg font-bold">${expectedCash.toFixed(2)}</p>
+                <p className="text-lg font-bold">{formatCurrency(expectedCash)}</p>
               </div>
               <div className={`rounded-xl px-3 py-2 text-center ${
                 variance === 0 ? "bg-emerald-50" : Math.abs(variance) <= 1 ? "bg-amber-50" : "bg-red-50"
@@ -306,7 +307,7 @@ export function ShiftCloseModal({
                 <p className={`text-lg font-bold ${
                   variance === 0 ? "text-emerald-700" : Math.abs(variance) <= 1 ? "text-amber-700" : "text-red-700"
                 }`}>
-                  {variance >= 0 ? "+" : ""}${variance.toFixed(2)}
+                  {variance >= 0 ? "+" : ""}{formatCurrency(variance)}
                 </p>
               </div>
             </div>

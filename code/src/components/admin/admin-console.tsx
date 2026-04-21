@@ -1,46 +1,53 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
-import Image from "next/image";
+/* eslint-disable @typescript-eslint/no-unused-vars, @next/next/no-img-element */
+import dynamic from "next/dynamic";
 import type { InputHTMLAttributes } from "react";
 import { adminLogoutAction, adjustInventoryAction, createCategoryAction, createEmployeeAction, createProductAction, toggleEmployeeAction, updateOrganizationAction, updateLocationAction, editCategoryAction, deleteCategoryAction, editProductAction, deleteProductAction, editVariantAction, deleteVariantAction } from "@/app/admin/actions";
-import { BarcodeLabelPrinter } from "@/components/admin/barcode-label-printer";
-import { BehaviorDashboard } from "@/components/admin/behavior-dashboard";
-import { BulkProductImport } from "@/components/admin/bulk-product-import";
-import { BundleManager } from "@/components/admin/bundle-manager";
-import { DashboardCharts } from "@/components/admin/dashboard-charts-lazy";
-import { EmployeeScheduler } from "@/components/admin/employee-scheduler";
-import { InventoryBrowser } from "@/components/admin/inventory-browser";
-import { BarcodeLookup } from "@/components/admin/barcode-lookup";
-import { GiftCardManager } from "@/components/admin/gift-card-manager";
-import { LayawayManager } from "@/components/admin/layaway-manager";
-import { PurchaseOrderManager } from "@/components/admin/purchase-order-manager";
-import { SupplierManager } from "@/components/admin/supplier-manager";
-import { ReorderSuggestions } from "@/components/admin/reorder-suggestions";
-import { ReturnsManager } from "@/components/admin/returns-manager";
-import { CustomerDatabase } from "@/components/admin/customer-database";
-import { ExpenseTracker } from "@/components/admin/expense-tracker";
-import { StocktakeManager } from "@/components/admin/stocktake-manager";
-import { StoreCreditManager } from "@/components/admin/store-credit-manager";
-import { TransferManager } from "@/components/admin/transfer-manager";
+
+// Lightweight/always-used components: keep static
 import { DashboardKPIs } from "@/components/admin/dashboard-kpis";
-import { LowStockAutoReorder } from "@/components/admin/low-stock-reorder";
-import { ProfitMarginDashboard } from "@/components/admin/profit-margin-dashboard";
-import { RecountScheduler } from "@/components/admin/recount-scheduler";
-import { TimesheetView } from "@/components/admin/timesheet-view";
-import { ZReport } from "@/components/admin/z-report";
-import { SalesReports } from "@/components/admin/sales-reports";
-import { DataExport } from "@/components/admin/data-export";
-import { CustomerReceiptLookup } from "@/components/admin/customer-receipt-lookup";
-import { DiscountScheduler } from "@/components/admin/discount-scheduler";
-import { EmployeePerformance } from "@/components/admin/employee-performance";
-import { TaxReport } from "@/components/admin/tax-report";
-import { SalesDigestSettings } from "@/components/admin/sales-digest-settings";
-import { OrderCalendar } from "@/components/admin/order-calendar";
-import { DailyManagerReport } from "@/components/admin/daily-manager-report";
-import { MultiLocationDashboard } from "@/components/admin/multi-location-dashboard";
-import { LoyaltyTiers } from "@/components/admin/loyalty-tiers";
-import { PayrollSummary } from "@/components/admin/payroll-summary";
+import { DashboardCharts } from "@/components/admin/dashboard-charts-lazy";
 import { AdminLayout, SectionPanel } from "@/components/admin/admin-sidebar";
 import { SectionCard } from "@/components/ui/section-card";
+import { TimezoneBootstrap } from "@/components/system/timezone-bootstrap";
+
+// Heavy / section-specific components: code-split with next/dynamic so they
+// don't ship on first load. SSR disabled to avoid duplicate render work.
+const BarcodeLabelPrinter = dynamic(() => import("@/components/admin/barcode-label-printer").then(m => ({ default: m.BarcodeLabelPrinter })));
+const BehaviorDashboard = dynamic(() => import("@/components/admin/behavior-dashboard").then(m => ({ default: m.BehaviorDashboard })));
+const BulkProductImport = dynamic(() => import("@/components/admin/bulk-product-import").then(m => ({ default: m.BulkProductImport })));
+const BundleManager = dynamic(() => import("@/components/admin/bundle-manager").then(m => ({ default: m.BundleManager })));
+const EmployeeScheduler = dynamic(() => import("@/components/admin/employee-scheduler").then(m => ({ default: m.EmployeeScheduler })));
+const InventoryBrowser = dynamic(() => import("@/components/admin/inventory-browser").then(m => ({ default: m.InventoryBrowser })));
+const BarcodeLookup = dynamic(() => import("@/components/admin/barcode-lookup").then(m => ({ default: m.BarcodeLookup })));
+const GiftCardManager = dynamic(() => import("@/components/admin/gift-card-manager").then(m => ({ default: m.GiftCardManager })));
+const LayawayManager = dynamic(() => import("@/components/admin/layaway-manager").then(m => ({ default: m.LayawayManager })));
+const PurchaseOrderManager = dynamic(() => import("@/components/admin/purchase-order-manager").then(m => ({ default: m.PurchaseOrderManager })));
+const SupplierManager = dynamic(() => import("@/components/admin/supplier-manager").then(m => ({ default: m.SupplierManager })));
+const ReorderSuggestions = dynamic(() => import("@/components/admin/reorder-suggestions").then(m => ({ default: m.ReorderSuggestions })));
+const ReturnsManager = dynamic(() => import("@/components/admin/returns-manager").then(m => ({ default: m.ReturnsManager })));
+const CustomerDatabase = dynamic(() => import("@/components/admin/customer-database").then(m => ({ default: m.CustomerDatabase })));
+const ExpenseTracker = dynamic(() => import("@/components/admin/expense-tracker").then(m => ({ default: m.ExpenseTracker })));
+const StocktakeManager = dynamic(() => import("@/components/admin/stocktake-manager").then(m => ({ default: m.StocktakeManager })));
+const StoreCreditManager = dynamic(() => import("@/components/admin/store-credit-manager").then(m => ({ default: m.StoreCreditManager })));
+const TransferManager = dynamic(() => import("@/components/admin/transfer-manager").then(m => ({ default: m.TransferManager })));
+const LowStockAutoReorder = dynamic(() => import("@/components/admin/low-stock-reorder").then(m => ({ default: m.LowStockAutoReorder })));
+const ProfitMarginDashboard = dynamic(() => import("@/components/admin/profit-margin-dashboard").then(m => ({ default: m.ProfitMarginDashboard })));
+const RecountScheduler = dynamic(() => import("@/components/admin/recount-scheduler").then(m => ({ default: m.RecountScheduler })));
+const TimesheetView = dynamic(() => import("@/components/admin/timesheet-view").then(m => ({ default: m.TimesheetView })));
+const ZReport = dynamic(() => import("@/components/admin/z-report").then(m => ({ default: m.ZReport })));
+const SalesReports = dynamic(() => import("@/components/admin/sales-reports").then(m => ({ default: m.SalesReports })));
+const DataExport = dynamic(() => import("@/components/admin/data-export").then(m => ({ default: m.DataExport })));
+const CustomerReceiptLookup = dynamic(() => import("@/components/admin/customer-receipt-lookup").then(m => ({ default: m.CustomerReceiptLookup })));
+const DiscountScheduler = dynamic(() => import("@/components/admin/discount-scheduler").then(m => ({ default: m.DiscountScheduler })));
+const EmployeePerformance = dynamic(() => import("@/components/admin/employee-performance").then(m => ({ default: m.EmployeePerformance })));
+const TaxReport = dynamic(() => import("@/components/admin/tax-report").then(m => ({ default: m.TaxReport })));
+const SalesDigestSettings = dynamic(() => import("@/components/admin/sales-digest-settings").then(m => ({ default: m.SalesDigestSettings })));
+const OrderCalendar = dynamic(() => import("@/components/admin/order-calendar").then(m => ({ default: m.OrderCalendar })));
+const DailyManagerReport = dynamic(() => import("@/components/admin/daily-manager-report").then(m => ({ default: m.DailyManagerReport })));
+const MultiLocationDashboard = dynamic(() => import("@/components/admin/multi-location-dashboard").then(m => ({ default: m.MultiLocationDashboard })));
+const LoyaltyTiers = dynamic(() => import("@/components/admin/loyalty-tiers").then(m => ({ default: m.LoyaltyTiers })));
+const PayrollSummary = dynamic(() => import("@/components/admin/payroll-summary").then(m => ({ default: m.PayrollSummary })));
+
 import { canManageEmployeeRole } from "@/lib/authz";
 import { hasPermission, roleDefinitions } from "@/lib/domain/permissions";
 import type { RoleKey } from "@/lib/domain/types";
@@ -56,6 +63,7 @@ import {
   InventorySummary as InventorySummaryWidget,
   Metric as MetricWidget,
 } from "@/components/admin/admin-dashboard-widgets";
+import { formatCurrency } from "@/lib/format";
 
 export function AdminConsole({
   store: rawStore,
@@ -70,8 +78,13 @@ export function AdminConsole({
   notice?: string;
   error?: string;
 }) {
-  // Safety: ensure all array fields exist (RSC serialization may drop undefined)
+  // Safety: ensure all array fields exist (RSC serialization may drop undefined,
+  // and Neon connection drops can produce partial store data)
   const _defaults: Record<string, unknown[]> = {
+    locations: [], employees: [], categories: [], products: [], variants: [],
+    inventory: [], customers: [], modifierGroups: [], modifiers: [],
+    authCredentials: [], sessions: [], shifts: [], registerSessions: [],
+    payInOuts: [], promoCodes: [], roles: [],
     inventoryAdjustments: [], transactionEventPlaceholders: [],
     transactionTenderPlaceholders: [], transactionExceptionPlaceholders: [],
     giftCards: [], giftCardTransactions: [], storeCreditLedger: [],
@@ -88,16 +101,26 @@ export function AdminConsole({
   const canManageEmployees = hasPermission(adminRole, "employee.manage");
   const manageableRoles = roleDefinitions.filter((role) => canManageEmployeeRole(adminRole, role.key));
 
+  // Pre-build lookup maps once — avoids O(N*M) .find() calls inside .map() loops
+  const categoriesById = new Map(store.categories.map(c => [c.id, c]));
+  const variantsByProductId = new Map<string, typeof store.variants>();
+  for (const v of store.variants) {
+    const arr = variantsByProductId.get(v.productId);
+    if (arr) arr.push(v); else variantsByProductId.set(v.productId, [v]);
+  }
+  const variantsById = new Map(store.variants.map(v => [v.id, v]));
+  const locationsById = new Map(store.locations.map(l => [l.id, l]));
+
   const productRows = store.products.map((product) => ({
     ...product,
-    category: store.categories.find((entry) => entry.id === product.categoryId),
-    variants: store.variants.filter((entry) => entry.productId === product.id),
+    category: categoriesById.get(product.categoryId),
+    variants: variantsByProductId.get(product.id) ?? [],
   }));
 
   const inventoryRows = store.inventory.map((row) => ({
     ...row,
-    variant: store.variants.find((entry) => entry.id === row.productVariantId),
-    location: store.locations.find((entry) => entry.id === row.locationId),
+    variant: variantsById.get(row.productVariantId),
+    location: locationsById.get(row.locationId),
   }));
 
   const sidebarHeader = (
@@ -113,6 +136,7 @@ export function AdminConsole({
 
   return (
     <AdminLayout header={sidebarHeader}>
+      <TimezoneBootstrap timezone={store.organization?.timezone} />
       {notice ? <p className="rounded-2xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{notice}</p> : null}
       {error ? <p className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p> : null}
 
@@ -155,7 +179,7 @@ export function AdminConsole({
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex flex-1 items-start gap-3">
                     {product.imageUrl && (
-                      <Image src={product.imageUrl} alt={product.name} className="h-12 w-12 shrink-0 rounded-xl object-cover" />
+                      <img src={product.imageUrl} alt={product.name} className="h-12 w-12 shrink-0 rounded-xl object-cover" />
                     )}
                     <div>
                       <h3 className="font-semibold">{product.name}</h3>
@@ -167,7 +191,7 @@ export function AdminConsole({
                 <div className="mt-3 flex flex-wrap gap-2 text-xs text-zinc-500">
                   {product.variants.map((variant) => (
                     <span key={variant.id} className="rounded-full bg-teal-50 px-3 py-1 text-teal-800">
-                      {variant.sku} · ${variant.price.toFixed(2)}
+                      {variant.sku} · {formatCurrency(variant.price)}
                     </span>
                   ))}
                 </div>
@@ -795,324 +819,7 @@ export function AdminConsole({
   );
 }
 
-/* ── Extracted sub-components ─────────────────────────────────────── */
-
-function SalesSummary({ store }: { store: LocalStoreData }) {
-  const txnEvents = store.transactionEventPlaceholders.filter(
-    (e) => e.eventKind === "transaction_placeholder" && e.payload?.grand_total && e.transactionId !== "txn_register_shift_placeholder" && e.transactionId !== "txn_inventory_placeholder",
-  );
-  const totalSales = txnEvents.filter((e) => !e.payload?.is_return).reduce((s, e) => s + Number(e.payload?.grand_total ?? 0), 0);
-  const totalReturns = txnEvents.filter((e) => e.payload?.is_return === "true").reduce((s, e) => s + Math.abs(Number(e.payload?.grand_total ?? 0)), 0);
-  const netSales = totalSales - totalReturns;
-  const txnCount = txnEvents.filter((e) => !e.payload?.is_return).length;
-  const returnCount = txnEvents.filter((e) => e.payload?.is_return === "true").length;
-  const avgTicket = txnCount > 0 ? totalSales / txnCount : 0;
-
-  const tenderMap = new Map<string, { total: number; count: number }>();
-  for (const t of store.transactionTenderPlaceholders) {
-    if (t.transactionId === "txn_register_shift_placeholder") continue;
-    const existing = tenderMap.get(t.tenderType) ?? { total: 0, count: 0 };
-    existing.total += t.amount;
-    existing.count += 1;
-    tenderMap.set(t.tenderType, existing);
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <MetricWidget label="Transactions" value={String(txnCount)} />
-        <MetricWidget label="Total sales" value={`$${totalSales.toFixed(2)}`} />
-        <MetricWidget label="Returns" value={`${returnCount} / $${totalReturns.toFixed(2)}`} />
-        <MetricWidget label="Avg ticket" value={`$${avgTicket.toFixed(2)}`} />
-      </div>
-      <div className="rounded-2xl bg-zinc-50 px-4 py-3">
-        <p className="text-sm font-semibold text-zinc-600">Net sales: <span className="text-lg text-zinc-900">${netSales.toFixed(2)}</span></p>
-      </div>
-      {tenderMap.size > 0 && (
-        <div className="space-y-1">
-          <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">By tender type</p>
-          {Array.from(tenderMap.entries()).map(([type, data]) => (
-            <div key={type} className="flex items-center justify-between rounded-xl bg-zinc-50 px-4 py-2 text-sm">
-              <span className="capitalize">{type === "store_credit" ? "Store credit" : type}</span>
-              <span className="font-semibold">{data.count} · ${data.total.toFixed(2)}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ShiftHistory({ store }: { store: LocalStoreData }) {
-  const closedShifts = store.shifts
-    .filter((s) => s.status === "closed")
-    .slice(0, 10)
-    .map((s) => ({ ...s, employee: store.employees.find((e) => e.id === s.employeeId) }));
-  if (closedShifts.length === 0) return <p className="text-sm text-zinc-600">No closed shifts yet.</p>;
-  return (
-    <div className="space-y-2">
-      {closedShifts.map((shift) => (
-        <div key={shift.id} className="rounded-2xl border border-zinc-200 px-4 py-3">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="font-semibold">{shift.employee?.displayName ?? "Unknown"}</p>
-              <p className="text-xs text-zinc-500">{formatDateTime(shift.openedAt)} — {shift.closedAt ? formatDateTime(shift.closedAt) : "open"}</p>
-            </div>
-            <div className="text-right">
-              <p className="text-sm">Float ${shift.openingFloat.toFixed(2)}</p>
-              {typeof shift.closingVariance === "number" && (
-                <p className={`text-sm font-semibold ${shift.closingVariance === 0 ? "text-emerald-700" : Math.abs(shift.closingVariance) <= 1 ? "text-amber-700" : "text-red-700"}`}>
-                  Variance {shift.closingVariance >= 0 ? "+" : ""}${shift.closingVariance.toFixed(2)}
-                </p>
-              )}
-              {shift.blindClose && <p className="text-xs text-zinc-400">blind close</p>}
-            </div>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function EmployeeActivity({ store }: { store: LocalStoreData }) {
-  const employeeStats = store.employees.filter((e) => e.isActive).map((emp) => {
-    const empTxns = store.transactionEventPlaceholders.filter(
-      (e) => e.actorEmployeeId === emp.id && e.eventKind === "transaction_placeholder" && e.payload?.grand_total && !e.payload?.is_return && e.transactionId !== "txn_register_shift_placeholder",
-    );
-    const empVoids = store.transactionEventPlaceholders.filter(
-      (e) => e.actorEmployeeId === emp.id && e.eventKind === "transaction_placeholder" && e.payload?.is_return === "true",
-    );
-    const totalSales = empTxns.reduce((s, e) => s + Number(e.payload?.grand_total ?? 0), 0);
-    return { employee: emp, txnCount: empTxns.length, totalSales, voidCount: empVoids.length };
-  }).filter((s) => s.txnCount > 0 || s.voidCount > 0);
-
-  if (employeeStats.length === 0) return <p className="text-sm text-zinc-600">No employee activity recorded yet.</p>;
-  return (
-    <div className="space-y-2">
-      {employeeStats.map((stat) => (
-        <div key={stat.employee.id} className="flex items-center justify-between rounded-2xl bg-zinc-50 px-4 py-3">
-          <div>
-            <p className="font-semibold">{stat.employee.displayName}</p>
-            <p className="text-xs text-zinc-500">{stat.employee.roleKey}</p>
-          </div>
-          <div className="text-right text-sm">
-            <p>{stat.txnCount} sales · ${stat.totalSales.toFixed(2)}</p>
-            {stat.voidCount > 0 && <p className="text-amber-700">{stat.voidCount} returns</p>}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function CustomerActivity({ customers }: { customers: LocalStoreData["customers"] }) {
-  const sorted = [...customers].sort((a, b) => b.totalSpend - a.totalSpend).slice(0, 10);
-  if (sorted.length === 0) return <p className="text-sm text-zinc-600">No customers yet.</p>;
-  return (
-    <div className="space-y-2">
-      {sorted.map((c) => (
-        <div key={c.id} className="flex items-center justify-between rounded-2xl bg-zinc-50 px-4 py-3">
-          <div className="flex flex-1 items-center gap-3">
-            <div>
-              <p className="font-semibold">{c.firstName} {c.lastName}</p>
-              <p className="text-xs text-zinc-500">{c.email ?? c.phone ?? "No contact"}</p>
-            </div>
-            {c.taxExempt && (
-              <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-800">TAX EXEMPT</span>
-            )}
-          </div>
-          <div className="text-right text-sm">
-            <p className="font-semibold">${c.totalSpend.toFixed(2)}</p>
-            <p className="text-xs text-zinc-500">{c.visitCount} visits · {c.loyaltyPoints} pts</p>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function CashierExceptions({ store }: { store: LocalStoreData }) {
-  const exceptions = store.transactionExceptionPlaceholders.map((exc) => {
-    const event = store.transactionEventPlaceholders.find((e) => e.transactionId === exc.transactionId);
-    const actor = event ? store.employees.find((e) => e.id === event.actorEmployeeId) : null;
-    return { ...exc, event, actor };
-  });
-  const voidEvents = store.transactionEventPlaceholders.filter(
-    (e) => e.eventKind === ("cart_voided" as string) || e.eventKind === ("transaction_voided" as string),
-  ).map((e) => ({ ...e, actor: store.employees.find((emp) => emp.id === e.actorEmployeeId) }));
-  const discountThreshold = store.registerConfiguration.approvalThresholds.discountOver;
-  const largeDiscountTxns = store.transactionEventPlaceholders.filter((e) => {
-    if (e.eventKind !== ("discount_applied" as string)) return false;
-    return Number(e.payload?.discount_amount ?? 0) > discountThreshold;
-  }).map((e) => ({ ...e, actor: store.employees.find((emp) => emp.id === e.actorEmployeeId) }));
-
-  const hasData = exceptions.length > 0 || voidEvents.length > 0 || largeDiscountTxns.length > 0;
-  if (!hasData) return <p className="text-sm text-zinc-600">No exceptions recorded yet.</p>;
-
-  return (
-    <div className="space-y-4">
-      {exceptions.length > 0 && (
-        <div className="space-y-1">
-          <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Approval exceptions ({exceptions.length})</p>
-          {exceptions.slice(0, 10).map((exc) => (
-            <div key={exc.id} className={`flex items-center justify-between rounded-xl px-4 py-2 text-sm ${exc.resolvedAt ? "bg-emerald-50" : "bg-amber-50"}`}>
-              <div>
-                <p className="font-medium">{exc.exceptionCode.replace(/_/g, " ")}</p>
-                <p className="text-xs text-zinc-500">{exc.actor?.displayName ?? "Unknown"} · {exc.transactionId.slice(0, 8)}</p>
-              </div>
-              <span className={`text-xs font-semibold ${exc.resolvedAt ? "text-emerald-700" : "text-amber-700"}`}>
-                {exc.resolvedAt ? "Resolved" : "Pending"}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-      {voidEvents.length > 0 && (
-        <div className="space-y-1">
-          <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Voids ({voidEvents.length})</p>
-          {voidEvents.slice(0, 10).map((evt) => (
-            <div key={evt.id} className="flex items-center justify-between rounded-xl bg-red-50 px-4 py-2 text-sm">
-              <div>
-                <p className="font-medium">{evt.eventKind.replace(/_/g, " ")}</p>
-                <p className="text-xs text-zinc-500">{evt.actor?.displayName ?? "Unknown"} · {formatDateTime(evt.createdAt)}</p>
-              </div>
-              <span className="text-xs text-red-700">{evt.payload?.reason_code ?? "No reason"}</span>
-            </div>
-          ))}
-        </div>
-      )}
-      {largeDiscountTxns.length > 0 && (
-        <div className="space-y-1">
-          <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Large discounts ({largeDiscountTxns.length})</p>
-          {largeDiscountTxns.slice(0, 10).map((evt) => (
-            <div key={evt.id} className="flex items-center justify-between rounded-xl bg-purple-50 px-4 py-2 text-sm">
-              <div>
-                <p className="font-medium">${evt.payload?.discount_amount ?? "?"}</p>
-                <p className="text-xs text-zinc-500">{evt.actor?.displayName ?? "Unknown"} · {formatDateTime(evt.createdAt)}</p>
-              </div>
-              <span className="text-xs text-purple-700">Over ${discountThreshold}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function DiscrepancyCorrelation({ store }: { store: LocalStoreData }) {
-  const closedShifts = store.shifts.filter((s) => s.status === "closed" && typeof s.closingVariance === "number");
-  if (closedShifts.length === 0) return <p className="text-sm text-zinc-600">No closed shifts with variance data yet.</p>;
-
-  const rows = closedShifts.map((shift) => {
-    const emp = store.employees.find((e) => e.id === shift.employeeId);
-    const shiftVoids = store.transactionEventPlaceholders.filter(
-      (e) => e.actorEmployeeId === shift.employeeId &&
-        (e.eventKind === ("cart_voided" as string) || e.eventKind === ("item_removed" as string)) &&
-        e.createdAt >= shift.openedAt && (!shift.closedAt || e.createdAt <= shift.closedAt),
-    ).length;
-    const shiftReturns = store.transactionEventPlaceholders.filter(
-      (e) => e.actorEmployeeId === shift.employeeId && e.eventKind === "transaction_placeholder" &&
-        e.payload?.is_return === "true" && e.createdAt >= shift.openedAt && (!shift.closedAt || e.createdAt <= shift.closedAt),
-    ).length;
-    return { shift, emp, shiftVoids, shiftReturns };
-  }).sort((a, b) => Math.abs(b.shift.closingVariance ?? 0) - Math.abs(a.shift.closingVariance ?? 0));
-
-  return (
-    <div className="space-y-2">
-      <div className="grid grid-cols-5 gap-2 text-xs font-semibold uppercase tracking-wider text-zinc-500 px-4">
-        <span>Cashier</span>
-        <span className="text-right">Variance</span>
-        <span className="text-right">Voids</span>
-        <span className="text-right">Returns</span>
-        <span className="text-right">Blind</span>
-      </div>
-      {rows.slice(0, 10).map((row) => {
-        const variance = row.shift.closingVariance ?? 0;
-        const varColor = variance === 0 ? "text-emerald-700" : Math.abs(variance) <= 1 ? "text-amber-700" : "text-red-700";
-        return (
-          <div key={row.shift.id} className="grid grid-cols-5 gap-2 rounded-xl bg-zinc-50 px-4 py-2 text-sm items-center">
-            <span className="truncate font-medium">{row.emp?.displayName ?? "?"}</span>
-            <span className={`text-right font-semibold ${varColor}`}>{variance >= 0 ? "+" : ""}${variance.toFixed(2)}</span>
-            <span className="text-right">{row.shiftVoids}</span>
-            <span className="text-right">{row.shiftReturns}</span>
-            <span className="text-right">{row.shift.blindClose ? "Yes" : "No"}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function InventorySummary({ store, inventoryRows }: { store: LocalStoreData; inventoryRows: { id: string; onHand: number; reserved: number; reorderPoint: number; productVariantId: string; variant?: { id: string; name: string; sku: string; price: number; cost?: number; productId: string }; location?: { name: string } }[] }) {
-  const totalOnHand = store.inventory.reduce((s, i) => s + i.onHand, 0);
-  const totalReserved = store.inventory.reduce((s, i) => s + i.reserved, 0);
-  const totalRetailValue = store.inventory.reduce((s, inv) => {
-    const variant = store.variants.find((v) => v.id === inv.productVariantId);
-    return s + (variant ? variant.price * inv.onHand : 0);
-  }, 0);
-  const totalCostValue = store.inventory.reduce((s, inv) => {
-    const variant = store.variants.find((v) => v.id === inv.productVariantId);
-    return s + (variant?.cost ? variant.cost * inv.onHand : 0);
-  }, 0);
-  const lowStockCount = store.inventory.filter((i) => i.onHand <= i.reorderPoint).length;
-  const outOfStockCount = store.inventory.filter((i) => i.onHand === 0).length;
-  const adjustments = store.inventoryAdjustments ?? [];
-  const adjustmentCount = adjustments.length;
-  const netAdjustment = adjustments.reduce((s, a) => s + a.delta, 0);
-
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <MetricWidget label="Total on hand" value={String(totalOnHand)} />
-        <MetricWidget label="Reserved" value={String(totalReserved)} />
-        <MetricWidget label="Retail value" value={`$${totalRetailValue.toFixed(2)}`} />
-        <MetricWidget label="Cost value" value={`$${totalCostValue.toFixed(2)}`} />
-      </div>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <MetricWidget label="Low stock items" value={String(lowStockCount)} />
-        <MetricWidget label="Out of stock" value={String(outOfStockCount)} />
-        <MetricWidget label="Adjustments" value={String(adjustmentCount)} />
-        <MetricWidget label="Net adjustment" value={`${netAdjustment >= 0 ? "+" : ""}${netAdjustment}`} />
-      </div>
-      {store.inventory.length > 0 && (
-        <div className="space-y-1">
-          <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Stock by variant</p>
-          {store.inventory.map((inv) => {
-            const variant = store.variants.find((v) => v.id === inv.productVariantId);
-            const product = variant ? store.products.find((p) => p.id === variant.productId) : null;
-            const pct = inv.reorderPoint > 0 ? Math.round((inv.onHand / (inv.reorderPoint * 3)) * 100) : 100;
-            const barColor = inv.onHand === 0 ? "bg-red-500" : inv.onHand <= inv.reorderPoint ? "bg-amber-500" : "bg-emerald-500";
-            return (
-              <div key={inv.id} className="flex items-center gap-3 rounded-xl bg-zinc-50 px-4 py-2 text-sm">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium">{product?.name ?? "?"} — {variant?.name ?? inv.productVariantId}</p>
-                  <p className="text-xs text-zinc-500">{variant?.sku}</p>
-                </div>
-                <div className="w-24">
-                  <div className="h-2 rounded-full bg-zinc-200">
-                    <div className={`h-2 rounded-full ${barColor}`} style={{ width: `${Math.min(100, pct)}%` }} />
-                  </div>
-                </div>
-                <span className="w-16 text-right font-semibold">{inv.onHand}</span>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
 /* ── Shared helpers ───────────────────────────────────────────────── */
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="kpi rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-4">
-      <p className="text-sm text-zinc-500">{label}</p>
-      <p className="mt-2 text-3xl font-semibold tracking-tight">{value}</p>
-    </div>
-  );
-}
 
 function Input({ label, ...props }: InputHTMLAttributes<HTMLInputElement> & { label: string }) {
   return (

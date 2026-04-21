@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { activateGiftCardAction, disableGiftCardAction, reloadGiftCardAction } from "@/app/admin/gift-card-actions";
 import type { GiftCard, GiftCardTransaction, Employee, Customer } from "@/lib/domain/types";
+import { formatCurrency } from "@/lib/format";
 
 const STATUS_COLORS: Record<string, string> = {
   active: "bg-emerald-100 text-emerald-800",
@@ -49,7 +50,7 @@ export function GiftCardManager({
         </div>
         <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3">
           <p className="text-xs text-zinc-500">Outstanding liability</p>
-          <p className="mt-1 text-2xl font-semibold">${totalOutstandingLiability.toFixed(2)}</p>
+          <p className="mt-1 text-2xl font-semibold">{formatCurrency(totalOutstandingLiability)}</p>
         </div>
         <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3">
           <p className="text-xs text-zinc-500">Transactions</p>
@@ -128,12 +129,12 @@ export function GiftCardManager({
                       <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_COLORS[gc.status]}`}>{gc.status}</span>
                     </div>
                     <p className="text-xs text-zinc-500">
-                      ${gc.balance.toFixed(2)} / ${gc.initialBalance.toFixed(2)}
+                      {formatCurrency(gc.balance)} / {formatCurrency(gc.initialBalance)}
                       {customer ? ` · ${customer.firstName} ${customer.lastName}` : ""}
                       {activator ? ` · Activated by ${activator.displayName}` : ""}
                     </p>
                   </div>
-                  <span className="text-lg font-semibold">${gc.balance.toFixed(2)}</span>
+                  <span className="text-lg font-semibold">{formatCurrency(gc.balance)}</span>
                 </button>
 
                 {isExpanded && (
@@ -148,7 +149,7 @@ export function GiftCardManager({
                           <div key={txn.id} className="flex items-center justify-between text-sm">
                             <span className="text-zinc-600">{txn.transactionType}</span>
                             <span className={`font-medium ${txn.amount >= 0 ? "text-emerald-700" : "text-red-700"}`}>
-                              {txn.amount >= 0 ? "+" : ""}${txn.amount.toFixed(2)}
+                              {txn.amount > 0 ? "+" : ""}{formatCurrency(txn.amount)}
                             </span>
                           </div>
                         ))}

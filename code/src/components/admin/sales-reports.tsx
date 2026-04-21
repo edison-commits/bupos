@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from "react";
 import type { LocalStoreData } from "@/lib/persistence/types";
+import { formatCurrency } from "@/lib/format";
 
 type DateRange = "today" | "7d" | "30d" | "all";
 
@@ -351,10 +352,5 @@ function formatHourLabel(hour: number): string {
   return hour < 12 ? `${hour} AM` : `${hour - 12} PM`;
 }
 
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-  }).format(amount);
-}
+// Local formatter removed — we now use the shared `formatCurrency` from
+// @/lib/format so locale/currency changes propagate everywhere.

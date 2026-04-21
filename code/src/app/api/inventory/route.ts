@@ -3,8 +3,11 @@
  * @tags inventory
  */
 import { NextResponse } from 'next/server';
-import { orgQuery } from '@/lib/supabase-rest';
+import { orgTx } from '@/lib/supabase-rest';
 import { withAdminAuth } from '@/lib/api/with-auth';
+import { _inventoryCache, INV_CACHE_TTL, MAX_INV_CACHE_SIZE } from '@/lib/cache/inventory-cache';
+import { safeErr } from "@/lib/logging/safe-err";
+export { invalidateInventoryCache } from '@/lib/cache/inventory-cache';
 
 interface ProductRow {
   product_id: string;
@@ -29,20 +32,23 @@ interface SummaryRow {
   out_of_stock_count: string;
 }
 
-// 30-second response cache — keyed by URL so search params are included
-const _inventoryCache = new Map<string, { data: unknown; expiresAt: number }>();
-const INV_CACHE_TTL = 30_000;
-const MAX_CACHE_SIZE = 50;
+// Response cache — keyed by URL so search params are included. See
+// src/lib/cache/inventory-cache.ts. Write paths invalidate via
+// invalidateInventoryCache(orgId).
 
 export const GET = withAdminAuth("inventory.adjust", async (request, ctx) => {
-  const cacheKey = request.nextUrl.toString();
-  const cached = _inventoryCache.get(cacheKey);
-
   const { orgId } = ctx;
   const locationId = ctx.locationId;
   if (!locationId) {
     return NextResponse.json({ error: 'No location context' }, { status: 400 });
   }
+  // SECURITY: include locationId AND roleKey in the cache key. Without
+  // locationId, two admins with different `locationIds[0]` would clobber
+  // each other's cached inventory. Role is included so any future
+  // role-based column filtering (e.g., support sees only public fields)
+  // can't serve a higher-privilege cached row to a lower-privilege caller.
+  const cacheKey = `${orgId}:${locationId}:${ctx.employee.roleKey}:${request.nextUrl.toString()}`;
+  const cached = _inventoryCache.get(cacheKey);
 
   if (cached && Date.now() < cached.expiresAt) {
     const hit = NextResponse.json(cached.data);
@@ -57,39 +63,50 @@ export const GET = withAdminAuth("inventory.adjust", async (request, ctx) => {
     const brand = searchParams.get('brand') || '';
     const stockFilter = searchParams.get('stock') || 'all';
 
-    // Build WHERE clause conditions
-    const conditions: string[] = [];
+    // R27-C7: explicit organization_id filter prepended to the conditions
+    // list. $1 is locationId, $2 is orgId, filter placeholders start at $3.
+    // Without this, an owner at any tenant listed every tenant's catalog.
+    const conditions: string[] = ['p.organization_id = $2'];
     const params: (string | number)[] = [];
 
     if (search) {
+      const escaped = search.replace(/[%_\\]/g, '\\$&');
       conditions.push(
-        `(LOWER(p.name) ILIKE $${params.length + 1} OR LOWER(pv.sku) ILIKE $${params.length + 1})`
+        `(LOWER(p.name) ILIKE $${params.length + 3} OR LOWER(pv.sku) ILIKE $${params.length + 3})`
       );
-      params.push(`%${search}%`);
+      params.push(`%${escaped}%`);
     }
 
     if (category) {
-      conditions.push(`p.category_id = $${params.length + 1}`);
+      conditions.push(`p.category_id = $${params.length + 3}`);
       params.push(category);
     }
 
     if (productType) {
-      conditions.push(`LOWER(p.product_type) = $${params.length + 1}`);
+      conditions.push(`LOWER(p.product_type) = $${params.length + 3}`);
       params.push(productType.toLowerCase());
     }
 
     if (brand) {
-      conditions.push(`LOWER(p.product_brand) = $${params.length + 1}`);
+      conditions.push(`LOWER(p.product_brand) = $${params.length + 3}`);
       params.push(brand.toLowerCase());
     }
 
-    const whereClause =
-      conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
-    // Query all in parallel: products, categories, types, brands, summary
-    const [productsResult, categoriesResult, typesResult, brandsResult, summaryResult] = await Promise.all([
-      orgQuery(
-        orgId,
+    // Run all 5 reads on ONE shared Neon client instead of 5 parallel
+    // orgQuery() calls. Each orgQuery opens a fresh one-shot Pool on
+    // Cloudflare Workers (per-call facade), so Promise.all of 5 = 5
+    // concurrent TLS+WebSocket handshakes. On cold-start that burst can
+    // briefly exceed Neon's per-project connection limit and yields a
+    // transient 500 on the first inventory load. Serialising the reads on
+    // a single client keeps handshake count at 1 while keeping the total
+    // wall time in the same order of magnitude (the small metadata
+    // queries run in milliseconds on the hot client).
+    const sharedClient = await orgTx(orgId);
+    let productsResult, categoriesResult, typesResult, brandsResult, summaryResult;
+    try {
+      productsResult = await sharedClient.query(
         `
         SELECT
           p.id as product_id,
@@ -106,49 +123,48 @@ export const GET = withAdminAuth("inventory.adjust", async (request, ctx) => {
           pv.cost,
           COALESCE(i.on_hand, 0) as quantity
         FROM products p
-        LEFT JOIN product_variants pv ON p.id = pv.product_id
-        LEFT JOIN inventory_levels i ON pv.id = i.product_variant_id AND i.location_id = $1
+        LEFT JOIN product_variants pv ON p.id = pv.product_id AND pv.organization_id = $2
+        LEFT JOIN inventory_levels i ON pv.id = i.product_variant_id
+          AND i.organization_id = $2
+          AND i.location_id = $1
         ${whereClause}
         ORDER BY p.name, pv.sku
         `,
-        [locationId, ...params]
-      ),
+        [locationId, orgId, ...params]
+      );
 
-      orgQuery(
-        orgId,
+      categoriesResult = await sharedClient.query(
         `
         SELECT DISTINCT c.id, c.name
         FROM categories c
-        INNER JOIN products p ON p.category_id = c.id
+        INNER JOIN products p ON p.category_id = c.id AND p.organization_id = $1
+        WHERE c.organization_id = $1
         ORDER BY c.name
         `,
-        []
-      ),
+        [orgId]
+      );
 
-      orgQuery(
-        orgId,
+      typesResult = await sharedClient.query(
         `
         SELECT DISTINCT LOWER(product_type) as value
         FROM products
-        WHERE product_type IS NOT NULL AND product_type != ''
+        WHERE organization_id = $1 AND product_type IS NOT NULL AND product_type != ''
         ORDER BY LOWER(product_type)
         `,
-        []
-      ),
+        [orgId]
+      );
 
-      orgQuery(
-        orgId,
+      brandsResult = await sharedClient.query(
         `
         SELECT DISTINCT LOWER(product_brand) as value
         FROM products
-        WHERE product_brand IS NOT NULL AND product_brand != ''
+        WHERE organization_id = $1 AND product_brand IS NOT NULL AND product_brand != ''
         ORDER BY LOWER(product_brand)
         `,
-        []
-      ),
+        [orgId]
+      );
 
-      orgQuery(
-        orgId,
+      summaryResult = await sharedClient.query(
         `
         SELECT
           COUNT(DISTINCT p.id) as total_products,
@@ -156,13 +172,22 @@ export const GET = withAdminAuth("inventory.adjust", async (request, ctx) => {
           COUNT(DISTINCT CASE WHEN COALESCE(i.on_hand, 0) <= 5 AND COALESCE(i.on_hand, 0) > 0 THEN pv.id END) as low_stock_count,
           COUNT(DISTINCT CASE WHEN COALESCE(i.on_hand, 0) = 0 THEN pv.id END) as out_of_stock_count
         FROM products p
-        LEFT JOIN product_variants pv ON p.id = pv.product_id
-        LEFT JOIN inventory_levels i ON pv.id = i.product_variant_id AND i.location_id = $1
+        LEFT JOIN product_variants pv ON p.id = pv.product_id AND pv.organization_id = $2
+        LEFT JOIN inventory_levels i ON pv.id = i.product_variant_id
+          AND i.organization_id = $2
+          AND i.location_id = $1
         ${whereClause}
         `,
-        [locationId, ...params]
-      ),
-    ]);
+        [locationId, orgId, ...params]
+      );
+
+      await sharedClient.query("COMMIT");
+    } catch (e) {
+      await sharedClient.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      sharedClient.release();
+    }
 
     // Process products data to group variants by product
     interface ProductVariant {
@@ -249,7 +274,7 @@ export const GET = withAdminAuth("inventory.adjust", async (request, ctx) => {
       },
     };
     _inventoryCache.set(cacheKey, { data: response, expiresAt: Date.now() + INV_CACHE_TTL });
-    if (_inventoryCache.size > MAX_CACHE_SIZE) {
+    if (_inventoryCache.size > MAX_INV_CACHE_SIZE) {
       const firstKey = _inventoryCache.keys().next().value;
       if (firstKey) _inventoryCache.delete(firstKey);
     }
@@ -257,7 +282,7 @@ export const GET = withAdminAuth("inventory.adjust", async (request, ctx) => {
     resp.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
     return resp;
   } catch (error) {
-    console.error('Inventory API error:', error);
+    console.error('Inventory API error:', safeErr(error));
     return NextResponse.json(
       { error: 'Failed to fetch inventory data' },
       { status: 500 }

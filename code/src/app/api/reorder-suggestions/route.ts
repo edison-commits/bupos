@@ -3,6 +3,7 @@ import { orgQuery } from '@/lib/supabase-rest';
 import { withDualAuth } from '@/lib/api/with-auth';
 
 
+import { safeErr } from "@/lib/logging/safe-err";
 /**
  * GET /api/reorder-suggestions
  *
@@ -12,9 +13,26 @@ import { withDualAuth } from '@/lib/api/with-auth';
  *
  * Also returns items with no supplier assigned so they can be flagged.
  */
-export const GET = withDualAuth("inventory.adjust", async (_req, ctx) => {
+export const GET = withDualAuth("inventory.adjust", async (req, ctx) => {
   const { orgId } = ctx;
   try {
+    // Default to the caller's primary location; allow explicit override only
+    // if the caller is assigned to that location (owner/manager can see all,
+    // to plan cross-store reorders). Without this, an inventory_clerk at
+    // Redondo could read stock levels + supplier mappings at every other
+    // store in the org — exfiltration-grade detail with no business reason.
+    const requestedLocation = req.nextUrl.searchParams.get("location");
+    const isManager = ctx.employee.roleKey === "owner" || ctx.employee.roleKey === "manager";
+    const locationId = requestedLocation ?? ctx.employee.locationIds?.[0];
+    if (requestedLocation && !isManager && !(ctx.employee.locationIds ?? []).includes(requestedLocation)) {
+      return NextResponse.json({ error: "Location not assigned to this employee" }, { status: 403 });
+    }
+
+    // When a specific location is known, filter the query to that location.
+    // Owner/manager with no location param see all locations (prior behavior).
+    const locationFilter = locationId ? ` AND il.location_id = $2` : "";
+    const params: unknown[] = locationId ? [orgId, locationId] : [orgId];
+
     // Find all low/out-of-stock items with supplier info if available
     const { rows } = await orgQuery(orgId,
       `SELECT
@@ -39,9 +57,9 @@ export const GET = withDualAuth("inventory.adjust", async (_req, ctx) => {
       LEFT JOIN suppliers s ON p.supplier_id = s.id
       LEFT JOIN locations l ON il.location_id = l.id
       WHERE il.organization_id = $1
-        AND il.on_hand <= il.reorder_point
+        AND il.on_hand <= il.reorder_point${locationFilter}
       ORDER BY s.name NULLS LAST, p.name, pv.name`,
-      [orgId],
+      params,
     );
 
     // Group by supplier
@@ -67,7 +85,7 @@ export const GET = withDualAuth("inventory.adjust", async (_req, ctx) => {
 
     return NextResponse.json({ groups, totalItems });
   } catch (error) {
-    console.error('Reorder suggestions error:', error);
+    console.error('Reorder suggestions error:', safeErr(error));
     return NextResponse.json({ error: 'Failed to fetch reorder suggestions' }, { status: 500 });
   }
 });

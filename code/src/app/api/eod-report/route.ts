@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { orgQuery } from "@/lib/supabase-rest";
 import { withAdminAuth, withDualAuth } from "@/lib/api/with-auth";
 import { validateBody, eodReportSchema } from "@/lib/validation/schemas";
+import { formatCurrency } from "@/lib/format";
+import { safeErr } from "@/lib/logging/safe-err";
 const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
 
 interface SalesSummary {
@@ -39,7 +41,7 @@ export const GET = withDualAuth("audit.view", async (req, ctx) => {
     const reportData = await generateReportData(orgId, locationId);
     return NextResponse.json(reportData);
   } catch (error) {
-    console.error("EOD Report GET error:", error);
+    console.error("EOD Report GET error:", safeErr(error));
     return NextResponse.json(
       { error: "Failed to generate report data" },
       { status: 500 }
@@ -57,12 +59,16 @@ export const POST = withAdminAuth("audit.view", async (req, ctx) => {
   const v = validateBody(eodReportSchema, body);
   if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
 
-  const locationId = employee.locationIds?.[0];
+  // Prefer the active-location header/cookie (wired through withAdminAuth)
+  // so a multi-location manager gets the EOD for the store they're viewing,
+  // not the first in their assignment. Fall back to ctx.locationId (already
+  // resolved to locationIds[0] by the wrapper) for non-JS clients.
+  const locationId = ctx.locationId ?? employee.locationIds?.[0];
   let reportData: ReportData;
   try {
     reportData = await generateReportData(orgId, locationId);
   } catch (error) {
-    console.error("EOD Report: data generation failed:", error);
+    console.error("EOD Report: data generation failed:", safeErr(error));
     return NextResponse.json({ error: "Failed to generate report data" }, { status: 500 });
   }
 
@@ -78,10 +84,10 @@ export const POST = withAdminAuth("audit.view", async (req, ctx) => {
     await sendEmailReport(reportData);
     return NextResponse.json({ success: true, message: "Report generated and sent", reportData });
   } catch (error) {
-    console.error("EOD Report: email send failed:", error);
+    console.error("EOD Report: email send failed:", safeErr(error));
     // Report was generated OK; email delivery failed — surface this clearly
     return NextResponse.json(
-      { error: "Report generated but email delivery failed", details: String(error) },
+      { error: "Report generated but email delivery failed" },
       { status: 502 }
     );
   }
@@ -89,19 +95,38 @@ export const POST = withAdminAuth("audit.view", async (req, ctx) => {
 
 async function generateReportData(orgId: string, locationId?: string): Promise<ReportData> {
   const today = new Date().toISOString().split("T")[0];
-  const startOfDay = `${today}T00:00:00Z`;
-  const endOfDay = `${today}T23:59:59Z`;
 
+  // Compute all day-windows in the ORG'S configured timezone. Previously
+  // daily_sales/payment_breakdown/employee_performance used UTC (startOfDay/
+  // endOfDay) while shift_info used AT TIME ZONE organization. For a
+  // Pacific-TZ store the two windows overlapped by only ~17 hours — sales
+  // at 18:00 PDT showed in "today's totals" but the shift that generated
+  // them was in the PREVIOUS day's shift_info, making reconciliation off
+  // by the evening's sales every single day. Passing `today` as a date and
+  // letting SQL compute both windows in the org TZ unifies the sources.
+  // Every CTE gates its org-scoped source table by `organization_id = $2`
+  // (on top of `location_id = $3`). `location_id` alone is not a tenancy
+  // boundary: location UUIDs are tenant-unique but a crafted/foreign id
+  // wouldn't be caught by RLS (BYPASSRLS under the postgres role), so the
+  // explicit org filter is what blocks cross-tenant reads. The JOINed
+  // `employees` / `product_variants` / `products` rows are also gated so
+  // display names / SKUs can't bleed across tenants via a foreign FK.
   const result = await orgQuery(
     orgId,
-    `WITH daily_sales AS (
+    `WITH window_bounds AS (
+       SELECT ($1::date AT TIME ZONE COALESCE((SELECT timezone FROM organizations WHERE id = $2), 'UTC')) AS window_start,
+              (($1::date + INTERVAL '1 day') AT TIME ZONE COALESCE((SELECT timezone FROM organizations WHERE id = $2), 'UTC')) AS window_end
+     ),
+     daily_sales AS (
        SELECT
          COUNT(*) FILTER (WHERE status = 'completed')::int AS total_sales_count,
          COALESCE(SUM(grand_total) FILTER (WHERE status = 'completed'), 0)::numeric AS total_sales_amount,
          COUNT(*) FILTER (WHERE status = 'returned')::int AS total_returns_count,
          COALESCE(SUM(grand_total) FILTER (WHERE status = 'returned'), 0)::numeric AS total_returns_amount
        FROM transactions
-       WHERE created_at >= $1::timestamp AND created_at <= $2::timestamp
+       WHERE organization_id = $2
+         AND created_at >= (SELECT window_start FROM window_bounds)
+         AND created_at < (SELECT window_end FROM window_bounds)
          AND location_id = $3
      ),
      payment_breakdown AS (
@@ -110,8 +135,9 @@ async function generateReportData(orgId: string, locationId?: string): Promise<R
          COALESCE(SUM(tt.amount), 0)::numeric AS total_amount,
          COUNT(*)::int AS transaction_count
        FROM transaction_tenders tt
-       JOIN transactions t ON t.id = tt.transaction_id
-       WHERE t.created_at >= $1::timestamp AND t.created_at <= $2::timestamp
+       JOIN transactions t ON t.id = tt.transaction_id AND t.organization_id = $2
+       WHERE t.created_at >= (SELECT window_start FROM window_bounds)
+         AND t.created_at < (SELECT window_end FROM window_bounds)
          AND t.location_id = $3
        GROUP BY tt.tender_type
      ),
@@ -121,8 +147,10 @@ async function generateReportData(orgId: string, locationId?: string): Promise<R
          COUNT(*)::int AS transaction_count,
          COALESCE(SUM(t.grand_total), 0)::numeric AS total_sales
        FROM transactions t
-       LEFT JOIN employees e ON e.id = t.employee_id
-       WHERE t.created_at >= $1::timestamp AND t.created_at <= $2::timestamp
+       LEFT JOIN employees e ON e.id = t.employee_id AND e.organization_id = $2
+       WHERE t.organization_id = $2
+         AND t.created_at >= (SELECT window_start FROM window_bounds)
+         AND t.created_at < (SELECT window_end FROM window_bounds)
          AND t.location_id = $3
          AND t.status = 'completed'
        GROUP BY e.id, e.display_name
@@ -135,8 +163,9 @@ async function generateReportData(orgId: string, locationId?: string): Promise<R
          s.closed_at,
          EXTRACT(EPOCH FROM (COALESCE(s.closed_at, NOW()) - s.opened_at))::int AS duration_seconds
        FROM shifts s
-       WHERE s.opened_at >= $1::timestamp AT TIME ZONE 'UTC'
-         AND s.opened_at < ($1::timestamp AT TIME ZONE 'UTC' + INTERVAL '1 day')
+       WHERE s.organization_id = $2
+         AND s.opened_at >= (SELECT window_start FROM window_bounds)
+         AND s.opened_at < (SELECT window_end FROM window_bounds)
          AND s.location_id = $3
      ),
      low_stock AS (
@@ -146,9 +175,10 @@ async function generateReportData(orgId: string, locationId?: string): Promise<R
          il.on_hand,
          il.reorder_point
        FROM inventory_levels il
-       JOIN product_variants pv ON pv.id = il.product_variant_id
-       JOIN products p ON p.id = pv.product_id
-       WHERE il.location_id = $3
+       JOIN product_variants pv ON pv.id = il.product_variant_id AND pv.organization_id = $2
+       JOIN products p ON p.id = pv.product_id AND p.organization_id = $2
+       WHERE il.organization_id = $2
+         AND il.location_id = $3
          AND il.on_hand < il.reorder_point
        LIMIT 10
      )
@@ -164,10 +194,9 @@ async function generateReportData(orgId: string, locationId?: string): Promise<R
        (SELECT coalesce(json_agg(row_to_json(low_stock.*)), '[]'::json)
         FROM low_stock) AS low_stock_items`,
     [
-      startOfDay,
-      endOfDay,
-      locationId,
-      today,
+      today,       // $1 — date used to derive the window_bounds in org TZ
+      orgId,       // $2 — tenancy anchor (organization_id filter on every CTE)
+      locationId,  // $3 — the active location
     ],
   );
 
@@ -264,7 +293,8 @@ function generateEmailHTML(data: ReportData): string {
     low_stock_items,
   } = data;
 
-  const formatCurrency = (val: number) => `$${Number(val).toFixed(2)}`;
+  // Use the shared helper (imported at top of file, R10 sweep). Local
+  // shadow removed so locale/currency changes propagate.
   const formatCount = (val: number) => (val || 0).toString();
   // Escape user-controlled strings to prevent XSS in HTML email body
   const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => ({

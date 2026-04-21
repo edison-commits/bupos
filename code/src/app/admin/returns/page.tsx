@@ -6,6 +6,7 @@ import React, { useState, useCallback } from 'react';
 import { Search, Calendar, Plus, X, AlertCircle, CheckCircle, Loader } from 'lucide-react';
 import { authFetch } from '@/lib/api/client';
 import { formatCurrency } from '@/lib/format';
+import { safeErr } from "@/lib/logging/safe-err";
 interface CartItem {
   product_id: string;
   product_name: string;
@@ -97,7 +98,7 @@ export default function ReturnsPage() {
       setSearchResults(data);
       setSelectedItems([]);
     } catch (error) {
-      console.error('Search failed:', error);
+      console.error('Search failed:', safeErr(error));
       alert('Failed to search transaction. Please check the ID and try again.');
     } finally {
       setSearching(false);
@@ -194,7 +195,7 @@ export default function ReturnsPage() {
         setConfirmation(null);
       }, 3000);
     } catch (error) {
-      console.error('Processing failed:', error);
+      console.error('Processing failed:', safeErr(error));
       setConfirmation({
         success: false,
         message: error instanceof Error ? error.message : 'Failed to process return',

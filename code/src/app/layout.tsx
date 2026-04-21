@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Suspense } from "react";
+import { headers } from "next/headers";
 import { Toaster } from "sonner";
 import { NoticeToaster } from "@/components/notice-toaster";
 import "./globals.css";
@@ -20,16 +21,41 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
   return (
     <html
       lang="en"
       className="h-full bg-[var(--surface-app)] text-[var(--text-primary)] antialiased"
     >
+      <head>
+        {/*
+          R35-P7: FOUC elimination — apply the POS theme class before paint.
+          Before this, `register-console-client.tsx` flipped the class in a
+          `useEffect` that runs after hydration. A user with the "dark" theme
+          saved saw ~200-400ms of light-mode flash on every cold render
+          (hard reload of /register, tab reopen, offline re-launch).
+          Reading localStorage in a blocking <head> script + mutating
+          documentElement classList pre-paint is the standard fix.
+          Wrapped in try/catch because localStorage throws in Safari
+          private mode. The nonce passes the strict CSP set by the
+          edge middleware.
+        */}
+        <script
+          nonce={nonce}
+          dangerouslySetInnerHTML={{
+            __html:
+              "(function(){try{var t=localStorage.getItem('pos-theme');" +
+              "if(t==='dark'){document.documentElement.classList.add('dark');}" +
+              "else if(t==='high-contrast'){document.documentElement.setAttribute('data-theme','high-contrast');}" +
+              "}catch(e){}})();",
+          }}
+        />
+      </head>
       <body className="min-h-full font-sans">
         {children}
         <Toaster richColors />
@@ -37,6 +63,7 @@ export default function RootLayout({
           <NoticeToaster />
         </Suspense>
         <script
+          nonce={nonce}
           dangerouslySetInnerHTML={{
             __html: `if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{})}`,
           }}

@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from 'react';
 import type { LocalStoreData } from '@/lib/persistence/types';
+import { formatCurrency } from "@/lib/format";
 
 interface PayrollEntry {
   date: string;
@@ -425,7 +426,7 @@ export function PayrollSummary({ store }: { store: LocalStoreData }) {
               <div>
                 <p className="text-xs text-zinc-600">Hourly Rate</p>
                 <div className="flex gap-2 mt-1">
-                  <span className="text-lg font-bold text-teal-700">${rate.toFixed(2)}</span>
+                  <span className="text-lg font-bold text-teal-700">{formatCurrency(rate)}</span>
                   <input
                     type="number"
                     step="0.01"
@@ -439,7 +440,7 @@ export function PayrollSummary({ store }: { store: LocalStoreData }) {
             </div>
 
             <div className="text-right font-bold text-lg text-teal-700">
-              Gross Pay: ${grossPay.toFixed(2)}
+              Gross Pay: {formatCurrency(grossPay)}
             </div>
           </div>
         );
@@ -458,14 +459,16 @@ export function PayrollSummary({ store }: { store: LocalStoreData }) {
           </div>
           <div>
             <p className="text-sm text-teal-700">Total Gross Payroll</p>
-            <p className="text-2xl font-bold text-teal-900">${payrollData.totalGrossPay.toFixed(2)}</p>
+            <p className="text-2xl font-bold text-teal-900">{formatCurrency(payrollData.totalGrossPay)}</p>
           </div>
           <div>
             <p className="text-sm text-teal-700">Avg Hourly Cost</p>
             <p className="text-2xl font-bold text-teal-900">
-              ${payrollData.totalRegularHours + payrollData.totalOvertimeHours > 0
-                ? (payrollData.totalGrossPay / (payrollData.totalRegularHours + payrollData.totalOvertimeHours)).toFixed(2)
-                : '0.00'}
+              {formatCurrency(
+                payrollData.totalRegularHours + payrollData.totalOvertimeHours > 0
+                  ? payrollData.totalGrossPay / (payrollData.totalRegularHours + payrollData.totalOvertimeHours)
+                  : 0
+              )}
             </p>
           </div>
         </div>

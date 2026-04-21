@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { verifyManagerApproval, type ApprovalRequest, type ApprovalResult } from "@/app/register/approval-action";
+import { formatCurrency } from "@/lib/format";
 
 interface ApprovalModalProps {
   request: ApprovalRequest;
@@ -32,27 +33,49 @@ export function ApprovalModal({ request, onApproved, onDenied }: ApprovalModalPr
   const [reasonCode, setReasonCode] = useState("customer_request");
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // R34-D7: ref-based re-entry guard prevents a rapid double-tap
+  // from firing two concurrent verifyManagerApproval requests (each
+  // burning a rate-limit attempt + potentially double-logging
+  // audit events). React state updates are async so the first
+  // `setProcessing(true)` hasn't committed when the second click
+  // arrives — the ref short-circuits synchronously.
+  const submitInFlightRef = useRef(false);
+  // R34-D7: mount flag so async `verifyManagerApproval` completions
+  // after unmount don't fire setState on an already-dismissed modal
+  // (React warning + stale onApproved propagation).
+  const mountedRef = useRef(true);
 
   // Escape key + backdrop click to dismiss
   useEffect(() => {
+    mountedRef.current = true;
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") onDenied();
     }
     document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    return () => {
+      mountedRef.current = false;
+      document.removeEventListener("keydown", onKey);
+    };
   }, [onDenied]);
 
   async function handleSubmit() {
-    if (pin.length !== 4) {
-      setError("Enter a 4-digit manager PIN.");
+    // R32-X2: managers/owners may have 6-digit PINs (R27-H1 enforced
+    // for privileged roles). Prior `length !== 4` hard-reject made
+    // every 6-digit manager approval impossible — breaks discount,
+    // price-override, and return threshold flows entirely.
+    if (pin.length < 4 || pin.length > 6) {
+      setError("Enter a 4-6 digit manager PIN.");
       return;
     }
 
+    if (submitInFlightRef.current) return;
+    submitInFlightRef.current = true;
     setProcessing(true);
     setError(null);
 
     try {
       const result = await verifyManagerApproval(pin, { ...request, reasonCode });
+      if (!mountedRef.current) return;
 
       if (result.approved) {
         onApproved(result);
@@ -61,14 +84,19 @@ export function ApprovalModal({ request, onApproved, onDenied }: ApprovalModalPr
         setPin("");
       }
     } catch {
-      setError("Approval verification failed. Try again.");
+      if (mountedRef.current) {
+        setError("Approval verification failed. Try again.");
+      }
     } finally {
-      setProcessing(false);
+      submitInFlightRef.current = false;
+      if (mountedRef.current) setProcessing(false);
     }
   }
 
   function handlePinPad(digit: string) {
-    if (pin.length < 4) {
+    // R32-X2: accept 4-6 digits to match server-side pinString regex
+    // and support privileged roles' 6-digit PINs.
+    if (pin.length < 6) {
       setPin((prev) => prev + digit);
     }
   }
@@ -96,11 +124,11 @@ export function ApprovalModal({ request, onApproved, onDenied }: ApprovalModalPr
         <div className="border-b border-zinc-100 px-5 py-3">
           <div className="flex justify-between text-sm">
             <span className="text-zinc-500">Amount</span>
-            <span className="font-semibold text-red-700">${request.triggerAmount.toFixed(2)}</span>
+            <span className="font-semibold text-red-700">{formatCurrency(request.triggerAmount)}</span>
           </div>
           <div className="flex justify-between text-sm">
             <span className="text-zinc-500">Threshold</span>
-            <span className="font-medium">${request.thresholdAmount.toFixed(2)}</span>
+            <span className="font-medium">{formatCurrency(request.thresholdAmount)}</span>
           </div>
         </div>
 
@@ -122,9 +150,9 @@ export function ApprovalModal({ request, onApproved, onDenied }: ApprovalModalPr
         <div className="px-5 py-4">
           <p className="mb-2 text-center text-sm font-medium text-zinc-600">Manager PIN</p>
 
-          {/* PIN dots */}
+          {/* PIN dots — show 6 to match the new 4-6 digit range. R32-X2. */}
           <div className="mb-4 flex justify-center gap-3">
-            {[0, 1, 2, 3].map((i) => (
+            {[0, 1, 2, 3, 4, 5].map((i) => (
               <div
                 key={i}
                 className={`h-4 w-4 rounded-full border-2 ${
@@ -191,9 +219,9 @@ export function ApprovalModal({ request, onApproved, onDenied }: ApprovalModalPr
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={processing || pin.length !== 4}
+            disabled={processing || pin.length < 4 || pin.length > 6}
             className={`touch-button flex-1 rounded-2xl px-4 text-sm font-bold transition-colors ${
-              processing || pin.length !== 4
+              processing || pin.length < 4 || pin.length > 6
                 ? "cursor-not-allowed bg-zinc-200 text-zinc-400"
                 : "bg-amber-600 text-white hover:bg-amber-700 active:bg-amber-800"
             }`}

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
+import { formatCurrency } from "@/lib/format";
 
 interface Customer {
   id: string;
@@ -185,7 +186,7 @@ export function LoyaltyTiers({ customers, currentConfig }: LoyaltyTiersProps) {
         </div>
         <div className="rounded-2xl bg-zinc-50 p-4 border border-zinc-200">
           <div className="text-sm text-zinc-600 font-medium">Point Liability</div>
-          <div className="text-2xl font-bold text-zinc-900 mt-2">${analytics.potentialLiability.toFixed(2)}</div>
+          <div className="text-2xl font-bold text-zinc-900 mt-2">{formatCurrency(analytics.potentialLiability)}</div>
           <div className="text-xs text-zinc-500 mt-1">Current redemption value</div>
         </div>
         <div className="rounded-2xl bg-zinc-50 p-4 border border-zinc-200">
@@ -472,7 +473,7 @@ export function LoyaltyTiers({ customers, currentConfig }: LoyaltyTiersProps) {
                       )}
                     </td>
                     <td className="py-3 px-3 text-right text-zinc-900 font-medium">{customer.loyaltyPoints.toLocaleString()}</td>
-                    <td className="py-3 px-3 text-right text-zinc-700">${customer.totalSpend.toFixed(2)}</td>
+                    <td className="py-3 px-3 text-right text-zinc-700">{formatCurrency(customer.totalSpend)}</td>
                     <td className="py-3 px-3">
                       {nextTier ? (
                         <div className="space-y-1">

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { CheckCircle2 } from "lucide-react";
 import { NumpadInput } from "./numpad-input";
+import { formatCurrency } from "@/lib/format";
 
 interface EODWizardProps {
   expectedCash: number;
@@ -139,7 +140,7 @@ export function EODWizard({
                 </div>
                 <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-4">
                   <p className="text-sm text-zinc-500">Total sales</p>
-                  <p className="mt-2 text-xl font-semibold">${salesTotal.toFixed(2)}</p>
+                  <p className="mt-2 text-xl font-semibold">{formatCurrency(salesTotal)}</p>
                 </div>
               </div>
 
@@ -159,7 +160,7 @@ export function EODWizard({
                         <td className="px-4 py-3 text-sm font-medium text-zinc-900 capitalize">{tender.type}</td>
                         <td className="px-4 py-3 text-right text-sm text-zinc-600">{tender.count}</td>
                         <td className="px-4 py-3 text-right text-sm font-semibold text-zinc-900">
-                          ${tender.total.toFixed(2)}
+                          {formatCurrency(tender.total)}
                         </td>
                       </tr>
                     ))}
@@ -179,7 +180,7 @@ export function EODWizard({
                 {!blindClose && (
                   <>
                     <p className="text-sm text-teal-700">Expected cash</p>
-                    <p className="mt-2 text-4xl font-bold text-teal-700">${expectedCash.toFixed(2)}</p>
+                    <p className="mt-2 text-4xl font-bold text-teal-700">{formatCurrency(expectedCash)}</p>
                   </>
                 )}
                 {blindClose && (
@@ -219,14 +220,14 @@ export function EODWizard({
               {/* Running total */}
               <div className="space-y-1 rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-4">
                 <p className="text-sm text-zinc-500">Running total</p>
-                <p className="text-3xl font-bold text-zinc-900">${declaredCash.toFixed(2)}</p>
+                <p className="text-3xl font-bold text-zinc-900">{formatCurrency(declaredCash)}</p>
               </div>
 
               {/* Variance display */}
               <div className="space-y-1 rounded-2xl border-2 border-zinc-200 px-4 py-4">
                 <p className="text-sm text-zinc-500">Variance</p>
                 <p className={`text-3xl font-bold ${varianceColor}`}>
-                  {variance >= 0 ? "+" : ""}${variance.toFixed(2)}
+                  {variance >= 0 ? "+" : ""}{formatCurrency(variance)}
                 </p>
                 <p className="mt-2 text-xs text-zinc-600">
                   {variance === 0 && "Perfect count"}
@@ -259,10 +260,10 @@ export function EODWizard({
                 <p className="text-sm font-semibold text-zinc-700">Closing summary</p>
                 <div className="mt-3 space-y-2 text-sm text-zinc-600">
                   <p>Shift is ready to close</p>
-                  <p>Expected cash: ${expectedCash.toFixed(2)}</p>
-                  <p>Declared cash: ${declaredCash.toFixed(2)}</p>
+                  <p>Expected cash: {formatCurrency(expectedCash)}</p>
+                  <p>Declared cash: {formatCurrency(declaredCash)}</p>
                   <p className={`font-semibold ${varianceColor}`}>
-                    Variance: {variance >= 0 ? "+" : ""}${variance.toFixed(2)}
+                    Variance: {variance >= 0 ? "+" : ""}{formatCurrency(variance)}
                   </p>
                 </div>
               </div>
@@ -298,7 +299,7 @@ export function EODWizard({
               <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-4 text-left">
                 <p className="text-sm text-zinc-500">Final variance</p>
                 <p className={`mt-2 text-2xl font-bold ${varianceColor}`}>
-                  {variance >= 0 ? "+" : ""}${variance.toFixed(2)}
+                  {variance >= 0 ? "+" : ""}{formatCurrency(variance)}
                 </p>
               </div>
             </div>

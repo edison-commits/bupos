@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { formatCurrency } from "@/lib/format";
 
 interface ReorderItem {
   inventory_id: string;
@@ -104,7 +105,10 @@ export function ReorderSuggestions() {
     } finally { setCreating(null); }
   };
 
-  const formatCurrency = (v: number | null) => v != null ? `$${Number(v).toFixed(2)}` : '—';
+  // Renders `formatCurrency` for numeric values, '—' for null. The imported
+  // `formatCurrency` doesn't distinguish null vs 0, which matters for unit-
+  // cost columns where an unset cost shouldn't render as $0.00.
+  const fmtPrice = (v: number | null | undefined) => v != null ? formatCurrency(v) : '—';
 
   if (loading) return <div className="text-center py-8 text-zinc-400">Checking inventory levels...</div>;
 
@@ -187,7 +191,7 @@ export function ReorderSuggestions() {
                           </span>
                         </td>
                         <td className="px-2 py-2 text-center text-zinc-600">{item.reorder_point}</td>
-                        <td className="px-2 py-2 text-right text-zinc-600">{formatCurrency(item.cost)}</td>
+                        <td className="px-2 py-2 text-right text-zinc-600">{fmtPrice(item.cost)}</td>
                         <td className="px-2 py-2 text-center">
                           <input
                             type="number"

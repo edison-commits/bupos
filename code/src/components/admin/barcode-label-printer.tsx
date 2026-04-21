@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useMemo } from "react";
 import type { Product, ProductVariant } from "@/lib/domain/types";
+import { formatCurrency } from "@/lib/format";
 
 interface BarcodeLabelPrinterProps {
   products: Product[];
@@ -92,21 +93,31 @@ export function BarcodeLabelPrinter({ products, variants }: BarcodeLabelPrinterP
   const [showSku, setShowSku] = useState(true);
   const printRef = useRef<HTMLDivElement>(null);
 
-  const filteredVariants = searchTerm.trim()
-    ? variants.filter((v) => {
-        const product = products.find((p) => p.id === v.productId);
-        const term = searchTerm.toLowerCase();
-        return (
-          v.sku.toLowerCase().includes(term) ||
-          v.name.toLowerCase().includes(term) ||
-          v.barcode?.toLowerCase().includes(term) ||
-          product?.name.toLowerCase().includes(term)
-        );
-      })
-    : variants;
+  // R35-P6: memoize the filter so typing unrelated state (label size,
+  // price toggles) doesn't re-walk the full variants list. Also
+  // precompute a productsById map — the inner `.find` was O(n) per
+  // variant, making the full filter O(n²) on large catalogs.
+  const productsById = useMemo(() => {
+    const m = new Map<string, Product>();
+    for (const p of products) m.set(p.id, p);
+    return m;
+  }, [products]);
+  const filteredVariants = useMemo(() => {
+    if (!searchTerm.trim()) return variants;
+    const term = searchTerm.toLowerCase();
+    return variants.filter((v) => {
+      const product = productsById.get(v.productId);
+      return (
+        v.sku.toLowerCase().includes(term) ||
+        v.name.toLowerCase().includes(term) ||
+        v.barcode?.toLowerCase().includes(term) ||
+        product?.name.toLowerCase().includes(term)
+      );
+    });
+  }, [searchTerm, variants, productsById]);
 
   const addToQueue = useCallback((variant: ProductVariant) => {
-    const product = products.find((p) => p.id === variant.productId);
+    const product = productsById.get(variant.productId);
     if (!product) return;
     setLabelItems((prev) => {
       const existing = prev.find((item) => item.variant.id === variant.id);
@@ -117,7 +128,7 @@ export function BarcodeLabelPrinter({ products, variants }: BarcodeLabelPrinterP
       }
       return [...prev, { variant, product, quantity: 1 }];
     });
-  }, [products]);
+  }, [productsById]);
 
   const updateQuantity = useCallback((variantId: string, qty: number) => {
     if (qty <= 0) {
@@ -146,7 +157,7 @@ export function BarcodeLabelPrinter({ products, variants }: BarcodeLabelPrinterP
     const labels = labelItems.map(({ variant, product, quantity }) => {
       const name = escapeHtml(product.name);
       const sku = escapeHtml(variant.sku || '');
-      const price = `$${variant.price.toFixed(2)}`;
+      const price = formatCurrency(variant.price);
       const barcode = generateBarcodeSVG(variant.barcode || variant.sku || variant.id, sizeConfig.w - 16, sizeConfig.bh);
       return Array.from({ length: quantity }, () =>
         `<div class="label"><div class="label-name">${name}</div><div class="label-sku">${sku}</div>${barcode}<div class="label-price">${price}</div></div>`
@@ -186,7 +197,7 @@ export function BarcodeLabelPrinter({ products, variants }: BarcodeLabelPrinterP
               <p className="py-2 text-center text-sm text-zinc-400">No matches</p>
             ) : (
               filteredVariants.slice(0, 20).map((v) => {
-                const product = products.find((p) => p.id === v.productId);
+                const product = productsById.get(v.productId);
                 return (
                   <button
                     key={v.id}
@@ -303,7 +314,7 @@ export function BarcodeLabelPrinter({ products, variants }: BarcodeLabelPrinterP
                     />
                     <div className="flex w-full items-center justify-between px-1">
                       {showSku && <span className="text-[7px] text-zinc-500">{item.variant.sku}</span>}
-                      {showPrice && <span className="text-[10px] font-bold">${item.variant.price.toFixed(2)}</span>}
+                      {showPrice && <span className="text-[10px] font-bold">{formatCurrency(item.variant.price)}</span>}
                     </div>
                   </div>
                 );

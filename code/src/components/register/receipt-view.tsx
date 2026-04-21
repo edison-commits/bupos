@@ -6,6 +6,7 @@ import { useState } from "react";
 import type { Cart, CartTotals } from "@/lib/cart/types";
 import type { TenderEntry } from "./tender-panel";
 import { formatReceipt, type ReceiptData } from "@/lib/receipt/format-receipt";
+import { formatCurrency } from "@/lib/format";
 
 interface ReceiptViewProps {
   transactionId: string;
@@ -106,7 +107,7 @@ export function ReceiptView({
           <p className="text-2xl font-bold text-gray-900">Sale Complete</p>
           {changeDue > 0 && (
             <div className="mt-3 inline-block rounded-full bg-teal-600 px-4 py-2 text-white font-semibold">
-              Change: ${changeDue.toFixed(2)}
+              Change: {formatCurrency(changeDue)}
             </div>
           )}
         </div>
@@ -141,7 +142,7 @@ export function ReceiptView({
                       <span className="text-xs text-gray-600 block">({item.variantName})</span>
                     )}
                   </div>
-                  <span className="shrink-0 pl-3 font-semibold">${lineTotal.toFixed(2)}</span>
+                  <span className="shrink-0 pl-3 font-semibold">{formatCurrency(lineTotal)}</span>
                 </div>
               );
             })}
@@ -169,7 +170,7 @@ export function ReceiptView({
             <div className="flex justify-between pt-2 border-t border-dashed border-gray-300">
               <span className="text-xl font-bold text-gray-900">Total</span>
               <span className="text-xl font-bold text-gray-900">
-                ${totals.grandTotal.toFixed(2)}
+                {formatCurrency(totals.grandTotal)}
               </span>
             </div>
           </div>
@@ -304,7 +305,7 @@ function ReceiptRow({
   return (
     <div className={`flex justify-between ${sizeClass} ${bold ? "font-bold" : "font-medium"} text-gray-900`}>
       <span>{label}</span>
-      <span>{value < 0 ? "−" : ""}${Math.abs(value).toFixed(2)}</span>
+      <span>{value < 0 ? "−" : ""}{formatCurrency(Math.abs(value))}</span>
     </div>
   );
 }

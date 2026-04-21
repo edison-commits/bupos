@@ -1,6 +1,37 @@
 import type { NextConfig } from "next";
 
+// R24-H-1: prime the Cloudflare context in dev so the first
+// `getCloudflareContext({async: true})` call inside a route handler
+// doesn't pay the full miniflare-bootstrap cost on the hot path.
+// Skipped outside `next dev` (guarded by NODE_ENV); prod runs via
+// OpenNext which wires the context differently.
+if (process.env.NODE_ENV === "development") {
+  // Dynamic-import + swallow errors: if @opennextjs/cloudflare isn't
+  // installed (production bundle already strips it), we fall through
+  // silently. No hard dependency at Next.js config load time.
+  import("@opennextjs/cloudflare")
+    .then(async (mod) => {
+      try {
+        await mod.initOpenNextCloudflareForDev();
+      } catch (err) {
+        // Eat — common failure is "no wrangler.jsonc" in sub-repos;
+        // the app still works, just without the primed context.
+        console.warn(
+          "[next.config] initOpenNextCloudflareForDev failed:",
+          err instanceof Error ? err.message.slice(0, 160) : String(err).slice(0, 160),
+        );
+      }
+    })
+    .catch(() => {
+      /* module not present in this environment */
+    });
+}
+
 const nextConfig: NextConfig = {
+  // Optimize tree-shaking for heavy icon + chart libraries
+  experimental: {
+    optimizePackageImports: ["lucide-react", "recharts"],
+  },
   images: {
     remotePatterns: [
       { protocol: "https", hostname: "images.unsplash.com" },
@@ -8,19 +39,8 @@ const nextConfig: NextConfig = {
       { protocol: "https", hostname: "plus.unsplash.com" },
     ],
   },
-  async headers() {
-    return [
-      {
-        source: "/(.*)",
-        headers: [
-          {
-            key: "Content-Security-Policy",
-            value: "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://images.unsplash.com https://picsum.photos; font-src 'self' data:; connect-src 'self' https://*.supabase.co https://*.cloudflare.com https://api.open-meteo.com; frame-ancestors 'none';",
-          },
-        ],
-      },
-    ];
-  },
+  // CSP is set dynamically (nonce-based) by middleware.ts — removed duplicate here
+  // to avoid conflicting headers.
 };
 
 export default nextConfig;

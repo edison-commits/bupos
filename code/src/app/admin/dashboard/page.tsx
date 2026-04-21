@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { authFetch } from '@/lib/api/client';
 import { DASHBOARD_POLL_INTERVAL_MS } from '@/lib/config/timing';
 import { formatCurrency } from '@/lib/format';
+import { safeErr } from "@/lib/logging/safe-err";
 interface Metrics {
   grossSales: number;
   discounts: number;
@@ -66,26 +67,35 @@ export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
+  // `showSpinner` controls whether to swap in the skeleton. Only true on the
+  // first fetch; subsequent polls keep the existing data visible to avoid
+  // a flash every minute.
+  const fetchData = useCallback(async (showSpinner = false) => {
+    if (showSpinner) setLoading(true);
     try {
       const response = await authFetch(`/api/dashboard?range=${range}`);
       if (!response.ok) throw new Error('Failed to fetch dashboard data');
       const result = await response.json();
       setData(result);
     } catch (error) {
-      console.error('Failed to fetch dashboard data:', error);
+      console.error('Failed to fetch dashboard data:', safeErr(error));
     } finally {
-      setLoading(false);
+      if (showSpinner) setLoading(false);
     }
   }, [range]);
 
   useEffect(() => {
-    fetchData();
+    fetchData(true);
   }, [fetchData]);
 
   useEffect(() => {
-    const interval = setInterval(fetchData, DASHBOARD_POLL_INTERVAL_MS);
+    // Only poll while the tab is visible. A backgrounded tab shouldn't hammer
+    // the API every minute.
+    const tick = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      fetchData(false);
+    };
+    const interval = setInterval(tick, DASHBOARD_POLL_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [fetchData]);
 
@@ -252,7 +262,7 @@ function HourlyChart({ data }: HourlyChartProps) {
               }}
             >
               <div className="opacity-0 group-hover:opacity-100 absolute -top-8 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-xs px-2 py-1 rounded whitespace-nowrap transition-opacity">
-                ${item.sales.toFixed(0)}
+                {formatCurrency(item.sales, 'USD', { fractionDigits: 0 })}
               </div>
             </div>
           </div>
@@ -339,13 +349,13 @@ function EmployeeTable({ data }: EmployeeTableProps) {
             <tr key={idx} className="border-b border-gray-100 hover:bg-gray-50">
               <td className="px-4 py-3 text-gray-900 font-medium">{emp.name}</td>
               <td className="px-4 py-3 text-right text-teal-600 font-semibold">
-                ${emp.sales.toFixed(2)}
+                {formatCurrency(emp.sales)}
               </td>
               <td className="px-4 py-3 text-right text-gray-600">
                 {emp.count}
               </td>
               <td className="px-4 py-3 text-right text-gray-600">
-                ${emp.avgTicket.toFixed(2)}
+                {formatCurrency(emp.avgTicket)}
               </td>
             </tr>
           ))}

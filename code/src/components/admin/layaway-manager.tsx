@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { cancelLayawayAction, collectLayawayAction, makeLayawayPaymentAction } from "@/app/admin/layaway-actions";
+import { cancelLayawayAction, collectLayawayAction, makeLayawayPaymentAction, type LayawayCancelDisposition } from "@/app/admin/layaway-actions";
 import type { Layaway, LayawayPayment, Customer, Employee } from "@/lib/domain/types";
+import { formatCurrency } from "@/lib/format";
 
 const STATUS_COLORS: Record<string, string> = {
   active: "bg-blue-100 text-blue-800",
@@ -28,6 +29,7 @@ export function LayawayManager({
   const [isPending, startTransition] = useTransition();
   const [cancelId, setCancelId] = useState<string | null>(null);
   const [cancelReason, setCancelReason] = useState("");
+  const [cancelDisposition, setCancelDisposition] = useState<LayawayCancelDisposition>("refund_cash");
 
   const custMap = new Map(customers.map((c) => [c.id, c]));
   const empMap = new Map(employees.map((e) => [e.id, e]));
@@ -51,7 +53,7 @@ export function LayawayManager({
         </div>
         <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3">
           <p className="text-xs text-zinc-500">Balance outstanding</p>
-          <p className="mt-1 text-2xl font-semibold">${totalBalanceDue.toFixed(2)}</p>
+          <p className="mt-1 text-2xl font-semibold">{formatCurrency(totalBalanceDue)}</p>
         </div>
         <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3">
           <p className="text-xs text-zinc-500">Payments recorded</p>
@@ -86,11 +88,11 @@ export function LayawayManager({
                       </span>
                     </div>
                     <p className="text-xs text-zinc-500">
-                      Total: ${lay.grandTotal.toFixed(2)} · Paid: ${lay.depositPaid.toFixed(2)} · Due: ${lay.balanceDue.toFixed(2)}
+                      Total: {formatCurrency(lay.grandTotal)} · Paid: {formatCurrency(lay.depositPaid)} · Due: {formatCurrency(lay.balanceDue)}
                       {lay.dueDate ? ` · Due: ${lay.dueDate}` : ""}
                     </p>
                   </div>
-                  <span className="text-lg font-semibold">${lay.balanceDue.toFixed(2)}</span>
+                  <span className="text-lg font-semibold">{formatCurrency(lay.balanceDue)}</span>
                 </button>
 
                 {isExpanded && (
@@ -110,7 +112,7 @@ export function LayawayManager({
                               <span className="text-zinc-600">
                                 {p.tenderType} · {pEmp?.displayName ?? "?"} · {new Date(p.createdAt).toLocaleDateString()}
                               </span>
-                              <span className="font-medium text-emerald-700">${p.amount.toFixed(2)}</span>
+                              <span className="font-medium text-emerald-700">{formatCurrency(p.amount)}</span>
                             </div>
                           );
                         })}
@@ -150,6 +152,18 @@ export function LayawayManager({
                       {(lay.status === "active" || lay.status === "partially_paid") && (
                         cancelId === lay.id ? (
                           <div className="flex items-center gap-2">
+                            {/* R10-M-1/R11-M-1: disposition required — the deposit
+                                has to land somewhere. Defaults to cash refund (most
+                                common). */}
+                            <select
+                              value={cancelDisposition}
+                              onChange={(e) => setCancelDisposition(e.target.value as LayawayCancelDisposition)}
+                              className="rounded-lg border border-zinc-300 px-2 py-1 text-xs"
+                            >
+                              <option value="refund_cash">Refund cash</option>
+                              <option value="refund_store_credit">Store credit</option>
+                              <option value="forfeit_with_approval">Forfeit (owner)</option>
+                            </select>
                             <input
                               type="text"
                               value={cancelReason}
@@ -158,13 +172,13 @@ export function LayawayManager({
                               className="w-32 rounded-lg border border-zinc-300 px-2 py-1 text-xs"
                             />
                             <button
-                              onClick={() => { startTransition(async () => { await cancelLayawayAction(lay.id, cancelReason); setCancelId(null); setCancelReason(""); }); }}
+                              onClick={() => { startTransition(async () => { await cancelLayawayAction(lay.id, cancelReason, cancelDisposition); setCancelId(null); setCancelReason(""); setCancelDisposition("refund_cash"); }); }}
                               disabled={isPending}
                               className="rounded-lg bg-red-600 px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
                             >
                               Confirm cancel
                             </button>
-                            <button onClick={() => { setCancelId(null); setCancelReason(""); }} className="text-xs text-zinc-500">
+                            <button onClick={() => { setCancelId(null); setCancelReason(""); setCancelDisposition("refund_cash"); }} className="text-xs text-zinc-500">
                               Back
                             </button>
                           </div>

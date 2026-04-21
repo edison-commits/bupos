@@ -2,6 +2,7 @@
 
 import { useState, useRef } from "react";
 import { cn } from "@/lib/utils/cn";
+import { formatCurrency } from "@/lib/format";
 
 export interface ImportRow {
   name: string;
@@ -384,8 +385,8 @@ export function BulkProductImport({ categories: _categories, onImport }: BulkPro
                       <td className="px-3 py-2 truncate">{row.category}</td>
                       <td className="px-3 py-2 truncate text-zinc-600">{row.sku}</td>
                       <td className="px-3 py-2 truncate text-zinc-600">{row.variantName}</td>
-                      <td className="px-3 py-2 text-right">${row.price.toFixed(2)}</td>
-                      <td className="px-3 py-2 text-right">${row.cost.toFixed(2)}</td>
+                      <td className="px-3 py-2 text-right">{formatCurrency(row.price)}</td>
+                      <td className="px-3 py-2 text-right">{formatCurrency(row.cost)}</td>
                       <td className="px-3 py-2 text-right">{row.openingStock}</td>
                     </tr>
                   ))}

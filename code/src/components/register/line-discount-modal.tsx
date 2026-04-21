@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { DiscountMode, LineDiscount } from "@/lib/cart/types";
 import { VirtualNumpad } from "@/components/ui/virtual-numpad";
 import { VirtualKeyboard } from "@/components/ui/virtual-keyboard";
+import { formatCurrency } from "@/lib/format";
 
 interface LineDiscountModalProps {
   lineItemId: string;
@@ -43,7 +44,7 @@ export function LineDiscountModal({
       <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl">
         <h3 className="text-lg font-bold">Line discount</h3>
         <p className="mt-1 text-sm text-zinc-500">{productName} — {variantName}</p>
-        <p className="text-sm text-zinc-600">Line subtotal: <span className="font-semibold">${lineSubtotal.toFixed(2)}</span></p>
+        <p className="text-sm text-zinc-600">Line subtotal: <span className="font-semibold">{formatCurrency(lineSubtotal)}</span></p>
 
         {/* Mode toggle */}
         <div className="mt-4 flex gap-2">
@@ -114,11 +115,11 @@ export function LineDiscountModal({
         <div className="mt-3 rounded-xl bg-zinc-50 px-3 py-2 text-sm">
           <div className="flex items-center justify-between">
             <span className="text-zinc-500">Discount</span>
-            <span className="font-semibold text-red-600">−${discountAmount.toFixed(2)}</span>
+            <span className="font-semibold text-red-600">−{formatCurrency(discountAmount)}</span>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-zinc-500">After discount</span>
-            <span className="font-bold">${afterDiscount.toFixed(2)}</span>
+            <span className="font-bold">{formatCurrency(afterDiscount)}</span>
           </div>
         </div>
 

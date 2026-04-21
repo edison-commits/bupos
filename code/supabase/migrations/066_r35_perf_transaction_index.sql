@@ -1,0 +1,56 @@
+-- R35-P4: composite + partial index on transactions for the dashboard,
+-- shift-report, shift-close, and eod-report hot paths.
+--
+-- Why this index exists
+-- ─────────────────────
+-- Every reporting surface that's NOT a single-txn lookup filters on
+--   organization_id + (location_id) + created_at range + status = 'completed'
+-- and either sorts by created_at DESC or aggregates. Existing indexes:
+--   * idx_transactions_organization_id (organization_id)                    -- mig 001
+--   * idx_transactions_location_id (location_id)                            -- mig 001
+--   * idx_transactions_created_at (created_at)                              -- mig 001
+--   * idx_transactions_location_status_created (location_id, status, ...)  -- mig 016
+--   * idx_transactions_org_idempotency partial unique                       -- mig 024
+-- The mig 016 composite LEADS with location_id, so the planner can't use
+-- it efficiently for organization-only queries (audit feed, cross-
+-- location dashboards) or when location_id is missing from WHERE. It
+-- also includes every status, so completed-only queries read index
+-- pages for voided/refunded rows they'll later filter out.
+--
+-- The new index:
+--   1. Leads with organization_id so org-only queries get a prefix match.
+--   2. Adds location_id as the second key so (org, loc, created_at)
+--      queries are a leading-prefix index walk.
+--   3. Orders created_at DESC so the reporting surfaces that paginate
+--      "most recent first" read the index in order without a sort.
+--   4. Partial predicate `WHERE status = 'completed'` shrinks the
+--      index to ~65-80% of the table (voided+refunded are rare) and
+--      eliminates the status re-check for the 95%+ of queries that
+--      only care about completed sales.
+--
+-- Storage cost estimate: ~(org_id uuid 16B + location_id uuid 16B +
+-- created_at 8B + heap TID 6B) = ~46B per completed txn + fillfactor.
+-- At 1M completed txns that's ~50MB. Small for the lookup win.
+--
+-- Non-blocking: CREATE INDEX CONCURRENTLY would avoid the
+-- AccessExclusive lock but cannot run inside a migration block.
+-- Vanilla CREATE INDEX is fine for small-mid tables. Operators
+-- running this against a large production transactions table should
+-- run the CREATE INDEX CONCURRENTLY equivalent OUTSIDE this migration
+-- (see docs/runbook-deploy.md § "Large-table index creation").
+--
+-- R36-M5: the migration used to wrap the CREATE INDEX in BEGIN/COMMIT;
+-- that doesn't change what PG does (CREATE INDEX still takes
+-- AccessExclusiveLock for its own build window) but it DOES prevent
+-- an operator from swapping the statement for `CREATE INDEX
+-- CONCURRENTLY` in-place without also removing the transaction
+-- wrapper (CONCURRENTLY refuses to run inside a transaction). Drop
+-- the BEGIN/COMMIT so operators with large tables can edit this one
+-- statement to include `CONCURRENTLY` without also touching the
+-- surrounding block.
+--
+-- Safe on re-apply (IF NOT EXISTS).
+
+CREATE INDEX IF NOT EXISTS idx_transactions_org_loc_created_completed
+  ON transactions (organization_id, location_id, created_at DESC)
+  WHERE status = 'completed';

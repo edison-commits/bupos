@@ -6,6 +6,7 @@ const managerApprovals: PermissionKey[] = [
   "approval.void_transaction",
   "approval.store_credit",
   "approval.price_override",
+  "approval.cash_payout",
 ];
 
 export const roleDefinitions: RoleDefinition[] = [
@@ -21,6 +22,7 @@ export const roleDefinitions: RoleDefinition[] = [
       "employee.manage",
       "audit.view",
       "reports.export",
+      "pricing.manage",
       ...managerApprovals,
     ],
   },
@@ -36,6 +38,7 @@ export const roleDefinitions: RoleDefinition[] = [
       "employee.manage",
       "audit.view",
       "reports.export",
+      "pricing.manage",
       ...managerApprovals,
     ],
   },

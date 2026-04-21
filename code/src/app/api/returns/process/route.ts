@@ -5,6 +5,7 @@ import { withDualAuth } from '@/lib/api/with-auth';
 import { checkRateLimit } from '@/lib/auth/rate-limit';
 import { validateBody, returnProcessSchema } from '@/lib/validation/schemas';
 
+import { safeErr } from "@/lib/logging/safe-err";
 interface ReturnLineItem {
   product_id: string;
   product_name: string;
@@ -45,24 +46,32 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
 
   const client = await orgTx(orgId);
 
-  // Idempotency check: if key provided, look for an already-succeeded return
+  // Idempotency check: if key provided, look for an already-succeeded return.
+  // MUST release the client on early return to prevent connection pool leak.
   if (idempotencyKey) {
-    const existing = await client.query(
-      `SELECT id, return_number, refund_amount FROM returns
-       WHERE organization_id = $1 AND idempotency_key = $2
-       LIMIT 1`,
-      [orgId, idempotencyKey],
-    );
-    if (existing.rows.length > 0) {
-      await client.query('ROLLBACK');
-      const row = existing.rows[0];
-      return NextResponse.json({
-        return_id: row.id,
-        return_number: row.return_number,
-        refund_amount: Number(row.refund_amount),
-        success: true,
-        _idempotent: true,
-      });
+    try {
+      const existing = await client.query(
+        `SELECT id, return_number, refund_amount FROM returns
+         WHERE organization_id = $1 AND idempotency_key = $2
+         LIMIT 1`,
+        [orgId, idempotencyKey],
+      );
+      if (existing.rows.length > 0) {
+        await client.query('ROLLBACK');
+        const row = existing.rows[0];
+        client.release();
+        return NextResponse.json({
+          return_id: row.id,
+          return_number: row.return_number,
+          refund_amount: Number(row.refund_amount),
+          success: true,
+          _idempotent: true,
+        });
+      }
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {});
+      client.release();
+      throw e;
     }
   }
 
@@ -88,6 +97,35 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
       );
     }
 
+    // R33-H5: require step-up for cash refunds OR large refunds. A
+    // stolen cashier cookie otherwise opens the drawer for up to
+    // grand_total in cash on ANY completed transaction. R32-H10
+    // gated the corresponding mint paths (store-credit, gift-card,
+    // loyalty) with step-up; the cash-out counterpart went un-
+    // gated. `original_tender` + `cash` both open the drawer when
+    // the original sale was cash-tendered, so both paths need the
+    // gate. `store_credit` refunds don't need step-up because the
+    // store credit balance already requires the customer to redeem
+    // via a future sale (which is itself gated).
+    const CASH_REFUND_STEP_UP_THRESHOLD = 100;
+    const needsStepUp =
+      refund_method === 'cash' ||
+      refund_method === 'original_tender' ||
+      refund_amount > CASH_REFUND_STEP_UP_THRESHOLD;
+    if (needsStepUp) {
+      const { requireStepUp } = await import('@/lib/auth/step-up');
+      const stepUp = await requireStepUp({
+        actorId: employeeId,
+        orgId,
+        actorPassword: (raw as { actorPassword?: string }).actorPassword,
+        bucketKey: 'returns-process-stepup',
+      });
+      if (!stepUp.ok) {
+        await client.query('ROLLBACK');
+        return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
+      }
+    }
+
     // Validate that at least one item has a valid quantity before creating the return record
     const validItems = items.filter((item) => item.quantity > 0);
     if (validItems.length === 0) {
@@ -98,10 +136,42 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
       );
     }
 
-    // Validate transaction exists and get its grand_total
+    // Validate transaction exists and load authoritative cart_snapshot so we
+    // can recompute refund_amount from server-side unit prices instead of
+    // trusting client-supplied values.
+    // Defense in depth: scope by org explicitly even inside orgTx. Without
+    // the org filter, a guessed foreign transaction id would pass through to
+    // RLS (which rejects it) but reveal existence via error timing, and if
+    // RLS is ever disabled during maintenance this would cross tenants.
+    // R31-H5: ALSO take the same advisory lock the register-side path
+    // uses. Prior shape relied only on FOR UPDATE of the transactions
+    // row, but the register path uses `pg_advisory_xact_lock` keyed
+    // on `return:<transaction_id>`. Two refund paths grabbing
+    // DIFFERENT lock scopes don't serialize against each other —
+    // concurrent admin + register refunds for the same sale could
+    // both commit refund rows + restock inventory. Acquiring the
+    // advisory lock here before the FOR UPDATE makes both paths
+    // mutually exclusive.
+    await client.query(
+      `SELECT pg_advisory_xact_lock((('x' || substr(md5($1), 1, 16))::bit(64)::bigint))`,
+      [`return:${transaction_id}`],
+    );
+
+    // R30-H10: also require status = 'completed'. Register-side
+    // return-action.ts has this filter; admin path was missing it. If
+    // any future code path flips status to 'voided' or 'refunded',
+    // this filter prevents double-refund against the same sale.
+    // R30-H1: also pull `location_id` so the inventory restock lands
+    // at the ORIGINAL sale's location, not the caller's. Prior shape
+    // restocked at `ctx.locationId` (the admin's active location),
+    // inflating stock at the admin's store and leaving the original
+    // store's ledger inconsistent — a manager could process a foreign
+    // store's return and credit their own stock. REGRESSION of
+    // R28-C5 (which fixed this on the register path only).
     const txnResult = await client.query(
-      `SELECT id, grand_total FROM transactions WHERE id = $1 FOR UPDATE`,
-      [transaction_id]
+      `SELECT id, grand_total, subtotal, discount_total, tax_total, cart_snapshot, location_id
+       FROM transactions WHERE id = $1 AND organization_id = $2 AND status = 'completed' FOR UPDATE`,
+      [transaction_id, orgId]
     );
 
     if (txnResult.rows.length === 0) {
@@ -110,13 +180,221 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
     }
 
     const _originalTotal = Number(txnResult.rows[0].grand_total) || 0;
+    void _originalTotal;
+    const origLocationId = (txnResult.rows[0].location_id as string | null) ?? null;
+    // R31-H11: cross-location permission gate. Mirror the register-
+    // side `return-action.ts` check — non-managers can only process
+    // returns at locations they're assigned to; managers/owners can
+    // cross locations (accepting the accounting reconciliation burden).
+    // Prior shape had NO check: a cashier with `returns.process` could
+    // refund a transaction from ANY other location in the org, with
+    // inventory restocking at the (now-correct, post-R30-H1) origin
+    // store they don't work at. Regression-adjacent to R28-C5.
+    if (origLocationId) {
+      const isManagerOrOwner = employee.roleKey === "owner" || employee.roleKey === "manager";
+      const callerLocs = employee.locationIds ?? [];
+      if (!isManagerOrOwner && !callerLocs.includes(origLocationId)) {
+        await client.query('ROLLBACK');
+        return NextResponse.json(
+          { error: 'Return must be processed at the originating location, or by a manager.' },
+          { status: 403 },
+        );
+      }
+    }
+    const restockLocationId = origLocationId ?? locationId;
 
-    // Sum all prior refunds for this transaction so we don't over-refund
+    // Build a lookup of the original line items so the client can't claim a
+    // different price/variant than the original sale. Bundle lines are
+    // merged into the same map keyed by their sentinel productVariantId
+    // (which equals bundleId — see src/lib/cart/types.ts); the `isBundle`
+    // flag lets the inventory restore loop below pick the right path.
+    const origSnapshot = typeof txnResult.rows[0].cart_snapshot === 'string'
+      ? JSON.parse(txnResult.rows[0].cart_snapshot)
+      : txnResult.rows[0].cart_snapshot;
+    // R30-H11: free-item promo lines must contribute $0 to the
+    // refund, not their listed `unitPrice`. The customer paid nothing
+    // for them at sale time (overridePrice=0 on the cart). Prior
+    // shape honored unitPrice and — when paired with finding R30-C4
+    // negative-discount-inflation — let an accomplice convert free
+    // promo units into paid-equivalent cash refunds. Mirrors the
+    // register-side handling (return-action.ts:277 skips promoCodeId
+    // lines). We preserve unitPrice in the map for audit but zero the
+    // EFFECTIVE price used in the refund math below when this line
+    // was paid at $0 originally (promoCodeId present OR overridePrice
+    // exactly 0).
+    const origItems: Array<{
+      productVariantId: string; unitPrice: number; quantity: number;
+      bundleId?: string; isFree: boolean;
+    }> = (origSnapshot?.items ?? []).map((i: {
+      productVariantId?: string; variantId?: string; unitPrice: number; quantity: number;
+      bundleId?: string; promoCodeId?: string; overridePrice?: number;
+    }) => ({
+      productVariantId: i.productVariantId ?? (i as { variantId?: string }).variantId ?? '',
+      unitPrice: Number(i.unitPrice) || 0,
+      quantity: Number(i.quantity) || 0,
+      bundleId: i.bundleId,
+      isFree: !!i.promoCodeId || Number(i.overridePrice ?? i.unitPrice) === 0,
+    }));
+    // SUM quantities when the same variant appears on multiple cart_snapshot
+    // lines (e.g. same variant with different modifiers). Previously the Map
+    // overwrote earlier entries, undercounting available return quantity.
+    // R30-H11 / R31-H9: paidQuantity + paidSubtotal track the exact
+    // $ the customer paid per variant. Prior R30-H11 shape used
+    // `Math.max(unitPrice)` which OVER-refunded when the same variant
+    // appeared on two paid lines with different prices (e.g., 2 @ $5
+    // + 2 @ $15 override): max=$15, return 4 units → $60 refund vs.
+    // $40 actually paid. NEW shape sums the line-level paid dollars
+    // (paidQuantity × line unitPrice) and divides at refund time so
+    // the effective per-unit is the actual weighted average.
+    const origByVariant = new Map<string, { quantity: number; paidQuantity: number; paidSubtotal: number; bundleId?: string }>();
+    for (const it of origItems) {
+      const prev = origByVariant.get(it.productVariantId);
+      const lineIsPaid = !it.isFree;
+      origByVariant.set(it.productVariantId, {
+        quantity: (prev?.quantity ?? 0) + it.quantity,
+        paidQuantity: (prev?.paidQuantity ?? 0) + (lineIsPaid ? it.quantity : 0),
+        paidSubtotal: (prev?.paidSubtotal ?? 0) + (lineIsPaid ? it.quantity * it.unitPrice : 0),
+        bundleId: it.bundleId ?? prev?.bundleId,
+      });
+    }
+
+    // For any bundle lines in the original transaction, fetch their
+    // AUTHORITATIVE component breakdown from `bundle_items`. Used later to
+    // expand bundle restocks into per-component-variant inventory writes.
+    // Falls through gracefully if a bundle was deleted after the sale (rare;
+    // admins should deactivate not delete) — then no inventory is restored
+    // for that bundle line and an audit event records the skip.
+    const origBundleIds = Array.from(
+      new Set(origItems.map((o) => o.bundleId).filter((b): b is string => !!b)),
+    );
+    const dbBundleComponents = new Map<string, { variantId: string; qty: number }[]>();
+    if (origBundleIds.length > 0) {
+      // Gate by org: bundleIds come from the org-verified transaction's
+      // cart_snapshot, but we still filter explicitly so a crafted snapshot
+      // with another tenant's bundle id can't pull foreign components.
+      const { rows: biRows } = await client.query(
+        `SELECT bundle_id, product_variant_id, quantity
+         FROM bundle_items
+         WHERE bundle_id = ANY($1::uuid[]) AND organization_id = $2`,
+        [origBundleIds, orgId],
+      );
+      for (const row of biRows as { bundle_id: string; product_variant_id: string; quantity: number }[]) {
+        const arr = dbBundleComponents.get(row.bundle_id) ?? [];
+        arr.push({ variantId: row.product_variant_id, qty: Number(row.quantity) });
+        dbBundleComponents.set(row.bundle_id, arr);
+      }
+    }
+
+    // Per-variant prior-return aggregation — summed across THIS endpoint
+    // (returns table) and register-side return-action (transactions with
+    // cart_snapshot.originalTransactionId). Previous code only capped by
+    // dollars (cashTendered - priorRefunds) which let the same variant be
+    // restocked infinitely.
+    const { rows: priorTable } = await client.query(
+      `SELECT rl.product_variant_id, COALESCE(SUM(rl.quantity), 0)::int AS qty
+       FROM return_lines rl
+       JOIN returns r ON r.id = rl.return_id
+       WHERE r.organization_id = $1 AND r.transaction_id = $2
+         AND r.status IN ('pending', 'completed')
+       GROUP BY rl.product_variant_id`,
+      [orgId, transaction_id],
+    );
+    const { rows: priorTxn } = await client.query(
+      `SELECT cart_snapshot FROM transactions
+       WHERE organization_id = $1
+         AND status = 'completed'
+         AND cart_snapshot->>'originalTransactionId' = $2`,
+      [orgId, transaction_id],
+    );
+    const priorReturnedByVariant: Record<string, number> = {};
+    for (const r of priorTable as Array<{ product_variant_id: string; qty: number }>) {
+      priorReturnedByVariant[r.product_variant_id] = (priorReturnedByVariant[r.product_variant_id] ?? 0) + Number(r.qty);
+    }
+    for (const r of priorTxn) {
+      const snap = typeof r.cart_snapshot === 'string' ? JSON.parse(r.cart_snapshot) : r.cart_snapshot;
+      const ritems = (snap?.items ?? []) as Array<{ productVariantId: string; quantity: number }>;
+      for (const it of ritems) {
+        priorReturnedByVariant[it.productVariantId] = (priorReturnedByVariant[it.productVariantId] ?? 0) + Number(it.quantity ?? 0);
+      }
+    }
+
+    // Recompute refund_amount server-side from original-transaction unit prices.
+    // R30-H11: only up to `paidQuantity` units contribute to the
+    // refund subtotal. Any return quantity beyond that count was a
+    // free-item promo unit and contributes $0. Total return quantity
+    // is still capped by `orig.quantity` (the physical units sold).
+    let computedRefundSubtotal = 0;
+    for (const item of items) {
+      const orig = origByVariant.get(item.variantId);
+      if (!orig) {
+        await client.query('ROLLBACK');
+        return NextResponse.json({ error: `Item ${item.variantId} was not in the original transaction` }, { status: 400 });
+      }
+      const alreadyReturned = priorReturnedByVariant[item.variantId] ?? 0;
+      const remaining = orig.quantity - alreadyReturned;
+      if (item.quantity > remaining) {
+        await client.query('ROLLBACK');
+        return NextResponse.json({ error: `Only ${Math.max(0, remaining)} of this item remain available to return` }, { status: 400 });
+      }
+      // Paid share of this return line. If the sale had N paid units
+      // + M free units and `alreadyReturned` < N, the current return
+      // converts up to `(N - alreadyReturned)` paid units. After that
+      // only free units remain — $0 refund on the tail.
+      // R31-H9: use weighted-average paid price (paidSubtotal /
+      // paidQuantity) so mixed-price paid lines (some at list, some
+      // at override-up / override-down) refund at their TRUE paid
+      // rate, not a max-of-prices inflation.
+      const paidRemaining = Math.max(0, orig.paidQuantity - alreadyReturned);
+      const paidShare = Math.min(item.quantity, paidRemaining);
+      const weightedPaidUnit = orig.paidQuantity > 0 ? orig.paidSubtotal / orig.paidQuantity : 0;
+      computedRefundSubtotal += weightedPaidUnit * paidShare;
+    }
+
+    // Refund proration. We need to refund what the customer ACTUALLY paid
+    // per line, which = listPrice × (1 - discount_rate) × (1 + tax_rate).
+    //   discountFactor = 1 - discount_total/subtotal  (0..1)
+    //   taxRate        = tax_total/subtotal
+    // Neither was applied before, causing over-refunds on discounted sales.
+    const origSubtotal = Number(txnResult.rows[0].subtotal) || 0;
+    const origDiscount = Number(txnResult.rows[0].discount_total) || 0;
+    const origTaxTotal = Number(txnResult.rows[0].tax_total) || 0;
+    // R30-C4: clamp at [0, 1] — see src/app/api/returns/route.ts for
+    // the rationale. Negative stored discounts can't inflate factors.
+    const discountFactor = origSubtotal > 0 ? Math.min(1, Math.max(0, 1 - origDiscount / origSubtotal)) : 1;
+    // Cap the effective tax rate. A malformed original transaction
+    // (bundle-only line with zero subtotal contribution but non-zero
+    // tax_total, or a stale snapshot with a fractional issue) could yield
+    // a ratio > 1 and over-refund tax. No legitimate jurisdiction exceeds
+    // 50%; the cap is a belt-and-braces sanity guard.
+    const effectiveTaxRate = origSubtotal > 0
+      ? Math.min(0.5, origTaxTotal / origSubtotal)
+      : 0;
+    const computedRefundTotal = Number(
+      (computedRefundSubtotal * discountFactor * (1 + effectiveTaxRate)).toFixed(2),
+    );
+
+    // If the client-supplied refund_amount differs by more than 1 cent, reject.
+    if (Math.abs(refund_amount - computedRefundTotal) > 0.01) {
+      await client.query('ROLLBACK');
+      return NextResponse.json(
+        { error: `Refund amount mismatch: computed ${computedRefundTotal.toFixed(2)}` },
+        { status: 400 }
+      );
+    }
+
+    // Sum all prior refunds for this transaction so we don't over-refund.
+    // Convention: refund tender rows are stored with negative amount (matching
+    // register/return-action.ts). Prior refunds = sum of negative tender amounts.
+    // Join through transactions to enforce org scoping on tender aggregates
+    // too — without this, a query on transaction_tenders keyed by a foreign
+    // transaction_id could, if RLS is ever disabled, sum up another tenant's
+    // refund totals and skew the cap calculation.
     const priorRefResult = await client.query(
-      `SELECT COALESCE(SUM(ABS(amount)), 0)::numeric AS prior_refunds
-       FROM transaction_tenders
-       WHERE transaction_id = $1 AND is_refund = true`,
-      [transaction_id],
+      `SELECT COALESCE(SUM(ABS(tt.amount)), 0)::numeric AS prior_refunds
+       FROM transaction_tenders tt
+       JOIN transactions t ON t.id = tt.transaction_id AND t.organization_id = $2
+       WHERE tt.transaction_id = $1 AND tt.amount < 0`,
+      [transaction_id, orgId],
     );
     const priorRefunds = Number(priorRefResult.rows[0]?.prior_refunds) || 0;
 
@@ -124,10 +402,11 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
     // not the grand_total — grand_total includes gift card redemptions which reduce
     // the actual cash outlay. Refunding must not exceed actual cash/card received.
     const tenderResult = await client.query(
-      `SELECT COALESCE(SUM(ABS(amount)), 0)::numeric AS cash_tendered
-       FROM transaction_tenders
-       WHERE transaction_id = $1 AND is_refund = false AND tender_type NOT IN ('gift_card_redemption', 'store_credit')`,
-      [transaction_id],
+      `SELECT COALESCE(SUM(tt.amount), 0)::numeric AS cash_tendered
+       FROM transaction_tenders tt
+       JOIN transactions t ON t.id = tt.transaction_id AND t.organization_id = $2
+       WHERE tt.transaction_id = $1 AND tt.amount > 0 AND tt.tender_type NOT IN ('gift_card', 'store_credit')`,
+      [transaction_id, orgId],
     );
     const cashTendered = Number(tenderResult.rows[0]?.cash_tendered) || 0;
     const maxRefundable = cashTendered - priorRefunds;
@@ -141,9 +420,13 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
     }
 
     // Generate return number: RET-BEL-YYMMDD-NNN
+    // R30-C3: add explicit org filter even though locationId is from
+    // the verified withDualAuth ctx — the guardrail now scans single-
+    // quoted SQL too, and a belt+suspenders filter is cheaper than a
+    // suppression comment.
     const locResult = await client.query(
-      'SELECT name FROM locations WHERE id = $1',
-      [locationId]
+      'SELECT name FROM locations WHERE id = $1 AND organization_id = $2',
+      [locationId, orgId]
     );
     const locCode = (locResult.rows[0]?.name || 'STR').slice(0, 3).toUpperCase();
     const now = new Date();
@@ -154,11 +437,13 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
       [orgId, `RET-${locCode}-${dateStr}-%`]
     );
 
-    // Create return record — retry loop handles concurrent collision on return_number
+    // Create return record — retry loop handles concurrent collision on return_number.
+    // We distinguish between (a) return_number collision (regenerate and retry) and
+    // (b) idempotency_key collision (replay: return the already-created return).
     let returnId: string | null = null;
     let returnNumber = '';
+    let idempotentReplay: { id: string; return_number: string; refund_amount: number } | null = null;
     for (let attempt = 0; attempt < 5; attempt++) {
-      // Re-fetch count on retry to get a fresh sequence number
       const seqCountResult = attempt === 0
         ? countResult
         : await client.query(
@@ -168,6 +453,7 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
       const seq = (seqCountResult.rows[0]?.cnt || 0) + 1;
       returnNumber = `RET-${locCode}-${dateStr}-${String(seq).padStart(3, '0')}`;
 
+      await client.query('SAVEPOINT sp_rp_insert');
       try {
         const retResult = await client.query(
           `INSERT INTO returns (
@@ -190,13 +476,49 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
             idempotencyKey || null,
           ],
         );
+        await client.query('RELEASE SAVEPOINT sp_rp_insert');
         returnId = retResult.rows[0]?.id ?? null;
         break; // success
       } catch (e) {
-        // If unique constraint violation, retry with new number; otherwise propagate
-        if (e instanceof Error && !e.message.includes('duplicate key') && !e.message.includes('23505')) throw e;
+        // Roll back only the failed INSERT, keeping the outer tx alive.
+        await client.query('ROLLBACK TO SAVEPOINT sp_rp_insert').catch(() => {});
+        const err = e as { code?: string; constraint?: string; message?: string };
+        const isUniqueViolation =
+          err.code === '23505' ||
+          (typeof err.message === 'string' && err.message.includes('duplicate key'));
+        if (!isUniqueViolation) throw e;
+
+        // Detect which constraint hit: idempotency_key ⇒ idempotent replay, don't retry.
+        if (idempotencyKey && err.constraint && err.constraint.includes('idempotency_key')) {
+          const { rows: existing } = await client.query(
+            `SELECT id, return_number, refund_amount FROM returns
+             WHERE organization_id = $1 AND idempotency_key = $2 LIMIT 1`,
+            [orgId, idempotencyKey],
+          );
+          if (existing[0]) {
+            idempotentReplay = {
+              id: existing[0].id,
+              return_number: existing[0].return_number,
+              refund_amount: Number(existing[0].refund_amount),
+            };
+            break;
+          }
+        }
+        // Otherwise it was a return_number collision — next iteration regenerates.
       }
     }
+
+    if (idempotentReplay) {
+      await client.query('ROLLBACK');
+      return NextResponse.json({
+        return_id: idempotentReplay.id,
+        return_number: idempotentReplay.return_number,
+        refund_amount: idempotentReplay.refund_amount,
+        success: true,
+        _idempotent: true,
+      });
+    }
+
     if (!returnId) {
       await client.query('ROLLBACK');
       return NextResponse.json({ error: 'Failed to generate unique return number' }, { status: 500 });
@@ -207,7 +529,18 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
       return item.variantId;
     });
 
-    // Create return line items and handle inventory (sequential to respect FK ordering)
+    // Build the final per-variant inventory restore map. Bundle lines
+    // contribute `component_qty × return_qty` for each component; regular
+    // lines contribute `return_qty` against their own variant. Without this
+    // pass the naive UPSERT below would write a phantom inventory_levels
+    // row keyed on the bundle's sentinel productVariantId (which equals
+    // bundleId, NOT a real variant) and fail to restock any component —
+    // silently losing stock on every admin-processed bundle return.
+    const restockByVariant = new Map<string, number>();
+
+    // Create return line items (respect DB schema: bundle sentinels go
+    // straight in, regular variants too). Inventory writes happen in the
+    // aggregated pass below.
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
       const variantId = variantIds[i];
@@ -217,61 +550,193 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
         continue;
       }
 
-      // Insert return line
+      // Insert return line. For bundle lines, `variantId` is the bundle
+      // sentinel — harmless in `return_lines` since nothing FKs it against
+      // `product_variants` (return_lines.product_variant_id has no FK per
+      // migration 002_returns_tables.sql).
       await client.query(
         `INSERT INTO return_lines (return_id, product_variant_id, quantity, unit_price, restock)
          VALUES ($1, $2, $3, $4, true)`,
         [returnId, variantId, item.quantity, item.unitPrice]
       );
 
-      // Adjust inventory (restock) — use upsert to handle missing row
+      // Determine if this line corresponds to a bundle in the original
+      // transaction and expand components accordingly.
+      const orig = origByVariant.get(variantId);
+      if (orig?.bundleId) {
+        const comps = dbBundleComponents.get(orig.bundleId) ?? [];
+        if (comps.length === 0) {
+          console.warn(`[returns/process] bundle ${orig.bundleId} has no live components; inventory for its components won't be restocked`);
+        }
+        for (const c of comps) {
+          restockByVariant.set(c.variantId, (restockByVariant.get(c.variantId) ?? 0) + c.qty * item.quantity);
+        }
+      } else {
+        restockByVariant.set(variantId, (restockByVariant.get(variantId) ?? 0) + item.quantity);
+      }
+    }
+
+    // Adjust inventory (batched UPSERT). Do NOT touch received_at — refund
+    // restocks aren't supplier receipts and bumping that column breaks FIFO
+    // aging. Skipping the fallback INSERT if the variant row doesn't exist
+    // in product_variants would require an extra lookup — use UPSERT and
+    // accept that a deleted variant produces an orphan row (same risk the
+    // pre-bundle code carried).
+    for (const [variantId, qty] of restockByVariant) {
+      if (qty <= 0) continue;
+      // Gate inventory writes by org so a restock can never land on a
+      // same-id foreign inventory row. inventory_levels has UNIQUE
+      // (organization_id, product_variant_id, location_id) so the filter
+      // is both safe and precise.
+      // R30-H1: restock at the ORIGINAL sale's location, not the
+      // caller's. See txnResult SELECT above for rationale.
       const invResult = await client.query(
         `UPDATE inventory_levels
-         SET on_hand = on_hand + $1, received_at = NOW(), updated_at = NOW()
-         WHERE product_variant_id = $2 AND location_id = $3
+         SET on_hand = on_hand + $1, updated_at = NOW()
+         WHERE product_variant_id = $2 AND location_id = $3 AND organization_id = $4
          RETURNING id`,
-        [item.quantity, variantId, locationId]
+        [qty, variantId, restockLocationId, orgId]
       );
-
-      // If no row existed, insert a new inventory_levels row
       if (invResult.rowCount === 0) {
         await client.query(
           `INSERT INTO inventory_levels (organization_id, product_variant_id, location_id, on_hand, received_at, updated_at)
            VALUES ($1, $2, $3, $4, NOW(), NOW())`,
-          [orgId, variantId, locationId, item.quantity]
+          [orgId, variantId, restockLocationId, qty]
         );
       }
     }
 
+    // Reject refund methods the schema permits but the handler doesn't
+    // implement. `exchange` is in refundMethodEnum but has no code path here
+    // — previously a client passing refund_method='exchange' would create the
+    // return row and restock inventory but write no refund tender, handing
+    // the customer the merchandise back for free. The enum MUST stay in sync
+    // with the implemented branches.
+    if (refund_method !== 'original_tender' && refund_method !== 'cash' && refund_method !== 'store_credit') {
+      await client.query('ROLLBACK');
+      return NextResponse.json(
+        { error: `Unsupported refund method: ${refund_method}` },
+        { status: 400 },
+      );
+    }
+
     // Create refund record based on method
     if (refund_method === 'original_tender' || refund_method === 'cash') {
-      // Record as transaction tender (refund)
+      // Record as transaction tender (refund) — negative amount convention
       await client.query(
-        `INSERT INTO transaction_tenders (transaction_id, tender_type, amount, is_refund)
-         VALUES ($1, $2, $3, true)`,
-        [transaction_id, refund_method === 'cash' ? 'cash' : 'card', refund_amount]
+        `INSERT INTO transaction_tenders (id, transaction_id, tender_type, amount, metadata)
+         VALUES (gen_random_uuid(), $1, $2, $3, $4)`,
+        [
+          transaction_id,
+          refund_method === 'cash' ? 'cash' : 'card',
+          -refund_amount,
+          JSON.stringify({ is_return: 'true', reason: reason || 'other' }),
+        ]
       );
     } else if (refund_method === 'store_credit') {
-      // Look up customer by name
-      const custResult = await client.query(
-        `SELECT id, store_credit_balance FROM customers WHERE first_name || ' ' || last_name = $1 AND organization_id = $2 LIMIT 1`,
-        [customer_name || '', orgId]
+      // Look up customer — prefer the customer_id on the original transaction
+      // (set at checkout), otherwise fall back to first_name+last_name match.
+      // Empty-name refund to store credit is rejected because first_name||' '||last_name
+      // would equal a single space and could match imported rows with blank names.
+      const txnCust = await client.query(
+        `SELECT customer_id FROM transactions WHERE id = $1 AND organization_id = $2`,
+        [transaction_id, orgId],
       );
-      if (custResult.rows.length > 0) {
-        const customer = custResult.rows[0];
-        const newBalance = (customer.store_credit_balance || 0) + refund_amount;
-        // Update customer store credit balance
-        await client.query(
-          `UPDATE customers SET store_credit_balance = $1, updated_at = NOW() WHERE id = $2`,
-          [newBalance, customer.id]
+      let custResult: { rows: { id: string; store_credit_balance: number }[] };
+      if (txnCust.rows[0]?.customer_id) {
+        custResult = await client.query(
+          // Lock the customer row so concurrent refunds don't read-compute-write
+          // the same starting balance and lose one of the credits.
+          `SELECT id, store_credit_balance FROM customers
+           WHERE id = $1 AND organization_id = $2 LIMIT 1 FOR UPDATE`,
+          [txnCust.rows[0].customer_id, orgId],
         );
-        // Insert ledger record
-        await client.query(
-          `INSERT INTO store_credit_ledger (id, organization_id, customer_id, transaction_type, amount, balance_after, employee_id, transaction_id, reason, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`,
-          [randomUUID(), orgId, customer.id, 'refund', refund_amount, newBalance, employeeId, transaction_id, `Return: ${reason}`]
+      } else if (customer_name && customer_name.trim().length > 0) {
+        custResult = await client.query(
+          `SELECT id, store_credit_balance FROM customers
+           WHERE first_name || ' ' || last_name = $1 AND organization_id = $2
+           LIMIT 1 FOR UPDATE`,
+          [customer_name.trim(), orgId],
+        );
+      } else {
+        custResult = { rows: [] };
+      }
+      // R29-L1: if we can't resolve a customer but the caller asked for
+      // store_credit, REFUSE the return. The prior shape silently
+      // succeeded with `success: true, refund_amount: N` while writing
+      // no store_credit rows + no ledger entry — the money evaporated.
+      // Inventory was still restocked, so the cashier + accomplice
+      // customer walked out with merchandise + no liability on the
+      // books. This is the admin-path mirror of the register-side
+      // return-action.ts which already rejects cleanly when customer is
+      // unresolved.
+      if (custResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return NextResponse.json(
+          { error: 'Store-credit refund requires a customer on the original transaction (or a matching customer name)' },
+          { status: 400 },
         );
       }
+      const customer = custResult.rows[0];
+      // store_credit_balance is NUMERIC; node-pg returns it as a string.
+      // Coerce to Number or "10.00" + 5 becomes the string "10.005".
+      // Round to 2 decimals so IEEE-754 drift (e.g. 10.00 + 0.1 + 0.2) can't
+      // accumulate into the NUMERIC column across successive refunds.
+      const newBalance = Number(
+        ((Number(customer.store_credit_balance) || 0) + refund_amount).toFixed(2)
+      );
+      // Update customer store credit balance. customer.id came from an
+      // org-gated SELECT above, but gate again explicitly — defense in
+      // depth so a future refactor that reorders or caches the SELECT
+      // can't silently write across tenants.
+      await client.query(
+        `UPDATE customers SET store_credit_balance = $1, updated_at = NOW() WHERE id = $2 AND organization_id = $3`,
+        [newBalance, customer.id, orgId]
+      );
+      // Insert ledger record
+      await client.query(
+        `INSERT INTO store_credit_ledger (id, organization_id, customer_id, transaction_type, amount, balance_after, employee_id, transaction_id, reason, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`,
+        [randomUUID(), orgId, customer.id, 'refund', refund_amount, newBalance, employeeId, transaction_id, `Return: ${reason}`]
+      );
+    }
+
+    // R28-C4: reverse loyalty points earned on the original sale.
+    // Mirror the register-side fix (src/app/register/return-action.ts).
+    // Without this, a cashier/manager + customer-accomplice loop can
+    // farm loyalty points via buy→refund→buy→refund and cash out via
+    // the loyalty tender at next purchase.
+    //
+    // R29-H1: reverse prorated from persisted points_earned instead of
+    // recomputing against the live earn rate — matches the register-side
+    // math so admin and register refunds produce identical reversals.
+    try {
+      const { rows: origCustRows } = await client.query(
+        `SELECT customer_id, points_earned, grand_total FROM transactions
+          WHERE id = $1 AND organization_id = $2`,
+        [transaction_id, orgId],
+      );
+      const origCustomerId = origCustRows[0]?.customer_id as string | null;
+      const origPointsEarned = Number(origCustRows[0]?.points_earned ?? 0) || 0;
+      const origGrandTotal = Number(origCustRows[0]?.grand_total ?? 0) || 0;
+      if (origCustomerId && origPointsEarned > 0 && origGrandTotal > 0) {
+        const share = Math.min(1, Math.max(0, refund_amount / origGrandTotal));
+        const pointsToReverse = Math.round(origPointsEarned * share);
+        if (pointsToReverse > 0) {
+          await client.query(
+            `UPDATE customers
+                SET loyalty_points = GREATEST(0, loyalty_points - $1),
+                    updated_at = NOW()
+              WHERE id = $2 AND organization_id = $3`,
+            [pointsToReverse, origCustomerId, orgId],
+          );
+        }
+      }
+    } catch (err) {
+      // Non-fatal — reversing loyalty failing shouldn't roll back the
+      // refund money movement. Surface via safeErr so the discrepancy
+      // is visible in logs for manual reconciliation.
+      console.error("[returns/process] loyalty reversal failed:", safeErr(err));
     }
 
     await client.query('COMMIT');
@@ -283,7 +748,7 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
     });
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('POST /api/returns/process error:', error);
+    console.error('POST /api/returns/process error:', safeErr(error));
     return NextResponse.json(
       { error: 'Failed to process return' },
       { status: 500 }

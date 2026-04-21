@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useCallback } from 'react';
 import type { LocalStoreData } from '@/lib/persistence/types';
+import { formatCurrency } from "@/lib/format";
 
 type DateRange = 'today' | 'week' | 'month' | 'custom';
 
@@ -283,13 +284,13 @@ export function MultiLocationDashboard({ store }: { store: LocalStoreData }) {
                   <div>
                     <div className="text-zinc-600 text-xs">Gross Sales</div>
                     <div className="text-xl font-semibold text-zinc-900">
-                      ${m.grossSales.toFixed(2)}
+                      {formatCurrency(m.grossSales)}
                     </div>
                   </div>
                   <div>
                     <div className="text-zinc-600 text-xs">Net Sales</div>
                     <div className="text-xl font-semibold text-zinc-900">
-                      ${m.netSales.toFixed(2)}
+                      {formatCurrency(m.netSales)}
                     </div>
                   </div>
                   <div>
@@ -299,13 +300,13 @@ export function MultiLocationDashboard({ store }: { store: LocalStoreData }) {
                   <div>
                     <div className="text-zinc-600 text-xs">Avg Ticket</div>
                     <div className="text-lg font-semibold text-zinc-900">
-                      ${m.avgTicket.toFixed(2)}
+                      {formatCurrency(m.avgTicket)}
                     </div>
                   </div>
                   <div>
                     <div className="text-zinc-600 text-xs">Returns</div>
                     <div className="text-lg font-semibold text-zinc-900">
-                      {m.returnCount} (${m.returnAmount.toFixed(2)})
+                      {m.returnCount} ({formatCurrency(m.returnAmount)})
                     </div>
                   </div>
                   <div>
@@ -315,7 +316,7 @@ export function MultiLocationDashboard({ store }: { store: LocalStoreData }) {
                   <div>
                     <div className="text-zinc-600 text-xs">Inventory Value</div>
                     <div className="text-lg font-semibold text-zinc-900">
-                      ${m.inventoryRetailValue.toFixed(2)}
+                      {formatCurrency(m.inventoryRetailValue)}
                     </div>
                   </div>
                   <div>
@@ -331,7 +332,7 @@ export function MultiLocationDashboard({ store }: { store: LocalStoreData }) {
                         Math.abs(m.cashVariance) > 50 ? 'text-red-600' : 'text-zinc-900'
                       }`}
                     >
-                      ${m.cashVariance.toFixed(2)}
+                      {formatCurrency(m.cashVariance)}
                     </div>
                   </div>
                   <div>
@@ -376,7 +377,7 @@ export function MultiLocationDashboard({ store }: { store: LocalStoreData }) {
                         {idx + 1}. {m.locationName}
                       </span>
                       <span className="text-sm font-semibold text-zinc-700">
-                        {rankingMetric === 'margin' ? `${(val as number).toFixed(1)}%` : `$${(val as number).toFixed(2)}`}
+                        {rankingMetric === 'margin' ? `${(val as number).toFixed(1)}%` : formatCurrency((val as number))}
                       </span>
                     </div>
                     <div className="w-full bg-zinc-200 rounded-full h-2 overflow-hidden">
@@ -404,7 +405,7 @@ export function MultiLocationDashboard({ store }: { store: LocalStoreData }) {
                       <div key={m.locationId}>
                         <div className="flex justify-between text-sm mb-1">
                           <span className="font-medium text-zinc-700">{m.locationName}</span>
-                          <span className="text-zinc-600">${m.netSales.toFixed(2)}</span>
+                          <span className="text-zinc-600">{formatCurrency(m.netSales)}</span>
                         </div>
                         <div className="w-full bg-zinc-200 rounded-full h-3 overflow-hidden">
                           <div

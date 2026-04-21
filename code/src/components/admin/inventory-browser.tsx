@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { formatCurrency } from "@/lib/format";
 
 interface InventoryRow {
   inventory_id: string;
@@ -88,28 +89,69 @@ export function InventoryBrowser({ categories }: { categories: Category[] }) {
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams({
-        page: String(page),
-        pageSize: String(pageSize),
-        sort: sortField,
-        order: sortOrder,
-      });
+      const params = new URLSearchParams();
       if (debouncedSearch) params.set('search', debouncedSearch);
       if (categoryFilter) params.set('category', categoryFilter);
-      if (stockStatus !== 'all') params.set('stockStatus', stockStatus);
-      if (agingFilter !== 'all') params.set('aging', agingFilter);
+      // API uses 'stock' param, component uses 'stockStatus' — translate
+      if (stockStatus !== 'all') params.set('stock', stockStatus);
 
       const res = await fetch(`/api/inventory?${params}`);
       if (!res.ok) throw new Error('Failed to fetch');
       const data = await res.json();
-      setItems(data.items);
-      setPagination(data.pagination);
+
+      // API returns { products: [{ variants: [{ variant_id, quantity, ... }] }] }.
+      // There is no `variant.inventory` nested object — the on-hand value is
+      // flattened to `variant.quantity`. Reading the wrong shape produced
+      // "Out of stock" badges for every row.
+      const flatItems: InventoryRow[] = [];
+      for (const product of (data.products ?? [])) {
+        for (const variant of (product.variants ?? [])) {
+          flatItems.push({
+            product_id: product.id,
+            product_name: product.name,
+            category_name: product.category?.name ?? product.category_name ?? '',
+            // The API's identifier field is `variant_id` (not `id`)
+            variant_id: variant.variant_id ?? variant.id,
+            variant_name: variant.variant_name ?? variant.name ?? '',
+            sku: variant.sku ?? '',
+            size_label: variant.size_label ?? '',
+            color_label: variant.color_label ?? '',
+            price: Number(variant.price ?? 0),
+            cost: variant.cost != null ? Number(variant.cost) : null,
+            barcode: variant.barcode ?? null,
+            on_hand: Number(variant.quantity ?? 0),
+            reserved: Number(variant.reserved ?? 0),
+            reorder_point: Number(variant.reorder_point ?? 0),
+            location_name: variant.location_name ?? '',
+            days_on_shelf: Number(variant.days_on_shelf ?? 0),
+          } as InventoryRow);
+        }
+      }
+
+      // Client-side sort & paginate
+      const sorted = [...flatItems].sort((a, b) => {
+        const av = (a as unknown as Record<string, unknown>)[sortField] ?? '';
+        const bv = (b as unknown as Record<string, unknown>)[sortField] ?? '';
+        if (typeof av === 'number' && typeof bv === 'number') {
+          return sortOrder === 'asc' ? av - bv : bv - av;
+        }
+        return sortOrder === 'asc'
+          ? String(av).localeCompare(String(bv))
+          : String(bv).localeCompare(String(av));
+      });
+
+      const total = sorted.length;
+      const totalPages = Math.max(1, Math.ceil(total / pageSize));
+      const pageItems = sorted.slice((page - 1) * pageSize, page * pageSize);
+
+      setItems(pageItems);
+      setPagination({ page, pageSize, total, totalPages });
     } catch {
       setError('Failed to load inventory');
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, categoryFilter, stockStatus, agingFilter, sortField, sortOrder, pageSize]);
+  }, [debouncedSearch, categoryFilter, stockStatus, sortField, sortOrder, pageSize]);
 
   useEffect(() => {
     fetchInventory(1);
@@ -128,14 +170,47 @@ export function InventoryBrowser({ categories }: { categories: Category[] }) {
     }
   };
 
+  // Build the matrix locally from the inventory rows we already loaded —
+  // the /api/inventory route does not honor `productId` and does not return
+  // a {product, sizes, colors, matrix, variants} shape, so deriving in the
+  // client is simpler and correct.
   const openMatrix = async (productId: string) => {
     setMatrixProductId(productId);
     setMatrixLoading(true);
     try {
-      const res = await fetch(`/api/inventory?productId=${productId}`);
-      if (!res.ok) throw new Error('Failed to fetch matrix');
-      const data = await res.json();
-      setMatrixData(data);
+      const productRows = items.filter((i) => i.product_id === productId);
+      if (productRows.length === 0) {
+        setMatrixData(null);
+        return;
+      }
+      const sizes = Array.from(new Set(productRows.map((r) => r.size_label).filter((s): s is string => !!s)));
+      const colors = Array.from(new Set(productRows.map((r) => r.color_label).filter((c): c is string => !!c)));
+      const matrix: Record<string, Record<string, unknown>> = {};
+      for (const r of productRows) {
+        if (r.size_label && r.color_label) {
+          matrix[`${r.size_label}|${r.color_label}`] = {
+            sku: r.sku,
+            on_hand: r.on_hand,
+            reorder_point: r.reorder_point,
+            price: r.price,
+            days_on_shelf: r.days_on_shelf,
+          };
+        }
+      }
+      const variants = productRows.map((r) => ({
+        variant_id: r.variant_id,
+        sku: r.sku,
+        variant_name: r.variant_name,
+        size_label: r.size_label,
+        color_label: r.color_label,
+        on_hand: r.on_hand,
+        reorder_point: r.reorder_point,
+        price: r.price,
+      }));
+      setMatrixData({
+        product: { id: productId, name: productRows[0].product_name },
+        sizes, colors, matrix, variants,
+      } as unknown as typeof matrixData);
     } catch {
       setMatrixData(null);
     } finally {
@@ -311,7 +386,7 @@ export function InventoryBrowser({ categories }: { categories: Category[] }) {
                               {onHand}
                             </div>
                             <div className="text-[10px] text-zinc-500">{String(variant.sku)}</div>
-                            <div className="text-xs text-zinc-600">${price.toFixed(2)}</div>
+                            <div className="text-xs text-zinc-600">{formatCurrency(price)}</div>
                             {daysOnShelf !== null && (
                               <div className={`text-[10px] mt-0.5 font-medium ${daysOnShelf >= 180 ? 'text-red-600' : daysOnShelf >= 90 ? 'text-orange-600' : daysOnShelf >= 60 ? 'text-amber-600' : 'text-zinc-400'}`}>
                                 {daysOnShelf}d
@@ -346,7 +421,7 @@ export function InventoryBrowser({ categories }: { categories: Category[] }) {
                       <span className="ml-2 text-xs text-zinc-500">{String(variant.sku)}</span>
                     </div>
                     <div className="flex items-center gap-3">
-                      <span className="text-sm text-zinc-600">${Number(variant.price).toFixed(2)}</span>
+                      <span className="text-sm text-zinc-600">{formatCurrency(Number(variant.price))}</span>
                       {stockBadge(onHand, reorder)}
                     </div>
                   </div>
@@ -447,9 +522,9 @@ export function InventoryBrowser({ categories }: { categories: Category[] }) {
                       </td>
                       <td className="px-3 py-2.5 text-zinc-600 font-mono text-xs">{item.sku}</td>
                       <td className="px-3 py-2.5 text-zinc-600">{item.category_name || '—'}</td>
-                      <td className="px-3 py-2.5 text-right text-zinc-900 font-medium">${Number(item.price).toFixed(2)}</td>
+                      <td className="px-3 py-2.5 text-right text-zinc-900 font-medium">{formatCurrency(Number(item.price))}</td>
                       <td className="px-3 py-2.5 text-right text-zinc-500">
-                        {item.cost ? `$${Number(item.cost).toFixed(2)}` : '—'}
+                        {item.cost ? formatCurrency(Number(item.cost)) : '—'}
                       </td>
                       <td className="px-3 py-2.5 text-center">{stockBadge(item.on_hand, item.reorder_point)}</td>
                       <td className="px-3 py-2.5 text-center text-xs text-zinc-500">{item.location_name}</td>

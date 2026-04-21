@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react";
 import { SectionCard } from "@/components/ui/section-card";
 import type { Product, ProductVariant, Category, InventoryLevel } from "@/lib/domain/types";
+import { formatCurrency } from "@/lib/format";
 
 interface ProfitMarginDashboardProps {
   products: Product[];
@@ -223,13 +224,8 @@ export function ProfitMarginDashboard({
     return "bg-red-50 text-red-700";
   };
 
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      minimumFractionDigits: 2,
-    }).format(value);
-  };
+  // R15-L-2: removed local `formatCurrency` shadow using `Intl.NumberFormat`
+  // directly. Import from `@/lib/format` (line 5 above) for consistency.
 
   return (
     <div className="space-y-6">

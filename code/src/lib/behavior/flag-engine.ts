@@ -8,6 +8,7 @@
 
 import type { EmployeeBehaviorFlag, BehaviorFlagSeverity } from "@/lib/domain/types";
 import type { LocalStoreData } from "@/lib/persistence/types";
+import { formatCurrency } from "@/lib/format";
 
 export interface FlagDescriptor {
   employeeId: string;
@@ -152,7 +153,7 @@ function ruleShiftDiscrepancies(store: LocalStoreData): FlagDescriptor[] {
         flagType: "shift_discrepancies",
         severity: avgAbsVariance > 10 ? "high" : avgAbsVariance > 5 ? "medium" : "low",
         title: "Elevated shift cash discrepancies",
-        description: `Average absolute variance of $${avgAbsVariance.toFixed(2)} across ${data.shifts} shifts. Net: $${data.totalVariance.toFixed(2)}.`,
+        description: `Average absolute variance of ${formatCurrency(avgAbsVariance)} across ${data.shifts} shifts. Net: ${formatCurrency(data.totalVariance)}.`,
         details: { shifts: data.shifts, avgAbsVariance, netVariance: data.totalVariance },
       });
     }
@@ -209,7 +210,7 @@ function ruleGiftCardActivity(store: LocalStoreData): FlagDescriptor[] {
         flagType: "excessive_gift_card_activity",
         severity: data.totalValue >= 1000 ? "high" : data.totalValue >= 500 ? "medium" : "low",
         title: "Elevated gift card activation volume",
-        description: `${data.activations} gift cards activated totaling $${data.totalValue.toFixed(2)}.`,
+        description: `${data.activations} gift cards activated totaling ${formatCurrency(data.totalValue)}.`,
         details: { activations: data.activations, totalValue: data.totalValue },
       });
     }
@@ -233,7 +234,7 @@ function ruleGiftCardActivity(store: LocalStoreData): FlagDescriptor[] {
         flagType: "excessive_store_credit_issuance",
         severity: data.totalValue >= 500 ? "high" : data.totalValue >= 200 ? "medium" : "low",
         title: "Elevated store credit issuance",
-        description: `${data.issuances} store credit issuances totaling $${data.totalValue.toFixed(2)}.`,
+        description: `${data.issuances} store credit issuances totaling ${formatCurrency(data.totalValue)}.`,
         details: { issuances: data.issuances, totalValue: data.totalValue },
       });
     }

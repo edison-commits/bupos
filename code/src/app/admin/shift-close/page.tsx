@@ -68,7 +68,7 @@ export default function ShiftClosePage() {
     // Warn and require acknowledgment for large cash variances before proceeding
     const varianceAmt = Number(declaredCash) - data.report.expectedCash;
     const varianceAbs = Math.abs(varianceAmt);
-    if (varianceAbs >= 20 && !window.confirm(`This shift has a $${varianceAbs.toFixed(2)} variance (${varianceAmt >= 0 ? 'over' : 'short'}). Are you sure you want to close it?`)) {
+    if (varianceAbs >= 20 && !window.confirm(`This shift has a ${formatCurrency(varianceAbs)} variance (${varianceAmt >= 0 ? 'over' : 'short'}). Are you sure you want to close it?`)) {
       return;
     }
 

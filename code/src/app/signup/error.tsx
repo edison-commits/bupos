@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
+import { safeErr } from "@/lib/logging/safe-err";
 
 export default function SignupError({
   error,
@@ -11,7 +12,9 @@ export default function SignupError({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error("[signup-error]", error);
+    // R21-H-2: safeErr redacts before logging. Next.js sanitizes
+    // `error.message` in prod builds but dev builds leak the raw stack.
+    console.error("[signup-error]", safeErr(error));
   }, [error]);
 
   return (

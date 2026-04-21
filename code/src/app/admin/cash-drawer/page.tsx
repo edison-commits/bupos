@@ -6,6 +6,7 @@ import { useState, useEffect } from 'react';
 import { ChevronLeft, DollarSign, AlertCircle, CheckCircle2, Plus, Minus } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { authFetch } from '@/lib/api/client';
+import { formatCurrency } from '@/lib/format';
 
 interface Shift {
   id: string;
@@ -189,12 +190,9 @@ export default function CashDrawerPage() {
     }
   };
 
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-    }).format(value);
-  };
+  // R15-L-2: removed local `formatCurrency` shadow using `Intl.NumberFormat`
+  // directly — it bypassed the shared `@/lib/format` helper and drifted
+  // as it evolved. Import from there instead (line 9 above).
 
   const formatDateTime = (dateString: string) => {
     const date = new Date(dateString);

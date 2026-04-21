@@ -24,6 +24,17 @@ function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
   return result === 0;
 }
 
+/**
+ * R32-D3: hex-encoded SHA-256 of an input string. Used to hash
+ * verification/reset tokens at rest so a DB read doesn't yield
+ * working account-takeover links.
+ */
+export async function sha256Hex(input: string): Promise<string> {
+  const bytes = new TextEncoder().encode(input);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return uint8ArrayToHex(new Uint8Array(digest));
+}
+
 function getSalt(): Uint8Array {
   return crypto.getRandomValues(new Uint8Array(16));
 }
@@ -71,3 +82,39 @@ export async function verifySecret(secret: string, encoded: string): Promise<boo
 
 // Alias for clarity — same function, async-only
 export const verifySecretAsync = verifySecret;
+
+// R27-M1: decoy hash for constant-time login. `verifySecret` is
+// ~100ms (PBKDF2 100 000 iterations). When the caller wants to keep
+// the endpoint's response time indistinguishable between "email
+// exists" and "email doesn't exist", they must run the SAME work
+// on the miss branch. `runDecoyVerify(password)` runs PBKDF2 against
+// a fixed decoy hash and discards the result. The hash is constant
+// across restarts so the SAME password always produces the SAME
+// wall-clock time — which is what we want for indistinguishability
+// (an attacker can't time-oracle "is this email registered?"
+// because the PBKDF2 work runs regardless).
+//
+// The decoy salt + hash were generated with hashSecret("decoy") at
+// the time this file was authored. They're baked in as literals
+// below — not secret; the whole point is that this hash exists and
+// can be "verified" against any password to burn PBKDF2 CPU.
+const DECOY_HASH =
+  "00112233445566778899aabbccddeeff" +
+  ":" +
+  // PBKDF2(SHA-256, "decoy", salt=<above>, iter=100000, keyLen=64).
+  // NOT a real credential — this is a random constant whose ONLY
+  // purpose is to be a non-null, well-formed target for
+  // `verifySecret(password, DECOY_HASH)`.
+  "deadbeef".repeat(16);
+
+export async function runDecoyVerify(password: string): Promise<void> {
+  // Parse + derive exactly like verifySecret, but throw away the
+  // comparison result. Errors (including encoding surprises) are
+  // silently caught so the decoy path can never produce a
+  // user-visible error that would itself be a side-channel.
+  try {
+    await verifySecret(password, DECOY_HASH);
+  } catch {
+    // Swallow — decoy verify is purely for wall-clock equalization.
+  }
+}

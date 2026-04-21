@@ -30,11 +30,24 @@ export default async function AdminPage({
     const msg = e instanceof Error ? e.message : String(e);
     redirect(`/?error=${encodeURIComponent('Store load failed: ' + msg)}`);
   }
+  // The previous implementation called a module-scope `setDefaultTimeZone`,
+  // which corrupted TZ state across concurrent Cloudflare Worker requests
+  // (R9-C-3). Timezone is now carried by a request-scoped AsyncLocalStorage;
+  // we wrap the render in `runWithTimeZone` below so every formatter call
+  // inside the tree sees the correct TZ without leaking to other tenants.
+  // The <TimezoneBootstrap> client component covers the client-side
+  // hydration path for the remaining interactive re-renders.
+  const orgTz = store?.organization?.timezone || "UTC";
   const notice = typeof params.notice === "string" ? params.notice.replaceAll("+", " ") : undefined;
   const error = typeof params.error === "string" ? params.error.replaceAll("+", " ") : undefined;
 
-  // Ensure all arrays exist — RPC may omit empty collections
+  // Ensure all arrays exist — RPC may omit empty collections or connection drops
+  // can produce partial store data. Guard every array field.
   const safeStore = Object.assign({
+    locations: [], employees: [], categories: [], products: [], variants: [],
+    inventory: [], customers: [], modifierGroups: [], modifiers: [],
+    authCredentials: [], sessions: [], shifts: [], registerSessions: [],
+    payInOuts: [], promoCodes: [], roles: [],
     inventoryAdjustments: [], transactionEventPlaceholders: [],
     transactionTenderPlaceholders: [], transactionExceptionPlaceholders: [],
     giftCards: [], giftCardTransactions: [], storeCreditLedger: [],
@@ -44,7 +57,8 @@ export default async function AdminPage({
     suppliers: [], purchaseOrders: [], registers: [], recountSchedules: [],
   }, store);
 
-  return (
+  const { runWithTimeZone } = await import("@/lib/format");
+  return runWithTimeZone(orgTz, () => (
     <PageShell
       eyebrow="Admin"
       title={safeStore.organization.name}
@@ -59,5 +73,5 @@ export default async function AdminPage({
         error={error}
       />
     </PageShell>
-  );
+  ));
 }

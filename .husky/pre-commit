@@ -1,0 +1,37 @@
+#!/usr/bin/env sh
+# Pre-commit guardrails — runs at repo root regardless of whether
+# the commit was initiated from `/bupos/` or `/bupos/code/`.
+#
+# R25-ops-C-1 follow-up: `core.hooksPath` resolves relative to the
+# git repo root (`/Users/edison/Desktop/bupos/`). The old hook lived
+# at `code/.husky/pre-commit` and never fired. This proxy hook lives
+# at the correct location and `cd`s into code/ before running the
+# actual checks.
+#
+# Install: `git config core.hooksPath .husky`
+
+set -e
+
+# Always run checks from the code/ subdirectory since package.json
+# + scripts + migrations live there.
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT/code"
+
+echo "→ Schema drift check..."
+node scripts/check-schema-drift-ci.mjs
+
+echo "→ Raw-err log guardrail (self-test + scan)..."
+node scripts/check-no-raw-err-log.mjs
+
+echo "→ Lint (staged files only)..."
+# Staged files are reported relative to repo root. Re-filter to the
+# code/ subtree and strip the prefix so eslint (running from code/)
+# can resolve them.
+STAGED_TS=$(git diff --cached --name-only --diff-filter=ACMR \
+  | grep -E '^code/.+\.(ts|tsx)$' \
+  | sed 's|^code/||' || true)
+if [ -n "$STAGED_TS" ]; then
+  npx eslint $STAGED_TS
+else
+  echo "  (no staged .ts/.tsx files under code/)"
+fi

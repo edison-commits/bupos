@@ -2,7 +2,9 @@ import { NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/supabase-rest';
 import { withDualAuth, withAdminAuth } from '@/lib/api/with-auth';
 import { validateBody, settingsUpdateSchema } from '@/lib/validation/schemas';
+import { checkRateLimit } from '@/lib/auth/rate-limit';
 
+import { safeErr } from "@/lib/logging/safe-err";
 export const GET = withDualAuth("catalog.manage", async (req, ctx) => {
   const { orgId, locationId } = ctx;
   if (!locationId) {
@@ -11,6 +13,9 @@ export const GET = withDualAuth("catalog.manage", async (req, ctx) => {
 
   try {
     const [orgResult, locationResult] = await Promise.all([
+      // check-pool-org-filter: scoped-by-organizations-id-is-orgId
+      // `organizations.id` IS the tenant key. Filtering by id = orgId
+      // IS the tenant scope.
       orgQuery(
         orgId,
         `SELECT id, name, legal_name, slug, phone, email, website, timezone, currency_code,
@@ -71,13 +76,24 @@ export const GET = withDualAuth("catalog.manage", async (req, ctx) => {
       },
     });
   } catch (error) {
-    console.error('Settings GET error:', error);
+    console.error('Settings GET error:', safeErr(error));
     return NextResponse.json({ error: 'Failed to fetch settings' }, { status: 500 });
   }
 });
 
-export const PUT = withAdminAuth('catalog.manage', async (request, ctx) => {
+// Receipt headers/footers, store identity, and location metadata affect customer
+// receipts and branding. Restrict to manager/owner via employee.manage (so
+// inventory_clerk, which has catalog.manage, cannot change them).
+export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
   const { orgId } = ctx;
+  // R30-M4: rate-limit settings mutations. Prior shape had no cap;
+  // a compromised manager cookie could spam org/location/receipt
+  // settings updates (brand spoofing, tax-rate tampering). 10 per
+  // 5 min per employee is well above legitimate usage.
+  const rl = checkRateLimit(`settings-put:${orgId}:${ctx.employee.id}`, { maxAttempts: 10, windowMs: 300_000 });
+  if (!rl.allowed) {
+    return NextResponse.json({ error: 'Too many settings updates. Try again shortly.' }, { status: 429 });
+  }
   const locationId = ctx.employee.locationIds?.[0];
   try {
     const raw = await request.json();
@@ -85,31 +101,64 @@ export const PUT = withAdminAuth('catalog.manage', async (request, ctx) => {
     if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
     const { section, data } = v.data;
 
-    switch (section) {
-      case 'store':
-        await orgQuery(
-          orgId,
-          `UPDATE organizations
-           SET name = $1, legal_name = $2, phone = $3, email = $4, website = $5,
-               timezone = $6, currency_code = $7, updated_at = NOW()
-           WHERE id = $8`,
-          [data.name, data.legalName, data.phone, data.email, data.website,
-           data.timezone, data.currencyCode, orgId]
-        );
-        return NextResponse.json({ success: true });
+    // Build dynamic UPDATE with only provided fields to avoid wiping other
+    // columns. Keys are restricted to the fieldMap (non-matching keys are
+    // ignored), and WHERE placeholders are generated in one pass so there's
+    // no string rewrite step — the old regex `.replace(/\$(\d+)/g, ...)` was
+    // footgun-prone (a future filter like `phone ILIKE '$1'` would also get
+    // rewritten). Accompanied by `.strict()` Zod schemas (R8-M-2) so
+    // unknown keys are rejected before they get here.
+    const buildDynamicUpdate = (
+      table: string,
+      fieldMap: Record<string, string>,
+      values: Record<string, unknown>,
+      whereTemplate: (offset: number) => { sql: string; params: unknown[] },
+    ) => {
+      const sets: string[] = [];
+      const params: unknown[] = [];
+      let i = 1;
+      for (const [key, col] of Object.entries(fieldMap)) {
+        if (values[key] !== undefined) {
+          sets.push(`${col} = $${i++}`);
+          params.push(values[key]);
+        }
+      }
+      if (sets.length === 0) return null;
+      sets.push(`updated_at = NOW()`);
+      const { sql: whereSql, params: whereParams } = whereTemplate(i);
+      return {
+        sql: `UPDATE ${table} SET ${sets.join(', ')} WHERE ${whereSql}`,
+        params: [...params, ...whereParams],
+      };
+    };
 
-      case 'location':
-        await orgQuery(
-          orgId,
-          `UPDATE locations
-           SET name = $1, code = $2, address1 = $3, city = $4, region = $5,
-               postal_code = $6, phone = $7, tax_rate = $8, updated_at = NOW()
-           WHERE id = $9 AND organization_id = $10`,
-          [data.name, data.code, data.address1, data.city, data.region,
-           data.postalCode, data.phone, data.taxRate, locationId, orgId]
+    switch (section) {
+      case 'store': {
+        const upd = buildDynamicUpdate(
+          'organizations',
+          { name: 'name', legalName: 'legal_name', phone: 'phone', email: 'email',
+            website: 'website', timezone: 'timezone', currencyCode: 'currency_code' },
+          data as Record<string, unknown>,
+          (offset) => ({ sql: `id = $${offset}`, params: [orgId] }),
         );
+        if (upd) await orgQuery(orgId, upd.sql, upd.params);
+        return NextResponse.json({ success: true });
+      }
+
+      case 'location': {
+        const upd = buildDynamicUpdate(
+          'locations',
+          { name: 'name', code: 'code', address1: 'address1', city: 'city',
+            region: 'region', postalCode: 'postal_code', phone: 'phone', taxRate: 'tax_rate' },
+          data as Record<string, unknown>,
+          (offset) => ({ sql: `id = $${offset} AND organization_id = $${offset + 1}`, params: [locationId, orgId] }),
+        );
+        if (upd) await orgQuery(orgId, upd.sql, upd.params);
         // Return full settings after update so client state stays valid
         const [updatedOrg, updatedLocation] = await Promise.all([
+          // check-pool-org-filter: scoped-by-organizations-id-is-orgId
+          // `organizations.id` IS the tenant key. Filtering by id = orgId
+          // IS the tenant scope.
           orgQuery(
             orgId,
             `SELECT id, name, legal_name, slug, phone, email, website, timezone, currency_code,
@@ -146,32 +195,27 @@ export const PUT = withAdminAuth('catalog.manage', async (request, ctx) => {
             storePostalCode: org.receipt_store_postal_code || '', storePhone: org.receipt_store_phone || '',
           },
         });
+      }
 
-      case 'receipt':
-        await orgQuery(
-          orgId,
-          `UPDATE organizations
-           SET receipt_header = $1, receipt_footer = $2,
-               receipt_store_name = $3, receipt_store_address = $4,
-               receipt_store_city = $5, receipt_store_region = $6,
-               receipt_store_postal_code = $7, receipt_store_phone = $8,
-               updated_at = NOW()
-           WHERE id = $9`,
-          [
-            data.header, data.footer,
-            data.storeName ?? '', data.storeAddress ?? '',
-            data.storeCity ?? '', data.storeRegion ?? '',
-            data.storePostalCode ?? '', data.storePhone ?? '',
-            orgId,
-          ]
+      case 'receipt': {
+        const upd = buildDynamicUpdate(
+          'organizations',
+          { header: 'receipt_header', footer: 'receipt_footer',
+            storeName: 'receipt_store_name', storeAddress: 'receipt_store_address',
+            storeCity: 'receipt_store_city', storeRegion: 'receipt_store_region',
+            storePostalCode: 'receipt_store_postal_code', storePhone: 'receipt_store_phone' },
+          data as Record<string, unknown>,
+          (offset) => ({ sql: `id = $${offset}`, params: [orgId] }),
         );
+        if (upd) await orgQuery(orgId, upd.sql, upd.params);
         return NextResponse.json({ success: true });
+      }
 
       default:
         return NextResponse.json({ error: 'Unknown section' }, { status: 400 });
     }
   } catch (error) {
-    console.error('Settings PUT error:', error);
+    console.error('Settings PUT error:', safeErr(error));
     return NextResponse.json({ error: 'Failed to update settings' }, { status: 500 });
   }
 });

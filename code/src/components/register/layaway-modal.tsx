@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { CartTotals } from "@/lib/cart/types";
 import { NumpadInput } from "./numpad-input";
+import { formatCurrency } from "@/lib/format";
 
 interface LayawayModalProps {
   totals: CartTotals;
@@ -32,7 +33,7 @@ export function LayawayModal({ totals, customerName, onConfirm, onCancel, proces
         <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-4">
           <div>
             <h2 className="text-xl font-bold">Create Layaway</h2>
-            <p className="text-sm text-zinc-500">Total: ${totals.grandTotal.toFixed(2)}</p>
+            <p className="text-sm text-zinc-500">Total: {formatCurrency(totals.grandTotal)}</p>
           </div>
           <button
             type="button"
@@ -60,7 +61,7 @@ export function LayawayModal({ totals, customerName, onConfirm, onCancel, proces
 
               <label className="block">
                 <span className="text-base font-medium text-zinc-600">
-                  Deposit amount (min ${minimumDeposit.toFixed(2)})
+                  Deposit amount (min {formatCurrency(minimumDeposit)})
                 </span>
                 <NumpadInput
                   value={deposit}
@@ -77,21 +78,21 @@ export function LayawayModal({ totals, customerName, onConfirm, onCancel, proces
                   onClick={() => setDeposit(minimumDeposit.toFixed(2))}
                   className="flex-1 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-100"
                 >
-                  Min (${minimumDeposit.toFixed(2)})
+                  Min ({formatCurrency(minimumDeposit)})
                 </button>
                 <button
                   type="button"
                   onClick={() => setDeposit((totals.grandTotal * 0.25).toFixed(2))}
                   className="flex-1 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-100"
                 >
-                  25% (${(totals.grandTotal * 0.25).toFixed(2)})
+                  25% ({formatCurrency((totals.grandTotal * 0.25))})
                 </button>
                 <button
                   type="button"
                   onClick={() => setDeposit((totals.grandTotal * 0.5).toFixed(2))}
                   className="flex-1 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-100"
                 >
-                  50% (${(totals.grandTotal * 0.5).toFixed(2)})
+                  50% ({formatCurrency((totals.grandTotal * 0.5))})
                 </button>
               </div>
 
@@ -119,11 +120,11 @@ export function LayawayModal({ totals, customerName, onConfirm, onCancel, proces
               <div className="rounded-2xl bg-zinc-100 px-4 py-3 text-sm">
                 <div className="flex justify-between">
                   <span>Deposit</span>
-                  <span className="font-semibold">${depositNum.toFixed(2)}</span>
+                  <span className="font-semibold">{formatCurrency(depositNum)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Balance due</span>
-                  <span className="font-semibold">${Math.max(0, totals.grandTotal - depositNum).toFixed(2)}</span>
+                  <span className="font-semibold">{formatCurrency(Math.max(0, totals.grandTotal - depositNum))}</span>
                 </div>
               </div>
             </>

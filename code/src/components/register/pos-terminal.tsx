@@ -1,4 +1,5 @@
 "use client";
+import { useCallback, useMemo } from "react";
 import { S } from "./styles";
 
 import {
@@ -9,8 +10,10 @@ import {
   type VoidState,
   type HeldCart,
 } from "./usePOSTerminal";
-import { setDiscount } from "@/lib/cart/cart";import { createCustomerAction } from "@/app/register/actions";
+import { setDiscount } from "@/lib/cart/cart";
+import { createCustomerAction } from "@/app/register/actions";
 import { ProductGrid } from "./product-grid";
+import { BundlePicker } from "./bundle-picker";
 import { CartSidebar } from "./cart-sidebar";
 import { TenderPanel } from "./tender-panel";
 import { VoidReasonModal } from "./void-reason-modal";
@@ -27,6 +30,7 @@ import { useKeyboardShortcuts, KeyboardShortcutsOverlay } from "./keyboard-short
 import { ThemeToggle } from "./theme-toggle";
 import { AudioToggle } from "./audio-toggle";
 import { ProductRecommendations } from "./product-recommendations";
+import { formatCurrency } from "@/lib/format";
 
 export type { POSTerminalProps, Screen, ReceiptData, VoidState, HeldCart };
 
@@ -89,8 +93,11 @@ export function POSTerminal(props: POSTerminalProps) {
     setShowMoreActions,
     gridItems,
     totals,
-    
+
+    bundles,
+
     handleAddItem,
+    handleAddBundle,
     handleUpdateQuantity,
     handleRemoveItem,
     handleRemoveItemConfirmed,
@@ -121,19 +128,40 @@ export function POSTerminal(props: POSTerminalProps) {
   } = usePOSTerminal(props);
 
   // ─── Keyboard Shortcuts ───────────────────────────────
+  // Stable handler references so useKeyboardShortcuts doesn't re-register the
+  // document-level keydown listener on every render.
+  // Flat variantId → human label map so the ReturnModal can render a
+  // bundle's component breakdown without having to re-fetch the catalog.
+  const variantDirectory = useMemo(() => {
+    const map: Record<string, { name: string; productName?: string }> = {};
+    for (const v of variants) {
+      const p = products.find((pp) => pp.id === v.productId);
+      map[v.id] = { name: v.name, productName: p?.name };
+    }
+    return map;
+  }, [variants, products]);
+
+  const openHeldCarts = useCallback(() => setShowHeldCarts(true), [setShowHeldCarts]);
+  const openCustomerSearch = useCallback(() => setShowCustomerSearch(true), [setShowCustomerSearch]);
+  const openReturnModal = useCallback(() => setShowReturnModal(true), [setShowReturnModal]);
+  const openExchangeModal = useCallback(() => setShowExchangeModal(true), [setShowExchangeModal]);
+  const openPromoModal = useCallback(() => setShowPromoModal(true), [setShowPromoModal]);
+  const openLayawayModal = useCallback(() => setShowLayawayModal(true), [setShowLayawayModal]);
+  const toggleShortcuts = useCallback(() => setShowShortcuts((v) => !v), [setShowShortcuts]);
+
   useKeyboardShortcuts({
     onCheckout: screen === "selling" ? handleCheckout : undefined,
     onHoldCart: handleHoldCart,
-    onRecallCart: heldCarts.length > 0 ? () => setShowHeldCarts(true) : undefined,
-    onCustomerSearch: () => setShowCustomerSearch(true),
-    onReturn: () => setShowReturnModal(true),
-    onExchange: () => setShowExchangeModal(true),
-    onPromo: cart.items.length > 0 ? () => setShowPromoModal(true) : undefined,
-    onLayaway: cart.items.length > 0 ? () => setShowLayawayModal(true) : undefined,
+    onRecallCart: heldCarts.length > 0 ? openHeldCarts : undefined,
+    onCustomerSearch: openCustomerSearch,
+    onReturn: openReturnModal,
+    onExchange: openExchangeModal,
+    onPromo: cart.items.length > 0 ? openPromoModal : undefined,
+    onLayaway: cart.items.length > 0 ? openLayawayModal : undefined,
     onVoidCart: handleVoidCart,
     onNewSale: screen === "receipt" ? handleNewSale : undefined,
     onPrint: screen === "receipt" ? handlePrint : undefined,
-    onToggleShortcuts: () => setShowShortcuts((v) => !v),
+    onToggleShortcuts: toggleShortcuts,
     screen,
     shiftOpen: !!activeShift,
   });
@@ -147,6 +175,15 @@ export function POSTerminal(props: POSTerminalProps) {
       <div className="flex flex-1 flex-col gap-3 lg:flex-row">
       {/* Left: Product grid + recommendations */}
       <div className="flex flex-1 flex-col gap-2 overflow-hidden lg:flex-[1.2]">
+        {screen === "selling" && bundles.length > 0 && (
+          <BundlePicker
+            bundles={bundles}
+            variants={variants}
+            inventory={inventory}
+            locationId={location.id}
+            onAddBundle={handleAddBundle}
+          />
+        )}
         <div className="flex-1 overflow-hidden rounded-2xl border p-3 shadow-lg sm:p-4" style={S.panelWithBorder}>
           <ProductGrid items={gridItems} categories={categories} onAddItem={handleAddItem} />
         </div>
@@ -276,7 +313,7 @@ export function POSTerminal(props: POSTerminalProps) {
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wider text-teal-700">Exchange mode</p>
                 <p className="text-sm text-teal-600">
-                  ${exchangeCredit.creditAmount.toFixed(2)} credit applied from return #{exchangeCredit.originalTxnId.slice(0, 8)}
+                  {formatCurrency(exchangeCredit.creditAmount)} credit applied from return #{exchangeCredit.originalTxnId.slice(0, 8)}
                 </p>
               </div>
               <button
@@ -322,7 +359,7 @@ export function POSTerminal(props: POSTerminalProps) {
           <div className="w-full max-w-sm rounded-2xl bg-white shadow-2xl">
             <div className="rounded-t-2xl bg-amber-600 px-5 py-4 text-center text-white">
               <p className="text-2xl font-bold">Return processed</p>
-              <p className="mt-1 text-lg">Refund: ${returnResult.total.toFixed(2)}</p>
+              <p className="mt-1 text-lg">Refund: {formatCurrency(returnResult.total)}</p>
             </div>
             <div className="px-5 py-4 text-center text-sm text-zinc-600">
               <p>Refunded via <span className="font-semibold capitalize">{returnResult.method === "store_credit" ? "store credit" : returnResult.method}</span></p>
@@ -346,6 +383,7 @@ export function POSTerminal(props: POSTerminalProps) {
         <ReturnModal
           transactionEvents={transactionEvents}
           transactionTenders={transactionTenders}
+          variantDirectory={variantDirectory}
           onConfirm={handleReturnConfirm}
           onCancel={() => setShowReturnModal(false)}
         />
@@ -355,7 +393,19 @@ export function POSTerminal(props: POSTerminalProps) {
       {showPromoModal && (
         <PromoCodeModal
           promoCodes={promoCodes}
+          variants={variants}
+          products={products}
           cartSubtotal={totals.subtotal + totals.modifiersTotal}
+          // Merge BOTH sources: cart-line promoCodeIds cover free_item
+          // promos (which land as cart lines) AND the `appliedPromo.id`
+          // covers fixed/percent/bogo promos (which only live in UI
+          // state). Having a single merged list prevents the modal from
+          // thinking a fixed-discount promo could be re-applied just
+          // because it doesn't produce a cart line.
+          appliedPromoIds={[
+            ...cart.items.map((i) => i.promoCodeId).filter((id): id is string => !!id),
+            ...(appliedPromo?.id ? [appliedPromo.id] : []),
+          ]}
           onApply={handlePromoApply}
           onCancel={() => setShowPromoModal(false)}
         />
@@ -366,6 +416,8 @@ export function POSTerminal(props: POSTerminalProps) {
         <ExchangeModal
           transactionEvents={transactionEvents}
           transactionTenders={transactionTenders}
+          location={location}
+          variantDirectory={variantDirectory}
           onConfirm={handleExchangeConfirm}
           onCancel={() => setShowExchangeModal(false)}
         />
@@ -388,10 +440,10 @@ export function POSTerminal(props: POSTerminalProps) {
           <div className="w-full max-w-sm rounded-2xl bg-white shadow-2xl">
             <div className="rounded-t-2xl bg-indigo-600 px-5 py-4 text-center text-white">
               <p className="text-2xl font-bold">Layaway created</p>
-              <p className="mt-1 text-lg">Deposit: ${layawayResult.deposit.toFixed(2)}</p>
+              <p className="mt-1 text-lg">Deposit: {formatCurrency(layawayResult.deposit)}</p>
             </div>
             <div className="px-5 py-4 text-center text-sm text-zinc-600">
-              <p>Balance due: <span className="font-semibold">${layawayResult.balance.toFixed(2)}</span></p>
+              <p>Balance due: <span className="font-semibold">{formatCurrency(layawayResult.balance)}</span></p>
               <p className="mt-1 font-mono text-xs text-zinc-400">Layaway #{layawayResult.id.slice(0, 8)}</p>
             </div>
             <div className="border-t border-zinc-100 px-5 py-4">

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { VirtualNumpad } from "@/components/ui/virtual-numpad";
 import { VirtualKeyboard } from "@/components/ui/virtual-keyboard";
+import { formatCurrency } from "@/lib/format";
 
 export type PayDirection = "pay_in" | "pay_out";
 
@@ -58,7 +59,7 @@ export function PayInOutModal({ direction, onConfirm, onCancel }: PayInOutModalP
               onClick={() => { setShowNumpad(true); setShowNoteKbd(false); }}
               className="rounded-xl border border-zinc-300 px-4 py-3 text-lg font-semibold text-left hover:border-teal-300 transition-colors"
             >
-              {amount ? `$${parsedAmount.toFixed(2)}` : "$0.00"}
+              {amount ? `${formatCurrency(parsedAmount)}` : "$0.00"}
             </button>
           </label>
 
@@ -106,7 +107,7 @@ export function PayInOutModal({ direction, onConfirm, onCancel }: PayInOutModalP
                 : "bg-amber-600 hover:bg-amber-700"
             } disabled:cursor-not-allowed disabled:opacity-40`}
           >
-            {title} ${parsedAmount.toFixed(2)}
+            {title} {formatCurrency(parsedAmount)}
           </button>
         </div>
       </div>

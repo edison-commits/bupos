@@ -13,6 +13,7 @@ import {
   pgCreateCategory,
   pgCreateProduct,
   pgCreateVariant,
+  VariantUniquenessConflictError,
   pgCreateInventoryLevel,
   pgAdjustInventory,
   pgCreateEmployee,
@@ -30,6 +31,8 @@ import {
   pgDeleteVariant,
 } from "@/lib/persistence/postgres-store";
 
+import { safeErr } from "@/lib/logging/safe-err";
+import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
 const isPg = () => !!process.env.USE_POSTGRES;
 
 function now() {
@@ -49,24 +52,44 @@ export async function adminLoginAction(formData: FormData) {
   try {
     await signInAdmin(email, String(formData.get("password") ?? ""));
   } catch (err) {
-    // Audit: log failed admin login attempt (non-fatal — redirect still proceeds)
+    // Audit: log failed admin login attempt (non-fatal — redirect still proceeds).
+    //
+    // R15-L-3: previously passed `orgId ?? 'unknown'` to pgInsertAuditEvent,
+    // which then fails the `app.current_org_id::uuid` cast inside orgTx.
+    // pgInsertAuditEvent swallows the error, so brute-force probes of
+    // non-existent emails left NO trace. Split the logic: write to the DB
+    // only when we resolved a real orgId; otherwise emit a structured warn
+    // log so the trail still exists for ops/security monitoring.
     if (isPg()) {
       try {
         const cred = await pgFindCredentialByEmail(email);
         let orgId: string | null = null;
         if (cred) {
           const { pool } = await import("@/lib/db");
+          // check-pool-org-filter: scoped-by-just-looked-up-employee-id
+          // cred.employeeId came from the email→credential lookup above;
+          // this SELECT resolves the org from that row.
           const { rows } = await pool.query(
             `SELECT organization_id FROM employees WHERE id = $1 LIMIT 1`,
             [cred.employeeId],
           );
           orgId = (rows[0]?.organization_id as string) ?? null;
         }
-        pgInsertAuditEvent(
-          orgId ?? 'unknown', null, cred?.employeeId ?? null,
-          "session", null, "admin_login_failed",
-          { email, reason: err instanceof Error ? err.message : "unknown" },
-        ).catch((err) => console.error("[audit] Failed to insert audit event:", err));
+        if (orgId) {
+          await waitUntilOrAwait(pgInsertAuditEvent(
+            orgId, null, cred?.employeeId ?? null,
+            "session", null, "admin_login_failed",
+            { email, reason: err instanceof Error ? err.message : "unknown" },
+          ).catch((err) => console.error("[audit] Failed to insert audit event:", safeErr(err))));
+        } else {
+          // Unknown-email attempt — no org to attribute to. Structured log
+          // so log-sink alerting can still pattern-match brute-force probes.
+          console.warn("[admin_login_failed]", JSON.stringify({
+            email_prefix: email.slice(0, 3) + "***",
+            reason: err instanceof Error ? err.message : "unknown",
+            at: new Date().toISOString(),
+          }));
+        }
       } catch {
         // audit lookup failed — skip audit, still redirect
       }
@@ -79,11 +102,11 @@ export async function adminLoginAction(formData: FormData) {
     const { getAdminSession } = await import("@/lib/auth/session");
     const ctx = await getAdminSession();
     if (ctx) {
-      pgInsertAuditEvent(
+      await waitUntilOrAwait(pgInsertAuditEvent(
         ctx.employee.organizationId, null, ctx.employee.id,
         "session", ctx.session.id, "admin_login",
         { email, role: ctx.employee.roleKey },
-      ).catch((err) => console.error("[adminLoginAction] audit failed:", err));
+      ).catch((err) => console.error("[adminLoginAction] audit failed:", safeErr(err))));
     }
   }
 
@@ -109,11 +132,11 @@ export async function adminLogoutAction() {
 
   // Audit: log admin logout (non-fatal — redirect still proceeds)
   if (isPg() && actorOrgId && actorEmployeeId) {
-    pgInsertAuditEvent(
+    await waitUntilOrAwait(pgInsertAuditEvent(
       actorOrgId, null, actorEmployeeId,
       "session", sessionId, "admin_logout",
       {},
-    ).catch((err) => console.error("[adminLogoutAction] audit failed:", err));
+    ).catch((err) => console.error("[adminLogoutAction] audit failed:", safeErr(err))));
   }
 
   redirect("/?notice=Signed+out");
@@ -175,7 +198,11 @@ export async function createProductAction(formData: FormData) {
   const variantName = String(formData.get("variantName") ?? "Default").trim();
   const price = Number(formData.get("price") ?? 0);
 
-  if (!name || !categoryId || !sku || Number.isNaN(price) || price <= 0) {
+  // R19-LOW-3: isFinite rejects NaN AND Infinity; isNaN only rejects NaN.
+  // FormData can carry "Infinity" / "1e400" which Number() happily turns
+  // into Infinity — Postgres NUMERIC accepts it since PG14 and corrupts
+  // every downstream calculation referencing the row.
+  if (!name || !categoryId || !sku || !Number.isFinite(price) || price <= 0) {
     redirect("/admin?error=Product+name,+category,+SKU,+and+price+are+required");
   }
 
@@ -187,29 +214,61 @@ export async function createProductAction(formData: FormData) {
   if (isPg()) {
     const orgId = employee.organizationId;
     const locationId = employee.locationIds[0] ?? "";
+    // R23-H-2: `fk_products_default_variant_id` is NOT DEFERRABLE and
+    // fires at INSERT time. The prior shape passed `defaultVariantId:
+    // variantId` here — but the variant doesn't exist yet, so every
+    // product-creation attempt through the admin UI 500'd with
+    // "insert or update on table 'products' violates foreign key
+    // constraint". Empirically verified on test DB.
+    //
+    // Fix: create product with `defaultVariantId: undefined`, then
+    // create variant + inventory, then pgUpdateProduct to set the
+    // default. Three separate txs — not atomic — but the orphan
+    // failure mode (product exists without a default variant) is
+    // already an admin-visible data state that's recoverable via
+    // delete-or-retry. The alternative (making the FK DEFERRABLE via
+    // migration + refactoring all three helpers to share a client)
+    // is a much bigger surface and can land separately.
     await pgCreateProduct({
       id: productId, organizationId: orgId, categoryId, name, slug,
       description: String(formData.get("description") ?? "").trim() || undefined,
       imageUrl: String(formData.get("imageUrl") ?? "").trim() || undefined,
       isActive: true, isTouchFavorite: formData.get("isTouchFavorite") === "on",
-      defaultVariantId: variantId, modifierGroupIds: [],
+      defaultVariantId: undefined, modifierGroupIds: [],
     });
-    await pgCreateVariant({
-      id: variantId, organizationId: orgId, productId, sku,
-      barcode: String(formData.get("barcode") ?? "").trim() || undefined,
-      name: variantName,
-      sizeLabel: String(formData.get("sizeLabel") ?? "").trim() || undefined,
-      colorLabel: String(formData.get("colorLabel") ?? "").trim() || undefined,
-      price, cost: Number(formData.get("cost") ?? 0) || undefined,
-      compareAtPrice: Number(formData.get("compareAtPrice") ?? 0) || undefined,
-      isActive: true,
-    });
+    try {
+      await pgCreateVariant({
+        id: variantId, organizationId: orgId, productId, sku,
+        barcode: String(formData.get("barcode") ?? "").trim() || undefined,
+        name: variantName,
+        sizeLabel: String(formData.get("sizeLabel") ?? "").trim() || undefined,
+        colorLabel: String(formData.get("colorLabel") ?? "").trim() || undefined,
+        price, cost: Number(formData.get("cost") ?? 0) || undefined,
+        compareAtPrice: Number(formData.get("compareAtPrice") ?? 0) || undefined,
+        isActive: true,
+      });
+    } catch (err) {
+      // R22-M-1: SKU/barcode partial-unique collision → friendly redirect.
+      // R23-H-2: clean up the product row we already inserted so the
+      // orphan doesn't persist if we catch-and-redirect. Fire-and-
+      // forget cleanup — failure to delete the orphan is logged but
+      // doesn't block the user-facing redirect.
+      if (err instanceof VariantUniquenessConflictError) {
+        await pgDeleteProduct(productId, orgId).catch((cleanupErr) =>
+          console.error("[createProductAction] orphan product cleanup failed:", safeErr(cleanupErr)),
+        );
+        redirect(`/admin?error=${encodeURIComponent(err.message)}`);
+      }
+      throw err;
+    }
     await pgCreateInventoryLevel({
       id: randomUUID(), organizationId: orgId, locationId,
       productVariantId: variantId,
       onHand: Number(formData.get("openingStock") ?? 0) || 0,
       reserved: 0, reorderPoint: Number(formData.get("reorderPoint") ?? 0) || 0,
     });
+    // Now that the variant exists, point product.default_variant_id at it.
+    await pgUpdateProduct(productId, { defaultVariantId: variantId }, orgId);
     await pgInsertAuditEvent(orgId, locationId, employee.id, "product", productId, "catalog_update", { action: "created", name, sku });
   } else {
     await mutateStore((store) => {
@@ -259,13 +318,100 @@ export async function adjustInventoryAction(formData: FormData) {
   const inventoryLevelId = String(formData.get("inventoryLevelId") ?? "");
   const delta = Number(formData.get("delta") ?? 0);
   const reason = String(formData.get("reason") ?? "").trim();
+  const actorPassword = String(formData.get("actorPassword") ?? "");
 
-  if (!inventoryLevelId || !reason || Number.isNaN(delta) || delta === 0) {
+  if (!inventoryLevelId || !reason || !Number.isFinite(delta) || delta === 0) {
     redirect("/admin?error=Inventory+adjustment+needs+row,+delta,+and+reason");
   }
 
+  // R34-D5: step-up auth on large deltas. The per-adjust cap (±10k
+  // manager / ±1k clerk at R28-H6) plus rate-limit (20/5min at
+  // R31-H3) together cap blast radius, but a compromised manager
+  // cookie can still mint +10k × 20 = 200k phantom units in a 5-min
+  // window. High-delta step-up forces the attacker to ALSO have the
+  // password — matches the financial-issuance patterns at R32-H10.
+  // Thresholds: |delta| > 500 for clerks, > 5_000 for managers.
+  const HIGH_DELTA_MANAGER = 5_000;
+  const HIGH_DELTA_CLERK = 500;
+  const isPrivileged = employee.roleKey === "owner" || employee.roleKey === "manager";
+  const highDeltaThreshold = isPrivileged ? HIGH_DELTA_MANAGER : HIGH_DELTA_CLERK;
+  if (Math.abs(delta) > highDeltaThreshold) {
+    const { requireStepUp } = await import('@/lib/auth/step-up');
+    const stepUp = await requireStepUp({
+      actorId: employee.id,
+      orgId: employee.organizationId,
+      actorPassword,
+      bucketKey: 'inventory-adjust-stepup',
+    });
+    if (!stepUp.ok) {
+      redirect(`/admin?error=${encodeURIComponent(stepUp.error)}`);
+    }
+  }
+
+  // R28-H6: delta bounds.
+  //
+  // |delta| ≤ 10_000 per call: covers every legitimate stocktake
+  // variance (damaged/missing/found goods) at a single-location POS.
+  // Beyond that, a manager submitting +/- 10_000 on a high-value SKU
+  // is either running a pilferage cloaking attack (mint phantom stock,
+  // then "sell" / move it off-books) or fat-fingering a decimal. Both
+  // deserve manager re-confirmation; block here and require the
+  // admin to break it into multiple smaller adjustments, each
+  // individually audit-visible.
+  //
+  // Separately, clerk-role (inventory.adjust) callers get a tighter
+  // cap (±1_000) so a compromised clerk cookie can't mint enough
+  // stock for meaningful pilferage without tripping manager-required
+  // approval. Owner/manager get the higher cap. The threshold lives
+  // here rather than in pgAdjustInventory so the helper stays a
+  // pure-write primitive that other callers (e.g., stocktake accept)
+  // don't have to coordinate around.
+  const MAX_DELTA_MANAGER = 10_000;
+  const MAX_DELTA_CLERK = 1_000;
+  const isManager = employee.roleKey === "owner" || employee.roleKey === "manager";
+  const cap = isManager ? MAX_DELTA_MANAGER : MAX_DELTA_CLERK;
+  if (Math.abs(delta) > cap) {
+    redirect(`/admin?error=Inventory+adjustment+exceeds+${cap}+unit+cap.+Split+into+smaller+adjustments.`);
+  }
+
+  // R31-H3: per-employee rate-limit. Without a cap an attacker with a
+  // stolen cookie can loop adjusts under the cap (±1_000 clerk ×
+  // 60/min = 60k minted units per minute). 20 per 5 min is above
+  // normal ops use; a legitimate stocktake goes through
+  // `acceptStocktakeAction`, not individual adjusts.
+  const { checkRateLimit } = await import("@/lib/auth/rate-limit");
+  const rl = checkRateLimit(
+    `inventory-adjust:${employee.organizationId}:${employee.id}`,
+    { maxAttempts: 20, windowMs: 300_000 },
+  );
+  if (!rl.allowed) {
+    redirect("/admin?error=Too+many+inventory+adjustments.+Try+again+in+a+few+minutes.");
+  }
+
   if (isPg()) {
-    const { level } = await pgAdjustInventory(inventoryLevelId, delta, employee.id, reason);
+    // R31-H2: verify the inventoryLevelId belongs to a location the
+    // caller is assigned to (non-managers only — owners/managers keep
+    // org-wide scope). Prior shape trusted the admin's client-supplied
+    // id, so a clerk at Store A could pull Store B's inventoryLevelId
+    // from /api/inventory (when switching location context in the UI)
+    // and submit +1000 to Store B's stock — phantom inventory at a
+    // store they don't work at, bypass of location assignment.
+    if (!isManager) {
+      const { rows: invLocRows } = await (await import("@/lib/db")).default.query(
+        `SELECT location_id FROM inventory_levels WHERE id = $1 AND organization_id = $2`,
+        [inventoryLevelId, employee.organizationId],
+      );
+      const invLocationId = invLocRows[0]?.location_id as string | undefined;
+      if (!invLocationId) {
+        redirect("/admin?error=Inventory+row+not+found");
+      }
+      if (!(employee.locationIds ?? []).includes(invLocationId)) {
+        // Generic "not found" — don't leak that the row exists at a
+        // location the caller doesn't have access to.
+        redirect("/admin?error=Inventory+row+not+found");
+      }
+    }
+    const { level } = await pgAdjustInventory(inventoryLevelId, delta, employee.id, reason, employee.organizationId);
     await pgInsertAuditEvent(level.organizationId, level.locationId, employee.id, "inventory_level", inventoryLevelId, "inventory_adjustment", { delta, reason });
   } else {
     await mutateStore((store) => {
@@ -361,13 +507,14 @@ export async function toggleEmployeeAction(formData: FormData) {
 
   let newStatus: boolean | null = null;
   if (isPg()) {
-    const target = await pgReadEmployeeById(employeeId);
+    const target = await pgReadEmployeeById(employeeId, actor.organizationId);
     if (!target) redirect("/admin?error=Employee+not+found");
     if (!canManageEmployeeRole(actor.roleKey, target!.roleKey)) {
       redirect("/admin?error=You+cannot+change+that+employee");
     }
     newStatus = !target!.isActive;
-    await pgToggleEmployee(employeeId);
+    const toggled = await pgToggleEmployee(employeeId, actor.organizationId);
+    if (!toggled) redirect("/admin?error=Employee+not+found");
     await pgInsertAuditEvent(
       actor.organizationId, null, actor.id,
       "employee", employeeId, "employee_status_changed",
@@ -406,7 +553,7 @@ export async function editCategoryAction(formData: FormData) {
 
   if (isPg()) {
     const orgId = employee.organizationId;
-    await pgUpdateCategory(categoryId, { name, slug, imageUrl });
+    await pgUpdateCategory(categoryId, { name, slug, imageUrl }, employee.organizationId);
     await pgInsertAuditEvent(orgId, null, employee.id, "category", categoryId, "catalog_update", { action: "updated", name });
   } else {
     await mutateStore((store) => {
@@ -444,7 +591,7 @@ export async function deleteCategoryAction(formData: FormData) {
 
   if (isPg()) {
     const orgId = employee.organizationId;
-    await pgDeleteCategory(categoryId);
+    await pgDeleteCategory(categoryId, employee.organizationId);
     await pgInsertAuditEvent(orgId, null, employee.id, "category", categoryId, "catalog_update", { action: "deleted" });
   } else {
     await mutateStore((store) => {
@@ -487,7 +634,7 @@ export async function editProductAction(formData: FormData) {
 
   if (isPg()) {
     const orgId = employee.organizationId;
-    await pgUpdateProduct(productId, { name, slug, categoryId, description, imageUrl, isActive, isTouchFavorite });
+    await pgUpdateProduct(productId, { name, slug, categoryId, description, imageUrl, isActive, isTouchFavorite }, employee.organizationId);
     await pgInsertAuditEvent(orgId, null, employee.id, "product", productId, "catalog_update", { action: "updated", name });
   } else {
     await mutateStore((store) => {
@@ -529,7 +676,7 @@ export async function deleteProductAction(formData: FormData) {
 
   if (isPg()) {
     const orgId = employee.organizationId;
-    await pgDeleteProduct(productId);
+    await pgDeleteProduct(productId, employee.organizationId);
     await pgInsertAuditEvent(orgId, null, employee.id, "product", productId, "catalog_update", { action: "deleted" });
   } else {
     await mutateStore((store) => {
@@ -567,13 +714,31 @@ export async function editVariantAction(formData: FormData) {
   const colorLabel = String(formData.get("colorLabel") ?? "").trim() || undefined;
   const isActive = formData.get("isActive") === "on";
 
-  if (!variantId || !name || !sku || Number.isNaN(price) || price <= 0) {
+  if (!variantId || !name || !sku || !Number.isFinite(price) || price <= 0) {
     redirect("/admin?error=Variant+ID,+name,+SKU,+and+valid+price+are+required");
+  }
+
+  // R33-H4: variant price + cost mutations require pricing.manage.
+  // catalog.manage is enough to create/rename variants (SKU, barcode,
+  // size/color labels) — but not to reprice. Matches the /api/products
+  // PUT gate so the two admin-writable surfaces stay consistent.
+  const { hasPermission } = await import("@/lib/domain/permissions");
+  if (!hasPermission(employee.roleKey, "pricing.manage")) {
+    redirect("/admin?error=Pricing+changes+require+owner+or+manager+role");
   }
 
   if (isPg()) {
     const orgId = employee.organizationId;
-    await pgUpdateVariant(variantId, { name, sku, barcode, price, cost, sizeLabel, colorLabel, isActive });
+    try {
+      await pgUpdateVariant(variantId, { name, sku, barcode, price, cost, sizeLabel, colorLabel, isActive }, employee.organizationId);
+    } catch (err) {
+      // R22-M-1: reactivating / renaming into a conflicting SKU/barcode
+      // collides with uniq_product_variants_org_{sku,barcode}_active.
+      if (err instanceof VariantUniquenessConflictError) {
+        redirect(`/admin?error=${encodeURIComponent(err.message)}`);
+      }
+      throw err;
+    }
     await pgInsertAuditEvent(orgId, null, employee.id, "variant", variantId, "catalog_update", { action: "updated", name, sku });
   } else {
     await mutateStore((store) => {
@@ -616,7 +781,7 @@ export async function deleteVariantAction(formData: FormData) {
 
   if (isPg()) {
     const orgId = employee.organizationId;
-    await pgDeleteVariant(variantId);
+    await pgDeleteVariant(variantId, employee.organizationId);
     await pgInsertAuditEvent(orgId, null, employee.id, "variant", variantId, "catalog_update", { action: "deleted" });
   } else {
     await mutateStore((store) => {
@@ -644,7 +809,10 @@ export async function deleteVariantAction(formData: FormData) {
 // ── Settings actions ──────────────────────────────────────────────────
 
 export async function updateOrganizationAction(formData: FormData) {
-  const { employee } = await requireAdminPermission("catalog.manage");
+  // Match the REST /api/settings gate (employee.manage). catalog.manage is
+  // also held by inventory_clerk, who should NOT be able to change org
+  // identity, receipt wording, etc.
+  const { employee } = await requireAdminPermission("employee.manage");
   const orgId = employee.organizationId;
 
   if (isPg()) {
@@ -671,7 +839,9 @@ export async function updateOrganizationAction(formData: FormData) {
 }
 
 export async function updateLocationAction(formData: FormData) {
-  const { employee } = await requireAdminPermission("catalog.manage");
+  // taxRate affects every checkout — gate above catalog.manage so an
+  // inventory_clerk can't silently retarget tax collection.
+  const { employee } = await requireAdminPermission("employee.manage");
   const locationId = String(formData.get("locationId") ?? "").trim();
   if (!locationId) redirect("/admin?error=Missing+location");
 
@@ -688,7 +858,7 @@ export async function updateLocationAction(formData: FormData) {
       postalCode: String(formData.get("postalCode") ?? "").trim() || undefined,
       phone: String(formData.get("locationPhone") ?? "").trim(),
       taxRate,
-    });
+    }, employee.organizationId);
     await pgInsertAuditEvent(employee.organizationId, locationId, employee.id, "location", locationId, "settings_update", { action: "updated_location", taxRate });
   }
 

@@ -4,9 +4,29 @@ import { NextRequest } from "next/server";
 // ── Mocks ──
 
 const mockOrgQuery = vi.fn();
+// R25-perf-3 migrated transaction read paths to orgTx + client.query.
+// Bridge: each client.query() pulls from mockOrgQuery so tests that set
+// mockOrgQuery.mockResolvedValueOnce(...) keep working.
+const mockOrgTxClient = {
+  query: (...args: unknown[]) => {
+    const sql = typeof args[0] === "string" ? args[0].trim().toUpperCase() : "";
+    if (sql.startsWith("COMMIT") || sql.startsWith("ROLLBACK") || sql.startsWith("BEGIN")) {
+      return Promise.resolve({ rows: [] });
+    }
+    return mockOrgQuery(...args);
+  },
+  release: vi.fn(),
+};
 vi.mock("@/lib/db", () => ({
   orgQuery: (...args: unknown[]) => mockOrgQuery(...args),
+  orgTx: vi.fn().mockResolvedValue(mockOrgTxClient),
   pool: { query: vi.fn(), connect: vi.fn() },
+}));
+
+vi.mock("@/lib/supabase-rest", () => ({
+  orgQuery: (...args: unknown[]) => mockOrgQuery(...args),
+  orgTx: vi.fn().mockResolvedValue(mockOrgTxClient),
+  getPool: vi.fn().mockResolvedValue({ query: vi.fn(), connect: vi.fn() }),
 }));
 
 const mockGetAdminSession = vi.fn();

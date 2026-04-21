@@ -6,6 +6,10 @@ import { requireRegisterPermission } from "@/lib/authz";
 import { mutateStore } from "@/lib/persistence/store";
 import { generateAndPersistFlags } from "@/lib/behavior/flag-engine";
 import { orgTx } from "@/lib/supabase-rest";
+import { checkRateLimit } from "@/lib/auth/rate-limit";
+import { getRegisterConfig } from "@/lib/config/register-config";
+import { hasPermission } from "@/lib/domain/permissions";
+import { formatCurrency } from "@/lib/format";
 
 const isPg = () => !!process.env.USE_POSTGRES;
 
@@ -25,8 +29,33 @@ export async function payInOutAction(input: PayInOutInput): Promise<{ success: b
     return { success: false, error: "No active shift" };
   }
 
-  if (input.amount <= 0) {
-    return { success: false, error: "Amount must be greater than zero" };
+  // Bound + sanitize amount. Mirrors the /api/cash-drawer REST guards; without
+  // these, a compromised client could extract arbitrary cash via this action.
+  if (!Number.isFinite(input.amount) || input.amount <= 0) {
+    return { success: false, error: "Amount must be a positive number" };
+  }
+  if (input.amount > 10_000) {
+    return { success: false, error: "Amount exceeds maximum allowed" };
+  }
+
+  if (!input.reason || typeof input.reason !== "string" || input.reason.trim().length === 0) {
+    return { success: false, error: "Reason is required" };
+  }
+
+  // Rate-limit per employee
+  const rl = checkRateLimit(`pay-in-out:${context.employee.id}`);
+  if (!rl.allowed) {
+    return { success: false, error: "Too many requests" };
+  }
+
+  // Enforce manager-approval threshold on pay_outs above configured limit.
+  if (input.direction === "pay_out") {
+    const isManager = hasPermission(context.employee.roleKey, "approval.void_transaction");
+    const config = await getRegisterConfig(context.employee.organizationId);
+    const threshold = config.approvalThresholds.transactionVoidOver ?? 50;
+    if (!isManager && input.amount > threshold) {
+      return { success: false, error: `Pay-out exceeds $${threshold}; manager approval required.` };
+    }
   }
 
   if (isPg()) {
@@ -91,7 +120,7 @@ export async function payInOutAction(input: PayInOutInput): Promise<{ success: b
       transactionId: "txn_register_shift_placeholder",
       eventKind: input.direction,
       actorEmployeeId: context.employee.id,
-      notes: `${input.direction === "pay_in" ? "Pay in" : "Pay out"}: $${input.amount.toFixed(2)} — ${input.reason}`,
+      notes: `${input.direction === "pay_in" ? "Pay in" : "Pay out"}: ${formatCurrency(input.amount)} — ${input.reason}`,
       payload: {
         shift_id: context.activeShift!.id,
         direction: input.direction,
@@ -124,21 +153,72 @@ export async function closeShiftEnhancedAction(
     return { success: false, error: "No active shift" };
   }
 
-  const variance = Number((input.declaredCash - input.expectedCash).toFixed(2));
-
   if (isPg()) {
     const client = await orgTx(context.employee.organizationId);
     try {
-      // 1. Close the shift with blind_close flag
+      // 1. Recompute expected cash SERVER-SIDE. Never trust client input here —
+      //    a dishonest cashier could fabricate expectedCash to erase a shortage.
+      //    expected = opening_float + SUM(cash tenders on this shift) + SUM(pay_in) - SUM(pay_out)
+      const shiftId = context.activeShift!.id;
+      const orgId = context.employee.organizationId;
+      const { rows: sRows } = await client.query(
+        `SELECT opening_float FROM shifts WHERE id = $1 AND status = 'open' AND organization_id = $2`,
+        [shiftId, orgId],
+      );
+      if (sRows.length === 0) {
+        await client.query("ROLLBACK");
+        return { success: false, error: "Shift not found or already closed" };
+      }
+      const openingFloat = Number(sRows[0].opening_float) || 0;
+
+      // Cash sales AND cash change given in one roundtrip, scoped to the
+      // shift window. Without subtracting change_due the drawer is always
+      // "short" by the total change given.
+      const { rows: cashRows } = await client.query(
+        `SELECT
+           COALESCE((SELECT SUM(tt.amount)
+             FROM transaction_tenders tt
+             JOIN transactions t ON t.id = tt.transaction_id AND t.organization_id = $3
+             WHERE t.register_session_id = $1
+               AND t.organization_id = $3
+               AND t.created_at >= (SELECT opened_at FROM shifts WHERE id = $2 AND organization_id = $3)
+               AND tt.tender_type = 'cash'
+               AND t.status = 'completed'
+           ), 0)::numeric AS cash_sales,
+           COALESCE((SELECT SUM(t.change_due)
+             FROM transactions t
+             WHERE t.register_session_id = $1
+               AND t.organization_id = $3
+               AND t.created_at >= (SELECT opened_at FROM shifts WHERE id = $2 AND organization_id = $3)
+               AND t.status = 'completed'
+           ), 0)::numeric AS cash_change`,
+        [context.registerSession.id, shiftId, orgId],
+      );
+      const netCash = Number(cashRows[0]?.cash_sales) || 0;
+      const cashChange = Number(cashRows[0]?.cash_change) || 0;
+
+      // pay_in_outs.direction is 'pay_in'/'pay_out', not 'in'/'out'.
+      const { rows: pioRows } = await client.query(
+        `SELECT COALESCE(SUM(CASE WHEN direction = 'pay_in' THEN amount ELSE -amount END), 0)::numeric AS net_flow
+         FROM pay_in_outs
+         WHERE shift_id = $1 AND organization_id = $2`,
+        [shiftId, orgId],
+      );
+      const netFlow = Number(pioRows[0]?.net_flow) || 0;
+
+      const expectedCash = Number((openingFloat + netCash - cashChange + netFlow).toFixed(2));
+      const variance = Number((input.declaredCash - expectedCash).toFixed(2));
+
+      // 2. Close the shift with blind_close flag (expected cash is SERVER-computed)
       const { rows } = await client.query(
         `UPDATE shifts SET status = 'closed', closed_at = now(),
          closing_expected_cash = $1, closing_declared_cash = $2,
          closing_variance = $3, closed_note = $4, blind_close = $5
-         WHERE id = $6 AND status = 'open' RETURNING id`,
+         WHERE id = $6 AND status = 'open' AND organization_id = $7 RETURNING id`,
         [
-          input.expectedCash, input.declaredCash, variance,
+          expectedCash, input.declaredCash, variance,
           input.note || null, input.blindClose,
-          context.activeShift!.id,
+          context.activeShift!.id, orgId,
         ],
       );
 
@@ -163,7 +243,12 @@ export async function closeShiftEnhancedAction(
           JSON.stringify({
             register_session_id: context.registerSession.id,
             shift_id: context.activeShift!.id,
-            expected_cash: input.expectedCash.toFixed(2),
+            // expected_cash MUST use the server-recomputed value, not
+            // input.expectedCash. A dishonest cashier can submit a fabricated
+            // expected_cash to the action; the shifts row writes the server
+            // value, but logging the client value here would leave the audit
+            // trail pointing at the wrong number.
+            expected_cash: expectedCash.toFixed(2),
             declared_cash: input.declaredCash.toFixed(2),
             variance: variance.toFixed(2),
             blind_close: String(input.blindClose),
@@ -190,6 +275,10 @@ export async function closeShiftEnhancedAction(
 
     const shift = store.shifts.find((s) => s.id === registerSession.activeShiftId && s.status === "open");
     if (!shift) return;
+
+    // JSON fallback: no transaction_tenders or pay_in_outs tables, so fall back
+    // to trusting input.expectedCash for variance. Non-production path.
+    const variance = Number((input.declaredCash - input.expectedCash).toFixed(2));
 
     shift.status = "closed";
     shift.closedAt = timestamp;

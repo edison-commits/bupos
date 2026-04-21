@@ -12,6 +12,7 @@ const adminLinks = [
   { href: "/admin/customers", label: "Customers" },
   { href: "/admin/employees", label: "Employees" },
   { href: "/admin/loyalty", label: "Loyalty" },
+  { href: "/admin/promos", label: "Promos" },
   { href: "/admin/shifts", label: "Shifts" },
   { href: "/admin/audit", label: "Log" },
   { href: "/admin/clock-in", label: "Clock In" },

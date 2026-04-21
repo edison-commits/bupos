@@ -6,11 +6,71 @@ import { z } from "zod";
 
 const uuid = z.string().uuid();
 
-const requiredString = z.string().trim().min(1);
-const optionalString = z.string().trim().optional();
-const optionalEmail = z.string().trim().email().optional();
-const nonnegativeNumber = z.number().nonnegative();
-const positiveInt = z.number().int().positive();
+// Reasonable length limits to prevent DoS via large payloads
+const MAX_STRING = 2000;
+
+const requiredString = z.string().trim().min(1).max(MAX_STRING);
+const optionalString = z.preprocess(
+  (v) => (v === "" ? undefined : v),
+  z.string().trim().max(MAX_STRING).optional(),
+);
+const optionalEmail = z.preprocess(
+  // Treat empty-string email fields as undefined (HTML forms send "" when cleared)
+  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  z.string().trim().email().max(320).optional(),
+);
+// Bounded money amount — caps at $10M to prevent integer overflow / abuse.
+// (POS transactions > $10M should be rejected at the business-logic layer
+// long before reaching the DB.)
+const MAX_MONEY = 10_000_000;
+const nonnegativeNumber = z.number().nonnegative().max(MAX_MONEY);
+const positiveInt = z.number().int().positive().max(1_000_000);
+const pinString = z.string().regex(/^\d{4,6}$/, "PIN must be 4-6 digits");
+// R33-M-admin-image-url: every admin-writable imageUrl (product,
+// bundle, category) must be https or a relative path. Prior shape
+// (`optionalString`) accepted `javascript:`, `data:text/html`, etc.
+// <img src="javascript:..."> doesn't execute in modern browsers but
+// `<a href>` bindings or future SSR that inlines into <script> or
+// attribute operands would.
+const imageUrlField = z.preprocess(
+  (v) => (v === "" ? undefined : v),
+  z.string().trim().max(2000)
+    .refine(
+      (s) => /^https:\/\//i.test(s) || s.startsWith('/'),
+      "imageUrl must be an https URL or a relative path",
+    )
+    .refine(
+      (s) => !/^(?:javascript|data|vbscript|file):/i.test(s),
+      "imageUrl must not use javascript/data/vbscript/file protocols",
+    )
+    .optional(),
+);
+// R30-M1 / R31-M1: pinHint is free-text but must NEVER be readable
+// as a PIN. A manager could otherwise reset a cashier's PIN, write
+// the plaintext PIN into the pinHint field, and later impersonate
+// that cashier at a different register. Reject any value whose
+// non-letter characters could spell out a sequence of digits:
+//   - pure digits ("1234")
+//   - digits + whitespace or punctuation ("1 2 3 4", "1-2-3-4",
+//     "1.2.3.4", "1,2,3,4", "1/2/3/4", "1:2:3:4", "1|2|3|4")
+// Positive test: the value must contain at least ONE letter. That's
+// the simplest mechanical rule that makes "pin is my birthday" OK
+// while rejecting every digit-smuggling variant.
+const pinHintField = z.preprocess(
+  (v) => (v === "" ? undefined : v),
+  z.string().trim().max(MAX_STRING)
+    .refine(
+      (s) => /\p{L}/u.test(s),
+      "PIN hint must contain at least one letter (prevents digit-only leaks of the PIN)",
+    )
+    .optional(),
+);
+const roleKeyEnum = z.enum(["owner", "manager", "cashier", "inventory_clerk", "support"]);
+const isoDateTime = z.string().datetime({ offset: true });
+// Shared refund-method enum — used by both returnCreateSchema and returnProcessSchema
+const refundMethodEnum = z.enum([
+  "original_tender", "cash", "store_credit", "gift_card", "credit_card", "debit_card", "exchange",
+]);
 
 // ---------------------------------------------------------------------------
 // Customers
@@ -28,8 +88,8 @@ export const customerCreateSchema = z.object({
 
 export const customerUpdateSchema = z.object({
   id: uuid,
-  first_name: requiredString,
-  last_name: requiredString,
+  first_name: requiredString.optional(),
+  last_name: requiredString.optional(),
   email: optionalEmail,
   phone: optionalString,
   address: optionalString,
@@ -84,21 +144,46 @@ export const productUpdateSchema = z.object({
   variant: variantUpdateSchema.optional(),
 });
 
+// R26-F8: tighten per-field caps for CSV import. The generic
+// `requiredString` / `optionalString` allow 2000 chars each — multiplied
+// across 7 string fields × 2000 rows, an adversarial payload reaches
+// ~28MB, blowing past the 2MB MAX_REQUEST_BODY_BYTES gate AND making
+// the row-cap × field-cap math impossible to keep under budget.
+//
+// Realistic CSV rows have short names/SKUs (POS products are rarely
+// > 200 chars per field). These dedicated caps keep worst-case
+// row-size bounded: 7 × 200 + 3 × 20 ≈ 1.5KB. 1500 rows × 1.5KB ≈
+// 2.2MB, which fits the (newly-aware) 3MB import-route limit with
+// headroom for JSON overhead.
+const csvShortString = z.string().trim().min(1).max(200);
+const csvShortOptionalString = z.preprocess(
+  (v) => (v === "" ? undefined : v),
+  z.string().trim().max(200).optional(),
+);
+
 const csvImportRowSchema = z.object({
-  name: requiredString,
-  sku: requiredString,
+  name: csvShortString,
+  sku: csvShortString,
   price: nonnegativeNumber,
-  category: optionalString,
-  barcode: optionalString,
-  size: optionalString,
-  color: optionalString,
+  category: csvShortOptionalString,
+  barcode: csvShortOptionalString,
+  size: csvShortOptionalString,
+  color: csvShortOptionalString,
   cost: nonnegativeNumber.optional(),
   compare_at_price: nonnegativeNumber.optional(),
 });
 
 export const productImportSchema = z.object({
   action: z.literal("import"),
-  rows: z.array(csvImportRowSchema).min(1),
+  // R18-LOW-3 + R26-F8: upper bound on batch size.
+  //
+  // Math: 1200 rows × ~1.5KB per row ≈ 1.8MB worst case, fits within
+  // the 2MB MAX_REQUEST_BODY_BYTES gate (src/lib/api/with-auth.ts)
+  // with headroom for JSON structural overhead. The prior 2000 cap
+  // paired with the generic 2KB/field caps was unsatisfiable — a
+  // valid-schema payload could exceed the body limit (rejected at 413)
+  // AND a valid-body payload could exceed the Workers CPU budget.
+  rows: z.array(csvImportRowSchema).min(1).max(1200),
 });
 
 export const productDeleteSchema = z.object({
@@ -142,16 +227,20 @@ const purchaseOrderLineSchema = z.object({
 export const purchaseOrderCreateSchema = z.object({
   supplier_id: uuid,
   notes: optionalString,
-  expected_at: optionalString,
-  lines: z.array(purchaseOrderLineSchema).min(1),
+  expected_at: isoDateTime.optional(),
+  // R18-LOW-3: upper bound — see productImportSchema for rationale. 500
+  // lines is far above any real PO we've seen.
+  lines: z.array(purchaseOrderLineSchema).min(1).max(500),
 });
 
 export const purchaseOrderUpdateSchema = z.object({
   id: uuid,
-  status: optionalString,
+  // DB CHECK constraint: ('draft','submitted','partial','received','cancelled').
+  // Keep this in sync with the DB constraint — 'ordered' was wrong and rejected by DB.
+  status: z.enum(["draft", "submitted", "partial", "received", "cancelled"]).optional(),
   notes: optionalString,
-  expected_at: optionalString,
-  ordered_at: optionalString,
+  expected_at: isoDateTime.optional(),
+  ordered_at: isoDateTime.optional(),
 });
 
 const receiveLineSchema = z.object({
@@ -161,7 +250,8 @@ const receiveLineSchema = z.object({
 
 export const purchaseOrderReceiveSchema = z.object({
   id: uuid,
-  receives: z.array(receiveLineSchema).min(1),
+  // R18-LOW-3
+  receives: z.array(receiveLineSchema).min(1).max(500),
 });
 
 // ---------------------------------------------------------------------------
@@ -189,11 +279,13 @@ export const expenseDeleteSchema = z.object({
 const receivingItemSchema = z.object({
   product_variant_id: uuid,
   quantity: positiveInt,
+  po_line_id: uuid.optional(),
 });
 
 export const receivingCreateSchema = z.object({
   type: z.literal("receive"),
-  items: z.array(receivingItemSchema).min(1),
+  // R18-LOW-3
+  items: z.array(receivingItemSchema).min(1).max(500),
   po_id: uuid.optional(),
   mode: optionalString,
 });
@@ -202,10 +294,45 @@ export const receivingCreateSchema = z.object({
 // Settings
 // ---------------------------------------------------------------------------
 
-export const settingsUpdateSchema = z.object({
-  section: requiredString,
-  data: z.record(z.string(), z.unknown()),
-});
+// Section-specific schemas prevent arbitrary column injection via settings API.
+// Every section is .strict() so unknown keys are rejected rather than silently
+// dropped — the settings UPDATE builder then can't accidentally route an
+// unexpected key through to a real column via the field map.
+const storeSettingsSchema = z.object({
+  name: z.string().max(200).optional(),
+  legalName: z.string().max(200).optional(),
+  phone: z.string().max(40).optional(),
+  email: z.string().email().max(320).optional(),
+  website: z.string().max(500).optional(),
+  timezone: z.string().max(80).optional(),
+  currencyCode: z.string().length(3).optional(),
+}).strict();
+const locationSettingsSchema = z.object({
+  name: z.string().max(200).optional(),
+  code: z.string().max(40).optional(),
+  address1: z.string().max(200).optional(),
+  city: z.string().max(100).optional(),
+  region: z.string().max(100).optional(),
+  postalCode: z.string().max(20).optional(),
+  phone: z.string().max(40).optional(),
+  taxRate: z.number().min(0).max(1).optional(),
+}).strict();
+const receiptSettingsSchema = z.object({
+  header: z.string().max(2000).optional(),
+  footer: z.string().max(2000).optional(),
+  showLogo: z.boolean().optional(),
+  storeName: z.string().max(200).optional(),
+  storeAddress: z.string().max(200).optional(),
+  storeCity: z.string().max(100).optional(),
+  storeRegion: z.string().max(100).optional(),
+  storePostalCode: z.string().max(20).optional(),
+  storePhone: z.string().max(40).optional(),
+}).strict();
+export const settingsUpdateSchema = z.discriminatedUnion('section', [
+  z.object({ section: z.literal('store'), data: storeSettingsSchema }),
+  z.object({ section: z.literal('location'), data: locationSettingsSchema }),
+  z.object({ section: z.literal('receipt'), data: receiptSettingsSchema }),
+]);
 
 // ---------------------------------------------------------------------------
 // Shift Close
@@ -246,7 +373,8 @@ export const transferSchema = z.object({
   sourceLocationId: uuid.optional(),
   destinationLocationId: uuid.optional(),
   notes: optionalString,
-  lines: z.array(transferLineSchema).optional(),
+  // R19-LOW-2: bound lines to prevent self-DoS via 10k-line payload.
+  lines: z.array(transferLineSchema).max(500).optional(),
   id: uuid.optional(),
 });
 
@@ -256,7 +384,8 @@ export const transferSchema = z.object({
 
 export const loyaltyAdjustSchema = z.object({
   customer_id: uuid,
-  adjustment: z.number(),
+  // Bound adjustment to ±1M points — catches malformed input without hurting real usage.
+  adjustment: z.number().int().min(-1_000_000).max(1_000_000),
   reason: optionalString,
 });
 
@@ -278,7 +407,7 @@ export const giftCardSchema = z.object({
 
 export const storeCreditSchema = z.object({
   customerId: uuid,
-  amount: z.number(),
+  amount: nonnegativeNumber,
   reason: optionalString,
   approvedBy: uuid.optional(),
 });
@@ -289,7 +418,7 @@ export const storeCreditSchema = z.object({
 
 export const taxConfigUpdateSchema = z.object({
   locationId: uuid,
-  taxRate: nonnegativeNumber,
+  taxRate: z.number().min(0).max(1), // 0-100% (expressed as 0.00 to 1.00)
 });
 
 // ---------------------------------------------------------------------------
@@ -330,23 +459,84 @@ export const offlineSyncSchema = z.object({
   tenders: z.unknown(),
   timestamp: optionalString,
   registerSessionId: uuid.optional(),
-  approvedExceptions: z.array(z.unknown()).optional(),
+  approvedExceptions: z.array(z.string()).optional(),
 });
 
 // ---------------------------------------------------------------------------
 // Promo Codes
 // ---------------------------------------------------------------------------
 
+// Promo-code create/update payload. `free_item` is structurally different
+// from `fixed` / `percent` / `bogo` because it gives away a specific
+// variant rather than a cart-level discount — `freeVariantId` MUST be
+// provided for `free_item` and MUST be omitted for the others. Enforced
+// by the `.superRefine` below so the server rejects malformed payloads
+// before hitting the DB CHECK constraint.
 export const promoCodeSchema = z.object({
   code: requiredString,
   description: optionalString,
-  type: z.enum(["fixed", "percent", "bogo"]),
+  type: z.enum(["fixed", "percent", "bogo", "free_item"]),
+  // `value` is dollars off / percent off / ignored for bogo + free_item.
+  // Keep nonnegativeNumber so callers can send 0 for the types that don't
+  // use it; the per-type meaning is enforced by the refine below.
   value: nonnegativeNumber,
   minimumPurchase: nonnegativeNumber.optional(),
-  maxRedemptions: z.number().int().positive().optional(),
-  startsAt: optionalString,
-  expiresAt: optionalString,
-  action: z.enum(["create", "toggle"]).optional(),
+  maxRedemptions: z.number().int().positive().max(10_000_000).optional(),
+  // R28-M6: per-customer cap. NULL/undefined = unlimited (back-compat).
+  maxRedemptionsPerCustomer: z.number().int().positive().max(10_000).optional(),
+  startsAt: isoDateTime.optional(),
+  expiresAt: isoDateTime.optional(),
+  freeVariantId: uuid.optional(),
+  // Mirror every branch accepted by POST /api/promo-codes. `redeem` and
+  // `disable` don't flow through `validateBody(promoCodeSchema, …)`
+  // today, but shipping them in the enum keeps the schema as an
+  // accurate contract for the route — prevents the "list says toggle
+  // but server says disable" drift that confused last audit.
+  action: z.enum(["create", "toggle", "redeem", "disable"]).optional(),
+}).superRefine((data, ctx) => {
+  if (data.type === "free_item") {
+    if (!data.freeVariantId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "freeVariantId is required for free_item promos",
+        path: ["freeVariantId"],
+      });
+    }
+  } else if (data.freeVariantId !== undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "freeVariantId is only valid for free_item promos",
+      path: ["freeVariantId"],
+    });
+  }
+  if (data.type === "fixed" && data.value <= 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Fixed-discount promos must have value > 0",
+      path: ["value"],
+    });
+  }
+  if (data.type === "percent" && (data.value <= 0 || data.value > 100)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Percent-discount promos must have value in (0, 100]",
+      path: ["value"],
+    });
+  }
+  // An expires-at earlier than the starts-at produces a permanently
+  // unusable promo (always "expired" or always "not yet active"). Reject
+  // at create time rather than let admins ship broken promos.
+  if (data.startsAt && data.expiresAt) {
+    const starts = new Date(data.startsAt).getTime();
+    const expires = new Date(data.expiresAt).getTime();
+    if (Number.isFinite(starts) && Number.isFinite(expires) && expires <= starts) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "expiresAt must be after startsAt",
+        path: ["expiresAt"],
+      });
+    }
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -369,19 +559,24 @@ const returnLineSchema = z.object({
   product_variant_id: uuid,
   quantity: positiveInt,
   unit_price: nonnegativeNumber,
+  restock: z.boolean().optional(),
 });
 
 export const returnCreateSchema = z.object({
+  // transaction_id links the return to an originating sale. Without this,
+  // an admin can mint arbitrary refunds for items never sold.
+  transaction_id: uuid,
   customer_name: optionalString,
   reason: optionalString,
   notes: optionalString,
-  refund_method: optionalString,
-  lines: z.array(returnLineSchema).min(1),
+  refund_method: refundMethodEnum.optional(),
+  // R18-LOW-3
+  lines: z.array(returnLineSchema).min(1).max(500),
 });
 
 export const returnUpdateSchema = z.object({
   id: uuid,
-  status: requiredString,
+  status: z.enum(["pending", "approved", "completed", "rejected", "cancelled"]),
   processed_by: uuid.optional(),
 });
 
@@ -397,8 +592,9 @@ export const returnProcessSchema = z.object({
   customer_name: optionalString,
   reason: optionalString,
   notes: optionalString,
-  refund_method: optionalString,
-  items: z.array(returnProcessItemSchema).min(1),
+  refund_method: refundMethodEnum.optional(),
+  // R18-LOW-3
+  items: z.array(returnProcessItemSchema).min(1).max(500),
   refund_amount: nonnegativeNumber,
 });
 
@@ -407,18 +603,55 @@ export const returnProcessSchema = z.object({
 // ---------------------------------------------------------------------------
 
 export const eodReportSchema = z.object({
-  action: optionalString,
+  action: z.enum(["generate", "email", "print", "download"]).optional(),
 });
 
 // ---------------------------------------------------------------------------
 // Customer Display
 // ---------------------------------------------------------------------------
 
+// customer-display state: bound the cart/totals shape so a malicious or
+// buggy register client can't persist megabytes of JSON into the state
+// row (which every GET-poll then serves back). Previously cart/totals
+// were z.unknown() with no size guard; the jsonb column accepts up to
+// 1 GB per row and polling happens every ~2s (R11-H-5).
+const displayCartLine = z.object({
+  productVariantId: uuid.optional(),
+  bundleId: uuid.optional(),
+  productName: z.string().max(500).optional(),
+  variantName: z.string().max(500).optional(),
+  sku: z.string().max(100).optional(),
+  unitPrice: z.number().optional(),
+  quantity: z.number().optional(),
+  overridePrice: z.number().nullable().optional(),
+  modifierTotal: z.number().optional(),
+  promoCodeId: uuid.optional(),
+}).strict();
+
+const displayTotals = z.object({
+  subtotal: z.number().optional(),
+  discountTotal: z.number().optional(),
+  taxTotal: z.number().optional(),
+  grandTotal: z.number().optional(),
+  modifiersTotal: z.number().optional(),
+  itemCount: z.number().optional(),
+}).strict();
+
 export const customerDisplaySchema = z.object({
   registerSessionId: uuid,
-  cart: z.unknown(),
-  totals: z.unknown(),
-  paymentStatus: optionalString,
+  // R27-M11: .strict() rejects unknown fields. Previously .passthrough()
+  // persisted arbitrary keys into the jsonb column, which then got
+  // polled back to the display every ~2s. A future render change
+  // that trusts an unknown key would be stored-XSS; .strict() makes
+  // that class of bug unreachable.
+  cart: z.object({
+    id: z.string().max(100).optional(),
+    items: z.array(displayCartLine).max(500),
+    customerId: uuid.nullable().optional(),
+    customerName: z.string().max(500).optional(),
+  }).strict(),
+  totals: displayTotals,
+  paymentStatus: z.enum(["idle", "selecting", "processing", "complete", "error"]).optional(),
   amountTendered: nonnegativeNumber.optional(),
   changeDue: nonnegativeNumber.optional(),
 });
@@ -433,10 +666,11 @@ export const employeeCreateSchema = z.object({
   displayName: optionalString,
   email: optionalEmail,
   phone: optionalString,
-  roleKey: requiredString,
-  pin: requiredString,
-  pinHint: optionalString,
-  locationIds: z.array(uuid).min(1),
+  roleKey: roleKeyEnum,
+  pin: pinString,
+  pinHint: pinHintField,
+  // R18-LOW-3: no org has 100 simultaneous locations, let alone 1000s.
+  locationIds: z.array(uuid).min(1).max(100),
 });
 
 export const employeeUpdateSchema = z.object({
@@ -446,17 +680,84 @@ export const employeeUpdateSchema = z.object({
   displayName: optionalString,
   email: optionalEmail,
   phone: optionalString,
-  roleKey: requiredString.optional(),
-  pin: requiredString.optional(),
-  pinHint: optionalString,
-  locationIds: z.array(uuid).optional(),
+  roleKey: roleKeyEnum.optional(),
+  pin: pinString.optional(),
+  pinHint: pinHintField,
+  // R19-LOW-1: bound to 100 (no real org has >100 locations). R18-LOW-3
+  // bounded the POST schema but this update schema was missed.
+  locationIds: z.array(uuid).max(100).optional(),
   isActive: z.boolean().optional(),
 });
 
 export const employeePatchSchema = z.object({
   id: uuid,
-  action: z.enum(["deactivate", "reset_pin"]),
-  pin: requiredString.optional(),
+  // R28-H4: explicit `activate` vs `deactivate` actions.
+  //
+  // Prior shape: a single `deactivate` action that ran
+  // `SET is_active = NOT is_active` — a TOGGLE. Semantically ambiguous
+  // (the name lied for re-activation), and a stolen-cookie attacker
+  // could deactivate every employee (store-wide DoS) or silently
+  // re-activate previously-fired hostile employees. Making activate/
+  // deactivate explicit lets the handler refuse no-op transitions
+  // (activate-an-active, deactivate-an-inactive) and pin intent.
+  action: z.enum(["activate", "deactivate", "reset_pin"]),
+  pin: pinString.optional(),
+  // R27-M7 + R28-H4: step-up auth. Required for ALL three actions now —
+  // the prior exemption for `deactivate` let a session-theft attacker
+  // silently DoS the store or re-hire fired employees.
+  actorPassword: z.string().min(1).max(200).optional(),
+});
+
+// ---------------------------------------------------------------------------
+// Product Bundles
+// ---------------------------------------------------------------------------
+
+// Bundle items have a tighter quantity cap than the generic `positiveInt`
+// (1_000_000) because migration 031's CHECK constraint enforces <= 1000.
+// Without this, a client POST with quantity=1001 passes Zod but trips a
+// CHECK violation returned as a generic "Failed to create bundle" 500.
+const bundleItemQty = z.number().int().positive().max(1000);
+
+// Bundle prices must be strictly positive. A $0 bundle is a distinct
+// feature ("free with purchase") whose pricing and redemption semantics
+// differ — it should be modeled separately rather than sharing the bundle
+// codepath. See follow-up task in tracker.
+const bundlePriceSchema = z.number().positive().max(MAX_MONEY);
+
+const bundleItemInputSchema = z.object({
+  productVariantId: uuid,
+  quantity: bundleItemQty,
+});
+
+export const bundleCreateSchema = z.object({
+  name: requiredString,
+  slug: optionalString,
+  description: optionalString,
+  imageUrl: imageUrlField,
+  bundlePrice: bundlePriceSchema,
+  compareAtPrice: nonnegativeNumber.optional(),
+  isActive: z.boolean().optional(),
+  // Bundles need at least 2 items to be meaningful (a 1-item "bundle" is
+  // just a variant with a discount — use a promo code for that instead).
+  items: z.array(bundleItemInputSchema).min(2).max(50),
+});
+
+export const bundleUpdateSchema = z.object({
+  id: uuid,
+  name: requiredString.optional(),
+  description: optionalString,
+  imageUrl: imageUrlField,
+  bundlePrice: bundlePriceSchema.optional(),
+  compareAtPrice: nonnegativeNumber.optional(),
+  isActive: z.boolean().optional(),
+  // Optional full-replace of the component items. If present, the PATCH
+  // handler deletes the existing bundle_items rows and inserts these new
+  // ones in a single transaction.
+  items: z.array(bundleItemInputSchema).min(2).max(50).optional(),
+});
+
+export const bundleDeleteSchema = z.object({
+  id: uuid,
 });
 
 // ---------------------------------------------------------------------------

@@ -100,9 +100,8 @@ export function SectionPanel({
   children: ReactNode;
 }) {
   const { active } = useActiveSection();
-  return (
-    <div className={`grid gap-6 ${active === sectionKey ? "" : "hidden"}`}>
-      {children}
-    </div>
-  );
+  // Conditionally mount (don't just hide with CSS) — saves huge render cost
+  // on first admin page load since 40+ admin components otherwise hydrate eagerly.
+  if (active !== sectionKey) return null;
+  return <div className="grid gap-6">{children}</div>;
 }

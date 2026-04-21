@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 "use client";
 
 import { useState, useEffect, useId } from "react";
@@ -11,10 +11,12 @@ import { SectionCard } from "@/components/ui/section-card";
 import type { PayInOutRecord } from "@/lib/domain/types";
 import type { LocalStoreData, RegisterSessionContext } from "@/lib/persistence/types";
 import { formatDateTime } from "@/lib/utils/date";
+import { setDefaultTimeZone } from "@/lib/format";
 import { NumpadInput } from "./numpad-input";
 import { ShiftCloseModal } from "./shift-close-modal";
 import { PayInOutModal, type PayDirection } from "./pay-in-out-modal";
 import { EODWizard } from "./eod-wizard";
+import { formatCurrency } from "@/lib/format";
 
 // Dynamic import with ssr: false to avoid module initialization errors
 // during SSR on Cloudflare Workers (Turbopack bundling TDZ issue)
@@ -118,6 +120,23 @@ export function RegisterConsoleClient({
   recentShifts,
   payInOuts,
 }: RegisterConsoleClientProps) {
+  // R36-FE3: Apply the org's configured timezone to the client-side
+  // formatter fallback. Previously this ran during render, which:
+  //   (a) mutates module-scope state from inside React render (React
+  //       disallows side effects during render; future Strict Mode
+  //       double-invocations could hit this twice);
+  //   (b) — while `setDefaultTimeZone` itself is a no-op on server —
+  //       the CALL during SSR still counts as a render side effect.
+  // Moving it into a useEffect runs it exactly once after mount. The
+  // first-paint TZ is handled by `runWithTimeZone(orgTz, () => render)`
+  // in src/app/register/page.tsx:139 (server), so the hydration result
+  // matches SSR; this effect just primes client-side formatters for
+  // subsequent (post-hydration) renders.
+  useEffect(() => {
+    if (store.organization?.timezone) {
+      setDefaultTimeZone(store.organization.timezone);
+    }
+  }, [store.organization?.timezone]);
   const _uid = useId();
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [showEODWizard, setShowEODWizard] = useState(false);
@@ -130,11 +149,18 @@ export function RegisterConsoleClient({
   const [drawerStatus, setDrawerStatus] = useState<"idle" | "opening" | "done" | "error">("idle");
   const [shiftFloatValue, setShiftFloatValue] = useState("200.00");
 
-  // Sortable button state
-  const [buttons, setButtons] = useState<ButtonConfig[]>(loadButtons);
-  const [isLocked, setIsLocked] = useState(loadLocked);
+  // Sortable button state.
+  // Init with server-safe defaults; hydrate user's saved order from
+  // localStorage in a useEffect so SSR output matches first client render.
+  const [buttons, setButtons] = useState<ButtonConfig[]>(DEFAULT_BUTTONS);
+  const [isLocked, setIsLocked] = useState<boolean>(false);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setButtons(loadButtons());
+    setIsLocked(loadLocked());
+  }, []);
 
   async function handleOpenDrawer() {
     if (!("serial" in navigator)) {
@@ -142,19 +168,31 @@ export function RegisterConsoleClient({
       return;
     }
     setDrawerStatus("opening");
+    type SerialPort = {
+      open: (o: { baudRate: number }) => Promise<void>;
+      close: () => Promise<void>;
+      writable: { getWriter: () => { write: (d: Uint8Array) => Promise<void>; releaseLock: () => void } };
+    };
+    type SerialAPI = { serial: { requestPort: () => Promise<SerialPort> } };
+    type Writer = { write: (d: Uint8Array) => Promise<void>; releaseLock: () => void };
+    let port: SerialPort | null = null;
+    let writer: Writer | null = null;
     try {
-      const port = await (navigator as any).serial.requestPort();
+      port = await (navigator as unknown as SerialAPI).serial.requestPort();
       await port.open({ baudRate: 9600 });
-      const writer = port.writable.getWriter();
+      writer = port.writable.getWriter();
       const cmd = new ESCPOSBuilder().init().openDrawer().build();
       await writer.write(cmd);
-      writer.releaseLock();
-      await port.close();
       setDrawerStatus("done");
       setTimeout(() => setDrawerStatus("idle"), 2000);
     } catch {
       setDrawerStatus("error");
       setTimeout(() => setDrawerStatus("idle"), 3000);
+    } finally {
+      // Always release the writer + close the port so the serial port isn't
+      // held until tab close if write() throws mid-send.
+      try { writer?.releaseLock(); } catch { /* ignore */ }
+      try { await port?.close(); } catch { /* ignore */ }
     }
   }
 
@@ -282,29 +320,36 @@ export function RegisterConsoleClient({
     );
   }
 
-  // Theme for register — respects pos-theme (light/dark/high-contrast)
+  // R35-P7: theme is now applied pre-paint by the inline <head>
+  // script in src/app/layout.tsx, eliminating the light→dark flash
+  // that this useEffect used to cause. We still run here to:
+  //   1. Migrate the legacy `bupos-dark-mode` key to `pos-theme` on
+  //      older installs (one-shot; becomes a no-op once migrated).
+  //   2. Default a brand-new register to 'dark' when no saved theme
+  //      exists (product decision — dark is preferred for POS).
+  // We do NOT re-apply the class on mount (the head script already
+  // did), and we DO NOT remove the class on unmount (the user hasn't
+  // changed their preference just because the component unmounted —
+  // the old cleanup caused a flash when switching between /register
+  // and any sibling route).
   useEffect(() => {
     type ThemeMode = 'light' | 'dark' | 'high-contrast';
     const posTheme = localStorage.getItem('pos-theme') as ThemeMode | null;
-    // Legacy: migrate old bupos-dark-mode to pos-theme
     if (!posTheme) {
       const legacy = localStorage.getItem('bupos-dark-mode');
-      const theme: ThemeMode = (legacy === null || legacy === 'true') ? 'dark' : 'light';
+      // Legacy migration only produces 'dark' or 'light' — 'high-contrast'
+      // didn't exist at the time of bupos-dark-mode. Missing / 'true' →
+      // dark (old default); anything else → light.
+      const theme: 'dark' | 'light' = (legacy === null || legacy === 'true') ? 'dark' : 'light';
       localStorage.setItem('pos-theme', theme);
       localStorage.removeItem('bupos-dark-mode');
+      // Apply the freshly-migrated theme (the head script ran before
+      // the migration key existed, so it defaulted to light-mode).
+      const root = document.documentElement;
+      root.classList.remove('dark');
+      root.removeAttribute('data-theme');
+      if (theme === 'dark') root.classList.add('dark');
     }
-    const theme: ThemeMode = posTheme ?? (localStorage.getItem('pos-theme') as ThemeMode) ?? 'dark';
-    document.documentElement.classList.remove('dark');
-    document.documentElement.removeAttribute('data-theme');
-    if (theme === 'dark') {
-      document.documentElement.classList.add('dark');
-    } else if (theme === 'high-contrast') {
-      document.documentElement.setAttribute('data-theme', 'high-contrast');
-    }
-    return () => {
-      document.documentElement.classList.remove('dark');
-      document.documentElement.removeAttribute('data-theme');
-    };
   }, []);
 
   const _payInTotal = payInOuts.filter((p) => p.direction === "pay_in").reduce((s, p) => s + p.amount, 0);
@@ -392,6 +437,7 @@ export function RegisterConsoleClient({
           categories={store.categories}
           inventory={store.inventory}
           customers={store.customers}
+          bundles={store.bundles ?? []}
           transactionEvents={store.transactionEventPlaceholders}
           transactionTenders={store.transactionTenderPlaceholders}
           employee={context.employee}
@@ -544,7 +590,7 @@ export function RegisterConsoleClient({
           ) : context.activeShift ? (
             <div className="grid gap-4">
               <div className="grid gap-3 md:grid-cols-2">
-                <Metric label="Opening float" value={`$${context.activeShift.openingFloat.toFixed(2)}`} detail={context.activeShift.openedNote ?? "No opening note"} />
+                <Metric label="Opening float" value={`${formatCurrency(context.activeShift.openingFloat)}`} detail={context.activeShift.openedNote ?? "No opening note"} />
                 <Metric label="Shift state" value="Open" detail={`Opened ${formatDateTime(context.activeShift.openedAt)}`} />
               </div>
               <button
@@ -607,8 +653,8 @@ export function RegisterConsoleClient({
                     <span className={`rounded-full px-3 py-1 text-sm font-semibold ${shift.status === "open" ? "bg-emerald-100 text-emerald-800" : "bg-zinc-100 text-zinc-700"}`}>{shift.status}</span>
                   </div>
                   <div className="mt-3 text-base text-zinc-700">
-                    Float ${shift.openingFloat.toFixed(2)}
-                    {typeof shift.closingVariance === "number" ? ` · variance ${shift.closingVariance >= 0 ? "+" : ""}$${shift.closingVariance.toFixed(2)}` : ""}
+                    Float {formatCurrency(shift.openingFloat)}
+                    {typeof shift.closingVariance === "number" ? ` · variance ${shift.closingVariance >= 0 ? "+" : ""}${formatCurrency(shift.closingVariance)}` : ""}
                   </div>
                 </div>
               ))
@@ -629,7 +675,7 @@ export function RegisterConsoleClient({
             {Object.entries(store.registerConfiguration.approvalThresholds).map(([key, value]) => (
               <div key={key} className="flex items-center justify-between rounded-2xl bg-zinc-50 px-4 py-3 text-sm">
                 <span>{formatThresholdLabel(key)}</span>
-                <span className="font-semibold">${value.toFixed(2)}</span>
+                <span className="font-semibold">{formatCurrency(value)}</span>
               </div>
             ))}
           </div>

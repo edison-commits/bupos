@@ -2,6 +2,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import type { EntityId, Supplier, PurchaseOrder } from '@/lib/domain/types';
+import { formatCurrency } from "@/lib/format";
 
 // Event types and data structures
 export type EventType = 'order_due' | 'order_placed' | 'expected_delivery' | 'delivery_received' | 'custom_note';
@@ -772,7 +773,7 @@ export function OrderCalendar({ suppliers, purchaseOrders, employees: _employees
             )}
             {selectedEvent.amount && (
               <div>
-                <span className="font-medium">Amount:</span> ${selectedEvent.amount.toFixed(2)}
+                <span className="font-medium">Amount:</span> {formatCurrency(selectedEvent.amount)}
               </div>
             )}
             {selectedEvent.trackingNumber && (

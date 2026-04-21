@@ -2,6 +2,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { LocalStoreData } from '@/lib/persistence/types';
+import { formatCurrency } from "@/lib/format";
 
 type DateRange = {
   startDate: Date;
@@ -382,14 +383,14 @@ export function TaxReport({ store }: { store: LocalStoreData }) {
 
       {/* Tax Summary Dashboard */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
-        <SummaryCard label="Gross Sales" value={`$${taxSummary.grossSales.toFixed(2)}`} />
-        <SummaryCard label="Returns/Refunds" value={`-$${taxSummary.totalReturns.toFixed(2)}`} negative />
-        <SummaryCard label="Net Taxable Sales" value={`$${taxSummary.netTaxableSales.toFixed(2)}`} />
-        <SummaryCard label="Tax Collected" value={`$${taxSummary.taxCollected.toFixed(2)}`} />
-        <SummaryCard label="Expected Tax" value={`$${taxSummary.expectedTax.toFixed(2)}`} />
+        <SummaryCard label="Gross Sales" value={formatCurrency(taxSummary.grossSales)} />
+        <SummaryCard label="Returns/Refunds" value={`-${formatCurrency(taxSummary.totalReturns)}`} negative />
+        <SummaryCard label="Net Taxable Sales" value={formatCurrency(taxSummary.netTaxableSales)} />
+        <SummaryCard label="Tax Collected" value={formatCurrency(taxSummary.taxCollected)} />
+        <SummaryCard label="Expected Tax" value={formatCurrency(taxSummary.expectedTax)} />
         <SummaryCard
           label="Variance"
-          value={`$${Math.abs(taxSummary.variance).toFixed(2)}`}
+          value={formatCurrency(Math.abs(taxSummary.variance))}
           negative={taxSummary.variance < 0}
         />
       </div>
@@ -411,8 +412,8 @@ export function TaxReport({ store }: { store: LocalStoreData }) {
                 {taxSummary.tenderBreakdown.map((tender, idx) => (
                   <tr key={idx} className="border-b border-zinc-100 hover:bg-white transition-colors">
                     <td className="px-4 py-3 text-zinc-900">{tender.type}</td>
-                    <td className="text-right px-4 py-3 text-zinc-900">${tender.amount.toFixed(2)}</td>
-                    <td className="text-right px-4 py-3 text-zinc-900">${tender.taxAmount.toFixed(2)}</td>
+                    <td className="text-right px-4 py-3 text-zinc-900">{formatCurrency(tender.amount)}</td>
+                    <td className="text-right px-4 py-3 text-zinc-900">{formatCurrency(tender.taxAmount)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -440,10 +441,10 @@ export function TaxReport({ store }: { store: LocalStoreData }) {
                 {taxSummary.dailyBreakdown.map((day, idx) => (
                   <tr key={idx} className="border-b border-zinc-100 hover:bg-white transition-colors">
                     <td className="px-4 py-3 text-zinc-900 font-medium">{day.date}</td>
-                    <td className="text-right px-4 py-3 text-zinc-900">${day.grossSales.toFixed(2)}</td>
-                    <td className="text-right px-4 py-3 text-zinc-900">${day.returns.toFixed(2)}</td>
-                    <td className="text-right px-4 py-3 text-zinc-900">${day.netSales.toFixed(2)}</td>
-                    <td className="text-right px-4 py-3 text-zinc-900">${day.taxCollected.toFixed(2)}</td>
+                    <td className="text-right px-4 py-3 text-zinc-900">{formatCurrency(day.grossSales)}</td>
+                    <td className="text-right px-4 py-3 text-zinc-900">{formatCurrency(day.returns)}</td>
+                    <td className="text-right px-4 py-3 text-zinc-900">{formatCurrency(day.netSales)}</td>
+                    <td className="text-right px-4 py-3 text-zinc-900">{formatCurrency(day.taxCollected)}</td>
                   </tr>
                 ))}
               </tbody>

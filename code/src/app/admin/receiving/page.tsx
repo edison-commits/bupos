@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { authFetch } from '@/lib/api/client';
 import { SUCCESS_TOAST_MS } from '@/lib/config/timing';
+import { safeErr } from '@/lib/logging/safe-err';
 
 // Product type from domain
 
@@ -80,7 +81,7 @@ export default function ReceivingPage() {
       const json = await response.json();
       setPurchaseOrders(json.orders || []);
     } catch (err) {
-      console.error(err);
+      console.error("[receiving] fetch POs failed:", safeErr(err));
     } finally {
       setPosLoading(false);
     }
@@ -94,7 +95,7 @@ export default function ReceivingPage() {
       const json = await response.json();
       setPoDetails(json.lines || []);
     } catch (err) {
-      console.error(err);
+      console.error("[receiving] fetch PO details failed:", safeErr(err));
     }
   }, []);
 
@@ -111,7 +112,7 @@ export default function ReceivingPage() {
       const json = await response.json();
       setSearchResults(json.variants || []);
     } catch (err) {
-      console.error(err);
+      console.error("[receiving] search failed:", safeErr(err));
       setSearchResults([]);
     } finally {
       setSearchLoading(false);

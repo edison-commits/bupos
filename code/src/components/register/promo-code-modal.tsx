@@ -1,16 +1,23 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import type { PromoCode } from "@/lib/domain/types";
+import type { PromoCode, ProductVariant, Product } from "@/lib/domain/types";
+import { formatCurrency } from "@/lib/format";
 
 interface PromoCodeModalProps {
   promoCodes: PromoCode[];
+  /** Needed to preview the free variant on a `free_item` promo. */
+  variants: ProductVariant[];
+  /** Needed to display "<Product> — <Variant>" on the free-item preview. */
+  products: Product[];
   cartSubtotal: number;
+  /** IDs of promo codes already applied to this cart — prevents double-applying. */
+  appliedPromoIds?: string[];
   onApply: (promo: PromoCode, discountAmount: number) => void;
   onCancel: () => void;
 }
 
-export function PromoCodeModal({ promoCodes, cartSubtotal, onApply, onCancel }: PromoCodeModalProps) {
+export function PromoCodeModal({ promoCodes, variants, products, cartSubtotal, appliedPromoIds, onApply, onCancel }: PromoCodeModalProps) {
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -21,22 +28,67 @@ export function PromoCodeModal({ promoCodes, cartSubtotal, onApply, onCancel }: 
 
   const validation = useMemo(() => {
     if (!matchedPromo) return null;
-    const now = new Date().toISOString();
+    // Use epoch-ms comparison so TZ-offset or fractional-second
+    // differences don't flip the check. String compare only worked for
+    // strictly UTC-Z ISO strings; new admin-created promos from the
+    // local <input type="datetime-local"> go through `new Date(...).toISOString()`
+    // which is UTC-Z, but a future import path (CSV, migration) could
+    // ship `+00:00` — then the string compare would differ.
+    //
+    // react-hooks/purity flags Date.now inside useMemo as impure; that's
+    // fine here — this validation is a UI preview, the server
+    // revalidates on apply. Disabling the rule for this line.
+    // eslint-disable-next-line react-hooks/purity
+    const nowMs = Date.now();
 
     if (matchedPromo.status !== "active") {
       return { valid: false, reason: `Code is ${matchedPromo.status}` };
     }
-    if (matchedPromo.startsAt > now) {
+    if (matchedPromo.startsAt && new Date(matchedPromo.startsAt).getTime() > nowMs) {
       return { valid: false, reason: "Code is not yet active" };
     }
-    if (matchedPromo.expiresAt && matchedPromo.expiresAt < now) {
+    if (matchedPromo.expiresAt && new Date(matchedPromo.expiresAt).getTime() < nowMs) {
       return { valid: false, reason: "Code has expired" };
     }
-    if (matchedPromo.currentRedemptions >= matchedPromo.maxRedemptions) {
+    // Match server semantics at checkout-action.ts / offline-sync:
+    //   maxRedemptions > 0 → enforced
+    //   maxRedemptions = 0 → unlimited
+    //   maxRedemptions = 10_000_000 → admin UI sentinel for "unlimited"
+    // Combined into a single condition so 0-via-CLI and 10M-via-admin
+    // both render as unlimited in the modal.
+    if (
+      matchedPromo.maxRedemptions > 0 &&
+      matchedPromo.maxRedemptions < 10_000_000 &&
+      matchedPromo.currentRedemptions >= matchedPromo.maxRedemptions
+    ) {
       return { valid: false, reason: "Code has reached maximum redemptions" };
     }
     if (cartSubtotal < matchedPromo.minimumPurchase) {
-      return { valid: false, reason: `Minimum purchase of $${matchedPromo.minimumPurchase.toFixed(2)} required (cart: $${cartSubtotal.toFixed(2)})` };
+      return { valid: false, reason: `Minimum purchase of ${formatCurrency(matchedPromo.minimumPurchase)} required (cart: ${formatCurrency(cartSubtotal)})` };
+    }
+    if (appliedPromoIds?.includes(matchedPromo.id)) {
+      return { valid: false, reason: "Code is already applied to this cart" };
+    }
+
+    // Free-item resolution: look up the variant + product for preview. The
+    // server revalidates on checkout; this lookup is for display only.
+    if (matchedPromo.type === "free_item") {
+      if (!matchedPromo.freeVariantId) {
+        return { valid: false, reason: "Promo is misconfigured (no free variant)" };
+      }
+      const variant = variants.find((v) => v.id === matchedPromo.freeVariantId);
+      const product = variant ? products.find((p) => p.id === variant.productId) : undefined;
+      if (!variant || !variant.isActive || !product) {
+        return { valid: false, reason: "Free item is no longer available" };
+      }
+      return {
+        valid: true,
+        // For a free-item promo, the "discount" displayed in the banner is
+        // the retail price of the freebie. Checkout doesn't apply it as a
+        // cart-level discount; the cart line comes through at $0.
+        discountAmount: variant.price,
+        freePreview: { product, variant },
+      };
     }
 
     // Calculate discount
@@ -51,7 +103,7 @@ export function PromoCodeModal({ promoCodes, cartSubtotal, onApply, onCancel }: 
     }
 
     return { valid: true, discountAmount };
-  }, [matchedPromo, cartSubtotal]);
+  }, [matchedPromo, cartSubtotal, variants, products, appliedPromoIds]);
 
   const handleApply = () => {
     if (!matchedPromo) {
@@ -94,14 +146,27 @@ export function PromoCodeModal({ promoCodes, cartSubtotal, onApply, onCancel }: 
                 <p className="text-sm font-semibold text-emerald-700">
                   {matchedPromo.description ?? matchedPromo.code}
                 </p>
-                <p className="mt-1 text-sm text-emerald-600">
-                  Discount: <span className="font-bold">${(validation.discountAmount ?? 0).toFixed(2)}</span>
-                  {matchedPromo.type === "percent" && ` (${matchedPromo.value}% off)`}
-                  {matchedPromo.type === "fixed" && ` ($${matchedPromo.value.toFixed(2)} off)`}
-                  {matchedPromo.type === "bogo" && " (BOGO)"}
-                </p>
+                {matchedPromo.type === "free_item" && validation.freePreview ? (
+                  <p className="mt-1 text-sm text-emerald-600">
+                    Free: <span className="font-bold">
+                      {validation.freePreview.product.name} — {validation.freePreview.variant.name}
+                    </span>
+                    <span className="ml-1 text-xs text-emerald-500">
+                      ({formatCurrency(validation.freePreview.variant.price)} value)
+                    </span>
+                  </p>
+                ) : (
+                  <p className="mt-1 text-sm text-emerald-600">
+                    Discount: <span className="font-bold">{formatCurrency((validation.discountAmount ?? 0))}</span>
+                    {matchedPromo.type === "percent" && ` (${matchedPromo.value}% off)`}
+                    {matchedPromo.type === "fixed" && ` (${formatCurrency(matchedPromo.value)} off)`}
+                    {matchedPromo.type === "bogo" && " (BOGO)"}
+                  </p>
+                )}
                 <p className="mt-1 text-xs text-emerald-500">
-                  {matchedPromo.maxRedemptions - matchedPromo.currentRedemptions} uses remaining
+                  {matchedPromo.maxRedemptions >= 10_000_000
+                    ? "unlimited uses"
+                    : `${matchedPromo.maxRedemptions - matchedPromo.currentRedemptions} uses remaining`}
                 </p>
               </div>
             )}

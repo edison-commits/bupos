@@ -106,15 +106,10 @@ CREATE TABLE IF NOT EXISTS modifiers (
 CREATE INDEX IF NOT EXISTS idx_modifiers_organization_id ON modifiers(organization_id);
 CREATE INDEX IF NOT EXISTS idx_modifiers_modifier_group_id ON modifiers(modifier_group_id);
 
--- Product ↔ Modifier Groups junction (required by pgCreateProduct / pgUpdateProduct)
-CREATE TABLE IF NOT EXISTS product_modifier_groups (
-  product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-  modifier_group_id UUID NOT NULL REFERENCES modifier_groups(id) ON DELETE CASCADE,
-  PRIMARY KEY (product_id, modifier_group_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_product_modifier_groups_product_id ON product_modifier_groups(product_id);
-CREATE INDEX IF NOT EXISTS idx_product_modifier_groups_modifier_group_id ON product_modifier_groups(modifier_group_id);
+-- Product ↔ Modifier Groups junction — moved AFTER products table below
+-- so fresh-DB bootstrap doesn't hit a forward-reference to products.
+-- Prod worked because it was pg_dump-restored in dependency order; fresh
+-- bootstrap from migrations couldn't satisfy the FK until it existed.
 
 -- Products
 CREATE TABLE IF NOT EXISTS products (
@@ -159,6 +154,18 @@ CREATE INDEX IF NOT EXISTS idx_product_variants_organization_id ON product_varia
 CREATE INDEX IF NOT EXISTS idx_product_variants_product_id ON product_variants(product_id);
 CREATE INDEX IF NOT EXISTS idx_product_variants_sku ON product_variants(sku);
 CREATE INDEX IF NOT EXISTS idx_product_variants_barcode ON product_variants(barcode);
+
+-- Product ↔ Modifier Groups junction (moved from earlier in this file
+-- so fresh-DB bootstrap sees both `products` and `modifier_groups`
+-- before this FK-heavy table is created).
+CREATE TABLE IF NOT EXISTS product_modifier_groups (
+  product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  modifier_group_id UUID NOT NULL REFERENCES modifier_groups(id) ON DELETE CASCADE,
+  PRIMARY KEY (product_id, modifier_group_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_product_modifier_groups_product_id ON product_modifier_groups(product_id);
+CREATE INDEX IF NOT EXISTS idx_product_modifier_groups_modifier_group_id ON product_modifier_groups(modifier_group_id);
 
 -- Inventory Levels
 CREATE TABLE IF NOT EXISTS inventory_levels (

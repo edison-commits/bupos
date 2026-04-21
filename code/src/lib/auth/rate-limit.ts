@@ -16,8 +16,8 @@ interface WindowEntry {
 
 const windows = new Map<string, WindowEntry>();
 
-const WINDOW_MS = 60_000; // 1 minute
-const MAX_ATTEMPTS = 5;   // 5 attempts per window
+const WINDOW_MS = 300_000; // 5 minutes — wider window to slow PIN brute-force
+const MAX_ATTEMPTS = 3;    // 3 attempts per window (stricter for 4-digit PINs)
 const CLEANUP_INTERVAL = 120_000; // purge stale keys every 2 min
 
 let lastCleanup = Date.now();
@@ -36,11 +36,20 @@ function cleanup() {
 /**
  * Check if the given key is rate-limited.
  * Returns `{ allowed: true }` or `{ allowed: false, retryAfterMs }`.
+ *
+ * Options let the caller override window/attempts — e.g. PIN login uses a
+ * strict per-cashier-attempt bucket plus a more generous per-location bucket
+ * so a few mistypes don't lock out the whole register.
  */
-export function checkRateLimit(key: string): { allowed: true } | { allowed: false; retryAfterMs: number } {
+export function checkRateLimit(
+  key: string,
+  opts?: { windowMs?: number; maxAttempts?: number },
+): { allowed: true } | { allowed: false; retryAfterMs: number } {
   cleanup();
   const now = Date.now();
-  const cutoff = now - WINDOW_MS;
+  const windowMs = opts?.windowMs ?? WINDOW_MS;
+  const maxAttempts = opts?.maxAttempts ?? MAX_ATTEMPTS;
+  const cutoff = now - windowMs;
 
   let entry = windows.get(key);
   if (!entry) {
@@ -51,9 +60,9 @@ export function checkRateLimit(key: string): { allowed: true } | { allowed: fals
   // Remove expired timestamps
   entry.timestamps = entry.timestamps.filter((t) => t > cutoff);
 
-  if (entry.timestamps.length >= MAX_ATTEMPTS) {
+  if (entry.timestamps.length >= maxAttempts) {
     const oldest = entry.timestamps[0];
-    const retryAfterMs = oldest + WINDOW_MS - now;
+    const retryAfterMs = oldest + windowMs - now;
     return { allowed: false, retryAfterMs: Math.max(retryAfterMs, 1000) };
   }
 

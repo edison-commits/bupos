@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { formatCurrency } from "@/lib/format";
 
 interface ReturnRecord {
   id: string;
@@ -48,13 +49,14 @@ export function ReturnsManager() {
 
   // Create form
   const [customerName, setCustomerName] = useState('');
+  const [transactionId, setTransactionId] = useState('');
   const [reason, setReason] = useState('changed_mind');
   const [refundMethod, setRefundMethod] = useState('store_credit');
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<Array<{ product_variant_id: string; label: string; quantity: number; unit_price: number; restock: boolean }>>([]);
-  const [itemSearch, setItemSearch] = useState('');
   const [searchResults, setSearchResults] = useState<InventoryItem[]>([]);
   const [searching, setSearching] = useState(false);
+  const [loadedTxnId, setLoadedTxnId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   const fetchReturns = useCallback(async () => {
@@ -68,19 +70,40 @@ export function ReturnsManager() {
 
   useEffect(() => { fetchReturns(); }, [fetchReturns]);
 
-  const searchItems = async () => {
-    if (!itemSearch.trim()) return;
+  // Load the line items of the original transaction. The /api/returns POST
+  // rejects any variant not in the original cart_snapshot, so the picker must
+  // ONLY show items actually in that transaction.
+  const loadTransactionLines = async () => {
+    const id = transactionId.trim();
+    if (!id) {
+      setMessage({ type: 'error', text: 'Enter a transaction ID first.' });
+      return;
+    }
     setSearching(true);
+    setSearchResults([]);
     try {
-      const res = await fetch(`/api/inventory?search=${encodeURIComponent(itemSearch)}&pageSize=15`);
-      if (!res.ok) throw new Error('Failed to search items');
+      const res = await fetch(`/api/transactions?id=${encodeURIComponent(id)}`);
+      if (!res.ok) {
+        setMessage({ type: 'error', text: 'Transaction not found' });
+        return;
+      }
       const data = await res.json();
-      setSearchResults((data.items || []).map((i: Record<string, unknown>) => ({
-        variant_id: i.variant_id, variant_name: i.variant_name, sku: i.sku,
-        product_name: i.product_name, price: Number(i.price),
-        size_label: i.size_label, color_label: i.color_label,
-      })));
-    } catch { /* */ } finally { setSearching(false); }
+      const cart = data.transaction?.cart_snapshot
+        ?? data.transaction?.cartSnapshot
+        ?? null;
+      const items: Array<{ productVariantId?: string; variantId?: string; productName?: string; variantName?: string; sku?: string; unitPrice: number; quantity: number }> =
+        (cart?.items ?? []) as Array<{ productVariantId?: string; variantId?: string; productName?: string; variantName?: string; sku?: string; unitPrice: number; quantity: number }>;
+      setSearchResults(items.map((i) => ({
+        variant_id: (i.productVariantId ?? i.variantId ?? '') as string,
+        variant_name: (i.variantName ?? '') as string,
+        sku: (i.sku ?? '') as string,
+        product_name: (i.productName ?? 'Item') as string,
+        price: Number(i.unitPrice) || 0,
+      } as InventoryItem)));
+      setLoadedTxnId(id);
+    } catch {
+      setMessage({ type: 'error', text: 'Failed to load transaction items' });
+    } finally { setSearching(false); }
   };
 
   const addLine = (item: InventoryItem) => {
@@ -93,12 +116,16 @@ export function ReturnsManager() {
   };
 
   const handleCreate = async () => {
+    if (!transactionId.trim()) {
+      setMessage({ type: 'error', text: 'Original transaction ID is required.' });
+      return;
+    }
     if (lines.length === 0) { setMessage({ type: 'error', text: 'Add at least one item.' }); return; }
     setSaving(true); setMessage(null);
     try {
       const res = await fetch('/api/returns', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customer_name: customerName || null, reason, refund_method: refundMethod, notes: notes || null, lines }),
+        body: JSON.stringify({ transaction_id: transactionId.trim(), customer_name: customerName || null, reason, refund_method: refundMethod, notes: notes || null, lines }),
       });
       const data = await res.json();
       if (!res.ok) { setMessage({ type: 'error', text: data.error }); return; }
@@ -135,6 +162,12 @@ export function ReturnsManager() {
         {message && <div role="alert" className={`rounded-xl border p-3 text-sm ${message.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700'}`}>{message.text}</div>}
 
         <div className="rounded-xl bg-white border border-zinc-200 p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="sm:col-span-2">
+            <label className="block text-sm font-medium text-zinc-700 mb-1">Original Transaction ID <span className="text-red-500">*</span></label>
+            <input type="text" value={transactionId} onChange={(e) => setTransactionId(e.target.value)}
+              className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2.5 text-sm font-mono text-zinc-800" placeholder="UUID of the original sale" />
+            <p className="mt-1 text-xs text-zinc-500">Required. Refund amount, tax, and eligible items are derived server-side from this transaction.</p>
+          </div>
           <div>
             <label className="block text-sm font-medium text-zinc-700 mb-1">Customer Name</label>
             <input type="text" value={customerName} onChange={(e) => setCustomerName(e.target.value)}
@@ -159,26 +192,30 @@ export function ReturnsManager() {
           </div>
         </div>
 
-        {/* Item search */}
+        {/* Load the original transaction's items and let the user pick from those.
+            Picking an arbitrary item from global inventory used to produce a
+            cryptic "variant was not in the original transaction" server error. */}
         <div className="rounded-xl bg-white border border-zinc-200 p-4">
-          <label className="block text-sm font-medium text-zinc-700 mb-2">Search for returned items</label>
-          <div className="flex gap-2">
-            <input type="text" value={itemSearch} onChange={(e) => setItemSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && searchItems()}
-              className="flex-1 rounded-lg border border-zinc-300 bg-white px-3 py-2.5 text-sm text-zinc-800" placeholder="Product name, SKU..." />
-            <button onClick={searchItems} disabled={searching} className="touch-button px-4 py-2.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-sm font-medium">
-              {searching ? '...' : 'Search'}
+          <div className="flex items-center justify-between mb-2">
+            <label className="block text-sm font-medium text-zinc-700">Items from original transaction</label>
+            <button onClick={loadTransactionLines} disabled={searching || !transactionId.trim()} className="touch-button px-4 py-2 rounded-lg bg-teal-100 hover:bg-teal-200 text-teal-700 text-sm font-medium disabled:opacity-40">
+              {searching ? 'Loading...' : (loadedTxnId === transactionId.trim() ? 'Reload' : 'Load items')}
             </button>
           </div>
-          {searchResults.length > 0 && (
-            <div className="mt-3 max-h-40 overflow-y-auto border border-zinc-200 rounded-lg divide-y divide-zinc-100">
+          {searchResults.length > 0 ? (
+            <div className="mt-1 max-h-56 overflow-y-auto border border-zinc-200 rounded-lg divide-y divide-zinc-100">
               {searchResults.map((item) => (
                 <div key={item.variant_id} className="flex items-center justify-between px-3 py-2 hover:bg-zinc-50">
-                  <span className="text-sm text-zinc-800">{item.product_name} — {item.variant_name} <span className="text-xs text-zinc-400 font-mono">{item.sku}</span></span>
+                  <span className="text-sm text-zinc-800">{item.product_name}{item.variant_name ? ` — ${item.variant_name}` : ''} {item.sku ? <span className="text-xs text-zinc-400 font-mono">{item.sku}</span> : null}</span>
                   <button onClick={() => addLine(item)} disabled={lines.some((l) => l.product_variant_id === item.variant_id)}
                     className="touch-button px-3 py-1 rounded-lg text-xs font-medium bg-teal-100 hover:bg-teal-200 text-teal-700 disabled:opacity-40">+ Add</button>
                 </div>
               ))}
             </div>
+          ) : loadedTxnId ? (
+            <p className="text-xs text-zinc-500">This transaction has no line items.</p>
+          ) : (
+            <p className="text-xs text-zinc-500">Enter a transaction ID above and click &ldquo;Load items&rdquo;.</p>
           )}
         </div>
 
@@ -203,7 +240,7 @@ export function ReturnsManager() {
                         setLines((p) => p.map((l, i) => i === idx ? { ...l, quantity: v } : l));
                       }} className="w-14 text-center rounded-lg border border-zinc-300 px-1 py-1 text-sm" />
                     </td>
-                    <td className="px-3 py-2 text-right text-zinc-800">${(line.quantity * line.unit_price).toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right text-zinc-800">{formatCurrency((line.quantity * line.unit_price))}</td>
                     <td className="px-3 py-2 text-center">
                       <input type="checkbox" checked={line.restock} onChange={(e) => {
                         setLines((p) => p.map((l, i) => i === idx ? { ...l, restock: e.target.checked } : l));
@@ -217,7 +254,7 @@ export function ReturnsManager() {
               </tbody>
               <tfoot><tr className="bg-zinc-50">
                 <td colSpan={2} className="px-3 py-2 text-right font-semibold text-zinc-700">Refund Total:</td>
-                <td className="px-3 py-2 text-right font-bold text-zinc-900">${refundTotal.toFixed(2)}</td>
+                <td className="px-3 py-2 text-right font-bold text-zinc-900">{formatCurrency(refundTotal)}</td>
                 <td colSpan={2}></td>
               </tr></tfoot>
             </table>
@@ -226,7 +263,7 @@ export function ReturnsManager() {
 
         <button onClick={handleCreate} disabled={saving || lines.length === 0}
           className="touch-button px-6 py-2.5 rounded-lg bg-teal-700 text-white font-semibold text-sm hover:bg-teal-800 disabled:opacity-40">
-          {saving ? 'Processing...' : `Create Return ($${refundTotal.toFixed(2)})`}
+          {saving ? 'Processing...' : `Create Return (${formatCurrency(refundTotal)})`}
         </button>
       </div>
     );
@@ -263,7 +300,7 @@ export function ReturnsManager() {
                   <td className="px-3 py-2.5 text-zinc-800">{r.customer_name || '—'}</td>
                   <td className="px-3 py-2.5 text-center text-xs text-zinc-600">{r.reason.replace('_', ' ')}</td>
                   <td className="px-3 py-2.5 text-center text-xs text-zinc-600">{r.refund_method.replace('_', ' ')}</td>
-                  <td className="px-3 py-2.5 text-right font-medium text-zinc-900">${Number(r.refund_amount).toFixed(2)}</td>
+                  <td className="px-3 py-2.5 text-right font-medium text-zinc-900">{formatCurrency(Number(r.refund_amount))}</td>
                   <td className="px-3 py-2.5 text-center text-zinc-600">{r.total_items}</td>
                   <td className="px-3 py-2.5 text-center">{statusBadge(r.status)}</td>
                   <td className="px-3 py-2.5 text-center">

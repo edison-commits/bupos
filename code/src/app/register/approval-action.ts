@@ -6,13 +6,14 @@ import { hasPermission } from "@/lib/domain/permissions";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { verifySecret } from "@/lib/auth/crypto";
 import { requireRegisterPermission } from "@/lib/authz";
-import type { PermissionKey } from "@/lib/domain/types";
+import { getRegisterConfig } from "@/lib/config/register-config";
+import type { PermissionKey, RoleKey } from "@/lib/domain/types";
 
 const isPg = () => !!process.env.USE_POSTGRES;
 
 export interface ApprovalRequest {
   /** The action that requires approval */
-  actionType: "discount_threshold" | "item_void" | "transaction_void" | "store_credit" | "price_override" | "return";
+  actionType: "discount_threshold" | "item_void" | "transaction_void" | "store_credit" | "price_override" | "return" | "store_credit_threshold" | "cash_payout";
   /** Amount that triggered the threshold */
   triggerAmount: number;
   /** Threshold value that was exceeded */
@@ -43,9 +44,49 @@ const approvalPermissionMap: Record<string, PermissionKey> = {
   item_void: "approval.void_item",
   transaction_void: "approval.void_transaction",
   store_credit: "approval.store_credit",
+  store_credit_threshold: "approval.store_credit",
   price_override: "approval.price_override",
   return: "approval.void_transaction", // returns use void_transaction permission
+  cash_payout: "approval.cash_payout",
 };
+
+/**
+ * Mapping from the UI actionType to the exception_code that checkout-action
+ * looks for in register_session_exceptions. These codes MUST match what
+ * checkout-action.ts checks (e.g. "discount_threshold", "price_override",
+ * "store_credit_threshold").
+ */
+function exceptionCodeFor(actionType: ApprovalRequest["actionType"]): string {
+  switch (actionType) {
+    case "store_credit": return "store_credit_threshold";
+    default: return actionType;
+  }
+}
+
+/**
+ * Which threshold field on `ApprovalThresholds` applies to a given action.
+ * Returns null for actions that always need approval regardless of amount
+ * (item voids, transaction voids, returns).
+ */
+function thresholdForAction(
+  actionType: ApprovalRequest["actionType"],
+  thresholds: { discountOver: number; storeCreditIssuanceOver: number; manualPriceOverrideOver: number; returnWithoutManagerOver: number; itemVoidOver: number; transactionVoidOver: number },
+): number | null {
+  switch (actionType) {
+    case "discount_threshold": return thresholds.discountOver;
+    case "store_credit":
+    case "store_credit_threshold": return thresholds.storeCreditIssuanceOver;
+    case "price_override": return thresholds.manualPriceOverrideOver;
+    case "return": return thresholds.returnWithoutManagerOver;
+    case "item_void": return thresholds.itemVoidOver;
+    case "transaction_void": return thresholds.transactionVoidOver;
+    // Pay-out uses the transactionVoidOver threshold today (same $50 default)
+    // but maps to a distinct exception code so a transaction_void approval
+    // can't be reused for a cash pay-out, and vice versa.
+    case "cash_payout": return thresholds.transactionVoidOver;
+    default: return null;
+  }
+}
 
 /**
  * Verify a manager PIN and record the approval/denial.
@@ -57,25 +98,60 @@ export async function verifyManagerApproval(pin: string, request: ApprovalReques
   const locationId = authCtx.location.id;
   const cashierEmployeeId = authCtx.employee.id;
 
-  // Rate-limit manager approval PINs (5 attempts/min per location)
-  const rl = checkRateLimit(`approval:${locationId}`);
+  // R16-L-3: rate-limit per (location, cashier) so one cashier's mistypes
+  // don't lock out every cashier at the location. Previously keyed on just
+  // `approval:${locationId}` — 5 attempts/min shared across the whole
+  // store meant one confused cashier could block all approvals for a
+  // minute. Per-cashier scope preserves DoS defense without cross-impact.
+  const rl = checkRateLimit(`approval:${locationId}:${cashierEmployeeId}`);
   if (!rl.allowed) {
     return { approved: false, reason: "Too many attempts. Please wait before trying again." };
   }
 
-  // 1. Resolve the PIN to an employee
-  const store = await readStore(organizationId);
+  // 1. Resolve the PIN to an employee.
+  // PG path: targeted SELECT instead of the full-store RPC — the previous
+  // `readStore(organizationId)` call parsed the entire org store (~all
+  // products/variants/inventory/customers) just to look up a single
+  // employee. Every manager-approval fire paid that CPU cost, which on
+  // large orgs was enough to trip Cloudflare's error-1102 CPU limit
+  // during back-to-back checkouts. The JSON dev path still uses readStore
+  // because the credential hashes live in the in-memory store there.
+  let approverEmployee: { id: string; displayName: string; roleKey: RoleKey; isActive: boolean } | null = null;
 
-  // Find employee by PIN — resolve via the hashed PIN credentials in the authCredentials table.
-  // No hardcoded dev PINs; every approver must use their real stored credential.
-  let approverEmployee = null;
-
-  for (const cred of store.authCredentials) {
-    if (cred.pinHash && await verifySecret(pin, cred.pinHash)) {
-      approverEmployee = store.employees.find(
-        (e) => e.id === cred.employeeId && e.isActive,
+  if (isPg()) {
+    const { pgFindCredentialByPin } = await import("@/lib/persistence/postgres-store");
+    const cred = await pgFindCredentialByPin(pin, organizationId);
+    if (cred) {
+      const { orgQuery } = await import("@/lib/supabase-rest");
+      const { rows } = await orgQuery(
+        organizationId,
+        `SELECT id, role_key, display_name, is_active
+         FROM employees
+         WHERE id = $1 AND organization_id = $2 AND is_active = true
+         LIMIT 1`,
+        [cred.employeeId, organizationId],
       );
-      break;
+      const r = rows[0] as Record<string, unknown> | undefined;
+      if (r) {
+        approverEmployee = {
+          id: r.id as string,
+          displayName: r.display_name as string,
+          roleKey: r.role_key as RoleKey,
+          isActive: r.is_active as boolean,
+        };
+      }
+    }
+  } else {
+    // JSON fallback path — store.authCredentials has hashes in JSON mode
+    const store = await readStore(organizationId);
+    for (const cred of store.authCredentials) {
+      if (cred.pinHash && await verifySecret(pin, cred.pinHash)) {
+        const emp = store.employees.find((e) => e.id === cred.employeeId && e.isActive);
+        if (emp) {
+          approverEmployee = { id: emp.id, displayName: emp.displayName, roleKey: emp.roleKey, isActive: emp.isActive };
+        }
+        break;
+      }
     }
   }
 
@@ -83,10 +159,17 @@ export async function verifyManagerApproval(pin: string, request: ApprovalReques
     return { approved: false, reason: "Invalid manager PIN." };
   }
 
-  // 2. Check the approver has the right permission
+  // 2. Check the approver has the right permission.
+  //
+  // R14-M-4: do NOT echo the employee's display_name in the failure message.
+  // That leaked the name when an attacker brute-forced PINs — a valid-but-
+  // non-permitted PIN would return a name, a wrong PIN returned "Invalid
+  // manager PIN". Attackers could scan PINs and build a {pin → name} map.
+  // Generic permission message says nothing about WHICH employee the PIN
+  // belonged to.
   const requiredPermission = approvalPermissionMap[request.actionType];
   if (!requiredPermission || !hasPermission(approverEmployee.roleKey, requiredPermission)) {
-    return { approved: false, reason: `${approverEmployee.displayName} does not have ${request.actionType} approval permission.` };
+    return { approved: false, reason: "That PIN does not have approval permission for this action." };
   }
 
   // 3. Approver must not be the same as the cashier (unless they are an owner)
@@ -94,79 +177,68 @@ export async function verifyManagerApproval(pin: string, request: ApprovalReques
     return { approved: false, reason: "A different manager must approve this action." };
   }
 
-  // 4. Record the approval as a transaction exception
+  // 3b. SERVER-SIDE threshold verification — never trust client-supplied
+  // triggerAmount/thresholdAmount values. The cashier (or compromised client)
+  // could claim triggerAmount: 10, thresholdAmount: 9 to get a manager PIN
+  // approval for a trivial amount, then later reuse that approval for a
+  // $10,000 discount. Look up the real threshold for this action type.
+  const regConfig = await getRegisterConfig(organizationId);
+  const realThreshold = thresholdForAction(request.actionType, regConfig.approvalThresholds);
+  if (realThreshold === null) {
+    // Not a threshold-bounded action (e.g. item_void, transaction_void, return) —
+    // those always require approval regardless of amount, so no numeric check needed.
+  } else if (request.triggerAmount < realThreshold - 0.005) {
+    return { approved: false, reason: "This action does not exceed the approval threshold." };
+  }
+
+  // 4. Record the approval in register_session_exceptions so the NEXT checkout
+  //    in this register session sees it as a pending approval. checkout-action
+  //    queries this table with status='pending' and (expires_at IS NULL OR expires_at > now()).
   const exceptionId = randomUUID();
   const timestamp = new Date().toISOString();
+  const exceptionCode = exceptionCodeFor(request.actionType);
+  // Approvals are valid for 10 minutes — plenty of time to finish the checkout.
+  const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
+  const registerSessionId = authCtx.registerSession.id;
 
   if (isPg()) {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    if (supabaseUrl && supabaseKey) {
-      // Supabase REST path — single RPC handles exception + audit atomically
-      const sbHeaders = {
-        apikey: supabaseKey,
-        Authorization: `Bearer ${supabaseKey}`,
-        'Content-Type': 'application/json',
-        Prefer: 'return=minimal',
-      };
-      await fetch(`${supabaseUrl}/rest/v1/rpc/register_insert_exception`, {
-        method: 'POST', headers: sbHeaders,
-        body: JSON.stringify({
-          p_exception_id: exceptionId,
-          p_action_type: request.actionType,
-          p_approver_id: approverEmployee.id,
-          p_reason_code: request.reasonCode ?? null,
-          p_trigger_amount: request.triggerAmount,
-          p_threshold_amount: request.thresholdAmount,
-          p_details: request.details ?? null,
-          p_org_id: organizationId,
-          p_location_id: locationId,
-          p_cashier_id: cashierEmployeeId,
-        }),
-      });
-    } else {
-      // Pool fallback (local dev)
-      const { orgTx } = await import("@/lib/db");
-      const client = await orgTx(organizationId);
-      try {
-        await client.query(
-          `INSERT INTO transaction_exceptions (id, transaction_id, exception_code, requires_manager_approval, approved_by_employee_id, reason_code, trigger_amount, threshold_amount, resolved_at, details)
-           VALUES ($1, $2, $3, true, $4, $5, $6, $7, $8, $9)`,
-          [exceptionId, "pending_" + exceptionId, request.actionType, approverEmployee.id,
-            request.reasonCode ?? null, request.triggerAmount, request.thresholdAmount, timestamp, request.details ?? null],
-        );
-        await client.query("COMMIT");
-      } finally {
-        client.release();
-      }
-
-      try {
-        const { default: pool } = await import("@/lib/db");
-        await pool.query(
-          `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [randomUUID(), organizationId, locationId, approverEmployee.id, "transaction_exception", exceptionId,
-            "manager_override", JSON.stringify({
-              action_type: request.actionType, cashier_employee_id: cashierEmployeeId,
-              approver_employee_id: approverEmployee.id,
-              trigger_amount: request.triggerAmount.toFixed(2), threshold_amount: request.thresholdAmount.toFixed(2),
-              reason_code: request.reasonCode ?? "none",
-            })],
-        );
-      } catch (err) {
-        console.error("[approval-action] audit event failed:", err);
-      }
+    const { orgTx } = await import("@/lib/supabase-rest");
+    const client = await orgTx(organizationId);
+    try {
+      await client.query(
+        `INSERT INTO register_session_exceptions (id, register_session_id, exception_code, status, approved_by, expires_at, created_at)
+         VALUES ($1, $2, $3, 'pending', $4, $5, $6)`,
+        [exceptionId, registerSessionId, exceptionCode, approverEmployee.id, expiresAt, timestamp],
+      );
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
     }
+
+    // Audit event — outside tx, best-effort. Route through pgInsertAuditEvent
+    // so `app.current_org_id` is set (R8-H-2 / R9-L-1); raw pool.query relied
+    // on BYPASSRLS and would silently stop inserting if that privilege is
+    // ever dropped.
+    const { pgInsertAuditEvent } = await import("@/lib/persistence/postgres-store");
+    await pgInsertAuditEvent(
+      organizationId, locationId, approverEmployee.id,
+      "register_session_exception", exceptionId, "manager_override",
+      {
+        action_type: request.actionType,
+        exception_code: exceptionCode,
+        register_session_id: registerSessionId,
+        cashier_employee_id: cashierEmployeeId,
+        approver_employee_id: approverEmployee.id,
+        trigger_amount: request.triggerAmount.toFixed(2),
+        threshold_amount: request.thresholdAmount.toFixed(2),
+        reason_code: request.reasonCode ?? "none",
+      },
+    );
   } else {
     await mutateStore((s) => {
-      s.transactionExceptionPlaceholders.unshift({
-        id: exceptionId,
-        transactionId: "pending_" + exceptionId,
-        exceptionCode: request.actionType as "discount_threshold",
-        requiresManagerApproval: true,
-        resolvedAt: timestamp,
-      });
-
       s.transactionEventPlaceholders.unshift({
         id: randomUUID(),
         transactionId: "pending_" + exceptionId,
@@ -175,6 +247,8 @@ export async function verifyManagerApproval(pin: string, request: ApprovalReques
         notes: `Manager ${approverEmployee!.displayName} approved ${request.actionType} for cashier ${cashierEmployeeId}`,
         payload: {
           action_type: request.actionType,
+          exception_code: exceptionCode,
+          register_session_id: registerSessionId,
           cashier_employee_id: cashierEmployeeId,
           trigger_amount: request.triggerAmount.toFixed(2),
           threshold_amount: request.thresholdAmount.toFixed(2),
