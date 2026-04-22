@@ -108,10 +108,12 @@ describe("R38 findings", () => {
   describe("R38-B-F1: REVOKE FROM anon on every customer-data table", () => {
     const mig = read("supabase/migrations/067_r38_hardening.sql");
     it("revokes anon + authenticated from the customer-data tables", () => {
-      expect(mig).toMatch(/REVOKE ALL ON TABLE[\s\S]+?FROM anon, authenticated/);
-      expect(mig).toMatch(/organizations,/);
-      expect(mig).toMatch(/audit_events,/);
-      expect(mig).toMatch(/rate_limit_buckets,/);
+      // Per-table REVOKE runs through a DO block with a quoted array so
+      // missing tables just skip instead of aborting the migration.
+      expect(mig).toMatch(/REVOKE ALL ON TABLE public\.%I FROM anon, authenticated/);
+      expect(mig).toMatch(/'organizations'/);
+      expect(mig).toMatch(/'audit_events'/);
+      expect(mig).toMatch(/'rate_limit_buckets'/);
     });
     it("rate_limit_buckets policy now scoped to service_role", () => {
       expect(mig).toMatch(/CREATE POLICY rate_limit_buckets_all ON rate_limit_buckets[\s\S]+?FOR ALL TO service_role/);
@@ -162,9 +164,10 @@ describe("R38 findings", () => {
       expect(mig).toMatch(/'layaway_payments'/);
     });
     it("promo_redemptions gets UPDATE + TRUNCATE but NOT DELETE (refund legitimate)", () => {
-      expect(mig).toMatch(/CREATE TRIGGER trg_promo_redemptions_no_update/);
-      expect(mig).toMatch(/CREATE TRIGGER trg_promo_redemptions_no_truncate/);
-      expect(mig).not.toMatch(/CREATE TRIGGER trg_promo_redemptions_no_delete/);
+      expect(mig).toMatch(/trg_promo_redemptions_no_update/);
+      expect(mig).toMatch(/trg_promo_redemptions_no_truncate/);
+      // DELETE trigger would break the register refund flow.
+      expect(mig).not.toMatch(/trg_promo_redemptions_no_delete/);
     });
   });
 
