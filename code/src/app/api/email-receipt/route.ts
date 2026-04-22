@@ -3,6 +3,7 @@ import { withDualAuth } from "@/lib/api/with-auth";
 import { orgQuery } from "@/lib/supabase-rest";
 import { validateBody, emailReceiptSchema } from "@/lib/validation/schemas";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
+import { escapeHtml } from "@/lib/format/html-escape";
 
 import { safeErr } from "@/lib/logging/safe-err";
 /**
@@ -175,10 +176,11 @@ export const POST = withDualAuth("register.open", async (req, ctx) => {
 
     const fromEmail = process.env.RESEND_FROM_EMAIL || "receipts@basicuniformpos.com";
 
-    // HTML escape helper to prevent XSS in user-controlled fields
-    const esc = (s: string) => String(s).replace(/[&<>"']/g, (c) => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    })[c]!);
+    // R39-A1-6: `esc` is the shared `escapeHtml` — imported at the top
+    // of this module. Prior inline copy had the same 5-char coverage
+    // but forked the implementation; a future tightening (e.g. adding
+    // backtick for attribute-context XSS) would not propagate here.
+    const esc = escapeHtml;
 
     // Build HTML receipt
     const itemHtmlRows = items.map((item) => {

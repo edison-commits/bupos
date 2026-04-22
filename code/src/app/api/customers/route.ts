@@ -306,3 +306,109 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
     return NextResponse.json({ error: 'Failed to update customer' }, { status: 500 });
   }
 });
+
+// R39-A1-1: right-to-be-forgotten. We do NOT hard-delete — that would
+// wipe financial history (transactions, store_credit_ledger, layaways)
+// that retail tax law requires for 7 years and that chargeback
+// disputes need. Instead we null-anonymize PII IN PLACE:
+//   • first_name → "[deleted]"
+//   • last_name  → ""
+//   • email      → NULL
+//   • phone      → NULL
+//   • address    → NULL
+//   • notes      → NULL
+//   • is_active  → false
+// The row retains `id`, `loyalty_points=0`, `store_credit_balance=0`
+// (both zeroed), `total_spend`, `visit_count`, `created_at`. Linked
+// transactions keep their `customer_id` (RESTRICT FK per mig 068
+// prevents accidental DELETE). Gated on step-up so a stolen cookie
+// can't mass-anonymize customers. `employee.manage` permission +
+// owner/manager role required.
+export const DELETE = withAdminAuth('employee.manage', async (request, ctx) => {
+  const { orgId, employee } = ctx;
+  if (employee.roleKey !== 'owner' && employee.roleKey !== 'manager') {
+    return NextResponse.json({ error: 'Manager authority required' }, { status: 403 });
+  }
+  const rl = checkRateLimit(`customers:delete:${orgId}`, { maxAttempts: 10, windowMs: 60_000 });
+  if (!rl.allowed) {
+    return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
+  }
+  try {
+    const body = await request.json().catch(() => ({}));
+    const id = (body as { id?: string }).id;
+    if (typeof id !== 'string' || !/^[0-9a-f-]{36}$/i.test(id)) {
+      return NextResponse.json({ error: 'Invalid customer id' }, { status: 400 });
+    }
+    // Mandatory step-up — hard-scoped destructive action.
+    const { requireStepUp } = await import('@/lib/auth/step-up');
+    const actorPassword = (body as { actorPassword?: string }).actorPassword;
+    const stepUp = await requireStepUp({
+      actorId: employee.id,
+      orgId,
+      actorPassword: typeof actorPassword === 'string' ? actorPassword : undefined,
+      bucketKey: 'customer-delete-stepup',
+    });
+    if (!stepUp.ok) {
+      return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
+    }
+    // Check the customer isn't blocking: outstanding layaway, store
+    // credit balance, or gift card balance. If so, require the
+    // manager to unwind first (the FK RESTRICT would fail anyway on
+    // a real hard-delete attempt; we enforce at the app layer too so
+    // the error message is actionable).
+    const { rows: blockerRows } = await orgQuery(
+      orgId,
+      `SELECT
+         COALESCE((SELECT COUNT(*) FROM layaways WHERE customer_id = $1 AND status IN ('active', 'partially_paid')), 0)::int AS open_layaways,
+         COALESCE((SELECT store_credit_balance FROM customers WHERE id = $1 AND organization_id = $2), 0)::numeric AS store_credit,
+         COALESCE((SELECT SUM(balance) FROM gift_cards WHERE customer_id = $1 AND status = 'active'), 0)::numeric AS gift_cards`,
+      [id, orgId],
+    );
+    const blocker = (blockerRows[0] ?? {}) as { open_layaways: number; store_credit: string; gift_cards: string };
+    if (Number(blocker.open_layaways) > 0) {
+      return NextResponse.json({
+        error: `Customer has ${blocker.open_layaways} open layaway(s). Close or forfeit first.`,
+      }, { status: 409 });
+    }
+    if (Number(blocker.store_credit) > 0.005) {
+      return NextResponse.json({
+        error: `Customer has ${blocker.store_credit} outstanding store credit. Redeem or zero out first.`,
+      }, { status: 409 });
+    }
+    if (Number(blocker.gift_cards) > 0.005) {
+      return NextResponse.json({
+        error: `Customer holds ${blocker.gift_cards} in active gift card balances. Transfer or disable first.`,
+      }, { status: 409 });
+    }
+
+    const { rows: updated } = await orgQuery(
+      orgId,
+      `UPDATE customers
+          SET first_name = '[deleted]',
+              last_name  = '',
+              email      = NULL,
+              phone      = NULL,
+              address    = NULL,
+              notes      = NULL,
+              is_active  = false,
+              loyalty_points = 0,
+              store_credit_balance = 0,
+              updated_at = NOW()
+        WHERE id = $1 AND organization_id = $2
+        RETURNING id`,
+      [id, orgId],
+    );
+    if (updated.length === 0) {
+      return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
+    }
+    await waitUntilOrAwait(pgInsertAuditEvent(
+      orgId, null, employee.id,
+      "customer", id, "customer_anonymized",
+      { id, right_to_be_forgotten: true },
+    ).catch((err) => console.error("[audit] customer_anonymized failed:", safeErr(err))));
+    return NextResponse.json({ success: true, anonymized: true });
+  } catch (error) {
+    console.error('Customers DELETE error:', safeErr(error));
+    return NextResponse.json({ error: 'Failed to anonymize customer' }, { status: 500 });
+  }
+});

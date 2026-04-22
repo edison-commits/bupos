@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { orgQuery } from "@/lib/supabase-rest";
 import { withAdminAuth } from "@/lib/api/with-auth";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
+import { csvCell } from "@/lib/format/csv-sanitize";
 
 import { safeErr } from "@/lib/logging/safe-err";
 // M-05: Validate date params to prevent Content-Disposition header injection
@@ -256,38 +257,17 @@ export const GET = withAdminAuth("reports.export", async (req, ctx) => {
   }
 });
 
-/** Neutralize CSV formula injection.
- *
- * Excel/LibreOffice treat cells starting with `= + - @` AS WELL AS `\t` (tab,
- * 0x09) and `\r` (CR, 0x0D) as formulas — leading whitespace is stripped
- * before the parser runs. A BOM (0xFEFF) prefix can also slip a formula past
- * a naïve first-byte check. Strip leading invisible runs to detect the real
- * first visible char, then prefix the ORIGINAL string with a single quote so
- * the stored data isn't mutated beyond the escape.
- */
-function sanitizeCsvCell(str: string): string {
-  if (str.length === 0) return str;
-  const stripped = str.replace(/^[\uFEFF\u200B\s]+/, "");
-  if (stripped.length > 0 && /^[=+\-@\t\r]/.test(stripped)) {
-    return "'" + str;
-  }
-  return str;
-}
+// R39-A2-7: sanitizeCsvCell moved to `@/lib/format/csv-sanitize` so
+// server + client paths share ONE canonical implementation. See that
+// module for the full rationale on leading-invisible-char stripping
+// and formula-char prefix list. `csvCell` composes sanitize + the
+// comma/quote/newline escape in a single call.
 
 /** Convert an array of objects to CSV string */
 function toCsv(rows: Record<string, unknown>[], columns: string[]): string {
   const header = columns.join(",");
   const body = rows.map((row) =>
-    columns.map((col) => {
-      const val = row[col];
-      if (val === null || val === undefined) return "";
-      const str = sanitizeCsvCell(String(val));
-      // Escape commas, quotes, and newlines
-      if (str.includes(",") || str.includes('"') || str.includes("\n")) {
-        return `"${str.replace(/"/g, '""')}"`;
-      }
-      return str;
-    }).join(",")
+    columns.map((col) => csvCell(row[col])).join(",")
   ).join("\n");
   return `${header}\n${body}`;
 }

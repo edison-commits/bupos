@@ -188,14 +188,17 @@ describe("R27 attack-chain B regression: auth-path hardening", () => {
   });
 
   describe("M3 — password recovery + session revocation routes exist", () => {
-    it("/api/auth/password-change requires re-auth + kills all admin sessions", () => {
+    it("/api/auth/password-change requires re-auth + kills all sessions", () => {
       const src = read("src/app/api/auth/password-change/route.ts");
       // Re-auth check.
       expect(src).toMatch(/verifySecret\(currentPassword, currentHash\)/);
-      // All admin sessions killed on success.
+      // R39-A1-5: ALL sessions (admin + register) killed on success.
+      // Prior shape used `scope = 'admin' AND employee_id = $1` which
+      // left register PIN sessions alive after a password rotation.
       expect(src).toMatch(
-        /DELETE FROM sessions WHERE scope = 'admin' AND employee_id = \$1/,
+        /DELETE FROM sessions WHERE employee_id = \$1/,
       );
+      expect(src).not.toMatch(/scope = 'admin' AND employee_id = \$1/);
     });
 
     it("/api/auth/password-reset-initiate always returns 200 (no email oracle)", () => {
@@ -214,10 +217,13 @@ describe("R27 attack-chain B regression: auth-path hardening", () => {
       expect(src).toMatch(/DELETE FROM password_resets[\s\S]*?RETURNING/);
       // Password rotated.
       expect(src).toMatch(/UPDATE auth_credentials[\s\S]*?SET password_hash/);
-      // Sessions killed.
+      // R39-A1-5: ALL sessions (admin + register) killed — a password
+      // reset after phishing didn't actually close the compromised
+      // surface if the attacker held a register PIN session too.
       expect(src).toMatch(
-        /DELETE FROM sessions WHERE scope = 'admin' AND employee_id = \$1/,
+        /DELETE FROM sessions WHERE employee_id = \$1/,
       );
+      expect(src).not.toMatch(/scope = 'admin' AND employee_id = \$1/);
     });
 
     it("/api/auth/revoke-all-sessions requires admin session + checkOrigin + clears cookie", () => {

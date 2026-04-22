@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { orgQuery } from "@/lib/supabase-rest";
 import { withDualAuth, withAdminAuth } from "@/lib/api/with-auth";
 import { validateBody, taxConfigUpdateSchema } from "@/lib/validation/schemas";
+import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
+import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
 
 
 import { safeErr } from "@/lib/logging/safe-err";
@@ -62,7 +64,7 @@ export const GET = withDualAuth("catalog.manage", async (req, ctx) => {
 // Tax rate affects every checkout. Restrict to manager/owner via employee.manage
 // instead of catalog.manage (which inventory_clerk also has).
 export const PUT = withAdminAuth('employee.manage', async (req, ctx) => {
-  const { orgId } = ctx;
+  const { orgId, employee } = ctx;
   try {
     const body = await req.json();
     const v = validateBody(taxConfigUpdateSchema, body);
@@ -71,6 +73,16 @@ export const PUT = withAdminAuth('employee.manage', async (req, ctx) => {
 
     // R27: explicit org filter on UPDATE — without it any tenant's
     // owner could change any other tenant's tax rate.
+    // R39-A1-2: capture the OLD rate so the audit event records the
+    // full transition. Tax-rate change is the single highest-fraud-
+    // risk admin mutation (owner flips rate mid-day, pockets delta),
+    // and prior shape wrote NO audit event for this at all.
+    const { rows: priorRows } = await orgQuery(
+      orgId,
+      `SELECT tax_rate FROM locations WHERE id = $1 AND organization_id = $2`,
+      [locationId, orgId],
+    );
+    const priorTaxRate = priorRows[0]?.tax_rate ?? null;
     const result = await orgQuery(
       orgId,
       `UPDATE locations SET tax_rate = $1, updated_at = now() WHERE id = $2 AND organization_id = $3 RETURNING id, name, tax_rate`,
@@ -80,6 +92,16 @@ export const PUT = withAdminAuth('employee.manage', async (req, ctx) => {
     if (result.rows.length === 0) {
       return NextResponse.json({ error: "Location not found" }, { status: 404 });
     }
+
+    // R39-A1-2: audit the change.
+    await waitUntilOrAwait(pgInsertAuditEvent(
+      orgId, locationId, employee.id,
+      "location", locationId, "tax_rate_changed",
+      {
+        prior_tax_rate: priorTaxRate !== null ? String(priorTaxRate) : null,
+        new_tax_rate: String(taxRate),
+      },
+    ).catch((err) => console.error("[audit] tax_rate_changed failed:", safeErr(err))));
 
     return NextResponse.json({
       location: result.rows[0],

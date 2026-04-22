@@ -44,18 +44,50 @@ export const GET = withAdminAuth("audit.view", async () => {
         { status: 503, headers: NO_STORE_HEADERS },
       );
     }
+
+    // R39-A1-4: verify the audit-events tamper triggers are still
+    // armed. A DBA (or compromised service-role key) can
+    // `DROP TRIGGER trg_audit_events_no_update ON audit_events` to
+    // disarm the tamper-prevent safety net and silently edit the
+    // audit log. Probe the `check_audit_triggers()` helper installed
+    // by migration 068 and surface missing triggers to the dashboard.
+    // Soft-fail — missing helper means the DB predates mig 068 and
+    // we report `unknown`, not `unhealthy`, so the health page
+    // doesn't break during a deploy window.
+    let auditTriggers: {
+      status: "ok" | "missing" | "unknown";
+      missing?: string[];
+    };
+    try {
+      const { rows: trigRows } = await pool.query(
+        `SELECT trigger_name, is_present FROM check_audit_triggers()`,
+      );
+      const missing = (trigRows as Array<{ trigger_name: string; is_present: boolean }>)
+        .filter((r) => !r.is_present)
+        .map((r) => r.trigger_name);
+      auditTriggers = missing.length === 0
+        ? { status: "ok" }
+        : { status: "missing", missing };
+    } catch {
+      auditTriggers = { status: "unknown" };
+    }
+
     return NextResponse.json(
       {
-        status: "ok",
+        status: auditTriggers.status === "missing" ? "degraded" : "ok",
         database: {
           connected: true,
           latencyMs: dbLatencyMs,
           pgVersion: rows[0]?.pg_version_num,
         },
         rateLimitKv: kvProbe,
+        auditTriggers,
         timestamp: new Date().toISOString(),
       },
-      { headers: NO_STORE_HEADERS },
+      {
+        status: auditTriggers.status === "missing" ? 503 : 200,
+        headers: NO_STORE_HEADERS,
+      },
     );
   } catch (err) {
     console.error("[admin/health] DB check failed:", safeErr(err));

@@ -133,9 +133,13 @@ export async function POST(req: NextRequest) {
     // pathological cross-tenant id collision can't wipe another
     // tenant's admin sessions. Redundant under correct ctx but cheap
     // defense in depth.
+    // R39-A1-5: drop the `scope = 'admin'` filter so register (PIN)
+    // sessions also get revoked. "Sign out everywhere" was misleading
+    // — a compromised admin who also had a register PIN could keep
+    // using the register session indefinitely. Revoke both scopes.
     await pool.query(
       `DELETE FROM sessions
-        WHERE scope = 'admin' AND employee_id = $1
+        WHERE employee_id = $1
           AND employee_id IN (SELECT id FROM employees WHERE organization_id = $2)`,
       [ctx.employee.id, ctx.employee.organizationId],
     );

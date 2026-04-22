@@ -5,6 +5,8 @@ import { randomUUID } from "@/lib/uuid";
 import { validateBody, promoCodeSchema } from "@/lib/validation/schemas";
 import { formatCurrency } from "@/lib/format";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
+import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
+import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
 
 
 import { safeErr } from "@/lib/logging/safe-err";
@@ -232,6 +234,22 @@ export const POST = withAdminAuth("pricing.manage", async (req, ctx) => {
         ],
       );
 
+      // R39-A1-2: audit promo-code creation. Promos create a
+      // direct fraud vector (100%-off code issued to accomplice),
+      // so every create/disable/update needs an audit trail.
+      await waitUntilOrAwait(pgInsertAuditEvent(
+        orgId, null, employee.id,
+        "promo_code", promoId, "promo_code_created",
+        {
+          code: code.toUpperCase(),
+          type,
+          value: String(value),
+          minimum_purchase: String(minimumPurchase || 0),
+          max_redemptions: maxRedemptions ?? null,
+          max_redemptions_per_customer: maxRedemptionsPerCustomer ?? null,
+        },
+      ).catch((err) => console.error("[audit] promo_code_created failed:", safeErr(err))));
+
       return NextResponse.json({ id: promoId, code: code.toUpperCase(), status: "active" }, { status: 201 });
     }
 
@@ -445,6 +463,13 @@ export const POST = withAdminAuth("pricing.manage", async (req, ctx) => {
         `UPDATE promo_codes SET status = 'disabled', updated_at = now() WHERE id = $1 AND organization_id = $2`,
         [promoCodeId, orgId],
       );
+      // R39-A1-2: audit promo disable (e.g., owner pulls their own
+      // honeypot promo before investigation).
+      await waitUntilOrAwait(pgInsertAuditEvent(
+        orgId, null, employee.id,
+        "promo_code", promoCodeId, "promo_code_disabled",
+        {},
+      ).catch((err) => console.error("[audit] promo_code_disabled failed:", safeErr(err))));
       return NextResponse.json({ id: promoCodeId, status: "disabled" });
     }
 

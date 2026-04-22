@@ -1,19 +1,22 @@
 "use client";
 
 import type { LocalStoreData } from "@/lib/persistence/types";
+import { csvCell } from "@/lib/format/csv-sanitize";
 
 interface DataExportProps {
   store: LocalStoreData;
 }
 
+// R39-A2-7: delegate to the shared `csvCell` helper so every cell
+// is formula-injection-sanitized (leading `=`/`+`/`-`/`@`/`\t`/`\r`
+// prefix with `'` before quoting). The prior inline helper only
+// double-quoted cells, which does NOT stop Excel from executing
+// `"=HYPERLINK(…)"` when opened. Server-side `/api/export` uses the
+// same shared helper so prevention stays in sync.
 function downloadCSV(filename: string, headers: string[], rows: string[][]) {
   const csv = [
-    headers.join(","),
-    ...rows.map((r) =>
-      r
-        .map((cell) => `"${String(cell).replace(/"/g, '""')}"`)
-        .join(",")
-    ),
+    headers.map((h) => csvCell(h)).join(","),
+    ...rows.map((r) => r.map((cell) => csvCell(cell)).join(",")),
   ].join("\n");
   const blob = new Blob([csv], { type: "text/csv" });
   const url = URL.createObjectURL(blob);

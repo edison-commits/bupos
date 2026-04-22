@@ -63,6 +63,16 @@ function escXml(s: string): string {
 }
 
 function generateBarcodeSVG(text: string, width: number, height: number): string {
+  // R39-A2-9: clamp numeric SVG dimensions defensively. Today every
+  // caller passes constants from `sizeConfig`, so this is pure belt-
+  // and-suspenders — but a future caller wiring user input into the
+  // size would otherwise let `width = '0 0" onload="alert(1)'`
+  // break out of the `viewBox` attribute and land script in the
+  // DOM. Numeric clamp makes that impossible regardless of caller.
+  const w = Math.max(50, Math.min(2000, Number(width) || 0));
+  const h = Math.max(20, Math.min(1000, Number(height) || 0));
+  width = w;
+  height = h;
   const patterns = encodeCode128B(text);
   const bars: string[] = [];
   let x = 10; // quiet zone

@@ -146,8 +146,12 @@ export async function POST(req: NextRequest) {
     // The client must log in again with the new password — which is
     // the correct UX for "I just rotated my password".
     try {
+      // R39-A1-5: revoke BOTH admin and register sessions on
+      // password change. Prior `scope = 'admin'` filter left the
+      // PIN-scoped register session alive — a stolen device still
+      // worked until the PIN-session's natural expiry.
       await pool.query(
-        `DELETE FROM sessions WHERE scope = 'admin' AND employee_id = $1`,
+        `DELETE FROM sessions WHERE employee_id = $1`,
         [ctx.employee.id],
       );
     } catch (err) {

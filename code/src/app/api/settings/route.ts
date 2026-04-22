@@ -3,6 +3,8 @@ import { orgQuery } from '@/lib/supabase-rest';
 import { withDualAuth, withAdminAuth } from '@/lib/api/with-auth';
 import { validateBody, settingsUpdateSchema } from '@/lib/validation/schemas';
 import { checkRateLimit } from '@/lib/auth/rate-limit';
+import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
+import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
 
 import { safeErr } from "@/lib/logging/safe-err";
 export const GET = withDualAuth("catalog.manage", async (req, ctx) => {
@@ -142,6 +144,14 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
           (offset) => ({ sql: `id = $${offset}`, params: [orgId] }),
         );
         if (upd) await orgQuery(orgId, upd.sql, upd.params);
+        // R39-A1-2: audit store-identity changes (name, legal name,
+        // phone, timezone, currency code all shift what customers
+        // see and how receipts render).
+        await waitUntilOrAwait(pgInsertAuditEvent(
+          orgId, null, ctx.employee.id,
+          "organization", orgId, "settings_updated",
+          { section: 'store', keys: Object.keys(data as Record<string, unknown>) },
+        ).catch((err) => console.error("[audit] settings_updated failed:", safeErr(err))));
         return NextResponse.json({ success: true });
       }
 
@@ -154,6 +164,16 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
           (offset) => ({ sql: `id = $${offset} AND organization_id = $${offset + 1}`, params: [locationId, orgId] }),
         );
         if (upd) await orgQuery(orgId, upd.sql, upd.params);
+        // R39-A1-2: audit location settings changes, especially
+        // `taxRate` — this sibling path to /api/tax-config PUT was
+        // similarly un-audited. Tax-rate change via the settings
+        // section is the exact flank /api/tax-config's new audit
+        // event covers.
+        await waitUntilOrAwait(pgInsertAuditEvent(
+          orgId, locationId ?? null, ctx.employee.id,
+          "location", locationId ?? orgId, "settings_updated",
+          { section: 'location', keys: Object.keys(data as Record<string, unknown>) },
+        ).catch((err) => console.error("[audit] settings_updated failed:", safeErr(err))));
         // Return full settings after update so client state stays valid
         const [updatedOrg, updatedLocation] = await Promise.all([
           // check-pool-org-filter: scoped-by-organizations-id-is-orgId
@@ -208,6 +228,17 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
           (offset) => ({ sql: `id = $${offset}`, params: [orgId] }),
         );
         if (upd) await orgQuery(orgId, upd.sql, upd.params);
+        // R39-A1-2: audit settings mutations. Receipt identity
+        // (name/address/phone) is a customer-facing brand signal —
+        // changes matter for disputes ("receipt said XYZ Co, charge
+        // was from ABC Inc"). Don't serialize the full payload into
+        // the audit row (could include a very long header/footer
+        // string); just record the keys that changed.
+        await waitUntilOrAwait(pgInsertAuditEvent(
+          orgId, locationId ?? null, ctx.employee.id,
+          "organization", orgId, "settings_updated",
+          { section: 'receipt', keys: Object.keys(data as Record<string, unknown>) },
+        ).catch((err) => console.error("[audit] settings_updated failed:", safeErr(err))));
         return NextResponse.json({ success: true });
       }
 

@@ -120,12 +120,17 @@ export async function POST(req: NextRequest) {
       client.release();
     }
 
-    // R27-M3: invalidate ALL admin sessions for this employee so any
-    // attacker holding a stolen cookie is locked out.
+    // R27-M3 + R39-A1-5: invalidate ALL sessions (both admin AND
+    // register/PIN scope) for this employee so any attacker holding
+    // a stolen cookie — in either scope — is locked out. Prior
+    // `scope = 'admin'` filter left the register PIN session alive,
+    // meaning a password reset after a phishing incident didn't
+    // actually close the compromised surface if the attacker had
+    // also picked up a register device.
     if (employeeId) {
       try {
         await pool.query(
-          `DELETE FROM sessions WHERE scope = 'admin' AND employee_id = $1`,
+          `DELETE FROM sessions WHERE employee_id = $1`,
           [employeeId],
         );
       } catch (err) {
