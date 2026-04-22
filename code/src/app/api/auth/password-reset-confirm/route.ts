@@ -31,6 +31,12 @@ import { getPool } from "@/lib/supabase-rest";
 import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 import { safeErr } from "@/lib/logging/safe-err";
 import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
+import {
+  parseHistory,
+  assertNotReused,
+  appendHistory,
+  PasswordReuseError,
+} from "@/lib/auth/password-history";
 import { z } from "zod";
 
 const schema = z.object({
@@ -103,14 +109,50 @@ export async function POST(req: NextRequest) {
       employeeId = reset.employee_id;
       organizationId = reset.organization_id;
 
-      // Rotate the password_hash.
-      await client.query(
-        `UPDATE auth_credentials
-            SET password_hash = $1,
-                updated_at = NOW()
-          WHERE employee_id = $2`,
-        [newHash, employeeId],
+      // R40-1: password-reuse history check. Load the CURRENT hash +
+      // history under the same tx, verify the new password isn't in
+      // the last-N, then atomically rotate + append-old. If the user
+      // picks a recent password, reject with 400 — the token stays
+      // consumed (the DELETE above already ran) so they must request
+      // a new reset link, which is acceptable UX for attempting
+      // to reuse a known-bad password.
+      const { rows: credRows } = await client.query(
+        `SELECT password_hash, prior_password_hashes FROM auth_credentials WHERE employee_id = $1 FOR UPDATE`,
+        [employeeId],
       );
+      const oldHash = credRows[0]?.password_hash as string | undefined;
+      const historyRaw = credRows[0]?.prior_password_hashes;
+      if (oldHash) {
+        const history = parseHistory(historyRaw);
+        try {
+          await assertNotReused(newPassword, history);
+        } catch (err) {
+          if (err instanceof PasswordReuseError) {
+            await client.query("ROLLBACK").catch(() => {});
+            return NextResponse.json({ error: err.message }, { status: err.status });
+          }
+          throw err;
+        }
+        const nextHistory = appendHistory(oldHash, history);
+        await client.query(
+          `UPDATE auth_credentials
+              SET password_hash = $1,
+                  prior_password_hashes = $2::jsonb,
+                  updated_at = NOW()
+            WHERE employee_id = $3`,
+          [newHash, JSON.stringify(nextHistory), employeeId],
+        );
+      } else {
+        // No existing hash (unusual — reset on a never-signed-in account).
+        // Just set the hash; nothing to append.
+        await client.query(
+          `UPDATE auth_credentials
+              SET password_hash = $1,
+                  updated_at = NOW()
+            WHERE employee_id = $2`,
+          [newHash, employeeId],
+        );
+      }
 
       await client.query("COMMIT");
     } catch (err) {

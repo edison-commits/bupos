@@ -759,8 +759,32 @@ export async function processReturnAction(input: ReturnInput): Promise<ReturnRes
       // in redeemed loyalty, producing origGrandTotal=0 and no points
       // to reverse anyway).
       if (origCustomerId && origPointsEarned > 0 && origGrandTotal > 0) {
-        const share = Math.min(1, Math.max(0, refundGrandTotal / origGrandTotal));
-        const pointsToReverse = Math.round(origPointsEarned * share);
+        // R40-2: use the CUMULATIVE refund share, not the per-refund
+        // share, so the total points reversed across all refunds of
+        // this sale stays bounded by `round(origPointsEarned × 1.0)
+        // = origPointsEarned`. Prior per-refund `round()` allowed the
+        // sum of rounded chunks to drift from the true proportional
+        // total — up to 3 points kept by the customer on a fully-
+        // refunded sale that earned 3 points (10 × round(3×0.1) = 0).
+        const { rows: priorRefundRows } = await client.query(
+          `SELECT COALESCE(SUM(grand_total), 0)::numeric AS prior_refund
+             FROM transactions
+            WHERE organization_id = $1
+              AND status = 'completed'
+              AND cart_snapshot->>'originalTransactionId' = $2
+              AND id <> $3`,
+          [context.employee.organizationId, input.originalTransactionId, returnTransactionId],
+        );
+        const priorRefundAbs = Math.abs(Number(priorRefundRows[0]?.prior_refund ?? 0)) || 0;
+        const priorShare = Math.min(1, Math.max(0, priorRefundAbs / origGrandTotal));
+        const priorExpectedReverse = Math.round(origPointsEarned * priorShare);
+        const newCumulativeAbs = priorRefundAbs + refundGrandTotal;
+        const newCumulativeShare = Math.min(1, Math.max(0, newCumulativeAbs / origGrandTotal));
+        const newExpectedReverse = Math.round(origPointsEarned * newCumulativeShare);
+        const pointsToReverse = Math.max(0, Math.min(
+          origPointsEarned - priorExpectedReverse,
+          newExpectedReverse - priorExpectedReverse,
+        ));
         if (pointsToReverse > 0) {
           await client.query(
             `UPDATE customers

@@ -28,6 +28,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminSession } from "@/lib/auth/session";
 import { verifySecret, hashSecret, runDecoyVerify } from "@/lib/auth/crypto";
+import {
+  parseHistory,
+  assertNotReused,
+  appendHistory,
+  PasswordReuseError,
+} from "@/lib/auth/password-history";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { getPool } from "@/lib/supabase-rest";
 import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
@@ -98,12 +104,13 @@ export async function POST(req: NextRequest) {
   const pool = await getPool();
 
   try {
-    // Look up the current password hash.
+    // Look up the current password hash + history (R40-1).
     const { rows: credRows } = await pool.query(
-      `SELECT password_hash FROM auth_credentials WHERE employee_id = $1`,
+      `SELECT password_hash, prior_password_hashes FROM auth_credentials WHERE employee_id = $1`,
       [ctx.employee.id],
     );
     const currentHash = credRows[0]?.password_hash as string | undefined;
+    const historyRaw = credRows[0]?.prior_password_hashes;
     if (!currentHash) {
       // No password set for this account (shouldn't happen for admin-scope
       // sessions — the signup flow always sets one). Equalize timing and
@@ -121,24 +128,39 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Defense against password-reuse: reject if the new password is
-    // identical to the current one. (We can't check a password-history
-    // list without building one — future work.)
+    // Defense against password-reuse:
+    //   (a) fast equality check against the CURRENT password
+    //   (b) R40-1: verify against the last-N hash history so a
+    //       `old → new → old` rotation can't cycle to bypass breach-
+    //       list-driven mandatory rotations.
     if (newPassword === currentPassword) {
       return NextResponse.json(
         { error: "New password must differ from the current password." },
         { status: 400 },
       );
     }
+    const history = parseHistory(historyRaw);
+    try {
+      await assertNotReused(newPassword, history);
+    } catch (err) {
+      if (err instanceof PasswordReuseError) {
+        return NextResponse.json({ error: err.message }, { status: err.status });
+      }
+      throw err;
+    }
 
-    // Derive the new hash and UPDATE auth_credentials.
+    // Derive the new hash and UPDATE auth_credentials. Append the OLD
+    // hash to the history at the same time so a future rotation
+    // sees it.
     const newHash = await hashSecret(newPassword);
+    const nextHistory = appendHistory(currentHash, history);
     await pool.query(
       `UPDATE auth_credentials
           SET password_hash = $1,
+              prior_password_hashes = $2::jsonb,
               updated_at = NOW()
-        WHERE employee_id = $2`,
-      [newHash, ctx.employee.id],
+        WHERE employee_id = $3`,
+      [newHash, JSON.stringify(nextHistory), ctx.employee.id],
     );
 
     // R27-M3: invalidate ALL admin sessions for this employee. The

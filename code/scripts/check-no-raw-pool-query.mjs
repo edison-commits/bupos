@@ -89,6 +89,12 @@ const ALLOWLIST = {
   // Health check is intentionally unscoped.
   "src/app/api/health/route.ts":
     "infra health probe; no tenanted data",
+  // R33-C1: internal cleanup entry point, gated by OPS_CLEANUP_SECRET
+  // Bearer token (R38-C-H9 added optional HMAC-signed replay protection).
+  // Calls `run_nightly_cleanup()` SECURITY DEFINER — tenanted-data
+  // cleanup is scoped INSIDE the function, not the caller.
+  "src/app/api/internal/run-cleanup/route.ts":
+    "ops cleanup endpoint; SECDEF fn scopes tenanted deletes internally",
   // R23-L-3: admin-gated variant. Same shape as /api/health; gated by
   // `audit.view` permission and only executes a `SELECT 1 + now() +
   // version()` probe with no tenant scope.

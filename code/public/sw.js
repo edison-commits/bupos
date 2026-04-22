@@ -1,4 +1,4 @@
-// BasicUniformPOS Service Worker — offline resilience (v3).
+// BasicUniformPOS Service Worker — offline resilience (v4).
 // R33-H3: bumped CACHE_NAME to v3 so the `activate` cleanup deletes
 // the v2 cache (which may have auth-page HTML baked in by prior
 // `cache.addAll(SHELL_URLS)` calls that happened while the first
@@ -6,14 +6,34 @@
 // evict existing entries). The fetch handler already skips auth
 // pages (R31-M3), so there's nothing left to pre-cache: drop the
 // SHELL_URLS list entirely and install as a pure bookkeeping step.
-const CACHE_NAME = "basicuniformpos-v3";
+// R40-7: bumped to v4 so the prior auto-skipWaiting SW is evicted
+// on the next fetch; see below.
+const CACHE_NAME = "basicuniformpos-v4";
 
+// R40-7: do NOT call `self.skipWaiting()` unconditionally on install.
+// A compromised-CI malicious SW update would otherwise take over the
+// admin tab's in-flight fetches the moment it lands — the user has
+// no affordance to decline the new worker. New shape: install the
+// new SW but leave it in `waiting` state; the client (layout.tsx
+// SW registration) detects `waiting` via `updatefound` + `installed`
+// transitions, surfaces a "Reload to update" banner, and posts a
+// `{type: 'SKIP_WAITING'}` message to this worker only when the
+// user explicitly clicks the banner. At that point the user's
+// session is paused, they expect the reload, and there's no
+// silent-takeover window.
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE_NAME));
-  self.skipWaiting();
 });
 
-// Clean old caches on activate
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
+});
+
+// Clean old caches on activate. `clients.claim()` stays — once the
+// user has explicitly opted in (via SKIP_WAITING), grabbing control
+// of open tabs is expected.
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>

@@ -43,6 +43,7 @@ export const POST = withDualAuth("register.open", async (req, ctx) => {
     // limited per employee, not per transaction). 3 sends per txn is
     // plenty for "lost the first one, please resend" flows while
     // stopping harassment at two re-sends.
+    // check-pool-org-filter: scoped-by-prior-org-verified-transaction-id
     const { rows: priorSendRows } = await orgQuery(
       orgId,
       `SELECT COUNT(*)::int AS n

@@ -122,13 +122,17 @@ describe("R28 fixes", () => {
       );
       // R29-H1 replaced the old `refundGrandTotal * earnRate` recompute
       // with a prorated reversal of the persisted `points_earned`.
-      expect(src).toMatch(/Math\.round\(origPointsEarned \* share\)/);
+      // R40-2 upgraded the formula to a cumulative-share delta (prevents
+      // per-refund rounding from summing > origPointsEarned). The
+      // reversal still derives from origPointsEarned; just bounded by
+      // the cumulative share across all refunds.
+      expect(src).toMatch(/Math\.round\(origPointsEarned \* newCumulativeShare\)/);
     });
 
     it("admin /api/returns/process reverses points too", () => {
       const src = read("src/app/api/returns/process/route.ts");
-      // R29-H1: prorated from origPointsEarned rather than recomputed.
-      expect(src).toMatch(/Math\.round\(origPointsEarned \* share\)/);
+      // R29-H1 + R40-2: prorated from origPointsEarned via cumulative share.
+      expect(src).toMatch(/Math\.round\(origPointsEarned \* newCumulativeShare\)/);
       expect(src).toMatch(
         /UPDATE customers[\s\S]*?loyalty_points = GREATEST\(0, loyalty_points - \$1\)/,
       );

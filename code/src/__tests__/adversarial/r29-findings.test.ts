@@ -76,12 +76,20 @@ describe("R29 findings", () => {
     it("register return-action prorates from origPointsEarned", () => {
       const src = read("src/app/register/return-action.ts");
       expect(src).toMatch(/origPointsEarned/);
-      expect(src).toMatch(/refundGrandTotal \/ origGrandTotal/);
+      // R40-2: per-refund `refundGrandTotal/origGrandTotal` → cumulative
+      // `newCumulativeAbs / origGrandTotal` and `priorRefundAbs / origGrandTotal`.
+      // Ratio still derives from refundGrandTotal over origGrandTotal,
+      // just bounded across refunds.
+      expect(src).toMatch(/newCumulativeAbs \/ origGrandTotal/);
     });
     it("admin returns/process prorates from points_earned", () => {
       const src = read("src/app/api/returns/process/route.ts");
       expect(src).toMatch(/origPointsEarned/);
-      expect(src).toMatch(/refund_amount \/ origGrandTotal/);
+      // R40-2: cumulative-share clamp — priorRefundTotal includes both
+      // admin-side (returns table) and register-side (transactions with
+      // cart_snapshot.originalTransactionId) prior refunds, divided by
+      // origGrandTotal to compute the new expected reversal.
+      expect(src).toMatch(/newCumulative \/ origGrandTotal/);
     });
   });
 

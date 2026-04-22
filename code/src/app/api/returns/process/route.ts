@@ -772,8 +772,41 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
       const origPointsEarned = Number(origCustRows[0]?.points_earned ?? 0) || 0;
       const origGrandTotal = Number(origCustRows[0]?.grand_total ?? 0) || 0;
       if (origCustomerId && origPointsEarned > 0 && origGrandTotal > 0) {
-        const share = Math.min(1, Math.max(0, refund_amount / origGrandTotal));
-        const pointsToReverse = Math.round(origPointsEarned * share);
+        // R40-2: cumulative-share loyalty reversal — see
+        // src/app/register/return-action.ts for the full rationale.
+        // Query prior refunds (both the admin `returns` table AND the
+        // register-side negative-transaction path) and compute the
+        // delta expected total minus what prior refunds already
+        // reversed, so the sum across all refunds stays bounded by
+        // `origPointsEarned`.
+        const { rows: priorReturnRows } = await client.query(
+          `SELECT COALESCE(SUM(refund_amount), 0)::numeric AS admin_prior
+             FROM returns
+            WHERE organization_id = $1
+              AND transaction_id = $2
+              AND status IN ('pending', 'completed')`,
+          [orgId, transaction_id],
+        );
+        const { rows: priorRegRows } = await client.query(
+          `SELECT COALESCE(SUM(grand_total), 0)::numeric AS reg_prior
+             FROM transactions
+            WHERE organization_id = $1
+              AND status = 'completed'
+              AND cart_snapshot->>'originalTransactionId' = $2`,
+          [orgId, transaction_id],
+        );
+        const adminPrior = Number(priorReturnRows[0]?.admin_prior ?? 0) || 0;
+        const regPriorAbs = Math.abs(Number(priorRegRows[0]?.reg_prior ?? 0)) || 0;
+        const priorRefundTotal = adminPrior + regPriorAbs;
+        const priorShare = Math.min(1, Math.max(0, priorRefundTotal / origGrandTotal));
+        const priorExpectedReverse = Math.round(origPointsEarned * priorShare);
+        const newCumulative = priorRefundTotal + refund_amount;
+        const newCumulativeShare = Math.min(1, Math.max(0, newCumulative / origGrandTotal));
+        const newExpectedReverse = Math.round(origPointsEarned * newCumulativeShare);
+        const pointsToReverse = Math.max(0, Math.min(
+          origPointsEarned - priorExpectedReverse,
+          newExpectedReverse - priorExpectedReverse,
+        ));
         if (pointsToReverse > 0) {
           await client.query(
             `UPDATE customers

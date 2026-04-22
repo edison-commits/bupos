@@ -63,8 +63,11 @@ describe("R33 findings", () => {
 
   describe("R33-H3: service worker no SHELL_URLS pre-cache", () => {
     const src = read("public/sw.js");
-    it("cache name bumped to v3", () => {
-      expect(src).toMatch(/CACHE_NAME = "basicuniformpos-v3"/);
+    it("cache name bumped to v3+", () => {
+      // R40-7 bumped again to v4 when skipWaiting became opt-in. Any
+      // v>=3 is acceptable — the concrete pin was tied to the R33
+      // cache-eviction rollout, not an invariant forever.
+      expect(src).toMatch(/CACHE_NAME = "basicuniformpos-v[3-9]"/);
     });
     it("install no longer actually calls cache.addAll(SHELL_URLS)", () => {
       // SHELL_URLS constant is gone; any remaining mention is in a comment.

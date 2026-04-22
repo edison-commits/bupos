@@ -23,6 +23,24 @@ node scripts/check-schema-drift-ci.mjs
 echo "→ Raw-err log guardrail (self-test + scan)..."
 node scripts/check-no-raw-err-log.mjs
 
+# R40-5: expand the pre-commit net so the other guardrails that
+# `npm run check:all` runs in CI also run locally. Prior shape only
+# caught schema + raw-err + lint drift; pool-query / RLS / CI-wiring
+# regressions were possible to commit and only flagged at CI time.
+# Each check script is fast (<2s on a warm cache).
+echo "→ Pool-query org-filter check..."
+node scripts/check-pool-query-org-filter.mjs
+
+echo "→ No raw pool.query under persistence layer..."
+node scripts/check-no-raw-pool-query.mjs
+
+echo "→ RLS force-matching self-test + scan..."
+node scripts/check-rls-force-matching-selftest.mjs
+node scripts/check-rls-force-matching.mjs
+
+echo "→ ESLint-config guardrail integrity..."
+node scripts/check-eslint-config-guard.mjs
+
 echo "→ Lint (staged files only)..."
 # Staged files are reported relative to repo root. Re-filter to the
 # code/ subtree and strip the prefix so eslint (running from code/)

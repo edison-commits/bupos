@@ -3,6 +3,7 @@ import { Suspense } from "react";
 import { headers } from "next/headers";
 import { Toaster } from "sonner";
 import { NoticeToaster } from "@/components/notice-toaster";
+import { SwUpdateBanner } from "@/components/sw-update-banner";
 import "./globals.css";
 
 export const viewport: Viewport = {
@@ -62,6 +63,9 @@ export default async function RootLayout({
         <Suspense>
           <NoticeToaster />
         </Suspense>
+        {/* R40-7: new-SW banner so users explicitly opt into an update
+            rather than a `skipWaiting` takeover mid-session. */}
+        <SwUpdateBanner />
         <script
           nonce={nonce}
           dangerouslySetInnerHTML={{

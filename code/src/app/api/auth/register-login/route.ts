@@ -224,30 +224,45 @@ export async function POST(request: Request) {
     // 3. Validate employee permissions and location assignment.
     //
     // R27-H1: if the PIN matched BUT post-match validation fails (wrong
-    // location assignment / insufficient role), increment the matched
-    // employee's `failed_pin_attempts` counter. An attacker who knows
-    // the victim's correct PIN but is hitting the wrong location shouldn't
-    // get unlimited attempts — 5 failed post-match validations in
-    // 10 min locks the credential. On the next attempt from ANY IP the
-    // RPC / handler will see the lockout and 401. Reset on successful
-    // login below.
+    // location assignment / insufficient role), originally increment
+    // the matched employee's `failed_pin_attempts` counter so an
+    // attacker who knows the victim's correct PIN can't brute against
+    // the right location from elsewhere.
+    //
+    // R40-3: drop the `locFail` arm of that increment. It was a DoS
+    // vector: an insider who knows a peer's PIN could send PIN +
+    // wrong-location from distributed IPs (bypassing the per-IP
+    // rate-limit) and lock out the victim at THEIR OWN location.
+    // The other rate-limits still catch brute-force: per-PIN
+    // fingerprint (5/5min in-mem + 8/5min KV + 10/10min DB) and
+    // per-(IP, location) (10/5min + 20/15min DB). Those cap the
+    // attacker without penalizing the victim.
+    //
+    // The `permFail` arm stays — a valid PIN for an employee who
+    // LACKS `register.pin_login` / `register.open` is a strong
+    // signal of misuse (admin-role account being used at a register
+    // terminal), and permFail isn't a geography-based DoS surface
+    // (the matched employee's role is deterministic, not attacker-
+    // controlled).
     const roleKey = match.role_key as RoleKey;
     const locationIds = match.location_ids ?? [];
     const locFail = !locationIds.includes(locationId);
     const permFail = !hasPermission(roleKey, "register.pin_login") || !hasPermission(roleKey, "register.open");
     if (locFail || permFail) {
-      // Best-effort increment — if the UPDATE errors we still 401, and
-      // we don't want a DB hiccup to leak a different error code.
-      try {
-        await pool.query(
-          `UPDATE auth_credentials
-              SET failed_pin_attempts = failed_pin_attempts + 1,
-                  last_failed_pin_at = now()
-            WHERE employee_id = $1::uuid`,
-          [match.employee_id],
-        );
-      } catch (err) {
-        console.error("[api/auth/register-login] failed-counter UPDATE:", safeErr(err));
+      if (permFail) {
+        // Best-effort increment — if the UPDATE errors we still 401, and
+        // we don't want a DB hiccup to leak a different error code.
+        try {
+          await pool.query(
+            `UPDATE auth_credentials
+                SET failed_pin_attempts = failed_pin_attempts + 1,
+                    last_failed_pin_at = now()
+              WHERE employee_id = $1::uuid`,
+            [match.employee_id],
+          );
+        } catch (err) {
+          console.error("[api/auth/register-login] failed-counter UPDATE:", safeErr(err));
+        }
       }
       return Response.json({ error: "PIN login failed." }, { status: 401 });
     }

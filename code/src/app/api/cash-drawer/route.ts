@@ -489,6 +489,7 @@ async function handlePayIn(
       // approval bucket, same permission gate (see approval-action.ts).
       // A distinct `cash_payin` code would also work but reuses the
       // existing UI flow / step-up bucket for simplicity.
+      // check-pool-org-filter: scoped-by-register-session-id-from-org-gated-shift
       const consume = await client.query(
         `UPDATE register_session_exceptions
            SET status = 'consumed'
