@@ -171,6 +171,15 @@ jobs:
 
       - name: Smoke test
         if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+        # R36-deploy: GitHub Actions does NOT inject repo secrets into
+        # `process.env` automatically — each secret a `run:` step needs
+        # must be named in the step's `env:` block. Without these, the
+        # Playwright script at scripts/smoke-test.js bails with
+        # "Missing required env vars: SMOKE_ADMIN_EMAIL ...".
+        env:
+          SMOKE_ADMIN_EMAIL: ${{ secrets.SMOKE_ADMIN_EMAIL }}
+          SMOKE_ADMIN_PASSWORD: ${{ secrets.SMOKE_ADMIN_PASSWORD }}
+          SMOKE_EMPLOYEE_PIN: ${{ secrets.SMOKE_EMPLOYEE_PIN }}
         run: |
           npx playwright install chromium --with-deps
           node scripts/smoke-test.js
