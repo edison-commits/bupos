@@ -25,14 +25,19 @@ ALTER TABLE register_session_exceptions
 REVOKE ALL ON TABLE
   organizations, locations, employees, auth_credentials, sessions,
   customers, products, product_variants, inventory_levels,
-  inventory_adjustments, categories, product_modifiers, modifiers,
+  inventory_adjustments, categories, modifier_groups, modifiers,
+  product_modifier_groups,
   transactions, transaction_tenders, transaction_events,
+  transaction_lines, transaction_exceptions,
   register_sessions, register_session_exceptions, shifts, pay_in_outs,
   returns, return_lines, layaways, layaway_payments,
   gift_cards, gift_card_transactions, store_credit_ledger,
   promo_codes, promo_redemptions, product_bundles, bundle_items,
   audit_events, pending_signups, password_resets,
-  rate_limit_buckets, customer_display_state
+  rate_limit_buckets, customer_display_state,
+  stocktakes, stocktake_lines, purchase_orders, purchase_order_lines,
+  transfers, transfer_lines, suppliers, expenses,
+  behavior_flags, scheduled_shifts, time_clock_entries, time_off_requests
   FROM anon, authenticated;
 
 -- `rate_limit_buckets` used `USING(true) WITH CHECK(true)` on FOR ALL —
