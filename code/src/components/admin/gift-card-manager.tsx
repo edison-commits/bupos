@@ -171,7 +171,24 @@ export function GiftCardManager({
                             </button>
                           </form>
                           <button
-                            onClick={() => { startTransition(() => disableGiftCardAction(gc.id)); }}
+                            onClick={() => {
+                              // R37-H3: disable now requires step-up (server
+                              // action gates via requireStepUp). Interim
+                              // UX: native prompt; a later polish pass
+                              // can swap for a proper shared <PasswordGate>
+                              // modal also needed by customer is_active /
+                              // notes edits and email-receipt override.
+                              const pwd = window.prompt(
+                                `Disable gift card ${gc.code}?\n\nThis zeroes the customer's balance and can't be undone.\nEnter your password to confirm:`,
+                              );
+                              if (!pwd) return;
+                              startTransition(async () => {
+                                const r = await disableGiftCardAction(gc.id, pwd);
+                                if (!r.success) {
+                                  window.alert(r.error);
+                                }
+                              });
+                            }}
                             disabled={isPending}
                             className="rounded-lg border border-red-300 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
                           >

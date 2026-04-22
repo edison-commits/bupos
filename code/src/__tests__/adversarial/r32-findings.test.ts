@@ -206,8 +206,12 @@ describe("R32 findings", () => {
     it("idempotency_key flows into returns INSERT", () => {
       expect(src).toMatch(/idempotency_key\)\s*VALUES/);
     });
-    it("caps origTax / origSubtotal at 0.5", () => {
-      expect(src).toMatch(/Math\.min\(0\.5, Math\.max\(0, origTax \/ origSubtotal\)\)/);
+    it("caps the effective tax rate at 0.5", () => {
+      // R37-H2 swapped the denominator from `origSubtotal` to
+      // `origTaxableBase` (= subtotal + modifiers) so refunds correctly
+      // include modifier upcharges the customer paid. The 0.5 cap
+      // invariant this test was originally about is unchanged.
+      expect(src).toMatch(/Math\.min\(0\.5, Math\.max\(0, origTax \/ origTaxableBase\)\)/);
     });
   });
 
@@ -277,8 +281,13 @@ describe("R32 findings", () => {
       expect(mig).toMatch(/DROP POLICY parent_org_isolation/);
     });
     it("adds SET search_path to audit tamper + tender-sum functions", () => {
-      expect(mig).toMatch(/ALTER FUNCTION IF EXISTS public\.audit_events_prevent_tamper\(\)\s*\n\s*SET search_path/);
-      expect(mig).toMatch(/ALTER FUNCTION IF EXISTS public\.check_tender_sum_fn\(\)\s*\n\s*SET search_path/);
+      // R36-deploy: `ALTER FUNCTION IF EXISTS` is NOT valid PostgreSQL
+      // syntax (IF EXISTS works on DROP, not ALTER). The migration now
+      // wraps both ALTERs in a DO block with an explicit pg_proc
+      // existence check; semantics are the same (conditional ALTER on
+      // existence), shape is different. Test against the new shape.
+      expect(mig).toMatch(/IF EXISTS \(SELECT 1 FROM pg_proc WHERE proname = 'audit_events_prevent_tamper'\)[\s\S]*?ALTER FUNCTION public\.audit_events_prevent_tamper\(\) SET search_path/);
+      expect(mig).toMatch(/IF EXISTS \(SELECT 1 FROM pg_proc WHERE proname = 'check_tender_sum_fn'\)[\s\S]*?ALTER FUNCTION public\.check_tender_sum_fn\(\) SET search_path/);
     });
     it("run_nightly_cleanup orchestrator exists", () => {
       expect(mig).toMatch(/CREATE OR REPLACE FUNCTION public\.run_nightly_cleanup/);

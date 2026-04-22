@@ -90,13 +90,13 @@ describe("R30 findings", () => {
       const a = read("src/app/api/returns/process/route.ts");
       const b = read("src/app/api/returns/route.ts");
       const c = read("src/app/register/return-action.ts");
-      expect(a).toMatch(/Math\.min\(1, Math\.max\(0, 1 - origDiscount \/ origSubtotal\)\)/);
-      expect(b).toMatch(/Math\.min\(1, Math\.max\(0, 1 - origDiscount \/ origSubtotal\)\)/);
-      // R36-H3 upgraded the register path's denominator from
-      // `origSubtotal` to `origTaxableBase` (= subtotal + modifiers) so
-      // modifier upcharges are included in the refund base — matches
-      // what computeTotals actually discounted against. The R30-C4
-      // invariant (clamp [0, 1]) still holds.
+      // R37-H2 ported the register-side R36-H3 denominator upgrade to
+      // the two admin paths: denominator is now `origTaxableBase =
+      // subtotal + modifiers` (matching computeTotals) instead of
+      // `origSubtotal` alone. All three paths still clamp at [0, 1]
+      // (the R30-C4 invariant this test was originally about).
+      expect(a).toMatch(/Math\.min\(1, Math\.max\(0, 1 - origDiscount \/ origTaxableBase\)\)/);
+      expect(b).toMatch(/Math\.min\(1, Math\.max\(0, 1 - origDiscount \/ origTaxableBase\)\)/);
       expect(c).toMatch(/Math\.min\(1, Math\.max\(0, 1 - origDiscountTotal \/ origTaxableBase\)\)/);
     });
   });

@@ -138,11 +138,23 @@ describe("R27 defense-in-depth regressions", () => {
       expect(src).toMatch(/\^\[0-9\]\{3\}_\[a-z0-9_\]\+\\\.sql\$/);
     });
 
-    it("uses psql parameter binding (-v / :'mig') not string concatenation", () => {
-      // Without param binding, a malicious migration filename containing
-      // ';DROP TABLE _migrations;--.sql would execute arbitrary SQL.
-      expect(src).toMatch(/-v mig="\$basename"/);
-      expect(src).toMatch(/:'mig'/);
+    it("injection-safe migration-name handling (regex validated + shell interpolation)", () => {
+      // R36-deploy: psql's `:'mig'` variable binding does NOT interpolate
+      // when passed via `-c` (only for `-f` / stdin / interactive), so
+      // the prior shape always errored with "syntax error at or near :"
+      // and no migration ever ran via the workflow. Replaced with shell
+      // interpolation of `$basename`. The filename regex two lines up
+      // ALREADY restricts basenames to `^[0-9]{3}_[a-z0-9_]+\.sql$` —
+      // no quotes, no backslashes, no whitespace — so the malicious
+      // `';DROP TABLE _migrations;--.sql` filename this R27-M14 test
+      // was guarding against is rejected at the regex step BEFORE
+      // interpolation. Equivalent safety, different mechanism.
+      expect(src).toMatch(/filename = '\$basename'/);
+      // And the broken `psql -c "... WHERE filename = :'mig'" -v mig=...` form
+      // should not creep back in as an ACTIVE SQL statement. Match only
+      // the concrete bug pattern (the string `WHERE filename = :'mig'`)
+      // — the explanatory comment above can reference `:'mig'` freely.
+      expect(src).not.toMatch(/WHERE filename = :'mig'/);
     });
 
     it("Telegram bot token read from env, not shell-interpolated", () => {

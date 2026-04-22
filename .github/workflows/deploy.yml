@@ -158,6 +158,14 @@ jobs:
           done
           echo "✓ All migrations applied"
 
+      # R37-M2: typecheck gates the build on master pushes. guardrails.yml
+      # runs tsc on PRs, but direct commits to master (or a branch-
+      # protection bypass) would previously skip it and could ship a TS
+      # error that slipped past the per-PR gate.
+      - name: Typecheck
+        if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+        run: npx tsc --noEmit
+
       - name: Build & Deploy
         run: npm run deploy
         env:

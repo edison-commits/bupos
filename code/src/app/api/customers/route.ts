@@ -223,17 +223,37 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
     if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
     const { id, first_name, last_name, email, phone, address, notes, is_active } = v.data;
 
-    // R36-M8: require step-up when the update touches `is_active` or
-    // `notes`. A stolen cookie with `employee.manage` could otherwise:
-    //   (a) mass-flip `is_active = false`, hiding loyalty history and
-    //       store-credit balance from login flows; or
-    //   (b) wipe `notes` (which include fraud flags / ban markers).
-    // Name/email/phone/address edits stay frictionless. Mirrors the
-    // employees PATCH pattern that gates step-up on role/email/pin
-    // changes but not on display_name edits.
-    const touchesSensitive =
-      is_active !== undefined ||
-      (notes !== undefined && typeof (body as { notes?: unknown }).notes === 'string');
+    // R37-H1: require step-up ONLY when the update actually CHANGES a
+    // sensitive field. Prior R36-M8 shape fired on mere presence of
+    // `notes` / `is_active` in the body — but every admin UI sends the
+    // whole form (including unchanged `notes`), so any email-typo fix
+    // 400'd with "Your password is required." Read the current row
+    // first and diff; only gate when the sensitive fields actually move.
+    //
+    // Security intent unchanged:
+    //   (a) can't flip is_active = false without step-up;
+    //   (b) can't change `notes` (fraud flags / ban markers) without
+    //       step-up.
+    // Name/email/phone/address remain frictionless.
+    const normNotes = (s: string | null | undefined) => (s?.trim() || null);
+    let touchesSensitive = false;
+    if (is_active !== undefined || notes !== undefined) {
+      const { rows: currentRows } = await orgQuery(
+        orgId,
+        `SELECT is_active, notes FROM customers WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+        [id, orgId],
+      );
+      if (currentRows.length === 0) {
+        return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
+      }
+      const current = currentRows[0] as { is_active: boolean; notes: string | null };
+      if (is_active !== undefined && Boolean(is_active) !== Boolean(current.is_active)) {
+        touchesSensitive = true;
+      }
+      if (notes !== undefined && normNotes(notes) !== normNotes(current.notes)) {
+        touchesSensitive = true;
+      }
+    }
     if (touchesSensitive) {
       const { requireStepUp } = await import('@/lib/auth/step-up');
       const actorPassword = (body && typeof body === 'object')

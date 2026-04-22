@@ -88,6 +88,23 @@ export async function syncPendingTransactions(): Promise<{
       if (res.ok) {
         await removePendingTransaction(txn.id);
         synced++;
+      } else if (res.status === 403) {
+        // R37-H4: terminal 403s — the server refuses this sync
+        // permanently, NOT because of a transient race. Current cases:
+        //   • R36-H4: offline cart's capture-time employee is deactivated
+        //     → "A manager must manually re-enter this sale."
+        //   • Cross-org / tampered register_session / missing employee.
+        // Retrying won't help; bump `attempts` to MAX so the cart hits
+        // the dead-letter branch immediately and the offline-status-bar
+        // can surface the real error instead of ticking "failed — will
+        // retry" forever.
+        const body = await res.json().catch(() => ({ error: "Forbidden" }));
+        await savePendingTransaction({
+          ...txn,
+          attempts: MAX_RETRY_ATTEMPTS,
+          lastError: body.error ?? "Server refused this offline sale (permanent).",
+        });
+        failed++;
       } else if (res.status === 409) {
         // 409s are either TRANSIENT (approval consumed by another
         // cashier, insufficient inventory right now, insufficient

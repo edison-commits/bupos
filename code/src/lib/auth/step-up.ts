@@ -127,16 +127,35 @@ export async function requireStepUp({
   // R35-P3: pgInsertAuditEvent is now a static import at the top of
   // this module. The outer try/catch still swallows any throw so audit
   // failures don't block the happy path.
+  // R37-M4: if the audit write fails we now EMIT a structured log
+  // line (instead of silently swallowing). Alerting can trip on
+  // `event=audit_insert_failed` to catch audit pipeline breakage —
+  // a blind catch {} would hide a DB outage / RLS regression that
+  // stops every step-up from being recorded.
   try {
     await pgInsertAuditEvent(
       orgId, null, actorId,
       'employee', actorId, 'step_up_verified',
       { bucket: bucketKey },
-    ).catch(() => {
-      // Non-fatal — successful step-up still proceeds.
+    ).catch((err: unknown) => {
+      console.error(JSON.stringify({
+        event: 'audit_insert_failed',
+        surface: 'step_up_verified',
+        bucket: bucketKey,
+        actorId,
+        orgId,
+        message: err instanceof Error ? err.message : String(err),
+      }));
     });
-  } catch {
-    // Belt-and-suspenders: wrap the await itself.
+  } catch (err) {
+    console.error(JSON.stringify({
+      event: 'audit_insert_failed',
+      surface: 'step_up_verified:outer',
+      bucket: bucketKey,
+      actorId,
+      orgId,
+      message: err instanceof Error ? err.message : String(err),
+    }));
   }
 
   return { ok: true };

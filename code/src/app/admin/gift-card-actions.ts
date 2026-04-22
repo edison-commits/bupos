@@ -201,11 +201,34 @@ export async function reloadGiftCardAction(formData: FormData) {
   revalidatePath("/admin");
 }
 
-export async function disableGiftCardAction(giftCardId: string) {
+export async function disableGiftCardAction(
+  giftCardId: string,
+  // R37-H3: actorPassword is required. Gift-card disable wipes live
+  // customer-owned balance — same impact as the REST sibling at
+  // `/api/gift-cards POST {action:'disable'}`, which already gates on
+  // step-up (R36-H5). This action was the forgotten path; a stolen
+  // manager cookie could previously call it directly via RSC form
+  // submission and erase every card's balance without re-auth.
+  actorPassword?: string,
+): Promise<{ success: true } | { success: false; error: string }> {
   const ctx = await requireAdminPermission("catalog.manage");
   requireGiftCardAuthority(ctx.employee.roleKey);
   const rl = checkRateLimit(`gc-disable:${ctx.employee.id}`);
-  if (!rl.allowed) throw new Error("Too many requests");
+  if (!rl.allowed) {
+    return { success: false, error: "Too many requests. Try again shortly." };
+  }
+  // Step-up. Share the REST path's bucket so a flood against one surface
+  // counts against the other (attacker can't dodge by switching paths).
+  const { requireStepUp } = await import("@/lib/auth/step-up");
+  const stepUp = await requireStepUp({
+    actorId: ctx.employee.id,
+    orgId: ctx.employee.organizationId,
+    actorPassword,
+    bucketKey: "gift-card-disable-stepup",
+  });
+  if (!stepUp.ok) {
+    return { success: false, error: stepUp.error };
+  }
   if (isPg()) {
     // Snapshot the balance BEFORE disabling so the audit row shows what was
     // wiped out. Without this, a compromised manager can zero a card and
@@ -242,4 +265,5 @@ export async function disableGiftCardAction(giftCardId: string) {
     });
   }
   revalidatePath("/admin");
+  return { success: true };
 }

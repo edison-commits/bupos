@@ -1,34 +1,74 @@
 # Deploy Runbook
 
+## Source of truth: the GitHub Actions workflow
+
+**Prod deploys run automatically on push to `master` via
+`.github/workflows/deploy.yml`.** That workflow is authoritative — the
+manual steps below are only for out-of-band or DR scenarios. The
+workflow does, in order: assert required Worker secrets, apply
+pending migrations via a `_migrations` tracker table (idempotent, safe
+to re-run), typecheck (R37-M2), build + deploy via
+`@opennextjs/cloudflare`, and run a Playwright smoke test against
+prod.
+
 ## Ordering invariant
 
 **Migrations MUST land before code.** Several R30-R34 migrations rename
 columns or add NOT NULL constraints that the new application code
 expects. Deploying code first produces an auth outage window; deploying
 migrations first is safe (old code still works against the new column
-because `RENAME` is atomic + column aliases preserve behavior).
+because `RENAME` is atomic + column aliases preserve behavior). The
+GH Actions workflow enforces this ordering; manual deploys must
+respect it too.
 
-## Standard deploy sequence
+## Out-of-band deploy (manual, emergencies only)
 
 ```bash
 # 1. Connect to prod Postgres
 #    (Supabase: `supabase link --project-ref <ref>` or psql with DATABASE_URL)
 
-# 2. Run pending migrations. Supabase CLI:
-supabase db push
-
-# Or raw psql, applying each migration in numeric order:
-for f in supabase/migrations/*.sql; do
-  psql "$DATABASE_URL" -f "$f" -v ON_ERROR_STOP=1
+# 2. Apply pending migrations using the same tracker the workflow uses.
+#    Do NOT run `supabase db push` — we don't use the Supabase migration
+#    tracker. This tracker lives in the `_migrations` table.
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "
+  CREATE TABLE IF NOT EXISTS _migrations (
+    filename TEXT PRIMARY KEY,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );"
+for f in $(ls code/supabase/migrations/*.sql | sort); do
+  base=$(basename "$f")
+  applied=$(psql "$DATABASE_URL" -tAc "SELECT COUNT(*) FROM _migrations WHERE filename = '$base'")
+  if [ "$applied" = "0" ]; then
+    echo "→ Applying $base"
+    psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f" >/dev/null
+    psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+      -c "INSERT INTO _migrations (filename) VALUES ('$base')" >/dev/null
+  fi
 done
 
 # 3. Verify schema state (sanity spot-checks)
 psql "$DATABASE_URL" -c "\d pending_signups" | grep verification_token_hash
 psql "$DATABASE_URL" -c "\d inventory_adjustments" | grep organization_id
+psql "$DATABASE_URL" -c "\d transactions" | grep idx_transactions_org_loc_created_completed
 
-# 4. Deploy the Worker
-npm run deploy
+# 4. Deploy the Worker (uses @opennextjs/cloudflare under the hood)
+cd code && npm run deploy
 ```
+
+## Expected client-error 400s after a R35-R36 deploy
+
+Three endpoints now require step-up (re-entry of the actor's password):
+- `POST /api/gift-cards {action:'disable'}` — `gift-card-disable-stepup`
+- `POST /api/email-receipt?override=true` — `email-receipt-override-stepup`
+- `PUT /api/customers` when `is_active` OR `notes` is CHANGED (R37-H1
+  now compares old↔new; mere presence of the field no longer gates)
+
+Until admin client UIs wire in a password prompt for each, the
+endpoints will return 400 "Your password is required to perform this
+action." Telegram alerting (see `runbook-alerting.md`) should treat a
+flood of these specific 400s as a deploy-caused UI regression, not a
+novel outage. The `api_route_client_error` event (R37-M1) emits a
+`stepUpBucket` field to make this correlation trivial.
 
 ## Rollback procedure
 

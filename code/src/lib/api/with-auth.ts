@@ -119,6 +119,25 @@ function checkBodySize(req: NextRequest): NextResponse | null {
 // with our cookies attached. Enforcing Origin === Host on state-changing
 // methods closes that gap for the common browser-CSRF case.
 //
+// R37-M1: map a request path to the step-up bucket key it would hit
+// (gift-card-disable-stepup / customer-update-stepup / etc.). Pure
+// pattern match — if the pathname isn't one we've gated, returns
+// undefined. Helps log-based alerting distinguish a step-up-password
+// 400 from a generic validation 400.
+function inferStepUpBucket(pathname: string): string | undefined {
+  if (pathname.startsWith("/api/gift-cards")) return "gift-card-*-stepup";
+  if (pathname.startsWith("/api/email-receipt")) return "email-receipt-override-stepup";
+  if (pathname.startsWith("/api/customers")) return "customer-update-stepup";
+  if (pathname.startsWith("/api/returns/process")) return "returns-process-stepup";
+  if (pathname.startsWith("/api/store-credit")) return "store-credit-stepup";
+  if (pathname.startsWith("/api/loyalty")) return "loyalty-adjust-stepup";
+  if (pathname.startsWith("/api/employees")) return "employees-patch-stepup";
+  if (pathname.startsWith("/api/shift-close") || pathname.startsWith("/api/shift-report")) {
+    return "shift-close-stepup";
+  }
+  return undefined;
+}
+
 // Exported so non-wrapped routes (e.g., /api/customer-display which uses
 // getRegisterSession directly) can opt into the same CSRF guard.
 export function checkOrigin(req: NextRequest): NextResponse | null {
@@ -269,6 +288,26 @@ export function withAdminAuth(
       });
       applyNoStore(res);
       res.headers.set("x-request-id", reqId);
+      // R37-M1: emit a structured event for client-error responses
+      // (400/401/403/409/429) so Axiom / Logpush can alert on step-up
+      // failure floods, unauthorized attempts, and stale-UI 4xx spikes.
+      // Previously only 5xx entered the catch below; 4xx responses went
+      // out silently, making "every customer edit 400s because R36 gate
+      // was wrong" invisible in monitoring.
+      if (res.status >= 400 && res.status < 500) {
+        const bucketHint = inferStepUpBucket(req.nextUrl.pathname);
+        console.error(JSON.stringify({
+          event: "api_route_client_error",
+          reqId,
+          method: req.method,
+          path: req.nextUrl.pathname,
+          status: res.status,
+          orgId,
+          employeeId: adminCtx.employee.id,
+          roleKey: adminCtx.employee.roleKey,
+          stepUpBucket: bucketHint,
+        }));
+      }
       return res;
     } catch (err) {
       // R21-H-2 + R25-ops-H-1: structured JSON log with correlation ID
@@ -406,6 +445,24 @@ export function withDualAuth(
       });
       applyNoStore(res);
       res.headers.set("x-request-id", reqId);
+      // R37-M1: also log 4xx from dual-auth routes. See withAdminAuth
+      // above for full rationale — step-up / stale-UI / validation 400s
+      // are now surfaced for log-based alerting.
+      if (res.status >= 400 && res.status < 500) {
+        const bucketHint = inferStepUpBucket(req.nextUrl.pathname);
+        console.error(JSON.stringify({
+          event: "api_route_client_error",
+          reqId,
+          method: req.method,
+          path: req.nextUrl.pathname,
+          status: res.status,
+          orgId,
+          employeeId: employee.id,
+          roleKey: employee.roleKey,
+          scope: ctx ? "admin" : "register",
+          stepUpBucket: bucketHint,
+        }));
+      }
       return res;
     } catch (err) {
       // R21-H-2 + R25-ops-H-1: structured JSON log with correlation ID.

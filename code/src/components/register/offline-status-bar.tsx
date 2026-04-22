@@ -63,9 +63,23 @@ export function OfflineStatusBar() {
       if (result.synced > 0) {
         setSyncResult(`Synced ${result.synced} transaction${result.synced > 1 ? "s" : ""}`);
       }
-      if (result.failed > 0) {
+      // R37-H4: surface dead-letter cases separately from retryable
+      // failures. Prior shape lumped terminal 403s (deactivated employee
+      // → "A manager must re-enter this sale") into "X failed — will
+      // retry", burning silent retry cycles and hiding the real signal
+      // from the cashier/manager standing at the register.
+      if (result.deadLetters.length > 0) {
+        const first = result.deadLetters[0]?.lastError;
+        const extra = result.deadLetters.length > 1 ? ` (+${result.deadLetters.length - 1} more)` : "";
         setSyncResult((prev) =>
-          (prev ? prev + ". " : "") + `${result.failed} failed — will retry`,
+          (prev ? prev + ". " : "") +
+          `${result.deadLetters.length} can't be synced${extra}: ${first ?? "manager action required"}`,
+        );
+      }
+      const retryableFailed = result.failed - result.deadLetters.length;
+      if (retryableFailed > 0) {
+        setSyncResult((prev) =>
+          (prev ? prev + ". " : "") + `${retryableFailed} failed — will retry`,
         );
       }
       setPendingCount(result.remaining);

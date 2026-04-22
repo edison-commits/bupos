@@ -246,14 +246,30 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
     // $40 actually paid. NEW shape sums the line-level paid dollars
     // (paidQuantity × line unitPrice) and divides at refund time so
     // the effective per-unit is the actual weighted average.
-    const origByVariant = new Map<string, { quantity: number; paidQuantity: number; paidSubtotal: number; bundleId?: string }>();
+    // R37-H2: also track `paidModifierTotal` — the dollars the customer
+    // actually paid for modifier upcharges on each variant. The register-
+    // side refund (return-action.ts R36-H3) already includes these in
+    // the refund; this admin path was still using unitPrice only, so any
+    // admin-processed return of a modifier-heavy line (e.g. burger +
+    // cheese + bacon) under-refunded by the modifier sum. Track per-
+    // variant so `weightedPaidUnit + weightedModifierUnit` gives the true
+    // per-unit amount the customer paid.
+    const origByVariant = new Map<string, {
+      quantity: number;
+      paidQuantity: number;
+      paidSubtotal: number;
+      paidModifierTotal: number;
+      bundleId?: string;
+    }>();
     for (const it of origItems) {
       const prev = origByVariant.get(it.productVariantId);
       const lineIsPaid = !it.isFree;
+      const lineModifierTotal = Number((it as { modifierTotal?: number }).modifierTotal ?? 0) || 0;
       origByVariant.set(it.productVariantId, {
         quantity: (prev?.quantity ?? 0) + it.quantity,
         paidQuantity: (prev?.paidQuantity ?? 0) + (lineIsPaid ? it.quantity : 0),
         paidSubtotal: (prev?.paidSubtotal ?? 0) + (lineIsPaid ? it.quantity * it.unitPrice : 0),
+        paidModifierTotal: (prev?.paidModifierTotal ?? 0) + (lineIsPaid ? it.quantity * lineModifierTotal : 0),
         bundleId: it.bundleId ?? prev?.bundleId,
       });
     }
@@ -344,30 +360,48 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
       // paidQuantity) so mixed-price paid lines (some at list, some
       // at override-up / override-down) refund at their TRUE paid
       // rate, not a max-of-prices inflation.
+      // R37-H2: also add weighted modifier upcharges per paid unit so
+      // customers who paid for modifiers get them refunded. Mirrors
+      // the register path's R36-H3 fix.
       const paidRemaining = Math.max(0, orig.paidQuantity - alreadyReturned);
       const paidShare = Math.min(item.quantity, paidRemaining);
       const weightedPaidUnit = orig.paidQuantity > 0 ? orig.paidSubtotal / orig.paidQuantity : 0;
-      computedRefundSubtotal += weightedPaidUnit * paidShare;
+      const weightedModifierUnit = orig.paidQuantity > 0 ? orig.paidModifierTotal / orig.paidQuantity : 0;
+      computedRefundSubtotal += (weightedPaidUnit + weightedModifierUnit) * paidShare;
     }
 
     // Refund proration. We need to refund what the customer ACTUALLY paid
-    // per line, which = listPrice × (1 - discount_rate) × (1 + tax_rate).
-    //   discountFactor = 1 - discount_total/subtotal  (0..1)
-    //   taxRate        = tax_total/subtotal
-    // Neither was applied before, causing over-refunds on discounted sales.
+    // per line, which = (listPrice + modifiers) × (1 - discount_rate) × (1 + tax_rate).
+    //   discountFactor = 1 - discount_total / (subtotal + modifiers)   (0..1)
+    //   taxRate        = tax_total / (subtotal + modifiers)
+    //
+    // R37-H2: denominator is now `subtotal + modifiers`, matching
+    // computeTotals() which applies cart-level discount against
+    // `(subtotal + modifiers - lineDiscounts)`. The previous shape used
+    // `subtotal` alone, inflating tax rate and producing a
+    // discountFactor below zero (clamped to 0, zero refund) on any
+    // heavily-modified sale with a cart discount.
     const origSubtotal = Number(txnResult.rows[0].subtotal) || 0;
     const origDiscount = Number(txnResult.rows[0].discount_total) || 0;
     const origTaxTotal = Number(txnResult.rows[0].tax_total) || 0;
+    // Aggregate modifier total across the original cart_snapshot.
+    const origModifiersTotal = origItems.reduce(
+      (s, it) => s + (Number(it.quantity) || 0) * (Number((it as { modifierTotal?: number }).modifierTotal ?? 0) || 0),
+      0,
+    );
+    const origTaxableBase = origSubtotal + origModifiersTotal;
     // R30-C4: clamp at [0, 1] — see src/app/api/returns/route.ts for
     // the rationale. Negative stored discounts can't inflate factors.
-    const discountFactor = origSubtotal > 0 ? Math.min(1, Math.max(0, 1 - origDiscount / origSubtotal)) : 1;
+    const discountFactor = origTaxableBase > 0
+      ? Math.min(1, Math.max(0, 1 - origDiscount / origTaxableBase))
+      : 1;
     // Cap the effective tax rate. A malformed original transaction
     // (bundle-only line with zero subtotal contribution but non-zero
     // tax_total, or a stale snapshot with a fractional issue) could yield
     // a ratio > 1 and over-refund tax. No legitimate jurisdiction exceeds
     // 50%; the cap is a belt-and-braces sanity guard.
-    const effectiveTaxRate = origSubtotal > 0
-      ? Math.min(0.5, origTaxTotal / origSubtotal)
+    const effectiveTaxRate = origTaxableBase > 0
+      ? Math.min(0.5, origTaxTotal / origTaxableBase)
       : 0;
     const computedRefundTotal = Number(
       (computedRefundSubtotal * discountFactor * (1 + effectiveTaxRate)).toFixed(2),

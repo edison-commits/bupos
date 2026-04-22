@@ -224,13 +224,23 @@ export const POST = withAdminAuth('employee.manage', async (request, ctx) => {
     // Aggregate original quantities by variant. The same variant may appear on
     // MULTIPLE cart_snapshot lines (different modifiers); summing quantities
     // and keeping unit price gives the correct "how many were purchased".
-    const origByVariant = new Map<string, { unitPrice: number; quantity: number; paidQuantity: number }>();
+    // R37-H2: track `paidModifierTotal` per variant so refunds include
+    // modifier upcharges the customer paid (mirrors the register-side
+    // R36-H3 fix and /api/returns/process R37-H2).
+    const origByVariant = new Map<string, {
+      unitPrice: number;
+      quantity: number;
+      paidQuantity: number;
+      paidModifierTotal: number;
+    }>();
     for (const it of origItems) {
       const prev = origByVariant.get(it.productVariantId);
+      const lineModifierTotal = Number((it as { modifierTotal?: number }).modifierTotal ?? 0) || 0;
       origByVariant.set(it.productVariantId, {
         unitPrice: Math.max(prev?.unitPrice ?? 0, it.isFree ? 0 : it.unitPrice),
         quantity: (prev?.quantity ?? 0) + it.quantity,
         paidQuantity: (prev?.paidQuantity ?? 0) + (it.isFree ? 0 : it.quantity),
+        paidModifierTotal: (prev?.paidModifierTotal ?? 0) + (it.isFree ? 0 : it.quantity * lineModifierTotal),
       });
     }
     const priorReturnedByVariant: Record<string, number> = {};
@@ -253,17 +263,29 @@ export const POST = withAdminAuth('employee.manage', async (request, ctx) => {
     const origSubtotal = Number(origTxnRows[0].subtotal) || 0;
     const origDiscount = Number(origTxnRows[0].discount_total) || 0;
     const origTax = Number(origTxnRows[0].tax_total) || 0;
+    // R37-H2: denominator is now (subtotal + modifiers) — matches
+    // computeTotals' cart-discount base. Prior shape used subtotal
+    // alone, inflating the tax rate on any modifier-heavy sale and
+    // clamping discountFactor to 0 when cart discount exceeded
+    // subtotal-but-not-(subtotal+modifiers).
+    const origModifiersTotal = origItems.reduce(
+      (s, it) => s + (Number(it.quantity) || 0) * (Number((it as { modifierTotal?: number }).modifierTotal ?? 0) || 0),
+      0,
+    );
+    const origTaxableBase = origSubtotal + origModifiersTotal;
     // R30-C4: clamp to [0, 1]. A negative stored origDiscount (from
     // legacy rows created before the clamp in cart.ts) would otherwise
     // produce a factor > 1, inflating the refund beyond what the
     // customer paid.
-    const discountFactor = origSubtotal > 0 ? Math.min(1, Math.max(0, 1 - origDiscount / origSubtotal)) : 1;
+    const discountFactor = origTaxableBase > 0
+      ? Math.min(1, Math.max(0, 1 - origDiscount / origTaxableBase))
+      : 1;
     // R32-H8-tax: cap derived tax rate at 0.5 to match the admin
     // `/api/returns/process` path (R28-M9) and the register-side
     // return-action. Without the cap, a malformed original txn (huge
     // forged tax_total on a small subtotal) inflates the refund.
-    const taxRateEffective = origSubtotal > 0
-      ? Math.min(0.5, Math.max(0, origTax / origSubtotal))
+    const taxRateEffective = origTaxableBase > 0
+      ? Math.min(0.5, Math.max(0, origTax / origTaxableBase))
       : 0;
 
     // Validate each line against (original qty - already returned) AND
@@ -296,10 +318,15 @@ export const POST = withAdminAuth('employee.manage', async (request, ctx) => {
       // R31-H8 / R30-H11: only the PAID share of this line contributes
       // to the refund subtotal. Units beyond paidQuantity were free
       // (promo or $0 override) and refund at $0.
+      // R37-H2: include modifier upcharges — customers who paid for
+      // modifiers (add-ons, size bumps) get those dollars back too.
       const paidRemaining = Math.max(0, orig.paidQuantity - alreadyReturned);
       const paidShare = Math.min(line.quantity, paidRemaining);
-      // Effective price paid = listPrice * (1 - discount/subtotal) * (1 + tax/subtotal)
-      refundAmount += orig.unitPrice * paidShare * discountFactor * (1 + taxRateEffective);
+      const weightedModifierUnit = orig.paidQuantity > 0
+        ? orig.paidModifierTotal / orig.paidQuantity
+        : 0;
+      // Effective price paid = (listPrice + modifiers) * (1 - discount/base) * (1 + tax/base)
+      refundAmount += (orig.unitPrice + weightedModifierUnit) * paidShare * discountFactor * (1 + taxRateEffective);
     }
     refundAmount = Number(refundAmount.toFixed(2));
 
