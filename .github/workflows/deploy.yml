@@ -135,15 +135,23 @@ jobs:
               echo "Expected ^[0-9]{3}_[a-z0-9_]+\.sql\$"
               exit 1
             fi
+            # R36-deploy: `psql -c "...:'mig'"` + `-v mig=...` does NOT
+            # interpolate — psql's `:variable` substitution only runs for
+            # `-f` / stdin / interactive, not for `-c`. That's a known
+            # quirk, not a version regression. The previous shape
+            # errored with "syntax error at or near \":\"" because psql
+            # saw the literal `:'mig'` token in the SQL text.
+            # The regex gate above constrains `$basename` to
+            # ^[0-9]{3}_[a-z0-9_]+\.sql$ — no quotes, no backslashes, no
+            # whitespace — so shell interpolation here is safe.
             applied=$(psql "$DB_URL" -tAc \
-              "SELECT COUNT(*) FROM _migrations WHERE filename = :'mig'" \
-              -v mig="$basename")
+              "SELECT COUNT(*) FROM _migrations WHERE filename = '$basename'")
             if [ "$applied" = "0" ]; then
               echo "→ Applying $basename"
               psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$f" >/dev/null
               psql "$DB_URL" -v ON_ERROR_STOP=1 \
-                -c "INSERT INTO _migrations (filename) VALUES (:'mig')" \
-                -v mig="$basename" >/dev/null
+                -c "INSERT INTO _migrations (filename) VALUES ('$basename')" \
+                >/dev/null
             else
               echo "   Skipping $basename (already applied)"
             fi
