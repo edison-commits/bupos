@@ -51,11 +51,23 @@ CREATE POLICY inventory_adjustments_org_isolation
   );
 
 -- ─── R32-M-search_path: fix tamper trigger + tender-sum functions ──
-ALTER FUNCTION IF EXISTS public.audit_events_prevent_tamper()
-  SET search_path = public;
-
-ALTER FUNCTION IF EXISTS public.check_tender_sum_fn()
-  SET search_path = public;
+-- R36-deploy: `ALTER FUNCTION IF EXISTS` is NOT valid PostgreSQL syntax
+-- (IF EXISTS works on DROP FUNCTION but not ALTER FUNCTION). Both
+-- functions are guaranteed to exist: `audit_events_prevent_tamper` is
+-- CREATEd by migration 061 and `check_tender_sum_fn` by migration 058,
+-- both of which run before 064 in sorted order. Wrap in a DO block
+-- with an explicit existence check so this migration is still safe to
+-- re-run against a DB where (for whatever reason) one of those
+-- functions was dropped manually.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'audit_events_prevent_tamper') THEN
+    EXECUTE 'ALTER FUNCTION public.audit_events_prevent_tamper() SET search_path = public';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'check_tender_sum_fn') THEN
+    EXECUTE 'ALTER FUNCTION public.check_tender_sum_fn() SET search_path = public';
+  END IF;
+END$$;
 
 -- ─── R32-M-cleanup-cron: orchestrator ───────────────────────────────
 -- Call all three cleanup functions from one entry point so a single
