@@ -809,7 +809,9 @@ export const PATCH = withAdminAuth('employee.manage', async (request, ctx) => {
         const target = targetInfo[0] as { email?: string; first_name?: string } | undefined;
         const toEmail = target?.email ?? null;
         const apiKey = process.env.RESEND_API_KEY;
-        const fromEmail = process.env.RESEND_FROM ?? "noreply@basicuniformpos.com";
+        // R36-drift: standardize on RESEND_FROM_EMAIL — see
+        // password-reset-initiate/route.ts for rationale.
+        const fromEmail = process.env.RESEND_FROM_EMAIL ?? "noreply@basicuniformpos.com";
         if (toEmail && apiKey) {
           const actorName = actor.displayName || actor.email || "a manager";
           // R28-M5: use the shared escapeHtml helper (covers `& < > " '`).

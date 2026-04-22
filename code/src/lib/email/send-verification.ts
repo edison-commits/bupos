@@ -3,7 +3,7 @@
  *
  * Configuration:
  *   RESEND_API_KEY — Resend HTTP API key (prod required)
- *   RESEND_FROM    — "Name <address@domain>" (prod required)
+ *   RESEND_FROM_EMAIL    — "Name <address@domain>" (prod required)
  *   APP_URL        — full base URL for the verification link (prod required)
  *
  * Dev fallback: if any required env is missing, logs the verification link
@@ -23,13 +23,13 @@ export interface VerificationEmailParams {
 
 export async function sendVerificationEmail(params: VerificationEmailParams): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.RESEND_FROM;
+  const from = process.env.RESEND_FROM_EMAIL;
   const isProd = process.env.NODE_ENV === "production";
 
   if (!apiKey || !from) {
     if (isProd) {
       throw new Error(
-        "RESEND_API_KEY / RESEND_FROM must be configured in production for signup verification",
+        "RESEND_API_KEY / RESEND_FROM_EMAIL must be configured in production for signup verification",
       );
     }
     // Dev: log the link so local testing works without Resend setup.

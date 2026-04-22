@@ -53,7 +53,7 @@ jobs:
           #     banners) mixed into stdout breaks the later grep.
           # jq exits 2 on invalid JSON, so a wrangler auth failure fails
           # the step instead of being swallowed by `|| echo '[]'`.
-          REQUIRED=(CUSTOMER_DISPLAY_SECRET RESEND_API_KEY RESEND_FROM DATABASE_URL)
+          REQUIRED=(CUSTOMER_DISPLAY_SECRET RESEND_API_KEY RESEND_FROM_EMAIL DATABASE_URL)
           echo "→ Listing Worker secrets..."
           # Split stderr (warnings) from stdout (JSON payload). Some
           # wrangler versions emit a deprecation notice on stderr that

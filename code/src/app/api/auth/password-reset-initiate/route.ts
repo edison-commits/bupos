@@ -190,7 +190,11 @@ export async function POST(req: NextRequest) {
     // Dispatch the email via Resend. Fire-and-forget routed through
     // waitUntil so a slow Resend call doesn't stretch out the response.
     const apiKey = process.env.RESEND_API_KEY;
-    const fromEmail = process.env.RESEND_FROM ?? "noreply@basicuniformpos.com";
+    // R36-drift: standardize on RESEND_FROM_EMAIL (the name actually set
+    // in prod Cloudflare). Prior shape read RESEND_FROM, which was never
+    // set — silently fell through to the fallback, which may not be a
+    // verified Resend sender → delivery failures.
+    const fromEmail = process.env.RESEND_FROM_EMAIL ?? "noreply@basicuniformpos.com";
     if (apiKey) {
       const emailPromise = fetch("https://api.resend.com/emails", {
         method: "POST",

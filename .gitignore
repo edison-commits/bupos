@@ -6,3 +6,29 @@ code/.next/
 code/.turbo/
 code/.open-next*
 code/.wrangler*
+
+# macOS iCloud Drive / Finder duplicate-filename artifacts.
+# These look like `route 2.ts`, `pre-commit 2`, etc. — created when
+# iCloud resolves a cross-device conflict. They should NEVER be
+# committed (they're stale copies of real files and confuse grep,
+# lint, and the TypeScript compiler).
+* 2.ts
+* 2.tsx
+* 2.mjs
+* 2.js
+* 2.sql
+* 2.md
+* 2.yml
+* 2.yaml
+* 2.json
+* 3.ts
+* 3.tsx
+* 3.mjs
+* 3.js
+* 3.sql
+* 3.md
+* 3.yml
+* 3.yaml
+* 3.json
+pre-commit 2
+pre-commit 3
