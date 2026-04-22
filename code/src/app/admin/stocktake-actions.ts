@@ -343,6 +343,19 @@ export async function acceptStocktakeAction(stocktakeId: string) {
         });
       }
 
+      // R38-A-F9: cap per-line applied delta, matching the
+      // `adjustInventoryAction` pattern. Without this, a clerk (or
+      // compromised clerk credential) could submit `counted_qty = 0`
+      // on every high-value SKU and accept — wiping the ledger in a
+      // single step. Conversely, `counted_qty = expected + 1_000_000`
+      // mints phantom stock an accomplice can then sell. The cap mirrors
+      // the manager-role cap used for adjustments (5,000 units), but
+      // tighter than `receivingQuantity` because accepts apply to
+      // EVERY line in one commit rather than an itemized receive. Non-
+      // manager callers cap at 500; manager/owner cap at 5,000.
+      const isManagerOrOwner2 = ctx.employee.roleKey === 'owner' || ctx.employee.roleKey === 'manager';
+      const perLineDeltaCap = isManagerOrOwner2 ? 5_000 : 500;
+
       const updateIds: string[] = [];
       const updateCounts: number[] = [];
       const adjInvLevelIds: string[] = [];
@@ -355,6 +368,13 @@ export async function acceptStocktakeAction(stocktakeId: string) {
         const counted = Number(line.counted_qty) || 0;
         const appliedDelta = counted - locked.priorOnHand;
         if (appliedDelta === 0) continue;
+        if (Math.abs(appliedDelta) > perLineDeltaCap) {
+          await client.query('ROLLBACK');
+          throw new Error(
+            `Stocktake line delta ${appliedDelta} exceeds per-line cap ${perLineDeltaCap}. ` +
+            `Split the count into smaller buckets or escalate to a manager.`,
+          );
+        }
         updateIds.push(locked.id);
         updateCounts.push(counted);
         adjInvLevelIds.push(locked.id);

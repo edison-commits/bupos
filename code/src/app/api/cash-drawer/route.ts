@@ -71,7 +71,12 @@ export const POST = withDualAuth("register.open", async (req, ctx) => {
       // close-shift entrypoint and had no ownership check.
       return handleCloseShift(orgId, locationId, body, actorEmployeeId, employee.roleKey);
     } else if (action === 'pay_in') {
-      return handlePayIn(orgId, locationId, actorEmployeeId, body);
+      // R38-A-F6: pass actor role so handlePayIn can enforce an
+      // approval threshold mirroring pay_out. A cashier padding the
+      // drawer with a fake `pay_in $5000` at open and matching `pay_out
+      // $5000` at close was previously un-audited and covered any cash
+      // short.
+      return handlePayIn(orgId, locationId, actorEmployeeId, employee.roleKey, body);
     } else if (action === 'pay_out') {
       // Rate-limit payouts per employee to prevent rapid-fire cash extraction.
       const rl = checkRateLimit(`payout:${actorEmployeeId}`);
@@ -417,8 +422,14 @@ async function handleCloseShift(
   });
 }
 
-async function handlePayIn(orgId: string, locationId: string, actorEmployeeId: string, body: Record<string, unknown>) {
-  const { shift_id, amount, reason, note } = body;
+async function handlePayIn(
+  orgId: string,
+  locationId: string,
+  actorEmployeeId: string,
+  actorRoleKey: import("@/lib/domain/types").RoleKey,
+  body: Record<string, unknown>,
+) {
+  const { shift_id, amount, reason, note, approval_id } = body;
 
   if (!shift_id || !amount || !reason) {
     return NextResponse.json(
@@ -432,6 +443,16 @@ async function handlePayIn(orgId: string, locationId: string, actorEmployeeId: s
     return NextResponse.json({ error: 'Invalid pay-in amount' }, { status: 400 });
   }
 
+  // R38-A-F6: threshold-gate non-trivial pay-ins too. A cashier can
+  // otherwise fake a `pay_in $X` at open (padding the drawer) and
+  // match it with a `pay_out $X` at close to mask a cash short — no
+  // approval, no audit. Use the same threshold as pay_out so both
+  // sides of the drawer movement require a manager for non-trivial
+  // amounts. Managers/owners (who have approval authority) bypass.
+  const isManager = hasPermission(actorRoleKey, "approval.void_transaction");
+  const cfg = await getRegisterConfig(orgId);
+  const payinThreshold = cfg.approvalThresholds.transactionVoidOver ?? 50;
+
   // Verify the shift belongs to the caller's location AND is still open,
   // then INSERT — inside one transaction so the shift can't close (via
   // a concurrent handleCloseShift) between the check and the insert and
@@ -441,7 +462,7 @@ async function handlePayIn(orgId: string, locationId: string, actorEmployeeId: s
   let payInOut: { id: string; created_at: string };
   try {
     const shiftCheck = await client.query(
-      `SELECT id FROM shifts
+      `SELECT id, register_session_id FROM shifts
        WHERE id = $1 AND location_id = $2 AND organization_id = $3 AND status = 'open'
        FOR UPDATE`,
       [shift_id, locationId, orgId],
@@ -450,6 +471,39 @@ async function handlePayIn(orgId: string, locationId: string, actorEmployeeId: s
       await client.query('ROLLBACK');
       return NextResponse.json({ error: 'Shift not found, not open, or not at this location' }, { status: 400 });
     }
+    const shiftRegisterSessionId = shiftCheck.rows[0].register_session_id as string | null;
+
+    if (!isManager && numericAmount >= payinThreshold) {
+      if (!approval_id || typeof approval_id !== 'string') {
+        await client.query('ROLLBACK');
+        return NextResponse.json(
+          { error: `Pay-in exceeds $${payinThreshold}; manager approval required.` },
+          { status: 403 },
+        );
+      }
+      if (!shiftRegisterSessionId) {
+        await client.query('ROLLBACK');
+        return NextResponse.json({ error: 'Shift has no associated register session' }, { status: 400 });
+      }
+      // Consume a `cash_payout` approval for pay-ins too — same
+      // approval bucket, same permission gate (see approval-action.ts).
+      // A distinct `cash_payin` code would also work but reuses the
+      // existing UI flow / step-up bucket for simplicity.
+      const consume = await client.query(
+        `UPDATE register_session_exceptions
+           SET status = 'consumed'
+         WHERE id = $1 AND register_session_id = $2 AND status = 'pending'
+           AND exception_code = 'cash_payout'
+           AND (expires_at IS NULL OR expires_at > now())
+         RETURNING id`,
+        [approval_id, shiftRegisterSessionId],
+      );
+      if (consume.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return NextResponse.json({ error: 'Invalid, expired, or already-used approval' }, { status: 403 });
+      }
+    }
+
     const payRes = await client.query(
       `INSERT INTO pay_in_outs
        (shift_id, location_id, employee_id, direction, amount, reason, note, organization_id)
@@ -539,7 +593,8 @@ async function handlePayOut(orgId: string, locationId: string, actorEmployeeId: 
     } else {
       const shiftRegisterSessionId = shiftCheck.rows[0].register_session_id as string | null;
 
-      if (!isManager && numericAmount > payoutThreshold) {
+      // R38-A-F7: `>=` so a threshold set at $50 blocks a $50.00 pay-out.
+      if (!isManager && numericAmount >= payoutThreshold) {
         if (!approval_id || typeof approval_id !== "string") {
           await payoutClient.query("ROLLBACK");
           payoutResult = { kind: "error", status: 403, error: `Pay-out exceeds $${payoutThreshold}; manager approval required.` };

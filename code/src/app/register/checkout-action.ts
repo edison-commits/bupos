@@ -261,7 +261,11 @@ export async function checkoutAction(
         // (adding one would require an extra JOIN for no gain).
         // check-pool-org-filter: scoped-by-register-session-cookie
         client.query(
-          `SELECT exception_code FROM register_session_exceptions
+          // R38-A-F2: also read `approved_amount` so consumers can
+          // verify the applied amount doesn't exceed what the manager
+          // approved. NULL approved_amount = unbounded (legacy row or
+          // non-amount-scoped action type).
+          `SELECT exception_code, approved_amount FROM register_session_exceptions
            WHERE register_session_id = $1 AND status = 'pending'
            AND (expires_at IS NULL OR expires_at > now())`,
           [context.registerSession.id],
@@ -349,6 +353,13 @@ export async function checkoutAction(
       const baseCartDiscountEffective = cart.discountMode === 'percent'
         ? Number((discountBase * Math.min(100, clampedDiscountAmount) / 100).toFixed(2))
         : clampedDiscountAmount;
+      // R38-A-F1: include per-line discounts in the approval gate. The
+      // prior shape only measured cart-level `baseCartDiscountEffective`
+      // — a cashier applying 10× $100 items @ 95% line discount took
+      // $950 off with zero approval because each line's discount was
+      // invisible to the threshold check. Sum both surfaces and gate on
+      // the combined dollar impact.
+      const totalDiscountEffective = Number((baseCartDiscountEffective + lineDiscountsTotal).toFixed(2));
       const baseStoreCreditTendered = tenders.filter((t) => t.type === "store_credit").reduce((s, t) => s + t.amount, 0);
       const totalTendered = tenders.reduce((sum, t) => sum + t.amount, 0);
 
@@ -373,7 +384,32 @@ export async function checkoutAction(
         ? Math.round(loyaltyTendered / loyaltyConfig.redemptionValuePerPoint)
         : 0;
 
-      const pendingExceptions = excRows.map((r: { exception_code: string }) => r.exception_code);
+      // R38-A-F2: retain approved_amount alongside exception_code so
+      // threshold-gated consumers can verify `applied <= approved`.
+      const pendingExceptionRows = excRows as Array<{ exception_code: string; approved_amount: string | number | null }>;
+      const pendingExceptions = pendingExceptionRows.map((r) => r.exception_code);
+      const approvedAmountByCode = new Map<string, number>();
+      for (const r of pendingExceptionRows) {
+        if (r.approved_amount !== null && r.approved_amount !== undefined) {
+          // Use the MAX across duplicates (shouldn't happen under normal
+          // flow; if there are multiple pending approvals for the same
+          // code, grant the most permissive — still tighter than the
+          // prior "unbounded" behavior).
+          const n = Number(r.approved_amount);
+          const prev = approvedAmountByCode.get(r.exception_code) ?? 0;
+          if (Number.isFinite(n) && n > prev) {
+            approvedAmountByCode.set(r.exception_code, n);
+          }
+        }
+      }
+      // Epsilon tolerance: an approved $55.00 should clear a computed
+      // $55.00 even with floating-point noise. 1 cent of slack.
+      const amountApprovedFor = (code: string, applied: number): boolean => {
+        if (!pendingExceptions.includes(code)) return false;
+        const approved = approvedAmountByCode.get(code);
+        if (approved === undefined) return true; // NULL = unbounded legacy
+        return applied <= approved + 0.01;
+      };
       const dbPriceByVariant: Record<string, number> = {};
       const dbActiveByVariant: Record<string, boolean> = {};
       for (const row of variantRows as { id: string; price: string; is_active: boolean }[]) {
@@ -413,6 +449,15 @@ export async function checkoutAction(
         if (dbPrice === undefined) {
           redirect(`/register?error=Unknown+product+variant`);
         }
+        // R38-A-F11: reject deactivated variants on regular lines too,
+        // not just free-item promo lines. Prior shape allowed a cashier
+        // to check out a variant an admin had already pulled from the
+        // catalog (recalled / discontinued SKU). Combined with price-
+        // override approval, this was a path to move shrink goods off
+        // the books at an attacker-chosen price.
+        if (dbActiveByVariant[item.productVariantId] === false) {
+          redirect(`/register?error=Product+is+no+longer+available`);
+        }
         if (item.unitPrice !== dbPrice) {
           redirect(`/register?error=Price+tampering+detected`);
         }
@@ -424,8 +469,16 @@ export async function checkoutAction(
         if (item.overridePrice !== undefined && item.overridePrice < 0) {
           redirect(`/register?error=Invalid+price+override`);
         }
-        if (item.overridePrice !== undefined && item.overridePrice !== dbPrice && !pendingExceptions.includes("price_override")) {
-          redirect(`/register?error=Price+override+requires+manager+approval`);
+        if (item.overridePrice !== undefined && item.overridePrice !== dbPrice) {
+          // R38-A-F2: verify the approved price-override amount covers
+          // the DOLLAR IMPACT of this override (dbPrice - overridePrice,
+          // absolute value because overrides can go up or down). A
+          // manager's $5 override approval shouldn't unlock a $500
+          // override on the same line.
+          const overrideDollarImpact = Math.abs(dbPrice - item.overridePrice);
+          if (!amountApprovedFor("price_override", overrideDollarImpact)) {
+            redirect(`/register?error=Price+override+exceeds+approved+amount`);
+          }
         }
       }
 
@@ -533,11 +586,23 @@ export async function checkoutAction(
         }
       }
 
-      if (baseCartDiscountEffective > thresholds.discountOver && !pendingExceptions.includes("discount_threshold")) {
-        redirect("/register?error=Discount+exceeds+threshold+without+manager+approval");
+      // R38-A-F1 + R38-A-F7: gate on combined (cart + line) discount
+      // and use `>=` so a threshold set at $50 blocks a $50.00 discount
+      // (prior `>` let exactly-threshold sneak through).
+      // R38-A-F2: ALSO verify the manager-approved amount covers the
+      // applied amount. A $55 approval no longer unlocks an arbitrary
+      // discount — the consumer confirms `applied <= approved`.
+      if (
+        totalDiscountEffective >= thresholds.discountOver
+        && !amountApprovedFor("discount_threshold", totalDiscountEffective)
+      ) {
+        redirect("/register?error=Discount+exceeds+threshold+or+approved+amount");
       }
-      if (baseStoreCreditTendered > thresholds.storeCreditIssuanceOver && !pendingExceptions.includes("store_credit_threshold")) {
-        redirect("/register?error=Store+credit+exceeds+threshold+without+manager+approval");
+      if (
+        baseStoreCreditTendered >= thresholds.storeCreditIssuanceOver
+        && !amountApprovedFor("store_credit_threshold", baseStoreCreditTendered)
+      ) {
+        redirect("/register?error=Store+credit+exceeds+threshold+or+approved+amount");
       }
       if (totalTendered < totals.grandTotal - 0.005) {
         redirect("/register?error=Insufficient+tender+amount");
@@ -1055,14 +1120,16 @@ export async function checkoutAction(
     const baseCartDiscountEffective = cart.discountMode === 'percent'
       ? Number((discountBase * Math.min(100, clampedDiscountAmount) / 100).toFixed(2))
       : clampedDiscountAmount;
+    // R38-A-F1: same combined-discount gate as the isPg branch.
+    const totalDiscountEffective = Number((baseCartDiscountEffective + lineDiscountsTotal).toFixed(2));
     const baseStoreCreditTendered = tenders.filter((t) => t.type === "store_credit").reduce((s, t) => s + t.amount, 0);
     const totalTendered = tenders.reduce((sum, t) => sum + t.amount, 0);
 
     // JSON path: no exception approvals possible, so threshold checks always apply
-    if (baseCartDiscountEffective > thresholds.discountOver) {
+    if (totalDiscountEffective >= thresholds.discountOver) {
       redirect("/register?error=Discount+exceeds+threshold+without+manager+approval");
     }
-    if (baseStoreCreditTendered > thresholds.storeCreditIssuanceOver) {
+    if (baseStoreCreditTendered >= thresholds.storeCreditIssuanceOver) {
       redirect("/register?error=Store+credit+exceeds+threshold+without+manager+approval");
     }
     if (totalTendered < totals.grandTotal - 0.005) {

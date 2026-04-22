@@ -20,6 +20,14 @@
     "mode": "smart"
   },
 
+  // R38-C-C2: disable the `basicuniformpos.<account>.workers.dev`
+  // subdomain so requests can ONLY reach the Worker via the custom
+  // domain (`basicuniformpos.com`) which goes through CF's WAF +
+  // rate-limits + cache rules. Leaving it enabled lets an attacker
+  // bypass every edge-level protection by just discovering the
+  // account-scoped subdomain.
+  "workers_dev": false,
+
   // R25-ops-M-1: enable Workers Logs retention so structured error
   // lines from with-auth.ts (`event: "api_route_error"`) and
   // postgres-store.ts (`event: "audit_insert_failed"`) are queryable

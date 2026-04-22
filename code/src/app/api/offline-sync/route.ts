@@ -697,13 +697,20 @@ export const POST = withDualAuth("register.open", async (request, ctx) => {
       regConfig = await getRegisterConfig(orgId);
     }
     const thresholds = regConfig.approvalThresholds;
-    if (cartDiscount > thresholds.discountOver && !approvedExceptions.includes("discount_threshold")) {
+    // R38-A-F1: gate on the COMBINED discount (`discountTotal` at this
+    // point contains both line-level and cart-level discounts, per
+    // line 684 above). Prior shape only read `cartDiscount`, so a
+    // cashier could take unlimited `lineDiscount: {mode:'percent',
+    // value:95}` off every line and the approval gate never fired.
+    // R38-A-F7: use `>=` so a threshold set at $50 blocks an exactly-
+    // $50 discount.
+    if (discountTotal >= thresholds.discountOver && !approvedExceptions.includes("discount_threshold")) {
       return NextResponse.json({ error: "Cart discount exceeds threshold without manager approval" }, { status: 403 });
     }
     const storeCreditTendered = tenders
       .filter((t: { type: string }) => t.type === "store_credit")
       .reduce((sum: number, t: { amount: number }) => sum + t.amount, 0);
-    if (storeCreditTendered > thresholds.storeCreditIssuanceOver && !approvedExceptions.includes("store_credit_threshold")) {
+    if (storeCreditTendered >= thresholds.storeCreditIssuanceOver && !approvedExceptions.includes("store_credit_threshold")) {
       return NextResponse.json({ error: "Store credit issuance exceeds threshold without manager approval" }, { status: 403 });
     }
 

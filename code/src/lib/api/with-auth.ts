@@ -171,13 +171,17 @@ export function checkOrigin(req: NextRequest): NextResponse | null {
     return NextResponse.json({ error: "Invalid Origin" }, { status: 403 });
   }
 
-  // Build the set of allowed origins. Same-origin (request's own host) always
-  // counts; the production host and dev localhost are the only other callers.
+  // Build the set of allowed origins. Same-origin (request's own host)
+  // always counts; localhost is added for non-prod.
+  //
+  // R38-C-H8: the secondary host `bupos.basicuniform.com` was removed
+  // from the allowlist. That origin isn't currently served by this app
+  // — it was a legacy cross-subdomain trust that became a CSRF vector
+  // if ever subdomain-taken-over (dangling CNAME). If a real secondary
+  // host is added later, put it back with a matching DNS ownership
+  // check in CI.
   const requestOrigin = new URL(req.url).origin;
-  const allowed = new Set<string>([
-    requestOrigin,
-    "https://bupos.basicuniform.com",
-  ]);
+  const allowed = new Set<string>([requestOrigin]);
   if (process.env.NODE_ENV !== "production") {
     allowed.add("http://localhost:3000");
   }

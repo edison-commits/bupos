@@ -159,8 +159,46 @@ export async function createLayawayAction(
         ],
       );
 
-      // 2. Record the initial deposit payment with the actual tender type
+      // 2. Record the initial deposit payment with the actual tender type.
+      // R38-A-F4: when the tender is `store_credit`, ACTUALLY DEBIT the
+      // customer's balance. Prior shape wrote a `layaway_payments` row
+      // but never touched `customers.store_credit_balance` and never
+      // wrote a `store_credit_ledger` entry. A later
+      // `cancelLayawayAction` with `disposition: "refund_cash"` then
+      // paid out real cash for a "deposit" that was never consumed —
+      // phantom-credit → cash conversion. Also reject tenders that
+      // require a customer (store_credit, loyalty) when the cart has
+      // no customer attached.
       if (depositAmount > 0) {
+        if (tenderType === "store_credit") {
+          if (!cart.customerId) {
+            throw new Error("Store-credit deposit requires a customer attached to the cart");
+          }
+          const { rows: balRows } = await client.query(
+            `SELECT store_credit_balance FROM customers
+              WHERE id = $1 AND organization_id = $2 AND is_active = true FOR UPDATE`,
+            [cart.customerId, context.employee.organizationId],
+          );
+          if (balRows.length === 0) {
+            throw new Error("Customer not found or inactive");
+          }
+          const currentBalance = Number(balRows[0].store_credit_balance ?? 0);
+          if (currentBalance < depositAmount - 0.005) {
+            throw new Error(`Insufficient store credit balance (have ${currentBalance.toFixed(2)}, need ${depositAmount.toFixed(2)})`);
+          }
+          const newBalance = Number((currentBalance - depositAmount).toFixed(2));
+          await client.query(
+            `UPDATE customers SET store_credit_balance = $1, updated_at = now()
+              WHERE id = $2 AND organization_id = $3`,
+            [newBalance, cart.customerId, context.employee.organizationId],
+          );
+          await client.query(
+            `INSERT INTO store_credit_ledger
+               (id, organization_id, customer_id, transaction_type, amount, balance_after, employee_id, reason, created_at)
+             VALUES ($1, $2, $3, 'redemption', $4, $5, $6, 'Layaway deposit', now())`,
+            [randomUUID(), context.employee.organizationId, cart.customerId, -depositAmount, newBalance, context.employee.id],
+          );
+        }
         await client.query(
           `INSERT INTO layaway_payments (id, layaway_id, tender_type, amount, employee_id, metadata)
            VALUES ($1, $2, $3, $4, $5, $6)`,

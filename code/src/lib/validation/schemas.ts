@@ -276,9 +276,18 @@ export const expenseDeleteSchema = z.object({
 // Receiving
 // ---------------------------------------------------------------------------
 
+// R38-A-F5: cap per-line receiving quantity at 10,000 units and
+// batch size at 500 lines (already). Prior shape used `positiveInt`
+// (max 1,000,000) × 500 lines = 500M units per POST — inventory_clerk
+// with `inventory.adjust` could mint arbitrary stock in adhoc mode
+// (no PO) with no step-up, no alert. Adhoc receiving is usually
+// small corrections; real PO receives rarely exceed a few hundred
+// units per line. Above-cap needs to be split into multiple batches
+// so each one has its own audit row.
+const receivingQuantity = z.number().int().positive().max(10_000);
 const receivingItemSchema = z.object({
   product_variant_id: uuid,
-  quantity: positiveInt,
+  quantity: receivingQuantity,
   po_line_id: uuid.optional(),
 });
 

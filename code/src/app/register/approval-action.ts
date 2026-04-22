@@ -205,10 +205,25 @@ export async function verifyManagerApproval(pin: string, request: ApprovalReques
     const { orgTx } = await import("@/lib/supabase-rest");
     const client = await orgTx(organizationId);
     try {
+      // R38-A-F2: persist the approved amount so the consumer can
+      // verify the actual applied amount doesn't exceed it. Prior
+      // shape only stored `exception_code`, letting a $55 approval
+      // unlock a $5,000 discount at checkout. Action types that
+      // aren't amount-scoped (item_void / transaction_void / return)
+      // persist NULL and the consumer treats NULL as "unbounded"
+      // (preserves legacy behavior for those flows).
+      const amountScoped =
+        request.actionType === "discount_threshold" ||
+        request.actionType === "store_credit" ||
+        request.actionType === "store_credit_threshold" ||
+        request.actionType === "price_override" ||
+        request.actionType === "cash_payout";
+      const approvedAmount = amountScoped ? request.triggerAmount : null;
       await client.query(
-        `INSERT INTO register_session_exceptions (id, register_session_id, exception_code, status, approved_by, expires_at, created_at)
-         VALUES ($1, $2, $3, 'pending', $4, $5, $6)`,
-        [exceptionId, registerSessionId, exceptionCode, approverEmployee.id, expiresAt, timestamp],
+        `INSERT INTO register_session_exceptions
+           (id, register_session_id, exception_code, status, approved_by, approved_amount, expires_at, created_at)
+         VALUES ($1, $2, $3, 'pending', $4, $5, $6, $7)`,
+        [exceptionId, registerSessionId, exceptionCode, approverEmployee.id, approvedAmount, expiresAt, timestamp],
       );
       await client.query("COMMIT");
     } catch (e) {

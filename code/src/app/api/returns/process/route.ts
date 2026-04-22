@@ -97,6 +97,24 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
       );
     }
 
+    // R38-A-F3: register-side `return-action.ts` enforces a
+    // `returnWithoutManagerOver` threshold — refunds above it require
+    // the cashier to be owner/manager. The admin `/api/returns/process`
+    // sibling had NO such gate, so a cashier with `register.open` (via
+    // dual-auth) could POST any `refund_amount` and drain the refund
+    // without manager role. Mirror the register-side gate here.
+    const { getRegisterConfig } = await import("@/lib/config/register-config");
+    const returnCfg = await getRegisterConfig(orgId);
+    const returnThreshold = returnCfg.approvalThresholds.returnWithoutManagerOver;
+    const isManagerRole = employee.roleKey === 'owner' || employee.roleKey === 'manager';
+    if (refund_amount >= returnThreshold && !isManagerRole) {
+      await client.query('ROLLBACK');
+      return NextResponse.json(
+        { error: `Refund of ${refund_amount.toFixed(2)} exceeds ${returnThreshold.toFixed(2)} threshold. Manager must process.` },
+        { status: 403 },
+      );
+    }
+
     // R33-H5: require step-up for cash refunds OR large refunds. A
     // stolen cashier cookie otherwise opens the drawer for up to
     // grand_total in cash on ANY completed transaction. R32-H10

@@ -23,6 +23,10 @@ ALTER TABLE promo_codes
     OR (type <> 'free_item' AND free_variant_id IS NULL)
   );
 
-CREATE INDEX idx_promo_codes_free_variant_id
+-- R38-B-F3: IF NOT EXISTS so the migration is safely re-runnable on
+-- fresh-DB bootstrap loops (the workflow's `_migrations` tracker
+-- normally prevents re-application, but a tracker rebuild / manual
+-- replay should not 42P07 here).
+CREATE INDEX IF NOT EXISTS idx_promo_codes_free_variant_id
   ON promo_codes(free_variant_id)
   WHERE free_variant_id IS NOT NULL;
