@@ -106,7 +106,13 @@ async function testHealthEndpoint() {
   log('📋', 'Testing health endpoint...');
   const resp = await fetch(`${BASE}/api/health`);
   const data = await resp.json();
-  if (data.status !== 'ok' || data.database !== 'connected') {
+  // R23-H-3: the PUBLIC /api/health response intentionally stopped
+  // leaking subsystem detail (the old `database: 'connected'` field).
+  // A `status: 'ok'` response IS the signal that the DB query under
+  // the hood succeeded — a failed DB check returns `unhealthy` or
+  // `degraded` with a non-200 status. Detailed diagnostics moved to
+  // /api/admin/health behind admin auth (R23-L-3).
+  if (!resp.ok || data.status !== 'ok') {
     log('❌', `Health check failed: ${JSON.stringify(data)}`);
     failures++;
     return;
