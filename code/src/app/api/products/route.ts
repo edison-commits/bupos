@@ -244,13 +244,35 @@ export const POST = withAdminAuth("catalog.manage", async (request, ctx) => {
     await client.query("SELECT set_config('app.current_org_id', $1, true)", [orgId]);
 
     // Handle category creation
+    // R66-M1: validate the category sub-payload. Prior shape read
+    // body.category.name/.slug with no Zod schema, no length cap,
+    // no type check — the route-level productCreateSchema hadn't
+    // been applied yet at this point (it runs AFTER the category
+    // branch returns early). A catalog.manage holder could stuff
+    // arbitrary strings up to the ~2MB request-body cap, or pass
+    // objects/arrays that would coerce unpredictably at bind-time.
     if (body.category) {
-      const { name, slug } = body.category;
+      const { z } = await import('zod');
+      const categoryBranchSchema = z.object({
+        category: z.object({
+          name: z.string().trim().min(1).max(200),
+          slug: z.string().trim().max(200).optional(),
+        }).strict(),
+      }).strict();
+      const cv = categoryBranchSchema.safeParse({ category: body.category });
+      if (!cv.success) {
+        await client.query('ROLLBACK');
+        return NextResponse.json(
+          { error: cv.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ') },
+          { status: 400 },
+        );
+      }
+      const { name, slug } = cv.data.category;
       const result = await client.query(
         `INSERT INTO categories (id, organization_id, name, slug, created_at, updated_at)
          VALUES (gen_random_uuid(), $1, $2, $3, NOW(), NOW())
          RETURNING id, name, slug`,
-        [orgId, name, slug]
+        [orgId, name, slug ?? null]
       );
       await client.query('COMMIT');
       invalidateProductsCache(orgId);
@@ -494,7 +516,13 @@ export const PUT = withAdminAuth("catalog.manage", async (request, ctx) => {
     await client.query("SELECT set_config('app.current_org_id', $1, true)", [orgId]);
 
     // Handle product update
-    if (updates.name || updates.slug || updates.description !== undefined || updates.image_url !== undefined || updates.is_active !== undefined || updates.is_touch_favorite !== undefined) {
+    // R66-M2: include `category_id` so a category-only reassignment
+    // (e.g. moving a product to a new category) routes through the
+    // UPDATE branch instead of silently falling through to
+    // "No updates made". Prior shape had `category_id` in the
+    // `wantsProductUpdate` guard but not in this branch predicate —
+    // the API returned 200 OK while the DB never got the change.
+    if (updates.name || updates.slug || updates.description !== undefined || updates.image_url !== undefined || updates.is_active !== undefined || updates.is_touch_favorite !== undefined || updates.category_id !== undefined) {
       const fields = [];
       const values = [];
       let paramIndex = 1;

@@ -357,7 +357,11 @@ export const DELETE = withAdminAuth('employee.manage', async (request, ctx) => {
   if (employee.roleKey !== 'owner' && employee.roleKey !== 'manager') {
     return NextResponse.json({ error: 'Manager authority required' }, { status: 403 });
   }
-  const rl = checkRateLimit(`customers:delete:${orgId}`, { maxAttempts: 10, windowMs: 60_000 });
+  // R66-L1: per-actor bucket parity with POST/PUT (R64-L2). Kept
+  // the tighter 10/60s ceiling since DELETE is destructive, but
+  // per-actor so two owners doing PII cleanup don't throttle each
+  // other.
+  const rl = checkRateLimit(`customers:delete:${orgId}:${employee.id}`, { maxAttempts: 10, windowMs: 60_000 });
   if (!rl.allowed) {
     return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
   }

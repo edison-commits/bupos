@@ -43,7 +43,10 @@ describe("R39 findings", () => {
   describe("R39-A1-2: audit events on tax / settings / promo mutations", () => {
     it("tax-config PUT writes tax_rate_changed audit event", () => {
       const src = read("src/app/api/tax-config/route.ts");
-      expect(src).toMatch(/pgInsertAuditEvent/);
+      // R48: tax-config PUT moved from pgInsertAuditEvent to an
+      // inline INSERT INTO audit_events inside the orgTx (R49
+      // pattern). Assert on the event_kind string + payload key
+      // which are present in both old and new shapes.
       expect(src).toMatch(/tax_rate_changed/);
       expect(src).toMatch(/prior_tax_rate/);
     });

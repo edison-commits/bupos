@@ -242,12 +242,21 @@ export default function EmployeeManagement() {
     setError(null);
 
     try {
+      // R66-M4: strip `pin` when empty. The employeeUpdateSchema has
+      // `pin: pinString.optional()` where pinString enforces
+      // /^\d{4,6}$/. Zod `.optional()` accepts missing, not empty —
+      // `pin: ""` fails the regex and the whole request 400s with
+      // "PIN must be 4-6 digits" on any non-PIN edit. openEditModal
+      // pre-populates formData.pin = '' which flowed into the spread.
+      const { pin: rawPin, ...formDataNoPin } = formData;
+      const pinToSend = rawPin && rawPin.trim() ? rawPin.trim() : undefined;
       const response = await authFetch('/api/employees', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: selectedEmployee.id,
-          ...formData,
+          ...formDataNoPin,
+          ...(pinToSend ? { pin: pinToSend } : {}),
           ...(actorPassword ? { actorPassword } : {}),
         }),
       });
@@ -292,11 +301,16 @@ export default function EmployeeManagement() {
     setError(null);
 
     try {
+      // R66-H1: use schema-valid enum value `reset_pin` (underscore).
+      // Prior shape sent `reset-pin` (hyphen) — server's
+      // employeePatchSchema at schemas.ts:753 has the enum
+      // ["activate", "deactivate", "reset_pin"]; every Reset-PIN
+      // click 400'd with "Invalid enum value" for every org.
       const response = await authFetch('/api/employees', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'reset-pin',
+          action: 'reset_pin',
           id: selectedEmployee.id,
           pin: formData.pin,
           actorPassword: pwd,
@@ -337,11 +351,14 @@ export default function EmployeeManagement() {
     if (!pwd) return;
     setSubmitting(true);
     try {
+      // R66-H1: send explicit `activate` / `deactivate` action
+      // value. Prior shape sent `toggle-status` which isn't in the
+      // server enum — every toggle click 400'd.
       const response = await authFetch('/api/employees', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'toggle-status',
+          action: employee.isActive ? 'deactivate' : 'activate',
           id: employee.id,
           actorPassword: pwd,
         }),

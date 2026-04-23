@@ -100,7 +100,11 @@ export const GET = withAdminAuth('employee.manage', async (request, ctx) => {
 // POST: Create new employee with auth credential (PIN)
 export const POST = withAdminAuth('employee.manage', async (request, ctx) => {
   const { orgId, employee: actor } = ctx;
-  const rl = checkRateLimit(`employees:post:${orgId}`);
+  // R66-M3: per-actor 60/60s bucket. Prior default (3/5min per-org)
+  // shared the bucket across admins — two managers onboarding staff
+  // simultaneously 429'd each other after 3 creates. Employee
+  // creation is a legitimate bursty operation during onboarding.
+  const rl = checkRateLimit(`employees:post:${orgId}:${actor.id}`, { maxAttempts: 60, windowMs: 60_000 });
   if (!rl.allowed) {
     return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
   }

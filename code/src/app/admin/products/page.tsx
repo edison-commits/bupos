@@ -236,16 +236,20 @@ export default function ProductsPage() {
       // for the reprice branch; everything else goes through the
       // separate variant-update object (not this endpoint).
       //
-      // product_id is required by schema but the variant-update
-      // branch only uses variant_id. Pass the parent id via
-      // modal.data.productId if present so the schema passes.
-      const parentIdFromModal = (modal.data as { productId?: string } | undefined)?.productId;
+      // R66-L3: the modal exposes `productId` at the peer level of
+      // ModalState (not nested inside `data`), populated by
+      // `setModal({ type: 'edit-variant', productId: product.id,
+      // variantId: variant.id, data: variant })` at line 512. Read
+      // it from modal.productId so the dead branch from R64-C1 is
+      // removed. Including product_id satisfies schemas for callers
+      // that still look for it; the variant-update handler branch
+      // uses variant_id.
       const payload: Record<string, unknown> = {
         variant_id: variantId,
         expectedUpdatedAt: formData.updatedAt,
         price: formData.price,
         cost: formData.cost,
-        ...(parentIdFromModal ? { product_id: parentIdFromModal } : {}),
+        ...(modal.productId ? { product_id: modal.productId } : {}),
         ...(actorPassword ? { actorPassword } : {}),
       };
       const response = await authFetch(`/api/products`, {
@@ -269,12 +273,25 @@ export default function ProductsPage() {
   };
 
   const handleAddVariant = async (productId: string, formData: Partial<ProductVariant>) => {
+    // R66-M5: server /api/products POST variant-create branch gates
+    // unconditionally on step-up (R58-5; bucketKey
+    // 'variant-price-stepup'). Prior shape POSTed without a
+    // password prompt — every Add-Variant call 400'd. Prompt
+    // synchronously, bail on cancel.
+    const pwd = await promptPassword({
+      title: "Add variant?",
+      description:
+        "New variants set a price at creation. Confirm with your password.",
+      confirmLabel: "Add variant",
+      confirmVariant: "default",
+    });
+    if (!pwd) return;
     setSaving(true);
     try {
       const response = await authFetch('/api/products', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ product_id: productId, variant: formData }),
+        body: JSON.stringify({ product_id: productId, variant: formData, actorPassword: pwd }),
       });
       if (!response.ok) throw new Error('Failed to add variant');
       setModal({ type: null });
@@ -289,10 +306,13 @@ export default function ProductsPage() {
   const handleDeleteProduct = async (productId: string) => {
     if (!window.confirm('Soft-delete this product? It will be marked inactive.')) return;
     try {
+      // R66-L2: server productDeleteSchema requires `product_id`
+      // (not `id`). Prior shape sent `{id: productId}` which Zod
+      // rejected with 400. Mirror of R64-C1 on PUT.
       const response = await authFetch('/api/products', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: productId }),
+        body: JSON.stringify({ product_id: productId }),
       });
       if (!response.ok) throw new Error('Failed to delete product');
       fetchProducts();
@@ -302,12 +322,23 @@ export default function ProductsPage() {
   };
 
   const handleImportCSV = async (rows: Record<string, string>[]) => {
+    // R66-M5: CSV import requires step-up (R54-M3; bucketKey
+    // 'variant-price-stepup' + pricing.manage gate). Prior shape
+    // sent the POST without actorPassword — every import 400'd.
+    const pwd = await promptPassword({
+      title: `Import ${rows.length} rows?`,
+      description:
+        "Bulk CSV import can create or update products and variants at scale. Confirm with your password.",
+      confirmLabel: "Import",
+      confirmVariant: "default",
+    });
+    if (!pwd) return;
     setSaving(true);
     try {
       const response = await authFetch('/api/products', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'import_csv', rows }),
+        body: JSON.stringify({ action: 'import_csv', rows, actorPassword: pwd }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Import failed');

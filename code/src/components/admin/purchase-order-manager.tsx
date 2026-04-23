@@ -188,9 +188,14 @@ export function PurchaseOrderManager() {
           supplier_id: newSupplierId,
           notes: newNotes || null,
           expected_at: newExpected || null,
+          // R66-H2: server purchaseOrderLineSchema expects
+          // `quantity` (renamed from `quantity_ordered` in the DTO
+          // while the DB column kept the old name). The internal
+          // UI state still uses quantity_ordered for readability;
+          // rename at the PUT boundary so the schema validates.
           lines: newLines.map((l) => ({
             product_variant_id: l.product_variant_id,
-            quantity_ordered: l.quantity_ordered,
+            quantity: l.quantity_ordered,
             unit_cost: l.unit_cost,
           })),
         }),

@@ -263,6 +263,12 @@ export default function PurchaseOrdersPage() {
     setCreating(true);
     setError(null);
     try {
+      // R66-H2: purchase-order line DTO renames `quantity_ordered`
+      // (UI / DB column name) to `quantity` at the schema boundary.
+      // Prior shape spread `...rest` including `quantity_ordered`,
+      // `variant_name`, `sku`, `product_name` — all of which the
+      // schema rejects (quantity required, others dropped). Every
+      // PO create 400'd. Whitelist + rename here.
       const res = await authFetch('/api/purchase-orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -270,7 +276,11 @@ export default function PurchaseOrdersPage() {
           supplier_id: createForm.supplier_id,
           notes: createForm.notes || null,
           expected_at: createForm.expected_at || null,
-          lines: createForm.lines.map(({ _temp_id, ...rest }) => rest),
+          lines: createForm.lines.map((l) => ({
+            product_variant_id: l.product_variant_id,
+            quantity: l.quantity_ordered,
+            unit_cost: l.unit_cost,
+          })),
         }),
       });
 
