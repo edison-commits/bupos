@@ -303,6 +303,13 @@ export async function adminOpenShiftAction(formData: FormData) {
     redirect("/admin/clock-in?error=Admin+shift+opening+not+supported+in+JSON+mode");
   }
 
+  // R91-M1: parity with the rest of this file + R84-R85 admin
+  // cache-invalidation sweep. openShiftAdminAction writes to
+  // `shifts` which IS loaded into readStore's 30s cache; without
+  // this invalidation both /admin/clock-in and /admin/shifts
+  // served stale data for up to 30s after the admin opened a
+  // shift on behalf of an employee.
+  invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin/clock-in");
   revalidatePath("/admin/shifts");
   redirect("/admin/clock-in?notice=Shift+opened");
