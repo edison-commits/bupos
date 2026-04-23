@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import { safeErr } from '@/lib/logging/safe-err';
 
 export default function RegisterError({
   error,
@@ -9,8 +10,18 @@ export default function RegisterError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  // R42-G: log via safeErr so PG DETAIL / stack frames can't leak. The
+  // user-facing text is already generic — kept that way.
   useEffect(() => {
-    console.error('[RegisterError]', { message: error.message, digest: error.digest, stack: error.stack });
+    console.error(
+      JSON.stringify({
+        level: 'error',
+        event: 'client_error_boundary',
+        section: 'register-root',
+        digest: error.digest,
+        error: safeErr(error),
+      }),
+    );
   }, [error]);
 
   return (

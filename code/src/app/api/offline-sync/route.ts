@@ -1081,15 +1081,24 @@ export const POST = withDualAuth("register.open", async (request, ctx) => {
             [randomUUID(), orgId, cart.customerId, -storeCreditTendered, newBalance, sessionEmployeeId, transactionId],
           );
         }
-      }
 
-      // Free-item promo redemptions. Row-lock the promo codes here so
-      // concurrent syncs can't both pass the max_redemptions check. The
-      // UNIQUE (promo_code_id, transaction_id) index catches double-
-      // redemption on retry. Re-validate status + expiry inside the lock
-      // — a promo could have been disabled since the pre-tx read. Each
-      // loop iteration is a DB round-trip; free-item promo usage is
-      // rare enough that batching isn't worth the complexity yet.
+      // R42-C: free-item promo loop MOVED INSIDE the `if (!isAlreadySynced)`
+      // guard. Prior shape ran this loop unconditionally — on a retry of
+      // a previously-synced transaction, the loop re-validated each promo
+      // against its CURRENT state. If the promo had since been disabled,
+      // depleted, or expired, a `PromoRevalidationError` was thrown and
+      // the client saw a 409 `retriable:false` for a transaction that had
+      // already committed correctly. That surfaces as "phantom failed
+      // syncs" for successful sales and forces manual re-entry. The UNIQUE
+      // (promo_code_id, transaction_id) on promo_redemptions already makes
+      // the insert idempotent; we don't need the loop to run twice.
+      //
+      // Row-lock the promo codes here so concurrent syncs can't both pass
+      // the max_redemptions check. The UNIQUE (promo_code_id, transaction_id)
+      // index catches double-redemption on retry. Re-validate status + expiry
+      // inside the lock — a promo could have been disabled since the pre-tx
+      // read. Each loop iteration is a DB round-trip; free-item promo usage
+      // is rare enough that batching isn't worth the complexity yet.
       for (const line of freeItemLines) {
         const promoId = line.promoCodeId!;
         // R29-H2: also select max_redemptions_per_customer so the
@@ -1184,6 +1193,7 @@ export const POST = withDualAuth("register.open", async (request, ctx) => {
           );
         }
       }
+      } // end of `if (!isAlreadySynced)` — see R42-C
 
       await syncClient.query("COMMIT");
     } catch (e) {

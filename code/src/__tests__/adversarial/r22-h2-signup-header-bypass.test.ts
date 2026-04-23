@@ -76,7 +76,8 @@ describe("R22-H-2 regression: signup refuses without client IP in prod", () => {
     fd.set("firstName", "A");
     fd.set("lastName", "B");
     fd.set("email", `bypass-${Date.now()}@attacker.test`);
-    fd.set("password", "P4ssword!");
+    // R42-J: signup minimum raised to 12 chars.
+    fd.set("password", "P4ssword!Xyz");
 
     const result = await signupAction(null, fd);
     expect(result.error).toMatch(/too many signups from this network/i);
@@ -98,7 +99,8 @@ describe("R22-H-2 regression: signup refuses without client IP in prod", () => {
     fd.set("firstName", "D");
     fd.set("lastName", "V");
     fd.set("email", `dev-${Date.now()}@example.test`);
-    fd.set("password", "P4ssword!");
+    // R42-J: signup minimum raised to 12 chars.
+    fd.set("password", "P4ssword!Xyz");
 
     const result = await signupAction(null, fd);
     // Dev branch should reach the generic "check your inbox" response —

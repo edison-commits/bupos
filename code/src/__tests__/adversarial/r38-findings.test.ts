@@ -227,8 +227,13 @@ describe("R38 findings", () => {
     const src = read("middleware.ts");
     it("Methods/Headers/Max-Age only emitted when origin allowed", () => {
       // The OPTIONS branch wraps Access-Control-Allow-Methods inside the allowlist check.
+      // R42-J: window widened to 2000 chars because the R42-J cleanup
+      // comment added ~600 chars of documentation between the
+      // `request.method === 'OPTIONS'` token and the origin-allowed
+      // check. The invariant (Methods is inside the includes() branch)
+      // is preserved — we just need more context to reach it.
       const options = src.slice(src.indexOf("request.method === 'OPTIONS'"));
-      const block = options.slice(0, 1200);
+      const block = options.slice(0, 2000);
       expect(block).toMatch(/allowedOrigins\.includes\(origin\)[\s\S]+?Access-Control-Allow-Methods/);
     });
   });

@@ -45,8 +45,13 @@ export function middleware(request: NextRequest) {
   if (request.method === 'OPTIONS') {
     const response = new NextResponse(null, { status: 204 })
     const origin = request.headers.get('origin') ?? '';
+    // R42-J: `bupos.basicuniform.com` removed from the allowlist.
+    // `src/lib/api/with-auth.ts` already dropped this secondary host in
+    // R38-C-H8 (dangling-CNAME CSRF vector if subdomain-taken-over);
+    // middleware drift meant this side still trusted it. App is only
+    // served from `basicuniformpos.com`. If a real secondary host is
+    // ever added, pair it with a DNS ownership check in CI.
     const allowedOrigins = [
-      'https://bupos.basicuniform.com',
       ...(process.env.NODE_ENV !== 'production' ? ['http://localhost:3000'] : []),
     ];
     // R27-L6: couple ACAC to ACAO on preflight too.
@@ -74,8 +79,9 @@ export function middleware(request: NextRequest) {
 
   // CORS — allow same-origin and known cross-origin API callers
   const origin = request.headers.get('origin') ?? '';
+  // R42-J: same allowlist as preflight above; stale
+  // `bupos.basicuniform.com` entry removed.
   const allowedOrigins = [
-    'https://bupos.basicuniform.com',
     ...(process.env.NODE_ENV !== 'production' ? ['http://localhost:3000'] : []),
   ];
   // For same-origin requests browsers don't send Origin, so we don't need to set ACAO.

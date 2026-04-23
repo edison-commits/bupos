@@ -129,9 +129,13 @@ describe("R27 cross-tenant regression: all previously-vulnerable SQL now gated",
     const src = read("src/app/api/returns/route.ts");
 
     it("status UPDATE includes AND organization_id", () => {
-      // Note: the SELECT is a FOR UPDATE; both read + write must be gated.
+      // R42-A: PUT lock upgraded to FOR NO KEY UPDATE so the advisory
+      // lock can be taken without the full row lock upfront. Both lock
+      // modes serialize writers; NO KEY is weaker but sufficient here
+      // because the row's FK-referenced columns don't change. Both
+      // read + write stay org-gated.
       expect(src).toMatch(
-        /FROM\s+returns\s+WHERE\s+id\s*=\s*\$1\s+AND\s+organization_id\s*=\s*\$2\s+FOR\s+UPDATE/,
+        /FROM\s+returns\s+WHERE\s+id\s*=\s*\$1\s+AND\s+organization_id\s*=\s*\$2\s+FOR\s+(NO\s+KEY\s+)?UPDATE/,
       );
       expect(src).toMatch(
         /UPDATE\s+returns\s+SET[\s\S]*?WHERE\s+id\s*=\s*\$3\s+AND\s+organization_id\s*=\s*\$4/,

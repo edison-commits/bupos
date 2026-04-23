@@ -6,12 +6,31 @@ on:
   pull_request:
     branches: [master, main]
 
+# R42-H: least-privilege token. Default permissions in GitHub Actions
+# include write on contents + pull-requests; this workflow only needs
+# to read the repo. A compromised dependency running during `npm ci`
+# lifecycle scripts is limited to what the token can touch.
+permissions:
+  contents: read
+
 defaults:
   run:
     working-directory: code
 
 jobs:
   deploy:
+    # R42-H: gate the whole job on same-repo provenance. A fork PR opens
+    # `pull_request` at our repo; without this `if:`, a malicious fork
+    # could edit `package.json` to add a `preinstall` script that
+    # exfiltrates the runner environment during `npm ci` below. Post-
+    # install steps were already gated on `push && master`, but the
+    # install step itself ran unconditionally. This gate makes the
+    # entire job a no-op for fork PRs (same-repo PRs still run the
+    # install-and-typecheck path; push-to-master runs the full deploy).
+    if: |
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

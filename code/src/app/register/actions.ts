@@ -163,14 +163,15 @@ export async function openShiftAction(formData: FormData) {
     } catch (err) {
       // Redirect throws (Next.js uses a special digest) — re-throw so routing still works.
       if (err && typeof err === "object" && "digest" in err) throw err;
+      // R42-K: `msg` is used ONLY for string-classification (the
+      // already-open-shift path). Never log the raw err.message — a pg
+      // error can include DETAIL with bound param values. Route the
+      // log through safeErr which scrubs PG DETAIL.
       const msg = err instanceof Error ? err.message : String(err);
-      // Most common: employee already has an open shift at a different register.
-      // Giving the cashier a readable redirect instead of a 503 "Register Error"
-      // page means the register UI recovers gracefully.
       if (/already has an open shift/i.test(msg)) {
         redirect("/register?error=Employee+already+has+an+open+shift");
       }
-      console.error("[openShiftAction] rpcOpenShift failed:", msg);
+      console.error("[openShiftAction] rpcOpenShift failed:", safeErr(err));
       redirect("/register?error=Failed+to+open+shift.+Please+try+again.");
     }
     await rpcInsertAudit(
@@ -643,10 +644,24 @@ export async function quickSwitchAction(pin: string): Promise<{ success: boolean
       const { orgTx } = await import("@/lib/supabase-rest");
       const client = await orgTx(context.employee.organizationId);
       try {
-        await client.query(`UPDATE sessions SET employee_id = $1 WHERE id = $2`, [newEmployee.id, context.session.id]);
+        // R42-M: defense-in-depth org filter on the sessions +
+        // register_sessions UPDATEs. context.session.id is derived from
+        // the authenticated HMAC-signed cookie, so in practice it's
+        // already tenant-bound — but pool.query runs as the `postgres`
+        // role (BYPASSRLS) so a future refactor that admits a less-
+        // trusted id into context.session.id, or a pg_dump-and-reload
+        // that aliases session ids across orgs, would cross-tenant
+        // write without this filter. Every other session write in the
+        // repo includes an explicit `organization_id` scope.
         await client.query(
-          `UPDATE register_sessions SET employee_id = $1, updated_at = $2 WHERE id = $3`,
-          [newEmployee.id, new Date().toISOString(), context.registerSession.id],
+          `UPDATE sessions SET employee_id = $1
+            WHERE id = $2 AND organization_id = $3`,
+          [newEmployee.id, context.session.id, context.employee.organizationId],
+        );
+        await client.query(
+          `UPDATE register_sessions SET employee_id = $1, updated_at = $2
+            WHERE id = $3 AND organization_id = $4`,
+          [newEmployee.id, new Date().toISOString(), context.registerSession.id, context.employee.organizationId],
         );
         if (context.registerSession.activeShiftId) {
           // R26-F1: explicit org filter.

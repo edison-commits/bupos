@@ -36,6 +36,7 @@ import { orgQuery } from '@/lib/supabase-rest';
 // the Worker's bundler inline them.
 import { checkKvRateLimit } from '@/lib/auth/kv-rate-limit';
 import { pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
+import { safeErr } from '@/lib/logging/safe-err';
 
 export interface StepUpInput {
   actorId: string;
@@ -108,13 +109,14 @@ export async function requireStepUp({
       return { ok: false, error: 'Your password is incorrect.', status: 401 };
     }
     if (!(await verifySecret(actorPassword, hash))) {
-      // R33-M-stepup-decoy: run a decoy after a confirmed-wrong
-      // password to equalize timing with the "hash missing" branch.
-      // Prior shape returned immediately after verifySecret => the
-      // wall-clock latency between "no credential" (PBKDF2 decoy) and
-      // "wrong password" (real PBKDF2 verify) was indistinguishable
-      // anyway, but a future refactor that swaps verifySecret for a
-      // fast-path could open the oracle. Belt-and-suspenders.
+      // Timing equalization: the "hash missing" branch above runs
+      // `runDecoyVerify` (one PBKDF2). This branch has already run one
+      // real PBKDF2 inside `verifySecret`. Both failure paths therefore
+      // cost exactly one PBKDF2 — identical wall-clock latency, no
+      // oracle. Kept explicit as a defensive comment against a future
+      // refactor that swaps `verifySecret` for a fast-path (e.g. a
+      // library that short-circuits on length mismatch) — that would
+      // need to re-add an explicit decoy here.
       return { ok: false, error: 'Your password is incorrect.', status: 401 };
     }
   } catch {
@@ -138,13 +140,16 @@ export async function requireStepUp({
       'employee', actorId, 'step_up_verified',
       { bucket: bucketKey },
     ).catch((err: unknown) => {
+      // R42-K: route via safeErr so PG DETAIL + bound-param values
+      // (including actorId which is PII-adjacent) can't leak into
+      // Worker logs. Prior shape pulled err.message raw.
       console.error(JSON.stringify({
         event: 'audit_insert_failed',
         surface: 'step_up_verified',
         bucket: bucketKey,
         actorId,
         orgId,
-        message: err instanceof Error ? err.message : String(err),
+        error: safeErr(err),
       }));
     });
   } catch (err) {
@@ -154,7 +159,7 @@ export async function requireStepUp({
       bucket: bucketKey,
       actorId,
       orgId,
-      message: err instanceof Error ? err.message : String(err),
+      error: safeErr(err),
     }));
   }
 

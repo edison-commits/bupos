@@ -4,16 +4,16 @@ import { useEffect } from "react";
 import { safeErr } from "@/lib/logging/safe-err";
 
 /**
- * Shared error boundary UI used by every admin subroute's error.tsx.
- * Logs via `safeErr` so PG DETAIL / bound params / stack frames can't
- * leak into Worker logs, and renders a GENERIC user-facing message +
- * a digest for ops correlation. The raw `error.message` is never shown
+ * R42-G: shared error-boundary fallback UI. Never renders `error.message`
  * to the user — server-thrown messages may carry internal IDs, SKUs,
- * or untrusted input (e.g. the R42-G audit finding where a customer
- * standing at the counter on /customer-display could see "invalid
- * input syntax for type uuid: abc…").
+ * PG DETAIL strings, or untrusted input. The user sees a generic
+ * message + an opaque digest for ops correlation; the raw error is
+ * logged via `safeErr` so PG bound-params and stack frames can't leak
+ * into Worker logs.
+ *
+ * Every app/.../error.tsx in this repo should use this component.
  */
-export function AdminErrorBoundary({
+export function ErrorFallback({
   error,
   reset,
   section,
@@ -27,7 +27,7 @@ export function AdminErrorBoundary({
       JSON.stringify({
         level: "error",
         event: "client_error_boundary",
-        section: section ?? "admin",
+        section: section ?? "unknown",
         digest: error.digest,
         error: safeErr(error),
       }),

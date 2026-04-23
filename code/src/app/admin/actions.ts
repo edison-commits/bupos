@@ -76,17 +76,30 @@ export async function adminLoginAction(formData: FormData) {
           orgId = (rows[0]?.organization_id as string) ?? null;
         }
         if (orgId) {
+          // R42-K: classify to a stable reason string instead of
+          // dumping the raw err.message into the audit payload (which
+          // is persisted to DB + serialized to logs). A pg error
+          // reaching this catch carries DETAIL with bound-param values
+          // including the email being probed; persisting that into
+          // audit_events.payload JSONB would expose attempted-login
+          // emails via audit views accessible to org owners.
+          const reason = err instanceof Error && /Invalid admin credentials/.test(err.message)
+            ? "invalid_credentials"
+            : "internal_error";
           await waitUntilOrAwait(pgInsertAuditEvent(
             orgId, null, cred?.employeeId ?? null,
             "session", null, "admin_login_failed",
-            { email, reason: err instanceof Error ? err.message : "unknown" },
+            { email, reason },
           ).catch((err) => console.error("[audit] Failed to insert audit event:", safeErr(err))));
         } else {
           // Unknown-email attempt — no org to attribute to. Structured log
           // so log-sink alerting can still pattern-match brute-force probes.
+          const reason = err instanceof Error && /Invalid admin credentials/.test(err.message)
+            ? "invalid_credentials"
+            : "internal_error";
           console.warn("[admin_login_failed]", JSON.stringify({
             email_prefix: email.slice(0, 3) + "***",
-            reason: err instanceof Error ? err.message : "unknown",
+            reason,
             at: new Date().toISOString(),
           }));
         }

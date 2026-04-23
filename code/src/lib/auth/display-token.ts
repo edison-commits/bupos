@@ -103,12 +103,27 @@ function constantTimeEq(a: Uint8Array, b: Uint8Array): boolean {
   return diff === 0;
 }
 
+/**
+ * R42-J: HMAC message now has an explicit scope prefix
+ * (`display-token-v1\0`) so `CUSTOMER_DISPLAY_SECRET` cannot produce
+ * colliding HMACs across callsites. device-cookie.ts already uses this
+ * pattern in its v2 format; display-token was the last outlier. Today
+ * the two message shapes (register UUID + decimal epoch vs. device id)
+ * can't collide by coincidence, but the hygiene rule is "hard-bind
+ * every HMAC to its purpose" — a future third caller reusing the same
+ * secret is one shape-overlap away from being able to forge / validate
+ * across domains. Backward-compat: verifyDisplayToken accepts both
+ * v0-unprefixed + v1-prefixed messages during a 15-minute rollover
+ * (TTL_MS above). After one TTL window, v0 acceptance can be removed.
+ */
+const SCOPE_PREFIX = "display-token-v1\0";
+
 /** Mint a short-lived HMAC-signed token for a register_session. */
 export async function mintDisplayToken(registerSessionId: string): Promise<string> {
   const secret = getSecret();
   const expiresAt = Date.now() + TTL_MS;
   const payload = `${registerSessionId}.${expiresAt}`;
-  const sigBytes = await hmacSha256(secret, payload);
+  const sigBytes = await hmacSha256(secret, SCOPE_PREFIX + payload);
   // 16-byte truncation — balances log/URL length against brute-force work.
   const sig = sigBytes.slice(0, 16);
   const payloadB64 = base64urlEncode(new TextEncoder().encode(payload));
@@ -149,9 +164,18 @@ export async function verifyDisplayToken(token: string): Promise<DisplayTokenCla
 
     // Compute HMAC FIRST, unconditionally. Both expired + non-expired
     // paths now do equivalent crypto work.
-    const expectedSig = (await hmacSha256(getSecret(), payload)).slice(0, 16);
+    //
+    // R42-J: accept EITHER the v1 scope-prefixed HMAC OR the v0 legacy
+    // (unprefixed) form, to carry in-flight tokens across the deploy.
+    // Both computations run unconditionally so timing stays equal; the
+    // boolean is the ORed result. One TTL window (15 min) is enough to
+    // age out all v0 tokens — drop the v0 branch after that.
+    const secret = getSecret();
+    const expectedSigV1 = (await hmacSha256(secret, SCOPE_PREFIX + payload)).slice(0, 16);
+    const expectedSigV0 = (await hmacSha256(secret, payload)).slice(0, 16);
     const providedSig = base64urlDecode(sigB64);
-    const sigValid = constantTimeEq(expectedSig, providedSig);
+    const sigValid = constantTimeEq(expectedSigV1, providedSig)
+      || constantTimeEq(expectedSigV0, providedSig);
     const notExpired = Date.now() <= expiresAt;
 
     // Single combined branch — no intermediate `if` that could leak via

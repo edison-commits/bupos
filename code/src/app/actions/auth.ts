@@ -130,8 +130,13 @@ export async function signupAction(_prev: { error: string } | null, formData: Fo
     return { error: "All fields are required." };
   }
 
-  if (password.length < 8) {
-    return { error: "Password must be at least 8 characters." };
+  // R42-J: align minimum with password-change + password-reset-confirm
+  // (both enforce 12). Signup was the only path that minted 8-char
+  // credentials, which could then live indefinitely on owner accounts
+  // — a weaker-than-rotation baseline. Inconsistency also telegraphs
+  // to an attacker which handler they're talking to.
+  if (password.length < 12) {
+    return { error: "Password must be at least 12 characters." };
   }
 
   // Validate email format
@@ -347,17 +352,25 @@ export async function signupAction(_prev: { error: string } | null, formData: Fo
       const verificationUrl = `${appUrl}/api/auth/verify?token=${encodeURIComponent(verificationToken)}`;
 
       const { sendVerificationEmail } = await import("@/lib/email/send-verification");
-      try {
-        await sendVerificationEmail({ to: email, firstName, verificationUrl });
-      } catch (emailErr) {
-        // R8-L-5: don't distinguish send-failed from email-taken in the
-        // user-facing response. A retry will hit pending_signups via the
-        // alreadyTaken path above. Log for ops visibility.
-        console.error(
-          "[signupAction] verification email failed:",
-          emailErr instanceof Error ? emailErr.message.slice(0, 200) : "unknown",
-        );
-      }
+      // R42-O: fire-and-forget the Resend call via waitUntilOrAwait so
+      // a slow cold-start response (observed 200-500ms in practice)
+      // doesn't exceed the MIN_DURATION_MS floor and create a timing
+      // oracle vs. the email-already-taken branch (which has no such
+      // awaited network I/O). On Workers the runtime extends the
+      // isolate lifetime to let the send complete; in Node it
+      // synchronously awaits (no observable difference in dev).
+      const { waitUntilOrAwait } = await import("@/lib/runtime/wait-until");
+      await waitUntilOrAwait(
+        sendVerificationEmail({ to: email, firstName, verificationUrl })
+          .catch((emailErr: unknown) => {
+            // R8-L-5: don't distinguish send-failed from email-taken in
+            // the user-facing response. Log for ops visibility only.
+            console.error(
+              "[signupAction] verification email failed:",
+              emailErr instanceof Error ? emailErr.message.slice(0, 200) : "unknown",
+            );
+          }),
+      );
     } else {
       // R21-H-6: execute a DB roundtrip of equivalent cost so the two
       // branches don't differ by the INSERT's ~30ms. The MIN_DURATION

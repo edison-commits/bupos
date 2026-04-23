@@ -330,6 +330,45 @@ export const POST = withAdminAuth('employee.manage', async (request, ctx) => {
     }
     refundAmount = Number(refundAmount.toFixed(2));
 
+    // R42-A: reject refund methods this PUT branch can't dispense. Prior
+    // shape would happily accept `exchange` (or any future enum value)
+    // into the pending row; a later PUT(completed) would restock
+    // inventory but never move money — the customer walked out with
+    // merchandise AND no compensating ledger entry. `original_tender` is
+    // an /api/returns/process synonym; accept and map it through.
+    const rm = (refund_method || 'store_credit') as string;
+    if (rm !== 'store_credit' && rm !== 'cash' && rm !== 'card' && rm !== 'original_tender') {
+      return abort(400, `Unsupported refund method: ${rm}`);
+    }
+
+    // R42-A: cash/card refund cap — cap refund at what was actually
+    // tendered in cash/card minus prior refunds, mirroring
+    // /api/returns/process:444-472. store_credit is always allowed (the
+    // shop is issuing credit, not cashing out).
+    if (rm === 'cash' || rm === 'card' || rm === 'original_tender') {
+      const { rows: capRows } = await client.query(
+        `SELECT COALESCE(SUM(tt.amount), 0)::numeric AS cash_tendered,
+                COALESCE(SUM(CASE WHEN tt.amount < 0 THEN ABS(tt.amount) ELSE 0 END), 0)::numeric AS prior_refunds
+           FROM transaction_tenders tt
+           JOIN transactions t ON t.id = tt.transaction_id AND t.organization_id = $2
+          WHERE tt.transaction_id = $1
+            AND tt.tender_type NOT IN ('gift_card', 'store_credit')`,
+        [transaction_id, orgId],
+      );
+      const cashTendered = Math.max(0, Number(capRows[0]?.cash_tendered ?? 0));
+      const priorRefunds = Number(capRows[0]?.prior_refunds ?? 0);
+      // cash_tendered SUM includes the prior negative refunds; subtract
+      // them once more isn't correct. `SUM(amount)` over a mix of
+      // positive tenders + negative refund rows already nets out to the
+      // "still owed back" balance. Prior = abs of negative rows.
+      const maxRefundable = Number((cashTendered).toFixed(2));
+      if (refundAmount > maxRefundable + 0.005) {
+        return abort(400, `Refund amount ${refundAmount.toFixed(2)} exceeds remaining refundable amount ${maxRefundable.toFixed(2)}`);
+      }
+      // Expose for downstream visibility; no-op otherwise.
+      void priorRefunds;
+    }
+
     // Generate return number: RET-BEL-YYMMDD-NNN — retry loop handles concurrent collision.
     // Reuse the same client so we're still inside the FOR UPDATE lock.
     // R30-C3: belt+suspenders org filter.
@@ -420,24 +459,46 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
 
     const client = await orgTx(orgId);
     try {
-      // R27-C10: explicit organization_id filter. Without it, a PUT
-      // with a foreign tenant's return id landed as "completed" and
-      // UPSERTed into THIS tenant's inventory_levels at the victim's
-      // location_id — polluting both sides' ledgers.
-      const { rows: ret } = await client.query(
-        `SELECT id, status, location_id FROM returns WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
+      // R42-A: take the advisory lock BEFORE reading the row so this PUT
+      // serializes with /api/returns POST, /api/returns/process, and
+      // register-side return-action.ts on the same original transaction.
+      // Without this, PUT(completed) dispensing money can interleave with
+      // a fresh refund created elsewhere — the two paths compute prior-
+      // refunds against a stale snapshot and double-dispense.
+      //
+      // The lock key is derived from the return row's transaction_id; we
+      // have to look it up first (before the lock, with FOR NO KEY UPDATE
+      // to serialize the minimum row-level access) to know the key.
+      const { rows: retPre } = await client.query(
+        `SELECT id, status, location_id, transaction_id, refund_method, refund_amount, customer_name, reason
+           FROM returns WHERE id = $1 AND organization_id = $2
+          FOR NO KEY UPDATE`,
         [id, orgId],
       );
-      if (ret.length === 0) {
+      if (retPre.length === 0) {
         await client.query("ROLLBACK");
         return NextResponse.json({ error: 'Return not found' }, { status: 404 });
       }
-      if (status === 'completed' && ret[0].status === 'completed') {
+      const retRow = retPre[0] as {
+        id: string;
+        status: string;
+        location_id: string;
+        transaction_id: string;
+        refund_method: string;
+        refund_amount: string | number;
+        customer_name: string | null;
+        reason: string | null;
+      };
+      await client.query(
+        `SELECT pg_advisory_xact_lock((('x' || substr(md5($1), 1, 16))::bit(64)::bigint))`,
+        [`return:${retRow.transaction_id}`],
+      );
+      if (status === 'completed' && retRow.status === 'completed') {
         await client.query("ROLLBACK");
         return NextResponse.json({ error: 'Return already completed' }, { status: 409 });
       }
 
-      if (status === 'completed' && ret[0].status !== 'completed') {
+      if (status === 'completed' && retRow.status !== 'completed') {
         // R27-C10: JOIN through returns to enforce org on the lines.
         const { rows: lines } = await client.query(
           `SELECT rl.product_variant_id, rl.quantity
@@ -466,8 +527,166 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
              DO UPDATE SET
                on_hand = inventory_levels.on_hand + EXCLUDED.on_hand,
                updated_at = NOW()`,
-            [orgId, ret[0].location_id, variantIds, quantities],
+            [orgId, retRow.location_id, variantIds, quantities],
           );
+        }
+
+        // R42-A: dispense the money. Prior shape silently restocked
+        // inventory while writing ZERO financial rows — accounting-
+        // looking-but-money-absent refunds that diverged cash drawers
+        // and robbed store_credit customers. Mirror the dispensation
+        // logic in /api/returns/process:676-753.
+        const refundAmount = Number(retRow.refund_amount) || 0;
+        const refundMethod = retRow.refund_method || 'store_credit';
+        if (refundAmount > 0) {
+          if (refundMethod === 'cash' || refundMethod === 'card' || refundMethod === 'original_tender') {
+            // Negative-amount convention marks the row as a refund.
+            await client.query(
+              `INSERT INTO transaction_tenders (id, transaction_id, tender_type, amount, metadata)
+               VALUES (gen_random_uuid(), $1, $2, $3, $4)`,
+              [
+                retRow.transaction_id,
+                refundMethod === 'cash' ? 'cash' : 'card',
+                -refundAmount,
+                JSON.stringify({ is_return: 'true', return_id: id, reason: retRow.reason || 'other' }),
+              ],
+            );
+            // For cash specifically, also record a pay_out tied to the
+            // current open shift at this return's location so shift-close
+            // expectedCash sees the outflow. If no open shift exists,
+            // refuse — physical cash can't leave a closed drawer.
+            if (refundMethod === 'cash') {
+              const { rows: shiftRows } = await client.query(
+                `SELECT id FROM shifts
+                  WHERE organization_id = $1 AND location_id = $2 AND status = 'open'
+                  ORDER BY opened_at DESC LIMIT 1`,
+                [orgId, retRow.location_id],
+              );
+              if (shiftRows.length === 0) {
+                await client.query('ROLLBACK');
+                return NextResponse.json(
+                  { error: 'Cash refund requires an open shift at the return location.' },
+                  { status: 409 },
+                );
+              }
+              await client.query(
+                `INSERT INTO pay_in_outs (id, organization_id, shift_id, location_id, employee_id, direction, amount, reason, note, created_at)
+                 VALUES (gen_random_uuid(), $1, $2, $3, $4, 'out', $5, $6, $7, now())`,
+                [
+                  orgId,
+                  shiftRows[0].id,
+                  retRow.location_id,
+                  processed_by,
+                  refundAmount,
+                  'refund',
+                  `Return ${id} (cash refund)`,
+                ],
+              );
+            }
+          } else if (refundMethod === 'store_credit') {
+            // Resolve customer: prefer the original transaction's
+            // customer_id; fall back to first_name+last_name match on
+            // the return row's customer_name. Same pattern as
+            // /api/returns/process.
+            const { rows: txnCustRows } = await client.query(
+              `SELECT customer_id FROM transactions
+                WHERE id = $1 AND organization_id = $2`,
+              [retRow.transaction_id, orgId],
+            );
+            let custRows: Array<{ id: string; store_credit_balance: number | string }>;
+            if (txnCustRows[0]?.customer_id) {
+              const r = await client.query(
+                `SELECT id, store_credit_balance FROM customers
+                  WHERE id = $1 AND organization_id = $2 LIMIT 1 FOR UPDATE`,
+                [txnCustRows[0].customer_id, orgId],
+              );
+              custRows = r.rows;
+            } else if (retRow.customer_name && retRow.customer_name.trim().length > 0) {
+              const r = await client.query(
+                `SELECT id, store_credit_balance FROM customers
+                  WHERE first_name || ' ' || last_name = $1 AND organization_id = $2
+                  LIMIT 1 FOR UPDATE`,
+                [retRow.customer_name.trim(), orgId],
+              );
+              custRows = r.rows;
+            } else {
+              custRows = [];
+            }
+            if (custRows.length === 0) {
+              await client.query('ROLLBACK');
+              return NextResponse.json(
+                { error: 'Store-credit refund requires a customer on the original transaction (or a matching customer name)' },
+                { status: 400 },
+              );
+            }
+            const customer = custRows[0];
+            const newBalance = Number(
+              ((Number(customer.store_credit_balance) || 0) + refundAmount).toFixed(2),
+            );
+            await client.query(
+              `UPDATE customers SET store_credit_balance = $1, updated_at = NOW()
+                WHERE id = $2 AND organization_id = $3`,
+              [newBalance, customer.id, orgId],
+            );
+            await client.query(
+              `INSERT INTO store_credit_ledger (id, organization_id, customer_id, transaction_type, amount, balance_after, employee_id, transaction_id, reason, created_at)
+               VALUES ($1, $2, $3, 'refund', $4, $5, $6, $7, $8, now())`,
+              [randomUUID(), orgId, customer.id, refundAmount, newBalance, processed_by, retRow.transaction_id, `Return: ${retRow.reason || 'other'}`],
+            );
+          }
+
+          // R28-C4 / R40-2: reverse loyalty points using the cumulative-
+          // share pattern so admin + register refunds don't double-reverse.
+          // Non-fatal — logging only on error; money movement is committed.
+          try {
+            const { rows: origRows } = await client.query(
+              `SELECT customer_id, points_earned, grand_total FROM transactions
+                WHERE id = $1 AND organization_id = $2`,
+              [retRow.transaction_id, orgId],
+            );
+            const origCustomerId = origRows[0]?.customer_id as string | null;
+            const origPointsEarned = Number(origRows[0]?.points_earned ?? 0) || 0;
+            const origGrandTotal = Number(origRows[0]?.grand_total ?? 0) || 0;
+            if (origCustomerId && origPointsEarned > 0 && origGrandTotal > 0) {
+              const { rows: priorAdminRows } = await client.query(
+                `SELECT COALESCE(SUM(refund_amount), 0)::numeric AS admin_prior
+                   FROM returns
+                  WHERE organization_id = $1 AND transaction_id = $2
+                    AND status IN ('pending', 'completed')
+                    AND id <> $3`,
+                [orgId, retRow.transaction_id, id],
+              );
+              const { rows: priorRegRows } = await client.query(
+                `SELECT COALESCE(SUM(grand_total), 0)::numeric AS reg_prior
+                   FROM transactions
+                  WHERE organization_id = $1 AND status = 'completed'
+                    AND cart_snapshot->>'originalTransactionId' = $2`,
+                [orgId, retRow.transaction_id],
+              );
+              const adminPrior = Number(priorAdminRows[0]?.admin_prior ?? 0) || 0;
+              const regPriorAbs = Math.abs(Number(priorRegRows[0]?.reg_prior ?? 0)) || 0;
+              const priorRefundTotal = adminPrior + regPriorAbs;
+              const priorShare = Math.min(1, Math.max(0, priorRefundTotal / origGrandTotal));
+              const priorExpectedReverse = Math.round(origPointsEarned * priorShare);
+              const newCumulative = priorRefundTotal + refundAmount;
+              const newCumulativeShare = Math.min(1, Math.max(0, newCumulative / origGrandTotal));
+              const newExpectedReverse = Math.round(origPointsEarned * newCumulativeShare);
+              const pointsToReverse = Math.max(0, Math.min(
+                origPointsEarned - priorExpectedReverse,
+                newExpectedReverse - priorExpectedReverse,
+              ));
+              if (pointsToReverse > 0) {
+                await client.query(
+                  `UPDATE customers
+                      SET loyalty_points = GREATEST(0, loyalty_points - $1), updated_at = NOW()
+                    WHERE id = $2 AND organization_id = $3`,
+                  [pointsToReverse, origCustomerId, orgId],
+                );
+              }
+            }
+          } catch (err) {
+            console.error('[api/returns PUT] loyalty reversal failed:', safeErr(err));
+          }
         }
       }
 

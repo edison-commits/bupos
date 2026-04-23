@@ -63,6 +63,42 @@ export async function makeLayawayPaymentAction(formData: FormData) {
          VALUES ($1, $2, $3, $4, $5, $6)`,
         [paymentId, layawayId, tenderType, amount, ctx.employee.id, "{}"],
       );
+
+      // R42-P: cash layaway payments must record a pay_in on the open
+      // shift so shift-close's expectedCash formula sees the inflow.
+      // Prior shape silently left cash layaways invisible to the
+      // drawer-reconciliation math — the cashier's actual count came
+      // in $N "over" expected every time, burning trust in the system.
+      // If no open shift exists at the layaway's location, the cash
+      // can't legitimately be in a drawer; reject the payment (mirrors
+      // the cash-refund pattern in return-action).
+      if (tenderType === "cash") {
+        const { rows: layRows } = await client.query(
+          `SELECT location_id FROM layaways WHERE id = $1 AND organization_id = $2`,
+          [layawayId, orgId],
+        );
+        const loc = layRows[0]?.location_id as string | undefined;
+        if (!loc) {
+          await client.query("ROLLBACK");
+          throw new Error("Layaway missing location");
+        }
+        const { rows: shiftRows } = await client.query(
+          `SELECT id FROM shifts
+            WHERE organization_id = $1 AND location_id = $2 AND status = 'open'
+            ORDER BY opened_at DESC LIMIT 1`,
+          [orgId, loc],
+        );
+        if (shiftRows.length === 0) {
+          await client.query("ROLLBACK");
+          throw new Error("Cash layaway payment requires an open shift at the layaway location");
+        }
+        await client.query(
+          `INSERT INTO pay_in_outs (id, organization_id, shift_id, location_id, employee_id, direction, amount, reason, note, created_at)
+           VALUES (gen_random_uuid(), $1, $2, $3, $4, 'in', $5, $6, $7, now())`,
+          [orgId, shiftRows[0].id, loc, ctx.employee.id, amount, "layaway_payment", `Layaway ${layawayId} cash payment`],
+        );
+      }
+
       const newBalance = Number((balanceDue - amount).toFixed(2));
       const newStatus = newBalance <= 0.005 ? "paid_in_full" : "partially_paid";
       await client.query(

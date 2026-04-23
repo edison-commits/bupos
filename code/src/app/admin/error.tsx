@@ -1,5 +1,8 @@
 'use client';
 
+import { useEffect } from 'react';
+import { safeErr } from '@/lib/logging/safe-err';
+
 export default function AdminError({
   error,
   reset,
@@ -7,6 +10,19 @@ export default function AdminError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  // R42-G: log via safeErr so PG DETAIL / stack frames can't leak into
+  // Worker logs; NEVER render error.message to the user.
+  useEffect(() => {
+    console.error(
+      JSON.stringify({
+        level: 'error',
+        event: 'client_error_boundary',
+        section: 'admin-root',
+        digest: error.digest,
+        error: safeErr(error),
+      }),
+    );
+  }, [error]);
   return (
     <div style={{
       minHeight: '100vh',
@@ -29,11 +45,11 @@ export default function AdminError({
           Admin Error
         </h1>
         <p style={{ color: '#64748b', marginBottom: '1.5rem', fontSize: '0.875rem' }}>
-          {error.message || 'Something went wrong in the admin panel.'}
+          Something went wrong in the admin panel. Please try again.
         </p>
         {error.digest ? (
           <p style={{ color: '#94a3b8', marginBottom: '1rem', fontSize: '0.75rem', fontFamily: 'monospace' }}>
-            Digest: {error.digest}
+            Reference: {error.digest}
           </p>
         ) : null}
         <button

@@ -305,7 +305,18 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
     // pattern the PATCH handler enforces. Non-privilege-affecting
     // edits (firstName, lastName, displayName, phone, pinHint) do
     // NOT require step-up since they're low-blast-radius.
-    const privilegedEdit = roleKey !== undefined || email !== undefined || locationIds !== undefined;
+    // R42-R: `isActive` added to the gate even though the current PUT
+    // SET-builder silently drops it. Defense-in-depth — if a future
+    // change wires isActive into the dynamic UPDATE (or the schema
+    // drops it entirely), activation/deactivation MUST continue to
+    // require step-up (mirroring PATCH). Without this, adding one
+    // line to the SET builder creates a privilege-escalation hole
+    // where a stolen cookie can deactivate peer owners.
+    const privilegedEdit =
+      roleKey !== undefined
+      || email !== undefined
+      || locationIds !== undefined
+      || v.data.isActive !== undefined;
     if (privilegedEdit) {
       const { requireStepUp } = await import('@/lib/auth/step-up');
       const stepUp = await requireStepUp({

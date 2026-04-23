@@ -282,7 +282,18 @@ export function RegisterConsoleClient({
     }
     if (b.type === "logout") {
       return (
-        <form key={b.id} action={registerLogoutAction}>
+        <form
+          key={b.id}
+          action={registerLogoutAction}
+          onSubmit={() => {
+            // R42-L: wipe local state (pos_device_id, dead-letter IDB)
+            // BEFORE the server action navigates. Fire-and-forget because
+            // the server redirect fires regardless of the promise.
+            import("@/lib/offline/register-client-reset")
+              .then((m) => m.clearLocalRegisterState())
+              .catch(() => undefined);
+          }}
+        >
           <button
             {...dragProps}
             type="submit"
@@ -576,7 +587,15 @@ export function RegisterConsoleClient({
             <div className="text-base text-zinc-800">
               Session opened {formatDateTime(context.session.createdAt)}
             </div>
-            <form action={registerLogoutAction}>
+            <form
+              action={registerLogoutAction}
+              onSubmit={() => {
+                // R42-L: local-state wipe on close-session too.
+                import("@/lib/offline/register-client-reset")
+                  .then((m) => m.clearLocalRegisterState())
+                  .catch(() => undefined);
+              }}
+            >
               <button className="touch-button rounded-2xl bg-zinc-900 px-5 text-base font-semibold text-white">Close session</button>
             </form>
           </div>

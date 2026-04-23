@@ -560,8 +560,22 @@ export async function signInAdmin(email: string, password: string) {
       );
       const lookup = (lookupRows[0]?.result ?? lookupRows[0] ?? null) as Record<string, unknown> | null;
       if (lookup && lookup.password_hash) {
-        if (lookup.is_active !== true) throw new Error("Invalid admin credentials");
+        // R42-I: equalize wall-clock time across every failure branch.
+        // Prior shape short-circuited on inactive / wrong-role BEFORE
+        // running PBKDF2, so an attacker measuring response latency
+        // could distinguish "this email has a non-admin / inactive
+        // account" from "this email has a correct-role account with a
+        // wrong password" — a user-enumeration oracle against ex-
+        // employees and support-role accounts. `runDecoyVerify` is the
+        // same pattern the `/api/auth/login` route uses to make all
+        // miss branches cost one PBKDF2 regardless of outcome.
+        const { runDecoyVerify } = await import("@/lib/auth/crypto");
+        if (lookup.is_active !== true) {
+          await runDecoyVerify(password);
+          throw new Error("Invalid admin credentials");
+        }
         if (!["owner", "manager"].includes(lookup.role_key as string)) {
+          await runDecoyVerify(password);
           throw new Error("Invalid admin credentials");
         }
         if (!await verifySecret(password, lookup.password_hash as string)) {
@@ -605,8 +619,14 @@ export async function signInAdmin(email: string, password: string) {
 
     // Column-level pool fallback (local dev without the RPCs provisioned)
     // R35-P3: pgFindCredentialByEmail is statically imported at the top.
+    // R42-I: also equalize timing on the fallback path. Same oracle
+    // applies here (local dev or RPC-missing environments) — a miss or
+    // inactive/wrong-role response should cost the same as a wrong
+    // password response.
+    const { runDecoyVerify } = await import("@/lib/auth/crypto");
     const credential = await pgFindCredentialByEmail(normalizedEmail);
     if (!credential?.passwordHash) {
+      await runDecoyVerify(password);
       throw new Error("Invalid admin credentials");
     }
 
@@ -619,6 +639,7 @@ export async function signInAdmin(email: string, password: string) {
     );
     const emp = empRows[0] as Record<string, unknown> | undefined;
     if (!emp || emp.is_active !== true || !["owner", "manager"].includes(emp.role_key as string)) {
+      await runDecoyVerify(password);
       throw new Error("Invalid admin credentials");
     }
 

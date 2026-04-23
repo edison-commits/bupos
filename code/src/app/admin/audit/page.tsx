@@ -3,7 +3,13 @@
 import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import { useState, useEffect, useRef, Fragment } from 'react';
-import { RoleGate } from '@/components/admin/role-gate';
+// R42-F: RoleGate removed. The component read `bupos_employee_role` from
+// localStorage, but no code path ever wrote that key, so every
+// authenticated admin saw "Sign In Required" and the audit page was
+// inaccessible. The server-side `/api/audit-events` route already
+// enforces `audit.view` via withAdminAuth, and AdminLayout handles
+// redirect for non-admins. Client-side role gating is redundant when
+// the server gate is authoritative.
 import { authFetch } from '@/lib/api/client';
 
 import { safeErr } from "@/lib/logging/safe-err";
@@ -249,7 +255,7 @@ export default function AuditPage() {
   };
 
   return (
-    <RoleGate allowedRoles={['owner', 'manager']}>
+    <>
       <div className="space-y-6 p-6 max-w-7xl mx-auto">
         <AdminTopNav />
         {/* Header */}
@@ -487,6 +493,6 @@ export default function AuditPage() {
           </div>
         </div>
       </div>
-    </RoleGate>
+    </>
   );
 }

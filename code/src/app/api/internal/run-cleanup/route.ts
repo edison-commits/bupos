@@ -25,10 +25,30 @@ import { getPool } from "@/lib/supabase-rest";
 // freely), meaning anyone could remotely force a cleanup and wipe
 // rate-limit buckets + idempotency keys on demand. The scheduled()
 // handler below invokes this route with the env secret set.
+// R42-E: constant-time byte comparison for bearer-token equality. A
+// plain `!==` short-circuits on the first mismatching byte, leaking
+// the secret one character at a time over network-timing-measurable
+// calls (the endpoint wipes rate_limit_buckets on success; disarming
+// brute-force defense + log-replay protection for ~60s per call is a
+// meaningful attacker reward).
+function bearerMatches(authHeader: string, expected: string): boolean {
+  const a = new TextEncoder().encode(authHeader);
+  const b = new TextEncoder().encode(expected);
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
+
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization") ?? "";
   const opsSecret = process.env.OPS_CLEANUP_SECRET;
-  if (!opsSecret) {
+  // R42-E: require secrets of at least 32 chars so the constant-time
+  // compare has meaningful entropy and so an offline brute-force on a
+  // leaked configuration string takes real effort. Defense-in-depth
+  // with the timing-safe compare below; the bearer is only valid if
+  // the operator provisioned a strong secret to begin with.
+  if (!opsSecret || opsSecret.length < 32) {
     // Fail closed if the secret isn't configured. Prior shape fell
     // back to the cf-cron branch which is exactly the bypass.
     return NextResponse.json(
@@ -36,7 +56,7 @@ export async function POST(req: NextRequest) {
       { status: 503 },
     );
   }
-  if (authHeader !== `Bearer ${opsSecret}`) {
+  if (!bearerMatches(authHeader, `Bearer ${opsSecret}`)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -74,7 +94,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid signed bearer" }, { status: 401 });
     }
     const [, secret, _ts, providedHex] = match;
-    if (secret !== opsSecret) {
+    // R42-E: constant-time compare on the secret portion too — same
+    // timing-leak reasoning as the bearerMatches check above. Even with
+    // the HMAC verification below gating signed-bearer acceptance, the
+    // secret equality gate lets an attacker partially confirm the
+    // secret before the HMAC math runs.
+    if (!bearerMatches(secret, opsSecret)) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
     const expected = new Uint8Array(

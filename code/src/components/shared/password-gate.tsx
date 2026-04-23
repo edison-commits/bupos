@@ -78,13 +78,43 @@ export function usePasswordGate(): [
     setSubmitting(false);
   }, [state]);
 
-  // ESC closes the modal as "cancel"; Enter submits the form.
+  // ESC closes the modal as "cancel"; Enter submits the form; Tab /
+  // Shift+Tab cycles through the modal's focusable elements without
+  // escaping to the underlying page.
+  //
+  // R42-L: focus trap. Prior shape left Tab free to move into the
+  // page behind the modal — a user (or a malicious browser extension)
+  // could interact with background content while a step-up re-auth
+  // was pending. Trapping keeps keyboard focus within the modal for
+  // its entire lifecycle.
+  const modalRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!state) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         state.resolve(null);
         setState(null);
+        return;
+      }
+      if (e.key === "Tab" && modalRef.current) {
+        const focusables = modalRef.current.querySelectorAll<HTMLElement>(
+          'input:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        );
+        if (focusables.length === 0) return;
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        const active = document.activeElement as HTMLElement | null;
+        if (e.shiftKey) {
+          if (active === first || !modalRef.current.contains(active)) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else {
+          if (active === last || !modalRef.current.contains(active)) {
+            e.preventDefault();
+            first.focus();
+          }
+        }
       }
     };
     window.addEventListener("keydown", onKey);
@@ -129,7 +159,7 @@ export function usePasswordGate(): [
         if (e.target === e.currentTarget) handleCancel();
       }}
     >
-      <div className="mx-4 w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-2xl">
+      <div ref={modalRef} className="mx-4 w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-2xl">
         <h2 id="password-gate-title" className="text-lg font-semibold text-slate-900">
           {state.opts.title}
         </h2>

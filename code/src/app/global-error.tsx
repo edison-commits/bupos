@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import { safeErr } from '@/lib/logging/safe-err';
 
 export default function GlobalError({
   error,
@@ -9,9 +10,18 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  // R42-G: log via safeErr. Top-level boundary — any PG DETAIL / bound-
+  // param leak elsewhere gets redacted at the outermost layer. User-
+  // facing message is already generic.
   useEffect(() => {
-    // Log error for debugging — replace with Sentry/DataDog when configured
-    console.error('[GlobalError]', { message: error.message, digest: error.digest, stack: error.stack });
+    console.error(
+      JSON.stringify({
+        level: 'error',
+        event: 'global_error_boundary',
+        digest: error.digest,
+        error: safeErr(error),
+      }),
+    );
   }, [error]);
 
   return (

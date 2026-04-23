@@ -16,12 +16,25 @@ on:
   push:
     branches: [master]
 
+# R42-H: minimal token scope. Workflow only needs to read the repo.
+permissions:
+  contents: read
+
 defaults:
   run:
     working-directory: code
 
 jobs:
   check:
+    # R42-H: fork-PR gate. A PR from a forked repo can edit
+    # `package.json` to add a `preinstall` / `postinstall` script that
+    # runs during `npm ci` below with the runner's GITHUB_TOKEN. Fork
+    # PRs are still reviewed via the `pre-merge-audit` workflow which
+    # has stricter gating.
+    if: |
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,6 +47,20 @@ jobs:
 
       - name: Install deps
         run: npm ci
+
+      # R42-N: supply-chain gate. `npm audit signatures` verifies every
+      # installed tarball matches its registry-published signature — a
+      # compromised npm publisher (e.g. the @babel/traverse /
+      # ua-parser-js class of attack) would flip the signature and
+      # fail here. Run AFTER `npm ci` so node_modules exists. Keep
+      # `npm audit --audit-level=high` gated on CVEs too — blocks on
+      # known high/critical known vulnerabilities.
+      #
+      # Tolerated failure modes: if the registry is unreachable during
+      # CI (rare), the step fails safely without a false green. Retry
+      # the workflow if it's transient.
+      - name: npm audit signatures (supply-chain)
+        run: npm audit signatures
 
       # Catches the R9-C-2 / R11-C-1 / R11-C-2 shape — code references a
       # column/table that no migration file ever declared. Fails the PR
@@ -101,6 +128,12 @@ jobs:
 
   integration:
     name: PG integration tests
+    # R42-H: same fork-PR gate as `check` — `npm ci` runs lifecycle
+    # scripts that would execute arbitrary code from a malicious fork.
+    if: |
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     # R8-L-12: spin up Postgres 17, apply every migration, run the
     # cross-tenant UPDATE regression suite. Adds ~15s cold start + a
@@ -144,6 +177,11 @@ jobs:
 
   playwright:
     name: Playwright e2e
+    # R42-H: fork-PR gate.
+    if: |
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     # Unblocked by R24 db/index.ts refactor: the app now detects a
     # localhost DATABASE_URL and dynamically imports `pg` instead of
