@@ -355,7 +355,8 @@ export function POSTerminal(props: POSTerminalProps) {
 
       {/* Return result */}
       {returnResult && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        // R81-FE-H1: role=dialog so the R80 Esc-yield matches.
+        <div role="dialog" aria-modal="true" aria-label="Return result" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-sm rounded-2xl bg-white shadow-2xl">
             <div className="rounded-t-2xl bg-amber-600 px-5 py-4 text-center text-white">
               <p className="text-2xl font-bold">Return processed</p>
@@ -436,7 +437,8 @@ export function POSTerminal(props: POSTerminalProps) {
 
       {/* Layaway result */}
       {layawayResult && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        // R81-FE-H1: role=dialog so the R80 Esc-yield matches.
+        <div role="dialog" aria-modal="true" aria-label="Layaway result" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-sm rounded-2xl bg-white shadow-2xl">
             <div className="rounded-t-2xl bg-indigo-600 px-5 py-4 text-center text-white">
               <p className="text-2xl font-bold">Layaway created</p>
@@ -540,7 +542,8 @@ export function POSTerminal(props: POSTerminalProps) {
 
       {/* Held carts overlay */}
       {showHeldCarts && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        // R81-FE-H1: role=dialog so the R80 Esc-yield matches.
+        <div role="dialog" aria-modal="true" aria-label="Held carts" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-sm rounded-2xl bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-4">
               <h2 className="text-lg font-bold">Held carts</h2>

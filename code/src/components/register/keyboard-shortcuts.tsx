@@ -206,6 +206,22 @@ interface KeyboardShortcutsOverlayProps {
 }
 
 export function KeyboardShortcutsOverlay({ isOpen, onClose }: KeyboardShortcutsOverlayProps) {
+  // R81-FE-H1: Esc closes the overlay. Without this, the R80 global
+  // Esc handler's `[role=dialog][aria-modal=true]` yield check would
+  // NOT recognize this overlay (prior shape lacked those attrs), and
+  // the global Esc → voidCart handler fired instead — pressing Esc
+  // to dismiss the shortcuts help destroyed the cart. We add the
+  // dialog role below AND this own-handler so the global yield
+  // correctly matches.
+  useEffect(() => {
+    if (!isOpen) return;
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", h);
+    return () => document.removeEventListener("keydown", h);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const shortcuts = {
@@ -231,6 +247,9 @@ export function KeyboardShortcutsOverlay({ isOpen, onClose }: KeyboardShortcutsO
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Keyboard shortcuts"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
       onClick={onClose}
     >

@@ -46,7 +46,7 @@ export function ReceiptView({
   receiptFooter,
 }: ReceiptViewProps) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" id="receipt-modal">
+    <div role="dialog" aria-modal="true" aria-label="Receipt" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" id="receipt-modal">
       <style>{`
         @keyframes checkmark-bounce {
           0% {

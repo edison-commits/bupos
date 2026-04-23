@@ -26,6 +26,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "@/lib/uuid";
+import { checkOrigin } from "@/lib/api/with-auth";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { getPool } from "@/lib/supabase-rest";
 import { safeErr } from "@/lib/logging/safe-err";
@@ -45,7 +46,19 @@ function mintToken(): string {
   return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
+const MAX_BODY_BYTES = 16 * 1024;
+
 export async function POST(req: NextRequest) {
+  // R81-SEC-M: checkOrigin + body-size as defense-in-depth. This is
+  // a pre-auth endpoint — an attacker hitting it from a foreign
+  // origin shouldn't be able to mint reset tokens. Body is tiny
+  // (just an email); cap at 16KB.
+  const originErr = checkOrigin(req);
+  if (originErr) return originErr;
+  const contentLength = Number(req.headers.get("content-length") ?? 0);
+  if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) {
+    return NextResponse.json({ error: "Request body too large" }, { status: 413 });
+  }
   // R28-M1: timing equalization. The prior implementation had three
   // observable response-latency branches (no-account: 1 SELECT; exists
   // + no in-flight token: 2 SELECTs + INSERT; exists + in-flight

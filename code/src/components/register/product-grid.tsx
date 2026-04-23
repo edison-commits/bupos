@@ -435,7 +435,10 @@ export const ProductGrid = memo(function ProductGrid({ items, categories, onAddI
 
       {/* Variant picker overlay with cleaner card design */}
       {variantPickerProduct && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+        // R81-FE-H1: role=dialog so the R80 keyboard-shortcuts Esc
+        // yield matches this overlay (prior shape let Esc fall
+        // through to the global void-cart handler).
+        <div role="dialog" aria-modal="true" aria-label="Pick variant" className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-lg rounded-2xl p-7 shadow-2xl" style={S.surfacePanel}>
             {/* Header with product info */}
             <div className="flex items-start justify-between gap-4 mb-6">

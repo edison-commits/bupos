@@ -416,11 +416,24 @@ export function ExchangeModal({
             disabled={loadingSnapshot || selectedCount === 0 || returnTotal < 0 || !selectedTxn || continuing}
             onClick={() => {
               if (!selectedTxn) return;
-              // R80-FE-M: double-submit guard — flip sync + fire once.
+              // R80-FE-M / R81-FE-H2: double-submit guard. Prior
+              // R80 shape set continuing=true before calling
+              // onConfirm but never reset it. If onConfirm threw
+              // synchronously or the parent kept the modal open
+              // on error (e.g. showing a toast), the button was
+              // dead forever. Wrap in try/catch so a sync throw
+              // resets the flag. onConfirm is a non-async
+              // callback that fires state setters in the parent;
+              // the modal typically unmounts on success, so the
+              // reset only matters on error paths.
               if (continuing) return;
               setContinuing(true);
-              const items = returnItems.filter((i) => i.returnQuantity > 0);
-              onConfirm(selectedTxn.transactionId, items, returnTotal, reason, note);
+              try {
+                const items = returnItems.filter((i) => i.returnQuantity > 0);
+                onConfirm(selectedTxn.transactionId, items, returnTotal, reason, note);
+              } catch {
+                setContinuing(false);
+              }
             }}
             className="touch-button flex-1 rounded-xl bg-teal-700 text-sm font-semibold text-white hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-40"
           >

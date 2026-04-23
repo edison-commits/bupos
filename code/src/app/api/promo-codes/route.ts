@@ -532,13 +532,32 @@ export const POST = withAdminAuth("pricing.manage", async (req, ctx) => {
         // referencing a non-existent promo. Prior shape emitted a
         // 'promo_code_disabled' event even when UPDATE affected 0
         // rows — log pollution + investigation noise.
+        // R81-DB-L: idempotent — `AND status != 'disabled'` so a
+        // repeat disable on an already-disabled promo returns
+        // without writing a fresh audit row (every re-disable
+        // previously emitted another promo_code_disabled event,
+        // polluting the audit trail). Separate 404 for non-existent
+        // from 200 idempotent for already-disabled.
+        const exists = await client.query(
+          `SELECT status FROM promo_codes WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+          [promoCodeId, orgId],
+        );
+        if (exists.rows.length === 0) {
+          await client.query("ROLLBACK");
+          return NextResponse.json({ error: "Promo code not found" }, { status: 404 });
+        }
+        if (exists.rows[0].status === 'disabled') {
+          await client.query("ROLLBACK");
+          return NextResponse.json({ id: promoCodeId, status: 'disabled', _idempotent: true });
+        }
         const upd = await client.query(
-          `UPDATE promo_codes SET status = 'disabled', updated_at = now() WHERE id = $1 AND organization_id = $2 RETURNING id`,
+          `UPDATE promo_codes SET status = 'disabled', updated_at = now() WHERE id = $1 AND organization_id = $2 AND status != 'disabled' RETURNING id`,
           [promoCodeId, orgId],
         );
         if (upd.rows.length === 0) {
+          // Concurrent disable beat us — idempotent success.
           await client.query("ROLLBACK");
-          return NextResponse.json({ error: "Promo code not found" }, { status: 404 });
+          return NextResponse.json({ id: promoCodeId, status: 'disabled', _idempotent: true });
         }
         await client.query(
           `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)

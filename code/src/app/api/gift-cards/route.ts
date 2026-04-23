@@ -521,6 +521,15 @@ export const POST = withAdminAuth('catalog.manage', async (req, ctx) => {
           await disableClient.query("ROLLBACK");
           return NextResponse.json({ error: "Gift card not found" }, { status: 404 });
         }
+        // R81-DB-L: idempotency parity with admin/gift-card-actions.ts
+        // (R47-M). Prior REST shape rewrote the same disabled state +
+        // inserted a fresh gift_card_disabled audit row on every repeat
+        // call. Return success without side-effect when already
+        // disabled.
+        if (before[0].status === "disabled") {
+          await disableClient.query("ROLLBACK");
+          return NextResponse.json({ id: giftCardId, status: "disabled", _idempotent: true });
+        }
         await disableClient.query(
           `UPDATE gift_cards SET status = 'disabled', updated_at = now()
             WHERE id = $1 AND organization_id = $2`,
@@ -532,7 +541,11 @@ export const POST = withAdminAuth('catalog.manage', async (req, ctx) => {
           [
             randomUUID(), orgId, null, employeeId, giftCardId,
             JSON.stringify({
-              code: before[0].code,
+              // R81-DB-L: mask the full code — prior shape logged the
+              // full card code to audit_events.payload (admin UI
+              // renders these rows). Mirror the Server Action's
+              // masking at admin/gift-card-actions.ts:378.
+              code: `****${String(before[0].code ?? "").slice(-4)}`,
               balance_at_disable: before[0].balance,
               prior_status: before[0].status,
             }),

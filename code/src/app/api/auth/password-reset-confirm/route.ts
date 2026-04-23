@@ -26,6 +26,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { hashSecret } from "@/lib/auth/crypto";
+import { checkOrigin } from "@/lib/api/with-auth";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { getPool } from "@/lib/supabase-rest";
 import { randomUUID } from "@/lib/uuid";
@@ -43,7 +44,18 @@ const schema = z.object({
   newPassword: z.string().min(12).max(200),
 });
 
+const MAX_BODY_BYTES = 16 * 1024;
+
 export async function POST(req: NextRequest) {
+  // R81-SEC-M: Origin + body-size as defense-in-depth (parity with
+  // password-change + login).
+  const originErr = checkOrigin(req);
+  if (originErr) return originErr;
+  const contentLength = Number(req.headers.get("content-length") ?? 0);
+  if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) {
+    return NextResponse.json({ error: "Request body too large" }, { status: 413 });
+  }
+
   // R28-M3: default-deny on x-forwarded-for. See lib/net/client-ip.ts.
   const { clientIpFrom } = await import("@/lib/net/client-ip");
   const clientIp = clientIpFrom(req.headers);

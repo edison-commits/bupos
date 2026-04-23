@@ -27,6 +27,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminSession } from "@/lib/auth/session";
+import { checkOrigin } from "@/lib/api/with-auth";
 import { verifySecret, hashSecret, runDecoyVerify } from "@/lib/auth/crypto";
 import {
   parseHistory,
@@ -47,7 +48,21 @@ const passwordChangeSchema = z.object({
   newPassword: z.string().min(12).max(200),
 });
 
+const MAX_BODY_BYTES = 16 * 1024; // 16KB is plenty for a password body
+
 export async function POST(req: NextRequest) {
+  // R81-SEC-M: defense-in-depth Origin + body-size checks. SameSite=
+  // Lax on the session cookie is the primary CSRF defense; this adds
+  // an explicit Origin check (parity with /api/auth/login and
+  // /api/auth/revoke-all-sessions) and rejects >16KB bodies so a
+  // pre-auth JSON bomb can't tie up the handler.
+  const originErr = checkOrigin(req);
+  if (originErr) return originErr;
+  const contentLength = Number(req.headers.get("content-length") ?? 0);
+  if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) {
+    return NextResponse.json({ error: "Request body too large" }, { status: 413 });
+  }
+
   // Session cookie gate — the client must be logged in as an admin
   // already. getAdminSession returns null if the cookie is missing,
   // invalid, or expired.

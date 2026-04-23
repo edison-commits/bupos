@@ -118,7 +118,11 @@ describe("R70 audit fixes — round 17", () => {
     const src = read("src/app/api/promo-codes/route.ts");
     it("UPDATE has RETURNING id + 404 on rows.length === 0", () => {
       expect(src).toMatch(/UPDATE promo_codes SET status = 'disabled'[\s\S]{0,300}RETURNING id/);
-      expect(src).toMatch(/if \(upd\.rows\.length === 0\)[\s\S]{0,200}ROLLBACK[\s\S]{0,200}404/);
+      // R81-DB-L shifted the 404 check onto the pre-UPDATE SELECT
+      // (to distinguish not-found from already-disabled). The 404
+      // still fires when the promo doesn't exist — just gated on
+      // `exists.rows.length === 0` now instead of `upd.rows.length`.
+      expect(src).toMatch(/if \(exists\.rows\.length === 0\)[\s\S]{0,200}ROLLBACK[\s\S]{0,200}404/);
     });
   });
 

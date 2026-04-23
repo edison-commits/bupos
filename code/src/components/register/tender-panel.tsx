@@ -179,7 +179,9 @@ export const TenderPanel = memo(function TenderPanel({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex bg-black/40">
+    // R81-FE-H1: role=dialog so R80 Esc-yield doesn't fall through
+    // to voidCart when Esc is pressed in the tender panel.
+    <div role="dialog" aria-modal="true" aria-label="Tender" className="fixed inset-0 z-50 flex bg-black/40">
       {/* Left side backdrop (semi-transparent) */}
       <div className="hidden md:block" style={{ width: "25%" }} onClick={onCancel} />
 

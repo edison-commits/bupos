@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import type { Customer, TransactionEventPlaceholder, TransactionTenderPlaceholder } from '@/lib/domain/types';
 import { formatCurrency } from "@/lib/format";
 
@@ -15,9 +15,31 @@ function ReceiptDetail({ transaction, customer, tenders, onClose }: ReceiptDetai
   const transactionTenders = tenders.filter(t => t.transactionId === transaction.transactionId);
   const totalAmount = transactionTenders.reduce((sum, t) => sum + t.amount, 0);
 
+  // R81-FE-H1: Esc closes the modal so the global Esc yield check
+  // (R80-FE-H1) correctly sees [role=dialog][aria-modal=true] here.
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", h);
+    return () => document.removeEventListener("keydown", h);
+  }, [onClose]);
+
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-2xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+    // R81-FE-H3: id="receipt-modal" makes the @media print rules at
+    // globals.css:380 match ONLY the modal content (not the admin
+    // page behind it). Prior shape printed the entire admin page
+    // with the modal overlay visible. Also R81-FE-H1: role=dialog +
+    // aria-modal so the R80 keyboard-shortcuts Esc yield correctly
+    // sees this as an open modal.
+    <div
+      id="receipt-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Receipt detail"
+      className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
+    >
+      <div id="receipt-content" className="bg-white rounded-2xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="sticky top-0 bg-white border-b border-zinc-200 p-6 flex items-center justify-between">
           <div>
@@ -27,10 +49,12 @@ function ReceiptDetail({ transaction, customer, tenders, onClose }: ReceiptDetai
             </p>
           </div>
           <button
+            type="button"
             onClick={onClose}
+            aria-label="Close receipt detail"
             className="touch-button p-2 hover:bg-zinc-100 rounded-lg transition"
           >
-            <span className="text-xl font-bold text-zinc-600">&times;</span>
+            <span className="text-xl font-bold text-zinc-600" aria-hidden="true">&times;</span>
           </button>
         </div>
 
