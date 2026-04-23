@@ -85,6 +85,14 @@ export async function pgInsertTimeClockEntry(data: {
 // organization_id = $N`, passing a stolen id from another tenant
 // would leak that tenant's time-clock data. Callers already vet
 // the inputs, but the function is the right place to enforce it.
+// R89-MED: 7th timezone sibling. `created_at` is TIMESTAMPTZ and
+// `$3::date` parses the date in session TZ (UTC here — no SET timezone
+// on the pool), so the bounds were UTC-midnight to UTC-midnight, not
+// org-local-midnight. A Pacific-TZ store asking for "today's
+// timesheet" at 9pm PT would see tomorrow's UTC-day rows (empty) and
+// miss the afternoon PT entries that crossed into UTC-tomorrow.
+// Parity with R82/R83/R87/R88 on dashboard, reports, eod-report,
+// returns, shifts. Use the same subquery shape as buildOrgDayRange.
 export async function pgReadTimeClockEntries(
   organizationId: string,
   locationId: string,
@@ -94,14 +102,26 @@ export async function pgReadTimeClockEntries(
     `SELECT * FROM time_clock_entries
      WHERE organization_id = $1
        AND location_id = $2
-       AND created_at >= $3::date
-       AND created_at < ($3::date + interval '1 day')
+       AND created_at >= (
+         $3::date AT TIME ZONE COALESCE(
+           (SELECT timezone FROM organizations WHERE id = $1), 'UTC'
+         )
+       )
+       AND created_at < (
+         ($3::date + interval '1 day') AT TIME ZONE COALESCE(
+           (SELECT timezone FROM organizations WHERE id = $1), 'UTC'
+         )
+       )
      ORDER BY created_at ASC`,
     [organizationId, locationId, datePrefix],
   );
   return rows.map(toTimeClockEntry);
 }
 
+// R89-MED: same fix applied defensively — this function has no live
+// callers in src/ today, but it's exported and will be called from a
+// future per-employee timesheet view. Fixing both siblings together
+// prevents a future regression from resurrecting the UTC-bound shape.
 export async function pgReadEmployeeTimeClockEntries(
   organizationId: string,
   employeeId: string,
@@ -111,8 +131,16 @@ export async function pgReadEmployeeTimeClockEntries(
     `SELECT * FROM time_clock_entries
      WHERE organization_id = $1
        AND employee_id = $2
-       AND created_at >= $3::date
-       AND created_at < ($3::date + interval '1 day')
+       AND created_at >= (
+         $3::date AT TIME ZONE COALESCE(
+           (SELECT timezone FROM organizations WHERE id = $1), 'UTC'
+         )
+       )
+       AND created_at < (
+         ($3::date + interval '1 day') AT TIME ZONE COALESCE(
+           (SELECT timezone FROM organizations WHERE id = $1), 'UTC'
+         )
+       )
      ORDER BY created_at ASC`,
     [organizationId, employeeId, datePrefix],
   );
