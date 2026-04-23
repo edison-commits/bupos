@@ -527,10 +527,19 @@ export const POST = withAdminAuth("pricing.manage", async (req, ctx) => {
         // R27-C11: explicit org filter on disable. Without it, any
         // pricing.manage-holder at any tenant could disable any other
         // tenant's promos — availability / revenue disruption.
-        await client.query(
-          `UPDATE promo_codes SET status = 'disabled', updated_at = now() WHERE id = $1 AND organization_id = $2`,
+        // R70-L2: RETURNING id + existence check so a bogus/cross-
+        // tenant promoCodeId doesn't write a phantom audit row
+        // referencing a non-existent promo. Prior shape emitted a
+        // 'promo_code_disabled' event even when UPDATE affected 0
+        // rows — log pollution + investigation noise.
+        const upd = await client.query(
+          `UPDATE promo_codes SET status = 'disabled', updated_at = now() WHERE id = $1 AND organization_id = $2 RETURNING id`,
           [promoCodeId, orgId],
         );
+        if (upd.rows.length === 0) {
+          await client.query("ROLLBACK");
+          return NextResponse.json({ error: "Promo code not found" }, { status: 404 });
+        }
         await client.query(
           `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
            VALUES ($1, $2, $3, $4, 'promo_code', $5, 'promo_code_disabled', $6, now())`,

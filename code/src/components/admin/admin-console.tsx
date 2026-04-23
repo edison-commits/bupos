@@ -347,7 +347,17 @@ export function AdminConsole({
 
           <SectionCard title="Create product + starter variant" description="Adds a product, its default variant, and an initial inventory row.">
             {canManageCatalog ? (
-              <SubmitGuardForm action={createProductAction} className="grid gap-3 md:grid-cols-2">
+              <PasswordGatedForm
+                action={createProductAction}
+                prompt={{
+                  title: "Create product + variant?",
+                  description:
+                    "Creating a product always sets a price on the starter variant — same fraud-relevant surface as a reprice. Confirm with your password.",
+                  confirmLabel: "Create product",
+                  confirmVariant: "default",
+                }}
+                className="grid gap-3 md:grid-cols-2"
+              >
                 <Input name="name" label="Product name" placeholder="Classic Zip Hoodie" />
                 <label className="grid gap-1 text-sm font-medium text-zinc-700">
                   <span>Category</span>
@@ -375,8 +385,8 @@ export function AdminConsole({
                   <input name="isTouchFavorite" type="checkbox" className="h-4 w-4 rounded border-zinc-300" />
                   Mark as touch favorite
                 </label>
-                <button className="touch-button rounded-2xl bg-zinc-900 px-5 text-sm font-semibold text-white md:col-span-2">Create product</button>
-              </SubmitGuardForm>
+                <button type="submit" className="touch-button rounded-2xl bg-zinc-900 px-5 text-sm font-semibold text-white md:col-span-2">Create product</button>
+              </PasswordGatedForm>
             ) : (
               <LockedMessage message="This role cannot create or edit products." />
             )}

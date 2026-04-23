@@ -129,13 +129,21 @@ export default function ReturnsPage() {
   };
 
   const handleQuantityChange = (productId: string, quantity: number) => {
+    // R70-M2: coerce NaN to 1. If the cashier clears the input,
+    // parseInt returns NaN → Math.max(1, Math.min(orig, NaN)) is
+    // NaN → line_total is NaN → refundAmount is NaN → the step-up
+    // gate `refundAmount > 100` evaluates false and bypasses the
+    // ">$100" prompt; JSON.stringify serializes NaN as null →
+    // server returns a confusing 400 rather than a clean client-
+    // side validation message.
+    const q = Number.isFinite(quantity) && quantity > 0 ? quantity : 1;
     setSelectedItems(
       selectedItems.map((item) =>
         item.product_id === productId
           ? {
               ...item,
-              return_quantity: Math.max(1, Math.min(item.original_quantity, quantity)),
-              line_total: item.unit_price * Math.max(1, Math.min(item.original_quantity, quantity)),
+              return_quantity: Math.max(1, Math.min(item.original_quantity, q)),
+              line_total: item.unit_price * Math.max(1, Math.min(item.original_quantity, q)),
             }
           : item
       )

@@ -230,12 +230,37 @@ export function LoyaltyTiers({ customers, currentConfig }: LoyaltyTiersProps) {
           <h2 className="text-lg font-bold text-zinc-900">Tier Configuration</h2>
           <button
             onClick={handleAddCustomTier}
-            className="px-4 py-2 rounded-lg bg-teal-700 text-white font-medium touch-button hover:bg-teal-800"
+            disabled
+            title="Custom tier persistence not yet available"
+            className="px-4 py-2 rounded-lg bg-zinc-300 text-zinc-600 font-medium touch-button cursor-not-allowed"
           >
-            + Add Custom Tier
+            + Add Custom Tier (preview)
           </button>
         </div>
-        <div className="grid gap-4">
+        {/* R70-H3: the tier configuration UI is a PREVIEW that does
+            not persist to the server today — edits mutate local
+            state only and revert on refresh. Point-earning at POS
+            still uses the single-rate `loyalty.earnRatePerDollar`
+            from register config, not these multipliers. Marking as
+            preview (inputs disabled below) prevents merchants from
+            building a false mental model of "I've configured
+            tiered rewards" when nothing is actually gated on this
+            configuration. Requires a new /api/loyalty-tiers
+            persistence endpoint + checkout integration to become
+            live; tracked as a feature spec, not shipped in this
+            round. */}
+        <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-800">
+          <strong>Preview:</strong> tier configuration is not yet
+          persisted or applied at checkout. Editable fields below
+          are read-only until the feature ships.
+        </div>
+        {/* R70-H3: fieldset[disabled] cascades `disabled` to every
+            nested input/select/textarea/button — keeps the UI
+            visually present for reference but interaction-dead so
+            merchants can't build false expectations. Remove this
+            fieldset wrapper when /api/loyalty-tiers persistence
+            ships. */}
+        <fieldset disabled className="grid gap-4 opacity-75">
           {tiers.map((tier) => (
             <div key={tier.id} className="rounded-2xl bg-zinc-50 border border-zinc-200 p-4">
               <div
@@ -387,7 +412,7 @@ export function LoyaltyTiers({ customers, currentConfig }: LoyaltyTiersProps) {
               )}
             </div>
           ))}
-        </div>
+        </fieldset>
       </div>
 
       {/* Tier Benefits Comparison */}

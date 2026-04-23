@@ -157,9 +157,21 @@ export async function createTransferAction(formData: FormData) {
   revalidatePath("/admin");
 }
 
-export async function shipTransferAction(transferId: string) {
+export async function shipTransferAction(transferId: string, actorPassword?: string) {
   const ctx = await requireAdminPermission("inventory.adjust");
   if (!ctx) throw new Error("Not authenticated");
+
+  // R70-M1: step-up re-auth. Ship is the inventory-draining step;
+  // R68-H2 gated CREATE but not SHIP. Mirror the REST parity on
+  // bucketKey 'transfer-ship-stepup'.
+  const { requireStepUp } = await import("@/lib/auth/step-up");
+  const stepUp = await requireStepUp({
+    actorId: ctx.employee.id,
+    orgId: ctx.employee.organizationId,
+    actorPassword: actorPassword ?? "",
+    bucketKey: "transfer-ship-stepup",
+  });
+  if (!stepUp.ok) throw new Error(stepUp.error);
 
   if (isPg()) {
     const orgId = ctx.employee.organizationId;
@@ -250,6 +262,19 @@ export async function shipTransferAction(transferId: string) {
           [line.quantity_requested, line.product_variant_id, transfer.source_location_id, orgId],
         );
       }
+      // R70-L1: ship audit in-tx (parity with REST ship path).
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'transfer', $5, 'transfer_shipped', $6, now())`,
+        [
+          randomUUID(), orgId, transfer.source_location_id, ctx.employee.id, transferId,
+          JSON.stringify({
+            source_location_id: transfer.source_location_id,
+            destination_location_id: transfer.destination_location_id,
+            line_count: lines.rows.length,
+          }),
+        ],
+      );
       await client.query("COMMIT");
     } catch (e) {
       await client.query("ROLLBACK");
@@ -340,6 +365,19 @@ export async function receiveTransferAction(transferId: string) {
           [randomUUID(), orgId, line.product_variant_id, transfer.destination_location_id, line.qty],
         );
       }
+      // R70-L1: receive audit in-tx.
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'transfer', $5, 'transfer_received', $6, now())`,
+        [
+          randomUUID(), orgId, transfer.destination_location_id, ctx.employee.id, transferId,
+          JSON.stringify({
+            source_location_id: transfer.source_location_id,
+            destination_location_id: transfer.destination_location_id,
+            line_count: lines.rows.length,
+          }),
+        ],
+      );
       await client.query("COMMIT");
     } catch (e) {
       await client.query("ROLLBACK");

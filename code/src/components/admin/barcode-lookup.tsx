@@ -88,9 +88,10 @@ export function BarcodeLookup({ categories }: { categories: Category[] }) {
     setSaveMessage(null);
 
     try {
-      // Route param is `code`, not `barcode` (R11-L-1). The save-flow
-      // POST to /api/barcode-lookup at line ~152 is still non-functional
-      // (route only exports GET) — tracked as a follow-up.
+      // Route param is `code`, not `barcode` (R11-L-1). The save-
+      // flow POST is live (R11-L-1 added the POST export; R68-H4
+      // gated it on pricing.manage + step-up; R68 UI threading
+      // above).
       const res = await fetch(`/api/barcode-lookup?code=${encodeURIComponent(trimmed)}`);
       if (!res.ok) throw new Error('Lookup failed');
       const data: LookupResult = await res.json();

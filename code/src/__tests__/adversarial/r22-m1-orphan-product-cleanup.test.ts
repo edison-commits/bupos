@@ -66,6 +66,12 @@ vi.mock("@/lib/authz", () => ({
     },
   }),
 }));
+// R70-H1: createProductAction now requires step-up re-auth. Mock
+// `requireStepUp` to always pass so this regression test stays
+// focused on the orphan-cleanup path.
+vi.mock("@/lib/auth/step-up", () => ({
+  requireStepUp: async () => ({ ok: true as const, status: 200 }),
+}));
 vi.mock("next/navigation", () => ({
   redirect: (url: string) => {
     calls.push(`redirect:${url}`);

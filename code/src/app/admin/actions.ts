@@ -171,23 +171,45 @@ export async function createCategoryAction(formData: FormData) {
     const { orgTx } = await import("@/lib/db");
     const ts = new Date().toISOString();
     const client = await orgTx(orgId);
+    let slugConflict = false;
     try {
-      await client.query(
-        `INSERT INTO categories (id, organization_id, slug, name, sort_order, image_url, parent_category_id, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)`,
-        [id, orgId, slug, name, 0, imageUrl ?? null, null, ts],
-      );
-      await client.query(
-        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
-         VALUES ($1, $2, $3, $4, 'category', $5, 'catalog_update', $6, now())`,
-        [randomUUID(), orgId, null, employee.id, id, JSON.stringify({ action: "created", name })],
-      );
-      await client.query("COMMIT");
+      try {
+        await client.query(
+          `INSERT INTO categories (id, organization_id, slug, name, sort_order, image_url, parent_category_id, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)`,
+          [id, orgId, slug, name, 0, imageUrl ?? null, null, ts],
+        );
+      } catch (err) {
+        // R70-L3: handle slug-uniqueness collision as a user-
+        // friendly redirect rather than bubbling a generic 500.
+        // `uniq_categories_org_slug` in migration 061 fires when a
+        // second "Shirts" collapses to the same slug as an existing
+        // category. Also handles the race where two admins click
+        // Create simultaneously — the loser sees the same message.
+        const e = err as { code?: string; constraint?: string };
+        if (e.code === "23505") {
+          await client.query("ROLLBACK").catch(() => {});
+          slugConflict = true;
+        } else {
+          throw err;
+        }
+      }
+      if (!slugConflict) {
+        await client.query(
+          `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+           VALUES ($1, $2, $3, $4, 'category', $5, 'catalog_update', $6, now())`,
+          [randomUUID(), orgId, null, employee.id, id, JSON.stringify({ action: "created", name })],
+        );
+        await client.query("COMMIT");
+      }
     } catch (e) {
       await client.query("ROLLBACK").catch(() => {});
       throw e;
     } finally {
       client.release();
+    }
+    if (slugConflict) {
+      redirect(`/admin?error=${encodeURIComponent(`A category with slug "${slug}" already exists`)}`);
     }
   } else {
     await mutateStore((store) => {
@@ -232,6 +254,31 @@ export async function createProductAction(formData: FormData) {
   // every downstream calculation referencing the row.
   if (!name || !categoryId || !sku || !Number.isFinite(price) || price <= 0) {
     redirect("/admin?error=Product+name,+category,+SKU,+and+price+are+required");
+  }
+
+  // R70-H1: parity with /api/products POST variant-create branch
+  // (R58-5) and /api/barcode-lookup POST (R68-H4). Creating a new
+  // product ALWAYS creates a priced variant (the starter variant),
+  // so the same pricing.manage + variant-price-stepup gates apply.
+  // Prior shape gated only on catalog.manage — a stolen
+  // inventory_clerk cookie could mint $0.01 variants via the
+  // admin-console Create Product form.
+  const { hasPermission } = await import("@/lib/domain/permissions");
+  if (!hasPermission(employee.roleKey, "pricing.manage")) {
+    redirect("/admin?error=Creating+a+product+sets+a+variant+price+and+requires+owner+or+manager+role");
+  }
+  {
+    const actorPassword = String(formData.get("actorPassword") ?? "");
+    const { requireStepUp } = await import("@/lib/auth/step-up");
+    const stepUp = await requireStepUp({
+      actorId: employee.id,
+      orgId: employee.organizationId,
+      actorPassword,
+      bucketKey: "variant-price-stepup",
+    });
+    if (!stepUp.ok) {
+      redirect(`/admin?error=${encodeURIComponent(stepUp.error)}`);
+    }
   }
 
   const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");

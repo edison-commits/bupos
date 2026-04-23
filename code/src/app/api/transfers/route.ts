@@ -394,6 +394,25 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
       const { transferId } = body;
       if (!transferId) return NextResponse.json({ error: "transferId required" }, { status: 400 });
 
+      // R70-M1: step-up re-auth on SHIP. A transfer in status='requested'
+      // was created by a (possibly different) actor; SHIP is the step
+      // that actually drains source inventory, so it's the fraud-
+      // relevant event. Prior shape had step-up on CREATE (R68-H2)
+      // but SHIP was ungated — a stolen manager cookie could ship
+      // any requested transfer off-books. New bucket
+      // 'transfer-ship-stepup' so a genuine serializing rate-limit
+      // is per-actor per-ship.
+      const { requireStepUp } = await import("@/lib/auth/step-up");
+      const stepUp = await requireStepUp({
+        actorId: employeeId,
+        orgId,
+        actorPassword: (body as { actorPassword?: string })?.actorPassword,
+        bucketKey: "transfer-ship-stepup",
+      });
+      if (!stepUp.ok) {
+        return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
+      }
+
       // R13-M-4: the old idempotency check returned `_idempotent: true` to
       // ANY caller once the transfer moved past status='requested', even
       // with a different Idempotency-Key. That claimed idempotency on
@@ -516,6 +535,24 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
           );
         }
 
+        // R70-L1: audit the ship inside the tx. Ship is the money-
+        // moving step (source inventory drained) — prior shape
+        // only wrote to transfers.shipped_by/shipped_at columns.
+        // A tampered/truncated transfers row would leave no
+        // forensic evidence without this audit event.
+        await client.query(
+          `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+           VALUES ($1, $2, $3, $4, 'transfer', $5, 'transfer_shipped', $6, now())`,
+          [
+            randomUUID(), orgId, transfer.source_location_id, employeeId, transferId,
+            JSON.stringify({
+              source_location_id: transfer.source_location_id,
+              destination_location_id: transfer.destination_location_id,
+              line_count: lines.rows.length,
+            }),
+          ],
+        );
+
         await client.query("COMMIT");
         invalidateInventoryCache(orgId);
         return NextResponse.json({ id: transferId, status: "in_transit" }, { status: 200 });
@@ -603,6 +640,22 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
             [randomUUID(), orgId, line.product_variant_id, transfer.destination_location_id, line.qty],
           );
         }
+
+        // R70-L1: audit the receive. Closes the second half of the
+        // inventory-move trail (source-drain audit on ship +
+        // destination-credit audit on receive).
+        await client.query(
+          `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+           VALUES ($1, $2, $3, $4, 'transfer', $5, 'transfer_received', $6, now())`,
+          [
+            randomUUID(), orgId, transfer.destination_location_id, employeeId, transferId,
+            JSON.stringify({
+              source_location_id: transfer.source_location_id,
+              destination_location_id: transfer.destination_location_id,
+              line_count: lines.rows.length,
+            }),
+          ],
+        );
 
         await client.query("COMMIT");
         invalidateInventoryCache(orgId);

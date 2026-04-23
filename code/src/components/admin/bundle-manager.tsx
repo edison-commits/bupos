@@ -347,7 +347,7 @@ export function BundleManager({ bundles, variants, products }: BundleManagerProp
                         type="number"
                         min="1"
                         value={item.quantity}
-                        onChange={(e) => handleItemChange(idx, "quantity", parseInt(e.target.value, 10))}
+                        onChange={(e) => handleItemChange(idx, "quantity", parseInt(e.target.value, 10) || 1)}
                         className="rounded-2xl border border-zinc-300 bg-white px-4 py-3 text-center"
                         required
                       />

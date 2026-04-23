@@ -3,14 +3,11 @@
 import { mutateStore } from "@/lib/persistence/store";
 import { requireAdminPermission } from "@/lib/authz";
 import { orgTx } from "@/lib/supabase-rest";
-import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 import type { StoreCreditEntry } from "@/lib/domain/types";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "@/lib/uuid";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
-
-import { safeErr } from "@/lib/logging/safe-err";
-import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
+import { formatCurrency } from "@/lib/format";
 const isPg = () => !!process.env.USE_POSTGRES;
 
 // R44-FE3: cap aligned with REST mirror /api/store-credit (5k not 10k)
@@ -18,6 +15,12 @@ const isPg = () => !!process.env.USE_POSTGRES;
 // server-action path than via the REST path. Prior $10k was a loose
 // upper bound that pre-dated the REST cap tightening.
 const MAX_STORE_CREDIT_ISSUANCE = 5_000;
+// R70-H2: 24h rolling per-actor aggregate cap. REST mirror enforces
+// the same limit — the Server Action was the bypass path. Attacker
+// with valid password (step-up passes) could otherwise mint 5×
+// $5000 per tick via this action, exceeding the intended daily
+// ceiling the REST surface prevented.
+const MAX_DAILY_STORE_CREDIT_PER_ACTOR = 25_000;
 
 export async function issueStoreCreditAction(formData: FormData) {
   const customerId = formData.get("customerId") as string;
@@ -61,6 +64,34 @@ export async function issueStoreCreditAction(formData: FormData) {
     const orgId = ctx.employee.organizationId;
     const client = await orgTx(orgId);
     try {
+      // R70-H2: advisory lock on `store-credit-actor:${orgId}:${employeeId}`
+      // + 24h aggregate check, SAME shape + SAME bucket as REST
+      // `/api/store-credit` (line ~218). The advisory lock key must
+      // be identical so concurrent issuances cross-coordinate
+      // between the two surfaces — otherwise an attacker could
+      // alternate between REST and Server Action to defeat
+      // serialization on each side.
+      await client.query(
+        `SELECT pg_advisory_xact_lock((('x' || substr(md5($1), 1, 16))::bit(64)::bigint))`,
+        [`store-credit-actor:${orgId}:${ctx.employee.id}`],
+      );
+      const { rows: dailyRows } = await client.query(
+        `SELECT COALESCE(SUM(amount), 0)::numeric AS minted
+           FROM store_credit_ledger
+          WHERE organization_id = $1
+            AND employee_id = $2
+            AND transaction_type = 'issuance'
+            AND created_at >= now() - interval '24 hours'`,
+        [orgId, ctx.employee.id],
+      );
+      const minted24h = Number(dailyRows[0]?.minted ?? 0) || 0;
+      if (minted24h + amount > MAX_DAILY_STORE_CREDIT_PER_ACTOR) {
+        await client.query("ROLLBACK");
+        throw new Error(
+          `24-hour store-credit issuance cap of ${formatCurrency(MAX_DAILY_STORE_CREDIT_PER_ACTOR)} exceeded (already ${formatCurrency(minted24h)} in the last 24h).`,
+        );
+      }
+
       // Defense in depth: even inside orgTx (which sets app.current_org_id
       // for RLS), add AND organization_id = $3 so any RLS regression, policy
       // drift, or future BYPASSRLS role change can't let a manager in org A

@@ -3,14 +3,11 @@
 import { mutateStore } from "@/lib/persistence/store";
 import { requireAdminPermission } from "@/lib/authz";
 import { orgTx, orgQuery } from "@/lib/supabase-rest";
-import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 import type { GiftCard, GiftCardTransaction } from "@/lib/domain/types";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "@/lib/uuid";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
-
-import { safeErr } from "@/lib/logging/safe-err";
-import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
+import { formatCurrency } from "@/lib/format";
 const isPg = () => !!process.env.USE_POSTGRES;
 
 // Cap gift card issuance/reload per request so a compromised manager can't
@@ -76,6 +73,35 @@ export async function activateGiftCardAction(formData: FormData) {
 
     const client = await orgTx(orgId);
     try {
+      // R70-H2: advisory lock + 24h aggregate cap. SAME bucket key
+      // (`gift-card-actor:${orgId}:${employeeId}`) and SAME 25k cap
+      // as REST `/api/gift-cards` so concurrent activations
+      // cross-coordinate. Prior shape let attacker with valid
+      // password alternate between Server Action and REST to
+      // defeat the REST-side daily cap.
+      const MAX_DAILY_MINT_PER_ACTOR = 25_000;
+      await client.query(
+        `SELECT pg_advisory_xact_lock((('x' || substr(md5($1), 1, 16))::bit(64)::bigint))`,
+        [`gift-card-actor:${orgId}:${ctx.employee.id}`],
+      );
+      const { rows: mintedRows } = await client.query(
+        `SELECT COALESCE(SUM(amount), 0)::numeric AS minted
+           FROM gift_card_transactions gct
+           JOIN gift_cards gc ON gc.id = gct.gift_card_id
+          WHERE gc.organization_id = $1
+            AND gct.employee_id = $2
+            AND gct.transaction_type IN ('activation', 'reload')
+            AND gct.created_at >= now() - interval '24 hours'`,
+        [orgId, ctx.employee.id],
+      );
+      const minted24h = Number(mintedRows[0]?.minted ?? 0) || 0;
+      if (minted24h + amount > MAX_DAILY_MINT_PER_ACTOR) {
+        await client.query("ROLLBACK");
+        throw new Error(
+          `24-hour gift-card mint cap of ${formatCurrency(MAX_DAILY_MINT_PER_ACTOR)} exceeded (${formatCurrency(minted24h)} minted in the last 24h). Owner must approve further activations.`,
+        );
+      }
+
       // R16-H-1: verify customerId belongs to caller's org. Same class as
       // R14-H-4 (the `/api/gift-cards` route equivalent). The FK
       // `gift_cards.customer_id → customers(id)` is tenant-agnostic; without
@@ -176,6 +202,32 @@ export async function reloadGiftCardAction(formData: FormData) {
     const orgId = ctx.employee.organizationId;
     const client = await orgTx(orgId);
     try {
+      // R70-H2: advisory lock + 24h aggregate cap parity with REST
+      // reload (same pattern as activate above + same bucket key
+      // so activate + reload share the daily ceiling).
+      const MAX_DAILY_MINT_PER_ACTOR = 25_000;
+      await client.query(
+        `SELECT pg_advisory_xact_lock((('x' || substr(md5($1), 1, 16))::bit(64)::bigint))`,
+        [`gift-card-actor:${orgId}:${ctx.employee.id}`],
+      );
+      const { rows: mintedRows } = await client.query(
+        `SELECT COALESCE(SUM(amount), 0)::numeric AS minted
+           FROM gift_card_transactions gct
+           JOIN gift_cards gc ON gc.id = gct.gift_card_id
+          WHERE gc.organization_id = $1
+            AND gct.employee_id = $2
+            AND gct.transaction_type IN ('activation', 'reload')
+            AND gct.created_at >= now() - interval '24 hours'`,
+        [orgId, ctx.employee.id],
+      );
+      const minted24h = Number(mintedRows[0]?.minted ?? 0) || 0;
+      if (minted24h + amount > MAX_DAILY_MINT_PER_ACTOR) {
+        await client.query("ROLLBACK");
+        throw new Error(
+          `24-hour gift-card mint cap of ${formatCurrency(MAX_DAILY_MINT_PER_ACTOR)} exceeded (${formatCurrency(minted24h)} minted in the last 24h). Owner must approve further mints.`,
+        );
+      }
+
       // Defense in depth: scope every gift_cards touch by org, not just RLS.
       // gift_cards.code collisions across tenants can leak IDs via the
       // activation conflict path (see R8-C-3), so a UUID could realistically

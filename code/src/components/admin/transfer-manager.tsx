@@ -70,7 +70,21 @@ export function TransferManager({
       </div>
 
       <button
-        onClick={() => { setShowCreate(!showCreate); setCreateLines([]); }}
+        onClick={() => {
+          // R70-L5: full reset on cancel/open so partially-typed
+          // line rows, selected variant, and src/dest locations
+          // from a prior attempt don't carry into the next form
+          // session. Previously only createLines was cleared —
+          // reopening the form after cancel showed the previous
+          // src/dest selection which could accidentally submit
+          // the wrong transfer if the user didn't re-verify.
+          setShowCreate(!showCreate);
+          setCreateLines([]);
+          setSourceLocationId(locations[0]?.id ?? "");
+          setDestLocationId(locations[1]?.id ?? locations[0]?.id ?? "");
+          setSelectedVariant("");
+          setSelectedQty(1);
+        }}
         className="rounded-2xl bg-zinc-900 px-4 py-2 text-sm font-semibold text-white"
       >
         {showCreate ? "Cancel" : "Create transfer"}
@@ -215,7 +229,25 @@ export function TransferManager({
                       {tr.status === "requested" && (
                         <>
                           <button
-                            onClick={() => { startTransition(() => shipTransferAction(tr.id)); }}
+                            onClick={async () => {
+                              // R70-M1: step-up before draining source
+                              // inventory via ship.
+                              const pwd = await promptPassword({
+                                title: "Ship transfer?",
+                                description:
+                                  "Shipping drains inventory at the source location. Confirm with your password.",
+                                confirmLabel: "Mark shipped",
+                                confirmVariant: "default",
+                              });
+                              if (!pwd) return;
+                              startTransition(async () => {
+                                try {
+                                  await shipTransferAction(tr.id, pwd);
+                                } catch (err) {
+                                  window.alert(err instanceof Error ? err.message : "Failed to ship transfer");
+                                }
+                              });
+                            }}
                             disabled={isPending}
                             className="rounded-lg bg-amber-600 px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
                           >
