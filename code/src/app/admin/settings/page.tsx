@@ -1068,17 +1068,20 @@ export default function SettingsPage() {
           cache: 'no-store',
         });
         clearTimeout(timeout);
-        // R64-M1 / R66-L4: surface the server's 409 drift message
-        // so a user racing a concurrent tax-rate edit sees "refresh
-        // and retry" instead of the generic error. R66-L4 ALSO
-        // refreshes the settings snapshot before throwing so the
-        // user's next retry compares against the fresh DB value
-        // (prior shape left stale snapshot → same 409 on retry).
+        // R64-M1 / R66-L4 / R68-L2: surface the server's 409 drift
+        // message AND refresh the local snapshot BEFORE throwing so
+        // the user's next retry operates on the fresh DB value. The
+        // server re-reads `priorTaxSnap` from DB on every request
+        // (so a retry without refresh still works — the server is
+        // the source of truth), but the UI also does a client-side
+        // snapshot-compare to decide whether to PROMPT for password
+        // before sending; that prompt decision needs the fresh
+        // baseline or the retry prompts even when no change was
+        // made. Awaiting ensures the `setSettings` lands before the
+        // thrown error unwinds to the catch + setSectionErrors.
         if (response.status === 409) {
           const body = await response.json().catch(() => ({ error: 'Location tax rate was changed by another user. Please refresh and try again.' }));
-          // Fire-and-forget the refresh; the user will see the new
-          // snapshot when they reopen the editor.
-          fetchSettings().catch(() => {});
+          await fetchSettings();
           throw new Error(body.error || 'Location tax rate was changed by another user. Please refresh and try again.');
         }
         if (!response.ok) {

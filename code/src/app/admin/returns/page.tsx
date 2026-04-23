@@ -7,6 +7,11 @@ import { Search, Calendar, Plus, X, AlertCircle, CheckCircle, Loader } from 'luc
 import { authFetch } from '@/lib/api/client';
 import { formatCurrency } from '@/lib/format';
 import { safeErr } from "@/lib/logging/safe-err";
+// R68-H5: server /api/returns/process gates on step-up whenever
+// refund_method ∈ {cash, original_tender} OR refund_amount > $100.
+// Prior UI didn't thread actorPassword → every refund via the
+// admin returns page 400'd with "password required."
+import { usePasswordGate } from "@/components/shared/password-gate";
 interface CartItem {
   product_id: string;
   product_name: string;
@@ -73,6 +78,7 @@ export default function ReturnsPage() {
   const [returnReason, setReturnReason] = useState('damaged');
   const [notes, setNotes] = useState('');
   const [processing, setProcessing] = useState(false);
+  const [promptPassword, passwordGate] = usePasswordGate();
   const [confirmation, setConfirmation] = useState<{ success: boolean; message: string } | null>(null);
 
   const handleSearch = useCallback(async () => {
@@ -150,6 +156,27 @@ export default function ReturnsPage() {
       return;
     }
 
+    // R68-H5: server gates refund_method ∈ {cash, original_tender}
+    // OR refund_amount > $100 on step-up. Prompt whenever any of
+    // these conditions apply so the refund actually processes.
+    const refundAmount = calculateRefundAmount();
+    const requiresStepUp =
+      refundMethod === 'cash' ||
+      refundMethod === 'original_tender' ||
+      refundAmount > 100;
+    let actorPassword: string | undefined;
+    if (requiresStepUp) {
+      const pwd = await promptPassword({
+        title: `Process ${formatCurrency(refundAmount)} refund?`,
+        description:
+          "Refunds via cash or original tender, or any refund over $100, require step-up re-auth. Confirm with your password.",
+        confirmLabel: "Process refund",
+        confirmVariant: "default",
+      });
+      if (!pwd) return;
+      actorPassword = pwd;
+    }
+
     setProcessing(true);
     try {
       const response = await authFetch('/api/returns/process', {
@@ -171,7 +198,8 @@ export default function ReturnsPage() {
             quantity: item.return_quantity,
             unit_price: item.unit_price,
           })),
-          refund_amount: calculateRefundAmount(),
+          refund_amount: refundAmount,
+          ...(actorPassword ? { actorPassword } : {}),
         }),
       });
 
@@ -589,6 +617,8 @@ export default function ReturnsPage() {
           </div>
         )}
       </div>
+      {/* R68-H5: <PasswordGate> renders nothing when inactive. */}
+      {passwordGate}
     </div>
   );
 }

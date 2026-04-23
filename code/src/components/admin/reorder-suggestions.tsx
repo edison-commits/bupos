@@ -69,11 +69,16 @@ export function ReorderSuggestions() {
       return;
     }
 
+    // R68-H1: DTO field is `quantity` per purchaseOrderLineSchema;
+    // the DB column is quantity_ordered. R66-H2 renamed this in
+    // /admin/purchase-orders and purchase-order-manager but missed
+    // this third call site — every auto-PO from Reorder Suggestions
+    // 400'd with "lines.0.quantity: Required".
     const lines = group.items
       .filter((item) => (qtys[item.variant_id] || 0) > 0)
       .map((item) => ({
         product_variant_id: item.variant_id,
-        quantity_ordered: qtys[item.variant_id] || item.suggested_qty,
+        quantity: qtys[item.variant_id] || item.suggested_qty,
         unit_cost: item.cost || 0,
       }));
 

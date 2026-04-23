@@ -135,8 +135,10 @@ describe("R66 audit fixes — round 15", () => {
   describe("R66-L4 LOW: settings 409 refreshes snapshot", () => {
     const src = read("src/app/admin/settings/page.tsx");
     it("409 branch calls fetchSettings() before throwing", () => {
-      // Match the block that handles 409 with the fetchSettings call.
-      expect(src).toMatch(/if \(response\.status === 409\)[\s\S]{0,500}fetchSettings\(\)\.catch/);
+      // R68-L2 changed fire-and-forget to `await fetchSettings()`
+      // so the state lands before the error unwinds — accept
+      // either shape.
+      expect(src).toMatch(/if \(response\.status === 409\)[\s\S]{0,500}(?:fetchSettings\(\)\.catch|await fetchSettings\(\))/);
     });
   });
 });

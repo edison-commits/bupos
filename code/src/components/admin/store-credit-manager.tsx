@@ -4,6 +4,10 @@ import { useState, useTransition } from "react";
 import { issueStoreCreditAction } from "@/app/admin/store-credit-actions";
 import type { Customer, StoreCreditEntry, Employee } from "@/lib/domain/types";
 import { formatCurrency } from "@/lib/format";
+// R68-H3: store-credit issuance is cash-equivalent minting. Server
+// (`issueStoreCreditAction`) requires step-up; prior UI form
+// didn't prompt → every issuance 400'd with "password required".
+import { usePasswordGate } from "@/components/shared/password-gate";
 
 export function StoreCreditManager({
   customers,
@@ -17,6 +21,7 @@ export function StoreCreditManager({
   const [showIssueForm, setShowIssueForm] = useState(false);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const [promptPassword, passwordGate] = usePasswordGate();
 
   const empMap = new Map(employees.map((e) => [e.id, e]));
 
@@ -57,10 +62,33 @@ export function StoreCreditManager({
 
       {showIssueForm && (
         <form
-          action={(fd) => {
+          onSubmit={async (e) => {
+            // R68-H3: server gates issueStoreCreditAction on step-
+            // up (bucketKey 'store-credit-issue-stepup'). Prompt
+            // before dispatch + thread actorPassword through the
+            // FormData so the action can succeed. Store-credit is
+            // cash-equivalent — same pattern as gift-card activate.
+            e.preventDefault();
+            const form = e.currentTarget;
+            const fd = new FormData(form);
+            const amountRaw = Number(fd.get("amount"));
+            if (!Number.isFinite(amountRaw) || amountRaw <= 0) return;
+            const pwd = await promptPassword({
+              title: `Issue ${formatCurrency(amountRaw)} store credit?`,
+              description:
+                "Store credit is cash-equivalent. Confirm with your password.",
+              confirmLabel: "Issue credit",
+              confirmVariant: "default",
+            });
+            if (!pwd) return;
+            fd.set("actorPassword", pwd);
             startTransition(async () => {
-              await issueStoreCreditAction(fd);
-              setShowIssueForm(false);
+              try {
+                await issueStoreCreditAction(fd);
+                setShowIssueForm(false);
+              } catch (err) {
+                window.alert(err instanceof Error ? err.message : "Failed to issue store credit");
+              }
             });
           }}
           className="rounded-xl border border-zinc-200 bg-white p-4 space-y-3"
@@ -158,6 +186,8 @@ export function StoreCreditManager({
           })()}
         </div>
       )}
+      {/* R68-H3: <PasswordGate> renders nothing when inactive. */}
+      {passwordGate}
     </div>
   );
 }

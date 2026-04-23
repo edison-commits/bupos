@@ -236,14 +236,14 @@ export default function ProductsPage() {
       // for the reprice branch; everything else goes through the
       // separate variant-update object (not this endpoint).
       //
-      // R66-L3: the modal exposes `productId` at the peer level of
-      // ModalState (not nested inside `data`), populated by
-      // `setModal({ type: 'edit-variant', productId: product.id,
-      // variantId: variant.id, data: variant })` at line 512. Read
-      // it from modal.productId so the dead branch from R64-C1 is
-      // removed. Including product_id satisfies schemas for callers
-      // that still look for it; the variant-update handler branch
-      // uses variant_id.
+      // R66-L3 / R68-L1: the modal exposes `productId` at the peer
+      // level of ModalState (not nested inside `data`), populated
+      // by `setModal({ type: 'edit-variant', productId: product.id,
+      // variantId: variant.id, data: variant })` at the onEditVariant
+      // callback site. Read it from modal.productId so the dead
+      // branch from R64-C1 is removed. Including product_id
+      // satisfies schemas for callers that still look for it; the
+      // variant-update handler branch uses variant_id.
       const payload: Record<string, unknown> = {
         variant_id: variantId,
         expectedUpdatedAt: formData.updatedAt,

@@ -178,6 +178,33 @@ export const POST = withAdminAuth("catalog.manage", async (request, ctx) => {
       initial_stock = 0, reorder_point = 5,
     } = v.data;
 
+    // R68-H4: this endpoint creates a priced variant — same fraud-
+    // relevant surface as /api/products POST variant-create (R58-5)
+    // and CSV import (R54-M3). Both of those gate on
+    // `pricing.manage` + `requireStepUp({bucketKey:'variant-price-
+    // stepup'})`. Prior shape here only had `catalog.manage` (which
+    // inventory_clerk also holds) — a compromised clerk cookie
+    // could mint $0.01 variants via the barcode-scan UI despite the
+    // other two variant-creating paths being gated. Close the
+    // parity gap.
+    const { hasPermission } = await import("@/lib/domain/permissions");
+    if (!hasPermission(employee.roleKey, "pricing.manage")) {
+      return NextResponse.json(
+        { error: 'Variant creation via barcode-lookup requires pricing.manage (owner / manager).' },
+        { status: 403 },
+      );
+    }
+    const { requireStepUp } = await import('@/lib/auth/step-up');
+    const stepUp = await requireStepUp({
+      actorId: employee.id,
+      orgId,
+      actorPassword: (body as { actorPassword?: string })?.actorPassword,
+      bucketKey: 'variant-price-stepup',
+    });
+    if (!stepUp.ok) {
+      return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
+    }
+
     // Verify category belongs to caller's org (FK-tenant check, same class
     // as R16 work).
     const catCheck = await orgQuery(

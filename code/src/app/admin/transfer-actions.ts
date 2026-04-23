@@ -68,6 +68,23 @@ export async function createTransferAction(formData: FormData) {
     destinationLocationId,
   );
 
+  // R68-H2: step-up parity with REST /api/transfers POST. Prior
+  // shape: only RBAC + location authority, no password re-auth. A
+  // transfer drains inventory at source + credits at destination;
+  // stolen manager cookie could move high-value stock to an off-
+  // books location for an accomplice to pick up. Mirror the REST
+  // bucket 'transfer-create-stepup' so the aggregate-per-actor cap
+  // covers both surfaces.
+  const actorPassword = String(formData.get("actorPassword") ?? "");
+  const { requireStepUp } = await import("@/lib/auth/step-up");
+  const stepUp = await requireStepUp({
+    actorId: ctx.employee.id,
+    orgId: ctx.employee.organizationId,
+    actorPassword,
+    bucketKey: "transfer-create-stepup",
+  });
+  if (!stepUp.ok) throw new Error(stepUp.error);
+
   if (isPg()) {
     const orgId = ctx.employee.organizationId;
     const client = await orgTx(orgId);

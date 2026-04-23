@@ -3,6 +3,10 @@
 import { useState, useTransition } from "react";
 import { cancelTransferAction, createTransferAction, receiveTransferAction, shipTransferAction } from "@/app/admin/transfer-actions";
 import type { Transfer, TransferLine, Location, ProductVariant, Product, Employee } from "@/lib/domain/types";
+// R68-H2: step-up prompt on transfer create. Server now gates on
+// bucketKey:'transfer-create-stepup' (R68-H2 server fix); UI must
+// thread actorPassword through the FormData.
+import { usePasswordGate } from "@/components/shared/password-gate";
 
 const STATUS_COLORS: Record<string, string> = {
   requested: "bg-blue-100 text-blue-800",
@@ -24,6 +28,7 @@ export function TransferManager({
   const [showCreate, setShowCreate] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const [promptPassword, passwordGate] = usePasswordGate();
 
   // Create form state
   const [sourceLocationId, setSourceLocationId] = useState(locations[0]?.id ?? "");
@@ -124,12 +129,34 @@ export function TransferManager({
 
           <button
             disabled={isPending || createLines.length === 0}
-            onClick={() => {
+            onClick={async () => {
+              // R68-H2: prompt for step-up password before creating
+              // the transfer. Inventory moves between locations —
+              // stolen cookie shouldn't be able to drain source
+              // stock to an accomplice-accessible location without
+              // password re-auth.
+              const pwd = await promptPassword({
+                title: "Create transfer?",
+                description:
+                  "Transfers drain inventory at the source and credit it at the destination. Confirm with your password.",
+                confirmLabel: "Create transfer",
+                confirmVariant: "default",
+              });
+              if (!pwd) return;
               const fd = new FormData();
               fd.set("sourceLocationId", sourceLocationId);
               fd.set("destinationLocationId", destLocationId);
               fd.set("lines", JSON.stringify(createLines));
-              startTransition(async () => { await createTransferAction(fd); setShowCreate(false); setCreateLines([]); });
+              fd.set("actorPassword", pwd);
+              startTransition(async () => {
+                try {
+                  await createTransferAction(fd);
+                  setShowCreate(false);
+                  setCreateLines([]);
+                } catch (err) {
+                  window.alert(err instanceof Error ? err.message : "Failed to create transfer");
+                }
+              });
             }}
             className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
           >
@@ -220,6 +247,8 @@ export function TransferManager({
           })}
         </div>
       )}
+      {/* R68-H2: <PasswordGate> renders nothing when inactive. */}
+      {passwordGate}
     </div>
   );
 }

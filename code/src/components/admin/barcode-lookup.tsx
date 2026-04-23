@@ -3,6 +3,9 @@
 
 import { useState, useRef, useCallback } from 'react';
 import { formatCurrency } from "@/lib/format";
+// R68-H4: server /api/barcode-lookup POST now gates on
+// `pricing.manage` + `variant-price-stepup`. Thread actorPassword.
+import { usePasswordGate } from "@/components/shared/password-gate";
 
 interface Category {
   id: string;
@@ -70,6 +73,7 @@ export function BarcodeLookup({ categories }: { categories: Category[] }) {
   });
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [promptPassword, passwordGate] = usePasswordGate();
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -148,6 +152,18 @@ export function BarcodeLookup({ categories }: { categories: Category[] }) {
       return;
     }
 
+    // R68-H4: server now requires step-up (bucketKey:'variant-
+    // price-stepup') + pricing.manage. Prompt for password, bail
+    // on cancel.
+    const pwd = await promptPassword({
+      title: `Create ${formData.name}?`,
+      description:
+        "Creating a new product via barcode scan sets a price. Confirm with your password — new variants are fraud-relevant surface.",
+      confirmLabel: "Create product",
+      confirmVariant: "default",
+    });
+    if (!pwd) return;
+
     setSaving(true);
     setSaveMessage(null);
 
@@ -168,6 +184,7 @@ export function BarcodeLookup({ categories }: { categories: Category[] }) {
           image_url: formData.image_url || null,
           initial_stock: parseInt(formData.initial_stock) || 0,
           reorder_point: parseInt(formData.reorder_point) || 5,
+          actorPassword: pwd,
         }),
       });
 
@@ -511,6 +528,8 @@ export function BarcodeLookup({ categories }: { categories: Category[] }) {
           Add a different product with this barcode?
         </button>
       )}
+      {/* R68-H4: <PasswordGate> renders nothing when inactive. */}
+      {passwordGate}
     </div>
   );
 }

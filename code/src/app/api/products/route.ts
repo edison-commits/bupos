@@ -267,12 +267,32 @@ export const POST = withAdminAuth("catalog.manage", async (request, ctx) => {
           { status: 400 },
         );
       }
-      const { name, slug } = cv.data.category;
+      const { name, slug: rawSlug } = cv.data.category;
+      // R68-H6: `categories.slug` and `.sort_order` are NOT NULL
+      // with no defaults (migration 001). Prior shape passed
+      // `slug ?? null` (NULL violates the constraint) and omitted
+      // sort_order entirely — every admin Add-Category POST 500'd
+      // with a 23502. Derive slug from name when absent (mirror the
+      // Server Action's canonicalizer) and default sort_order to 0.
+      const finalSlug = rawSlug && rawSlug.length > 0
+        ? rawSlug
+        : name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
       const result = await client.query(
-        `INSERT INTO categories (id, organization_id, name, slug, created_at, updated_at)
-         VALUES (gen_random_uuid(), $1, $2, $3, NOW(), NOW())
+        `INSERT INTO categories (id, organization_id, name, slug, sort_order, created_at, updated_at)
+         VALUES (gen_random_uuid(), $1, $2, $3, 0, NOW(), NOW())
          RETURNING id, name, slug`,
-        [orgId, name, slug ?? null]
+        [orgId, name, finalSlug]
+      );
+      // R68-M1: audit INSIDE the tx. Server Action
+      // `createCategoryAction` emits a catalog_update event; REST
+      // surface was the lossier twin. Mirror it.
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'category', $5, 'catalog_update', $6, now())`,
+        [
+          randomUUID(), orgId, null, ctx.employee.id, result.rows[0].id,
+          JSON.stringify({ action: 'created', name, slug: finalSlug }),
+        ],
       );
       await client.query('COMMIT');
       invalidateProductsCache(orgId);
@@ -558,6 +578,24 @@ export const PUT = withAdminAuth("catalog.manage", async (request, ctx) => {
         paramIndex++;
       }
       if (updates.category_id !== undefined) {
+        // R68-M2: FK tenant check. categories.id is not tenant-
+        // scoped at the FK level — prior shape let an attacker with
+        // a stolen catalog.manage cookie guess/scrape a category
+        // UUID from another org and reassign their product to it.
+        // R68-M3: also reject null/empty (column is NOT NULL in the
+        // schema; would 23502 otherwise).
+        if (updates.category_id === null || updates.category_id === '') {
+          await client.query('ROLLBACK');
+          return NextResponse.json({ error: 'category_id cannot be null' }, { status: 400 });
+        }
+        const catFkCheck = await client.query(
+          `SELECT 1 FROM categories WHERE id = $1 AND organization_id = $2 LIMIT 1 FOR SHARE`,
+          [updates.category_id, orgId],
+        );
+        if (catFkCheck.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return NextResponse.json({ error: 'category_id does not exist in this organization' }, { status: 400 });
+        }
         fields.push(`category_id = $${paramIndex}`);
         values.push(updates.category_id);
         paramIndex++;
@@ -1059,16 +1097,20 @@ export const PATCH = withAdminAuth("catalog.manage", async (request, ctx) => {
 
       // Batch insert categories
       if (newCategories.length > 0) {
+        // R68-M4: include sort_order (NOT NULL in migration 001)
+        // with literal 0. Prior shape omitted the column and every
+        // CSV import that introduced a new category 23502'd the
+        // whole tx, rolling back the entire import.
         const catValues: string[] = [];
         const catParams: string[] = [];
         let idx = 1;
         for (const cat of newCategories) {
-          catValues.push(`(gen_random_uuid(), $1, $${idx}, $${idx + 1}, NOW(), NOW())`);
+          catValues.push(`(gen_random_uuid(), $1, $${idx}, $${idx + 1}, 0, NOW(), NOW())`);
           catParams.push(cat.displayName, cat.slug);
           idx += 2;
         }
         await client.query(
-          `INSERT INTO categories (id, organization_id, name, slug, created_at, updated_at) VALUES ${catValues.join(', ')}`,
+          `INSERT INTO categories (id, organization_id, name, slug, sort_order, created_at, updated_at) VALUES ${catValues.join(', ')}`,
           [orgId, ...catParams]
         );
         // Refresh catMap with newly inserted categories
