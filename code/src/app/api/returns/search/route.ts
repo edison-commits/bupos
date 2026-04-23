@@ -41,10 +41,18 @@ export const GET = withAdminAuth('audit.view', async (req, ctx) => {
     }
 
     if (dateRange === 'today') {
-      const startOfDay = new Date(now);
-      startOfDay.setHours(0, 0, 0, 0);
+      // R87-MED: use buildOrgDayRange for org-TZ-aware "today"
+      // bounds. Prior shape used server-local `setHours(0,0,0,0)`
+      // which on Cloudflare Workers is UTC midnight — a Pacific-
+      // TZ store searching "today" at 9pm PT got yesterday-4pm PT
+      // → now instead of today-00:00 PT → now. Sibling of
+      // R83-SEC-H2 dashboard fix + R83-MED reports hourly + R83
+      // /api/export sweep.
+      const { buildOrgDayRange } = await import("@/lib/reports/day-range");
+      const todayStr = now.toISOString().slice(0, 10);
+      const { fromTs: startOfDay } = await buildOrgDayRange(ctx.orgId, todayStr, todayStr);
       dateCondition = ' AND t.created_at >= $3 AND t.created_at < $4';
-      dateParams.push(startOfDay.toISOString(), now.toISOString());
+      dateParams.push(startOfDay, now.toISOString());
     } else if (dateRange === 'week') {
       const weekAgo = new Date(now);
       weekAgo.setDate(weekAgo.getDate() - 7);
