@@ -55,7 +55,9 @@ describe("R60 audit fixes — round 12", () => {
       expect(priorIdx).toBeLessThan(stepUpIdx);
     });
     it("gate fires only when new tax differs by > 0.00005", () => {
-      expect(src).toMatch(/taxChanged = priorTax === null \|\| Math\.abs\(priorTax - submittedTax\) > 0\.00005/);
+      // R62-M1 renamed priorTax → priorTaxSnap when adding the
+      // TOCTOU re-read guard inside the tx; mechanism preserved.
+      expect(src).toMatch(/taxChanged = priorTax(?:Snap)? === null \|\| Math\.abs\(priorTax(?:Snap)? - submittedTax\) > 0\.00005/);
     });
   });
 
@@ -101,11 +103,14 @@ describe("R60 audit fixes — round 12", () => {
 
   describe("R60-B3 LOW: /api/products DELETE + PATCH have per-org rate limits", () => {
     const src = read("src/app/api/products/route.ts");
-    it("DELETE handler calls checkRateLimit('products:del:${orgId}')", () => {
-      expect(src).toMatch(/checkRateLimit\(`products:del:\$\{orgId\}`\)/);
+    // R62-L1 upgraded these from per-org to per-actor buckets
+    // (with 60/60s limits) to match the barcode-save precedent.
+    // The bucket key shape is now `products:{del,patch}:${orgId}:${employee.id}`.
+    it("DELETE handler calls checkRateLimit with products:del bucket", () => {
+      expect(src).toMatch(/checkRateLimit\(`products:del:\$\{orgId\}(?::\$\{employee\.id\})?`/);
     });
-    it("PATCH handler calls checkRateLimit('products:patch:${orgId}')", () => {
-      expect(src).toMatch(/checkRateLimit\(`products:patch:\$\{orgId\}`\)/);
+    it("PATCH handler calls checkRateLimit with products:patch bucket", () => {
+      expect(src).toMatch(/checkRateLimit\(`products:patch:\$\{orgId\}(?::\$\{employee\.id\})?`/);
     });
   });
 

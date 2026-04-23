@@ -601,6 +601,21 @@ export const POST = withDualAuth("register.open", async (request, ctx) => {
       if (!hasServerPrice) {
         return NextResponse.json({ error: "Unknown product variant in offline cart" }, { status: 400 });
       }
+      // R62-H1: mirror the free-line active-check (line ~585) AND
+      // the synchronous checkout-action.ts:458 R38-A-F11 fix on the
+      // regular-line path. An offline cart containing a variant that
+      // an admin soft-deleted (R60-A3 cascades products→variants)
+      // would otherwise still replay through `serverPrices[]` (same
+      // SELECT that populated serverVariantActive, but without the
+      // is_active filter at the JS level) and commit the sale.
+      // Terminal; retriable=false so sync-service dead-letters
+      // rather than spinning.
+      if (serverVariantActive[item.productVariantId] === false) {
+        return NextResponse.json(
+          { error: "Product is no longer available", retriable: false },
+          { status: 409 },
+        );
+      }
       const serverPrice = serverPrices[item.productVariantId];
       // Reject price tampering unless server has an approved price_override exception
       // tied to this register session (same validation path as online checkout).

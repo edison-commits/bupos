@@ -176,17 +176,24 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
         // for non-tax edits (phone, address, etc.) — every save
         // then failed with "password required". Now we snapshot-
         // compare the DB prior value with the same 0.00005 epsilon
-        // the Server Action `updateLocationAction` uses (REST
-        // parity closed).
+        // the Server Action `updateLocationAction` uses.
+        //
+        // R62-M1: step-up runs OUTSIDE the tx (short-lived hash
+        // verify without holding a lock), but the tx below re-reads
+        // with SELECT … FOR UPDATE and compares against priorTax
+        // with the same epsilon. If a concurrent tax edit landed
+        // between snapshot and tx, reject with 409 (R56-B2 pattern
+        // parity — the REST surface was the missing mirror).
         const submittedTax = (data as { taxRate?: number }).taxRate;
+        let priorTaxSnap: number | null = null;
         if (submittedTax !== undefined) {
           const { rows: priorRows } = await orgQuery(
             orgId,
             `SELECT tax_rate FROM locations WHERE id = $1 AND organization_id = $2 LIMIT 1`,
             [locationId, orgId],
           );
-          const priorTax = priorRows[0]?.tax_rate != null ? Number(priorRows[0].tax_rate) : null;
-          const taxChanged = priorTax === null || Math.abs(priorTax - submittedTax) > 0.00005;
+          priorTaxSnap = priorRows[0]?.tax_rate != null ? Number(priorRows[0].tax_rate) : null;
+          const taxChanged = priorTaxSnap === null || Math.abs(priorTaxSnap - submittedTax) > 0.00005;
           if (taxChanged) {
             const { requireStepUp } = await import('@/lib/auth/step-up');
             const stepUp = await requireStepUp({
@@ -210,8 +217,30 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
         // R49: wrap UPDATE + audit in one orgTx. taxRate is the highest-
         // fraud-risk admin mutation (R39-A1-2 rationale); audit must
         // not be lossy on post-commit failure.
+        // R62-M1: re-read tax_rate FOR UPDATE + drift-guard BEFORE
+        // the UPDATE so a concurrent writer that slipped in during
+        // the step-up window can't push a step-up-gated change
+        // through without gating.
         const client = await orgTx(orgId);
         try {
+          if (submittedTax !== undefined) {
+            const { rows: lockedRows } = await client.query(
+              `SELECT tax_rate FROM locations WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
+              [locationId, orgId],
+            );
+            const lockedTax = lockedRows[0]?.tax_rate != null ? Number(lockedRows[0].tax_rate) : null;
+            const drifted =
+              (priorTaxSnap === null && lockedTax !== null) ||
+              (priorTaxSnap !== null && lockedTax === null) ||
+              (priorTaxSnap !== null && lockedTax !== null && Math.abs(priorTaxSnap - lockedTax) > 0.00005);
+            if (drifted) {
+              await client.query("ROLLBACK").catch(() => {});
+              return NextResponse.json(
+                { error: "Location tax rate was changed by another user. Please refresh and try again." },
+                { status: 409 },
+              );
+            }
+          }
           if (upd) await client.query(upd.sql, upd.params);
           await client.query(
             `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)

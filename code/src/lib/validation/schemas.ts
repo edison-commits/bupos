@@ -123,6 +123,9 @@ const variantUpdateSchema = z.object({
   cost: nonnegativeNumber.optional(),
 });
 
+// R62-L2: `.strict()` parity with productUpdateSchema. Top-level
+// POST body shape includes the variant-create nested object but
+// also (on the variant-create branch) product_id + actorPassword.
 export const productCreateSchema = z.object({
   name: requiredString,
   slug: optionalString,
@@ -130,9 +133,23 @@ export const productCreateSchema = z.object({
   description: optionalString,
   image_url: optionalString,
   is_active: z.boolean().optional(),
+  is_touch_favorite: z.boolean().optional(),
   variant: variantCreateSchema,
-});
+  // Used by the variant-create branch (POST with product_id +
+  // variant.*).
+  product_id: uuid.optional(),
+  actorPassword: z.string().max(200).optional(),
+}).strict();
 
+// R62-L2: `productUpdateSchema` now `.strict()` AND lists the top-
+// level variant-update fields the PUT handler actually reads. Prior
+// shape only validated `product_id` + product metadata; then the
+// handler read `body.variant_id`, `body.price`, `body.cost`,
+// `body.expectedUpdatedAt`, `body.actorPassword`, and
+// `body.is_touch_favorite` (the favorite toggle) straight from raw
+// body — none of those were in the schema, so Zod silently passed
+// every shape through. `.strict()` makes typos reject with a 400
+// instead of silently missing the branch.
 export const productUpdateSchema = z.object({
   product_id: uuid,
   name: requiredString.optional(),
@@ -141,8 +158,18 @@ export const productUpdateSchema = z.object({
   description: optionalString,
   image_url: optionalString,
   is_active: z.boolean().optional(),
+  is_touch_favorite: z.boolean().optional(),
   variant: variantUpdateSchema.optional(),
-});
+  // Top-level variant-update fields (the handler uses a "variant_id
+  // + flat price/cost" shape, distinct from the `variant: {...}`
+  // nested shape above).
+  variant_id: uuid.optional(),
+  price: z.union([z.number(), z.string()]).optional(),
+  cost: z.union([z.number(), z.string()]).optional(),
+  expectedUpdatedAt: z.string().datetime().optional(),
+  // Step-up password lives on every mutating admin endpoint.
+  actorPassword: z.string().max(200).optional(),
+}).strict();
 
 // R26-F8: tighten per-field caps for CSV import. The generic
 // `requiredString` / `optionalString` allow 2000 chars each — multiplied

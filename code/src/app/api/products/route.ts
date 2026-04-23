@@ -230,7 +230,7 @@ export const GET = withDualAuth("catalog.manage", async (request, ctx) => {
 // since the register terminal legitimately renders the catalog.
 export const POST = withAdminAuth("catalog.manage", async (request, ctx) => {
   const { orgId, employee } = ctx;
-  const rl = checkRateLimit(`products:post:${orgId}`);
+  const rl = checkRateLimit(`products:post:${orgId}:${employee.id}`, { maxAttempts: 60, windowMs: 60_000 });
   if (!rl.allowed) {
     return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
   }
@@ -331,13 +331,28 @@ export const POST = withAdminAuth("catalog.manage", async (request, ctx) => {
       // product — the variant's own organization_id stays X, but the FK
       // dangles a pointer into org Y's catalog, silently polluting any
       // report that joins product_variants → products.
+      //
+      // R62-M3: also reject when the parent product is
+      // soft-deleted. A "deleted" product should accept no further
+      // mutations; otherwise you can re-populate the catalog via
+      // variant-create after deletion, which bypasses the intent of
+      // R58-2's soft-delete model. The new variant would be
+      // is_active=true by default and reachable from any code path
+      // that trusts variant.is_active alone.
       const parentCheck = await client.query(
-        `SELECT 1 FROM products WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+        `SELECT is_active FROM products WHERE id = $1 AND organization_id = $2 LIMIT 1`,
         [body.product_id, orgId],
       );
       if (parentCheck.rows.length === 0) {
         await client.query('ROLLBACK');
         return NextResponse.json({ error: 'product_id does not exist in this organization' }, { status: 400 });
+      }
+      if (parentCheck.rows[0].is_active === false) {
+        await client.query('ROLLBACK');
+        return NextResponse.json(
+          { error: 'Cannot add a variant to a deleted product. Reactivate the product first.' },
+          { status: 400 },
+        );
       }
       // Reject duplicate SKU within this org
       const dupCheck = await client.query(
@@ -432,7 +447,10 @@ export const POST = withAdminAuth("catalog.manage", async (request, ctx) => {
 // R27-H2: admin-only (see POST above).
 export const PUT = withAdminAuth("catalog.manage", async (request, ctx) => {
   const { orgId, employee } = ctx;
-  const rl = checkRateLimit(`products:put:${orgId}`);
+  // R62-L1: per-actor bucket at 60/60s — matches the barcode-save
+  // precedent. Prior shape inherited PIN-brute-force defaults
+  // (3 attempts / 5 min) which 429'd routine admin catalog CRUD.
+  const rl = checkRateLimit(`products:put:${orgId}:${employee.id}`, { maxAttempts: 60, windowMs: 60_000 });
   if (!rl.allowed) {
     return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
   }
@@ -701,13 +719,12 @@ export const PUT = withAdminAuth("catalog.manage", async (request, ctx) => {
 
 // R27-H2: admin-only (see POST above).
 export const DELETE = withAdminAuth("catalog.manage", async (request, ctx) => {
-  const { orgId } = ctx;
-  // R60-B3: rate-limit parity with POST/PUT. Prior shape had none —
-  // a stolen catalog.manage cookie could rapid-fire DELETEs to soft-
-  // delete every product in the catalog (each DELETE is O(1); step-
-  // up is NOT required since soft-delete doesn't move money). Same
-  // per-org bucket shape as POST.
-  const rl = checkRateLimit(`products:del:${orgId}`);
+  const { orgId, employee } = ctx;
+  // R60-B3 / R62-L1: per-actor bucket at 60/60s. Prior R60-B3
+  // shape inherited PIN-brute-force defaults (3/5min) which 429'd
+  // routine catalog cleanup (e.g. deleting 4 discontinued SKUs).
+  // Per-actor key so one admin's activity doesn't throttle peers.
+  const rl = checkRateLimit(`products:del:${orgId}:${employee.id}`, { maxAttempts: 60, windowMs: 60_000 });
   if (!rl.allowed) {
     return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
   }
@@ -784,11 +801,11 @@ export const DELETE = withAdminAuth("catalog.manage", async (request, ctx) => {
 // R27-H2: admin-only (see POST above).
 export const PATCH = withAdminAuth("catalog.manage", async (request, ctx) => {
   const { orgId, employee } = ctx;
-  // R60-B3: rate-limit parity with POST/PUT. The CSV import branch
-  // has its own step-up gate (which rate-limits at the aggregate
-  // step-up bucket layer), but the basic shape-only PATCH branches
-  // had no throttle.
-  const rl = checkRateLimit(`products:patch:${orgId}`);
+  // R60-B3 / R62-L1: per-actor bucket at 60/60s (PATCH is
+  // CSV-import-heavy; the per-org-shared default would throttle
+  // bulk onboarding). CSV-import itself still step-up-gates which
+  // limits aggregate minting attempts.
+  const rl = checkRateLimit(`products:patch:${orgId}:${employee.id}`, { maxAttempts: 60, windowMs: 60_000 });
   if (!rl.allowed) {
     return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
   }
