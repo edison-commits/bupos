@@ -261,12 +261,21 @@ export const POST = withAdminAuth('approval.store_credit', async (req, ctx) => {
         [entryId, orgId, customerId, amount, newBalance, employeeId, reason, approvedBy || null],
       );
 
+      // R46-H1: audit INSIDE the transaction. Prior shape used
+      // waitUntilOrAwait(pgInsertAuditEvent(...)) AFTER COMMIT; if the
+      // audit write failed (isolate freeze, RLS drift, DB hiccup), the
+      // ledger row persisted without a standalone audit trail. Matches
+      // the R44-MED / R45-M pattern already applied to the server-
+      // action sibling.
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'customer', $5, 'store_credit_issued', $6, now())`,
+        [
+          randomUUID(), orgId, null, employeeId, customerId,
+          JSON.stringify({ id: entryId, amount, new_balance: newBalance, reason }),
+        ],
+      );
       await client.query("COMMIT");
-      await waitUntilOrAwait(pgInsertAuditEvent(
-        orgId, null, employeeId,
-        "customer", customerId, "store_credit_issued",
-        { id: entryId, amount, new_balance: newBalance, reason },
-      ).catch((err) => console.error("[audit] Failed to insert audit event:", safeErr(err))));
       return NextResponse.json({ id: entryId, customerId, newBalance, amount }, { status: 201 });
     } catch (e) {
       await client.query("ROLLBACK");

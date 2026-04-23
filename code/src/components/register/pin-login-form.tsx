@@ -15,6 +15,19 @@ function getDeviceId(): string {
 
 export function PinLoginForm({ locationId }: { locationId: string }) {
   const [pin, setPin] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  // R46-M2: double-submit guard. The PIN pad's OK button is the form's
+  // submit control; a fast double-tap fires two concurrent
+  // registerLoginAction invocations, each burning pin/loc/ip rate-
+  // limit buckets. Since the <form> lives in the server-rendered
+  // parent page (we're embedded inside it), we can't use the
+  // `onSubmit` DOM-mutation pattern directly on the form element.
+  // Instead we intercept at the submit button: on click (or Enter
+  // keypress on the PIN input), disable the OK button via React state
+  // + set pointer-events:none. Enter key propagates to form submit
+  // AFTER our click handler, so the second synchronous tap sees the
+  // disabled state and no-ops.
   // R43-fix: back to useEffect-set pattern. Lazy init at mount time
   // diverges from the SSR output (server renders "", client's first
   // render computes the UUID), which fires React #418 hydration
@@ -68,13 +81,21 @@ export function PinLoginForm({ locationId }: { locationId: string }) {
           <button
             key={key}
             type={key === "OK" ? "submit" : "button"}
-            onClick={() => {
+            disabled={submitting && key === "OK"}
+            onClick={(e) => {
               if (key === "CLR") {
                 setPin("");
                 return;
               }
 
               if (key === "OK") {
+                // R46-M2: guard against fast double-tap on OK. The
+                // `submitting` flag is set here synchronously via the
+                // event; the second click's React render hasn't
+                // committed disabled={true} yet but our own check
+                // prevents the action from firing twice.
+                if (submitting) { e.preventDefault(); return; }
+                setSubmitting(true);
                 return;
               }
 
@@ -86,7 +107,7 @@ export function PinLoginForm({ locationId }: { locationId: string }) {
               // `pinString = /^\d{4,6}$/`.
               setPin((current) => `${current}${key}`.slice(0, 6));
             }}
-            className="touch-button rounded-2xl border border-zinc-200 bg-white text-lg font-semibold shadow-sm transition hover:border-teal-400 hover:bg-teal-50"
+            className="touch-button rounded-2xl border border-zinc-200 bg-white text-lg font-semibold shadow-sm transition hover:border-teal-400 hover:bg-teal-50 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {key}
           </button>

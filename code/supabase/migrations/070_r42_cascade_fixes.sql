@@ -1,3 +1,9 @@
+-- R46-M3: explicit BEGIN/COMMIT added retroactively to match 067-069
+-- / 072 pattern. Ensures atomicity across the DO blocks regardless of
+-- how the runner wraps the file.
+
+BEGIN;
+
 -- R42-B: close employee-CASCADE destruction windows on money-holding
 -- and compliance tables. Migration 046 covered shifts / transactions /
 -- time_clock_entries / pay_in_outs. This migration extends the same
@@ -147,3 +153,5 @@ BEGIN
   END LOOP;
 END
 $$;
+
+COMMIT;

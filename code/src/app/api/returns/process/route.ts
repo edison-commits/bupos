@@ -715,6 +715,20 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
         const sameSession = !!openShift && !!origSessionId && origSessionId === openShift.register_session_id;
         const openShiftOpenedAt = openShift ? new Date(openShift.opened_at).getTime() : 0;
         const inShiftWindow = sameSession && origCreatedAt >= openShiftOpenedAt;
+        // R46-M1: reject a cash refund when no open shift at the
+        // location exists. Prior shape silently committed the negative
+        // tender + skipped the pay_out — shift-close's cashSales
+        // filter excluded the historical transaction (created_at is in
+        // the past), so the cash left the drawer with zero reconciliation
+        // ledger entry. Mirror the /api/returns PUT behavior which
+        // rejects with 409 in this case.
+        if (!openShift) {
+          await client.query('ROLLBACK');
+          return NextResponse.json(
+            { error: 'Cash refund requires an open shift at the return location.' },
+            { status: 409 },
+          );
+        }
         if (openShift && !inShiftWindow) {
           await client.query(
             `INSERT INTO pay_in_outs (id, organization_id, shift_id, location_id, employee_id, direction, amount, reason, note, created_at)

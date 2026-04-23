@@ -511,7 +511,12 @@ export const POST = withDualAuth("register.open", async (request, ctx) => {
         await waitUntilOrAwait(pgInsertAuditEvent(
           orgId, locationId, sessionEmployeeId,
           "transaction", id, "transaction_placeholder",
-          { reason: "offline_sync_pre_read_failed", error: preReadError instanceof Error ? preReadError.message : String(preReadError) },
+          // R46-M: route audit payload through safeErr too. Raw pg
+          // errors reaching this catch embed DETAIL with bound param
+          // values; storing them in audit_events.payload JSONB then
+          // rendering in the admin audit UI is the exact leak R42-K
+          // / R43-H4 closed for other paths.
+          { reason: "offline_sync_pre_read_failed", error: safeErr(preReadError) },
         ).catch(() => {}));
         return NextResponse.json(
           { error: "Temporary server error — retry in a moment" },

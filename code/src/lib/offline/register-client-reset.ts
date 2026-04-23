@@ -39,13 +39,22 @@
  * supported.
  */
 
-import { getPendingTransactions, removePendingTransaction } from "./idb-store";
+import { getPendingTransactions, removePendingTransaction, clearCatalog } from "./idb-store";
 
 export async function clearLocalRegisterState(): Promise<void> {
   try {
     localStorage.removeItem("pos_device_id");
   } catch {
     // localStorage might be disabled / full / not available (private mode)
+  }
+
+  // R46-M3: wipe the cached catalog so shared-device cross-tenant
+  // rotation doesn't serve the previous tenant's products / prices /
+  // inventory to the next cashier in offline mode. Best-effort.
+  try {
+    await clearCatalog();
+  } catch {
+    // IDB blocked or module failed; best-effort.
   }
 
   // Wipe only SYNCED pending transactions — unsynced ones are money

@@ -449,6 +449,14 @@ export async function cancelLayawayAction(
 
 export async function collectLayawayAction(layawayId: string) {
   const ctx = await requireAdminPermission("catalog.manage");
+  // R46-M4: tighten to owner/manager — `catalog.manage` is also held
+  // by inventory_clerk, who shouldn't be marking layaways as
+  // customer-collected (that releases merchandise + ends the
+  // customer's liability exposure). Matches makeLayawayPaymentAction's
+  // role gate.
+  if (ctx.employee.roleKey !== "owner" && ctx.employee.roleKey !== "manager") {
+    throw new Error("Layaway collection requires manager authority");
+  }
 
   if (isPg()) {
     const orgId = ctx.employee.organizationId;
@@ -465,12 +473,15 @@ export async function collectLayawayAction(layawayId: string) {
         await client.query("ROLLBACK");
         throw new Error("Layaway must be paid in full before collection");
       }
+      // R46-M4: audit INSIDE the tx. Prior shape used waitUntilOrAwait
+      // after COMMIT; if the audit write failed the status transition
+      // (customer took the merchandise) committed without trail.
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'layaway', $5, 'layaway_collected', '{}'::jsonb, now())`,
+        [randomUUID(), orgId, null, ctx.employee.id, layawayId],
+      );
       await client.query("COMMIT");
-      await waitUntilOrAwait(pgInsertAuditEvent(
-        orgId, null, ctx.employee.id,
-        "layaway", layawayId, "layaway_collected",
-        {},
-      ).catch((err) => console.error("[collectLayawayAction] audit failed:", safeErr(err))));
     } catch (e) {
       await client.query("ROLLBACK").catch(() => {});
       throw e;

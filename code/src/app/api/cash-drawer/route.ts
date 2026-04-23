@@ -521,6 +521,26 @@ async function handlePayIn(
       ],
     );
     payInOut = payRes.rows[0];
+
+    // R46-H3: audit the pay_in INSIDE the transaction. Prior shape had
+    // ZERO audit_events row — only `pay_out` was audited (in a post-
+    // commit waitUntilOrAwait, itself audit-drift). An attacker with
+    // cashier credentials could inject a fake pay_in $N (inflating
+    // expectedCash + matching it with a legitimate-looking pay_out $N
+    // that IS audited) to launder cash through the drawer. Matches the
+    // "laundering via paired pay_in/pay_out" pattern documented at
+    // lines ~447-455 of this file.
+    await client.query(
+      `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+       VALUES (gen_random_uuid(), $1, $2, $3, 'shift', $4, 'cash_pay_in', $5, now())`,
+      [
+        orgId,
+        locationId,
+        actorEmployeeId,
+        shift_id,
+        JSON.stringify({ amount: numericAmount, reason, note: note || null, pay_in_out_id: payInOut.id }),
+      ],
+    );
     await client.query('COMMIT');
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
@@ -641,6 +661,26 @@ async function handlePayOut(orgId: string, locationId: string, actorEmployeeId: 
            RETURNING id, created_at`,
           [shift_id, locationId, actorEmployeeId, numericAmount, reason, note || null, orgId],
         );
+        // R46-H3: audit INSIDE the tx. Prior shape waited until after
+        // COMMIT via waitUntilOrAwait. On audit-write failure the
+        // cash removal committed without a standalone audit row.
+        await payoutClient.query(
+          `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+           VALUES (gen_random_uuid(), $1, $2, $3, 'shift', $4, 'pay_out', $5, now())`,
+          [
+            orgId,
+            locationId,
+            actorEmployeeId,
+            String(shift_id),
+            JSON.stringify({
+              pay_in_out_id: insertRes.rows[0].id,
+              amount: numericAmount.toFixed(2),
+              reason: String(reason),
+              note: note ? String(note) : null,
+              approval_id: approval_id ? String(approval_id) : null,
+            }),
+          ],
+        );
         await payoutClient.query("COMMIT");
         payoutResult = { kind: "ok", id: insertRes.rows[0].id, created_at: insertRes.rows[0].created_at };
       }
@@ -657,19 +697,6 @@ async function handlePayOut(orgId: string, locationId: string, actorEmployeeId: 
   }
 
   const payInOut = { id: payoutResult.id, created_at: payoutResult.created_at };
-
-  // Audit every payout — no more untracked cash extraction.
-  await waitUntilOrAwait(pgInsertAuditEvent(
-    orgId, locationId, actorEmployeeId,
-    "shift", String(shift_id), "pay_out",
-    {
-      pay_in_out_id: payInOut.id,
-      amount: numericAmount.toFixed(2),
-      reason: String(reason),
-      note: note ? String(note) : null,
-      approval_id: approval_id ? String(approval_id) : null,
-    },
-  ).catch((err) => console.error("[cash-drawer] audit failed:", safeErr(err))));
 
   return NextResponse.json(
     {

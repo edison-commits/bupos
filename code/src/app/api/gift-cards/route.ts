@@ -309,12 +309,16 @@ export const POST = withAdminAuth('catalog.manage', async (req, ctx) => {
           [randomUUID(), gcId, amount, employeeId],
         );
 
+        // R46-H1: audit INSIDE the tx (matches server-action sibling).
+        await client.query(
+          `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+           VALUES ($1, $2, $3, $4, 'gift_card', $5, 'gift_card_created', $6, now())`,
+          [
+            randomUUID(), orgId, null, employeeId, gcId,
+            JSON.stringify({ id: gcId, code: `****${code.slice(-4)}`, amount }),
+          ],
+        );
         await client.query("COMMIT");
-        await waitUntilOrAwait(pgInsertAuditEvent(
-          orgId, null, employeeId,
-          "gift_card", gcId, "gift_card_created",
-          { id: gcId, code: `****${code.slice(-4)}`, amount },
-        ).catch((err) => console.error("[audit] Failed to insert audit event:", safeErr(err))));
         return NextResponse.json({ id: gcId, code, balance: amount, status: "active" }, { status: 201 });
       } catch (e) {
         await client.query("ROLLBACK").catch(() => {});
@@ -442,6 +446,18 @@ export const POST = withAdminAuth('catalog.manage', async (req, ctx) => {
           [randomUUID(), giftCardId, amount, newBalance, employeeId],
         );
 
+        // R46-H1: reload had NO audit event at all prior to R46. Adds
+        // up to $5k to a card balance with only the gift_card_transactions
+        // row as evidence. Match the server-action sibling which
+        // writes gift_card_reloaded inside its tx.
+        await client.query(
+          `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+           VALUES ($1, $2, $3, $4, 'gift_card', $5, 'gift_card_reloaded', $6, now())`,
+          [
+            randomUUID(), orgId, null, employeeId, giftCardId,
+            JSON.stringify({ amount, new_balance: newBalance }),
+          ],
+        );
         await client.query("COMMIT");
         return NextResponse.json({ id: giftCardId, balance: newBalance, status: "active" });
       } catch (e) {
@@ -485,28 +501,52 @@ export const POST = withAdminAuth('catalog.manage', async (req, ctx) => {
       if (!stepUp.ok) {
         return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
       }
-      const { rows: before } = await orgQuery(
-        orgId,
-        `SELECT id, code, balance::text, status FROM gift_cards WHERE id = $1 AND organization_id = $2 LIMIT 1`,
-        [giftCardId, orgId],
-      );
-      if (before.length === 0) {
-        return NextResponse.json({ error: "Gift card not found" }, { status: 404 });
+      // R46-H2: wrap SELECT-before + UPDATE + audit in a single tx with
+      // FOR UPDATE on the SELECT. Prior shape had 3 separate queries
+      // (each its own short tx), with the audit as a post-commit
+      // waitUntilOrAwait. A concurrent disable / reload could race
+      // between the SELECT and UPDATE; if the post-commit audit failed,
+      // the balance wipe committed without evidence (zeroed a liability
+      // worth up to $5k with only a transaction_events trigger-entry).
+      const disableClient = await orgTx(orgId);
+      let before: Array<{ id: string; code: string; balance: string; status: string }>;
+      try {
+        const selRes = await disableClient.query(
+          `SELECT id, code, balance::text, status FROM gift_cards
+            WHERE id = $1 AND organization_id = $2 LIMIT 1 FOR UPDATE`,
+          [giftCardId, orgId],
+        );
+        before = selRes.rows as Array<{ id: string; code: string; balance: string; status: string }>;
+        if (before.length === 0) {
+          await disableClient.query("ROLLBACK");
+          return NextResponse.json({ error: "Gift card not found" }, { status: 404 });
+        }
+        await disableClient.query(
+          `UPDATE gift_cards SET status = 'disabled', updated_at = now()
+            WHERE id = $1 AND organization_id = $2`,
+          [giftCardId, orgId],
+        );
+        await disableClient.query(
+          `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+           VALUES ($1, $2, $3, $4, 'gift_card', $5, 'gift_card_disabled', $6, now())`,
+          [
+            randomUUID(), orgId, null, employeeId, giftCardId,
+            JSON.stringify({
+              code: before[0].code,
+              balance_at_disable: before[0].balance,
+              prior_status: before[0].status,
+            }),
+          ],
+        );
+        await disableClient.query("COMMIT");
+      } catch (e) {
+        await disableClient.query("ROLLBACK").catch(() => {});
+        throw e;
+      } finally {
+        disableClient.release();
       }
-      await orgQuery(
-        orgId,
-        `UPDATE gift_cards SET status = 'disabled', updated_at = now() WHERE id = $1 AND organization_id = $2`,
-        [giftCardId, orgId],
-      );
-      await waitUntilOrAwait(pgInsertAuditEvent(
-        orgId, null, employeeId,
-        "gift_card", giftCardId, "gift_card_disabled",
-        {
-          code: before[0].code,
-          balance_at_disable: before[0].balance,
-          prior_status: before[0].status,
-        },
-      ).catch((err) => console.error("[audit] gift_card_disabled:", safeErr(err))));
+      // R46-H2: post-commit audit mirror removed — the in-tx INSERT
+      // above is the canonical row.
       return NextResponse.json({ id: giftCardId, status: "disabled" });
     }
 

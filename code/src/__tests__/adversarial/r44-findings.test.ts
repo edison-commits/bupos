@@ -198,7 +198,10 @@ describe("R44 audit fixes", () => {
   describe("R44-FE6: register-client-reset imports idb-store statically", () => {
     const src = read("src/lib/offline/register-client-reset.ts");
     it("static import at module top", () => {
-      expect(src).toMatch(/^import \{ getPendingTransactions, removePendingTransaction \} from ['"]\.\/idb-store['"]/m);
+      // R46-M3 added clearCatalog to the import list. Match the three
+      // named exports in any order.
+      expect(src).toMatch(/^import \{[\s\S]*?getPendingTransactions[\s\S]*?\} from ['"]\.\/idb-store['"]/m);
+      expect(src).toMatch(/removePendingTransaction/);
     });
     it("no `await import(\"./idb-store\")` remains", () => {
       expect(src).not.toMatch(/await import\(["']\.\/idb-store["']\)/);

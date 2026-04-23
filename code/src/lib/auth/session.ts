@@ -1133,7 +1133,17 @@ export async function signOutRegister() {
             // R45-M3: org filter defense-in-depth on the shift UPDATE.
             // R45-H1: set closing_* to NULL (not faked opening_float)
             // so unreconciled closes surface clearly in reports.
-            await client.query(
+            // R46-M2: capture RETURNING id so we only audit when the
+            // UPDATE actually matched a row. A race with manual
+            // `closeShiftAction` (cashier hits "Close Shift" and then
+            // "Logout" in quick succession) leaves the shift ALREADY
+            // closed when signOutRegister runs — the UPDATE's
+            // `status = 'open'` predicate matches zero rows, but the
+            // prior shape still fired the `shift_auto_closed` +
+            // `unreconciled=true` audit event, falsely attributing an
+            // unreconciled close to the cashier who actually closed
+            // cleanly. Conditional audit emit via rowCount closes this.
+            const { rows: closedRows } = await client.query(
               `UPDATE shifts
                SET status = 'closed',
                    closed_at = $1,
@@ -1141,7 +1151,8 @@ export async function signOutRegister() {
                    closing_declared_cash = NULL,
                    closing_variance = NULL,
                    closed_note = $2
-               WHERE id = $3 AND status = 'open' AND organization_id = $4`,
+               WHERE id = $3 AND status = 'open' AND organization_id = $4
+               RETURNING id`,
               [
                 timestamp,
                 "Auto-closed on register logout — NOT reconciled. Declared cash + variance must be entered manually to close the books.",
@@ -1149,24 +1160,29 @@ export async function signOutRegister() {
                 registerSession.organization_id,
               ],
             );
-            await client.query(
-              `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
-               VALUES ($1, $2, $3, $4, 'shift', $5, 'shift_auto_closed', $6, $7)`,
-              [
-                randomUUID(),
-                registerSession.organization_id,
-                registerSession.location_id,
-                registerSession.employee_id,
-                registerSession.active_shift_id,
-                JSON.stringify({
-                  register_session_id: registerSession.id,
-                  auto_closed: "true",
-                  reason: "register_logout",
-                  unreconciled: "true",
-                }),
-                timestamp,
-              ],
-            );
+            if (closedRows.length > 0) {
+              await client.query(
+                `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+                 VALUES ($1, $2, $3, $4, 'shift', $5, 'shift_auto_closed', $6, $7)`,
+                [
+                  randomUUID(),
+                  registerSession.organization_id,
+                  registerSession.location_id,
+                  registerSession.employee_id,
+                  registerSession.active_shift_id,
+                  JSON.stringify({
+                    register_session_id: registerSession.id,
+                    auto_closed: "true",
+                    reason: "register_logout",
+                    unreconciled: "true",
+                  }),
+                  timestamp,
+                ],
+              );
+            }
+            // Always clear active_shift_id — if the shift was already
+            // closed by closeShiftAction, the register_sessions row
+            // may still point at it; clearing is idempotent either way.
             await client.query(
               `UPDATE register_sessions SET active_shift_id = NULL WHERE id = $1 AND organization_id = $2`,
               [registerSession.id, registerSession.organization_id],

@@ -1,3 +1,8 @@
+-- R46-M3: explicit BEGIN/COMMIT added retroactively to match 067-069
+-- / 072 pattern.
+
+BEGIN;
+
 -- R43 cleanup migration — closes schema-level findings from the R43
 -- round-2 audit.
 --
@@ -171,3 +176,5 @@ BEGIN
   END IF;
 END
 $$;
+
+COMMIT;

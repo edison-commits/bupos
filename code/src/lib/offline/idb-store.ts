@@ -163,3 +163,18 @@ export async function getCachedCatalog(): Promise<CachedCatalog | null> {
     request.onerror = () => reject(request.error);
   });
 }
+
+// R46-M3: wipe the cached catalog. Shared POS devices where one
+// cashier logs out and a different-tenant cashier logs in would
+// otherwise serve the previous tenant's products / inventory / prices
+// to the new one during offline mode. Called from clearLocalRegisterState
+// on logout.
+export async function clearCatalog(): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("catalog", "readwrite");
+    tx.objectStore("catalog").delete("current");
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}

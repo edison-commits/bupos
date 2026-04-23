@@ -61,15 +61,26 @@ export async function requireStepUp({
     return { ok: false, error: 'Your password is required to perform this action.', status: 400 };
   }
 
+  // R46-M4: structured log on every 429. Each of the three rate-limit
+  // branches below calls logRateLimited so Logpush / Axiom can alert
+  // on step-up floods (stuffing a stolen cookie across multiple
+  // endpoints to guess the actor's password). The actor field is the
+  // actorId suffix — full UUID is fine in structured logs since it's
+  // not rendered to any user.
+  const { logRateLimited } = await import("@/lib/logging/rate-limit-log");
+  const actor = `stepup:${actorId.slice(0, 8)}`;
+
   // Layered rate-limit (matches R30-L1 / R30-H6 / R30-H9 cadence:
   // in-mem 3/5min + KV 4/5min).
   const rl = checkRateLimit(`${bucketKey}:${actorId}`, { maxAttempts: 3, windowMs: 300_000 });
   if (!rl.allowed) {
+    logRateLimited({ bucket: bucketKey, layer: "mem", actor });
     return { ok: false, error: 'Too many step-up attempts. Try again shortly.', status: 429 };
   }
   try {
     const kvRl = await checkKvRateLimit(`${bucketKey}:${actorId}`, { maxAttempts: 4, windowMs: 300_000 });
     if (!kvRl.allowed) {
+      logRateLimited({ bucket: bucketKey, layer: "kv", actor });
       return { ok: false, error: 'Too many step-up attempts. Try again shortly.', status: 429 };
     }
   } catch {
@@ -86,6 +97,7 @@ export async function requireStepUp({
   try {
     const aggRl = await checkKvRateLimit(`stepup-aggregate:${actorId}`, { maxAttempts: 8, windowMs: 300_000 });
     if (!aggRl.allowed) {
+      logRateLimited({ bucket: "stepup-aggregate", layer: "kv", actor });
       return { ok: false, error: 'Too many step-up attempts. Try again shortly.', status: 429 };
     }
   } catch {
