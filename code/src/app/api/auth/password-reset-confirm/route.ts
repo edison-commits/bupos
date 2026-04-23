@@ -50,6 +50,9 @@ export async function POST(req: NextRequest) {
   const clientIp = clientIpFrom(req.headers);
   const rl = checkRateLimit(`pwd-reset-confirm:${clientIp}`, { maxAttempts: 10, windowMs: 600_000 });
   if (!rl.allowed) {
+    // R47-M: structured 429 log for ops alerting.
+    const { logRateLimited } = await import("@/lib/logging/rate-limit-log");
+    logRateLimited({ bucket: "pwd-reset-confirm", layer: "mem", actor: clientIp });
     return NextResponse.json({ error: "Too many attempts. Try again later." }, { status: 429 });
   }
 

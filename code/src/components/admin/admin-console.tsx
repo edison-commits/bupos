@@ -396,7 +396,22 @@ export function AdminConsole({
             ))}
           </div>
           {canAdjustInventory ? (
-            <form action={adjustInventoryAction} className="mt-5 grid gap-3 md:grid-cols-3">
+            <form
+              action={adjustInventoryAction}
+              className="mt-5 grid gap-3 md:grid-cols-3"
+              onSubmit={(e) => {
+                // R47-H5: synchronous double-submit guard.
+                // `pgAdjustInventory` ADDS delta — two concurrent
+                // submits with +50 both land, total +100. No
+                // idempotency key server-side. Mirror the login-form /
+                // register-logout button-disable pattern.
+                const btn = e.currentTarget.querySelector<HTMLButtonElement>('button[type="submit"]');
+                if (btn) {
+                  if (btn.disabled) { e.preventDefault(); return; }
+                  btn.disabled = true;
+                }
+              }}
+            >
               <label className="grid gap-1 text-sm font-medium text-zinc-700 md:col-span-2">
                 <span>Inventory row</span>
                 <select name="inventoryLevelId" className="rounded-2xl border border-zinc-300 bg-white px-4 py-3">

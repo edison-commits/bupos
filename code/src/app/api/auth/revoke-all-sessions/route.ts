@@ -77,8 +77,14 @@ export async function POST(req: NextRequest) {
   // shape was 5 in-mem with NO KV — an attacker with ~32 cross-isolate
   // Workers could get up to 160 password guesses per 5 min before
   // lockout, vs 4 on password-change.
+  // R47-M: structured 429 log (shares `pwd-change` bucket with the
+  // password-change route — both gate on the same employee password).
+  const { logRateLimited } = await import("@/lib/logging/rate-limit-log");
+  const actor = `actor:${ctx.employee.id.slice(0, 8)}`;
+
   const rl = checkRateLimit(`pwd-change:${ctx.employee.id}`, { maxAttempts: 3, windowMs: 300_000 });
   if (!rl.allowed) {
+    logRateLimited({ bucket: "pwd-change", layer: "mem", actor });
     return NextResponse.json(
       { error: "Too many attempts. Try again shortly." },
       { status: 429 },
@@ -90,6 +96,7 @@ export async function POST(req: NextRequest) {
       maxAttempts: 4, windowMs: 300_000,
     });
     if (!kvRl.allowed) {
+      logRateLimited({ bucket: "pwd-change", layer: "kv", actor });
       return NextResponse.json(
         { error: "Too many attempts. Try again shortly." },
         { status: 429 },

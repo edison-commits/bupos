@@ -278,13 +278,22 @@ export const POST = withAdminAuth("employee.manage", async (req, ctx) => {
     let newPoints: number;
     let previousPoints: number;
     try {
+      // R47-H3: advisory lock on (orgId, actorId) to serialize the 24h
+      // mint-cap TOCTOU window. Prior shape read `minted24h` under
+      // READ COMMITTED, then UPDATE'd; two concurrent requests from
+      // the same actor could both read `minted24h=N`, both pass
+      // `N+X <= 50k`, both UPDATE, double-minting past the cap.
+      // Mirrors the R31-M4 gift-cards/store-credit actor-lock pattern.
+      await client.query(
+        `SELECT pg_advisory_xact_lock((('x' || substr(md5($1), 1, 16))::bit(64)::bigint))`,
+        [`loyalty-actor:${orgId}:${employee.id}`],
+      );
       if (adjustment > 0) {
         // Aggregate committed loyalty_adjusted rows in the last 24h
         // for THIS actor. Reads within the same tx see committed
-        // rows from other txs (READ COMMITTED default). A concurrent
-        // tx would either (a) be blocked by the upcoming audit
-        // INSERT's FK/unique locks (not present here — see TOCTOU
-        // note below), or (b) commit first and be visible.
+        // rows from other txs (READ COMMITTED default). The advisory
+        // lock above serializes concurrent mints from the same actor
+        // so the TOCTOU window the prior shape had is closed.
         const { rows: dailyRows } = await client.query(
           `SELECT COALESCE(SUM((payload->>'adjustment')::int), 0)::int AS minted
              FROM audit_events

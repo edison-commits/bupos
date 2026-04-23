@@ -112,11 +112,18 @@ describe("R36 findings", () => {
     });
   });
 
-  describe("R36-FE4: product-grid tileSize lazy-inits from DOM on first client render", () => {
+  describe("R36-FE4 / R47-M: product-grid tileSize handles high-contrast via mount useEffect (was lazy init)", () => {
+    // R47-M reverted the lazy-init pattern because it fired React #418
+    // hydration warnings on high-contrast users. The UX win of "no
+    // layout shift on mount" wasn't worth the warning-on-every-HC-user
+    // footprint. Now: static 'md' initial, useEffect upgrades to 'lg'
+    // at mount if data-theme is high-contrast.
     const src = read("src/components/register/product-grid.tsx");
-    it("useState lazy init checks data-theme synchronously", () => {
-      expect(src).toMatch(/const \[tileSize, setTileSize\] = useState<[^>]+>\(\(\) => \{/);
-      expect(src).toMatch(/document\.documentElement\.getAttribute\('data-theme'\) === 'high-contrast' \? 'lg' : 'md'/);
+    it("useState initialValue is static 'md' (no lazy init)", () => {
+      expect(src).toMatch(/useState<['"]sm['"] \| ['"]md['"] \| ['"]lg['"]>\(['"]md['"]\)/);
+    });
+    it("useEffect reconciles high-contrast at mount", () => {
+      expect(src).toMatch(/Initial reconcile at mount[\s\S]*?isHighContrastInitial/);
     });
   });
 

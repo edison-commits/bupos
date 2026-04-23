@@ -59,27 +59,32 @@ function getCategoryChipActive(index: number): string {
 
 export const ProductGrid = memo(function ProductGrid({ items, categories, onAddItem }: ProductGridProps) {
   const [activeCategoryId, setActiveCategoryId] = useState<string | "all" | "favorites">("all");
-  // R36-FE4: lazy init reads the DOM on first client render so a
-  // high-contrast user gets 'lg' tiles immediately on mount — no
-  // layout shift when the post-mount effect would otherwise flip
-  // 'md' → 'lg'. SSR returns 'md' (no document available); client
-  // inspects the `data-theme` attribute set by the R35-P7 head
-  // script. React logs a hydration warning for this node (the text
-  // size class changes) but auto-corrects without crashing; the
-  // user-visible outcome is one stable paint rather than two.
-  const [tileSize, setTileSize] = useState<'sm' | 'md' | 'lg'>(() => {
-    if (typeof document === 'undefined') return 'md';
-    return document.documentElement.getAttribute('data-theme') === 'high-contrast' ? 'lg' : 'md';
-  });
+  // R47-M: avoid hydration mismatch entirely — SSR renders 'md',
+  // client's first render also renders 'md', and the `useEffect`
+  // below upgrades to 'lg' for high-contrast users on the next
+  // render. One extra render on HC is cheaper than the React #418
+  // that R44-FE7 caught for the sibling theme-toggle (same shape:
+  // lazy-init DOM read diverges SSR from client). Prior R36-FE4
+  // rationale ("get 'lg' immediately, no layout shift") was
+  // optimizing for a UX nit that was never actually reported, at
+  // the cost of hydration-warning noise on every HC user's
+  // register page load.
+  const [tileSize, setTileSize] = useState<'sm' | 'md' | 'lg'>('md');
   const [variantPickerProduct, setVariantPickerProduct] = useState<ProductGridItem | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [scanFeedback, setScanFeedback] = useState<string | null>(null);
   const [showKeyboard, setShowKeyboard] = useState(false);
 
   // Auto-switch to large tiles when high-contrast mode is enabled.
-  // R36-FE4: initial state is already set by the lazy init above, so
-  // this effect only reacts to live toggle of data-theme after mount.
+  // R47-M: this effect now ALSO handles the mount-time upgrade (the
+  // lazy init was dropped to fix hydration mismatch). On initial
+  // mount the effect runs, reads the actual `data-theme` value, and
+  // flips tileSize to 'lg' if appropriate — one extra render for
+  // high-contrast users, zero hydration warnings.
   useEffect(() => {
+    // Initial reconcile at mount.
+    const isHighContrastInitial = document.documentElement.getAttribute('data-theme') === 'high-contrast';
+    if (isHighContrastInitial) setTileSize('lg');
     const observer = new MutationObserver(() => {
       const isHighContrast = document.documentElement.getAttribute('data-theme') === 'high-contrast';
       // Always reconcile — flip up to 'lg' on high-contrast, flip back

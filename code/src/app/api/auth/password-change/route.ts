@@ -80,8 +80,14 @@ export async function POST(req: NextRequest) {
   // + KV buckets; weak 12-char passwords (top-1000 + digits) were
   // crackable in ~62 hours. 3+4 = 7 guesses gives a password with
   // modest dictionary resistance real protection.
+  // R47-M: structured 429 log so credential-stuffing against
+  // password-change shows up in Logpush / Axiom alerting.
+  const { logRateLimited } = await import("@/lib/logging/rate-limit-log");
+  const actor = `actor:${ctx.employee.id.slice(0, 8)}`;
+
   const rl = checkRateLimit(`pwd-change:${ctx.employee.id}`, { maxAttempts: 3, windowMs: 300_000 });
   if (!rl.allowed) {
+    logRateLimited({ bucket: "pwd-change", layer: "mem", actor });
     return NextResponse.json(
       { error: "Too many attempts. Try again shortly." },
       { status: 429 },
@@ -92,6 +98,7 @@ export async function POST(req: NextRequest) {
     // R28-L1: tightened from 8→4. See in-memory bucket comment above.
     const kvRl = await checkKvRateLimit(`pwd-change:${ctx.employee.id}`, { maxAttempts: 4, windowMs: 300_000 });
     if (!kvRl.allowed) {
+      logRateLimited({ bucket: "pwd-change", layer: "kv", actor });
       return NextResponse.json(
         { error: "Too many attempts. Try again shortly." },
         { status: 429 },

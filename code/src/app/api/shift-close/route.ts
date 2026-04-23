@@ -209,6 +209,27 @@ export const POST = withAdminAuth('register.open', async (req, ctx) => {
           [ts, registerSessionId, orgId],
         );
       }
+      // R47-M: audit INSIDE the tx. Prior shape had NO audit_events
+      // row for shift close at all — a manager fabricating declared
+      // cash to frame a cashier left no discrete audit trail beyond
+      // the shifts row itself. The sibling /api/shift-report emits
+      // (post-commit) too; both now write in-tx.
+      await closeClient.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES (gen_random_uuid(), $1, $2, $3, 'shift', $4, 'shift_closed', $5, now())`,
+        [
+          orgId,
+          shiftLocationId,
+          ctx.employee.id,
+          shiftId,
+          JSON.stringify({
+            expected_cash: expectedCash.toFixed(2),
+            declared_cash: Number(declaredCash).toFixed(2),
+            variance: variance.toFixed(2),
+            register_session_id: registerSessionId,
+          }),
+        ],
+      );
       await closeClient.query('COMMIT');
     } catch (e) {
       await closeClient.query('ROLLBACK').catch(() => {});

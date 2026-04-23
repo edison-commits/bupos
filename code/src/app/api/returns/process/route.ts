@@ -675,19 +675,54 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
       );
     }
 
+    // R47-M4: for original_tender, resolve the ACTUAL dominant tender
+    // on the original sale instead of defaulting to 'card'. Prior
+    // shape labeled every original_tender refund as 'card' — a
+    // cash-origin sale refunded via original_tender produced a
+    // negative 'card' tender row that shift-close's cashSales
+    // (filtered on tender_type='cash') didn't see. Net: cash left
+    // the drawer with no cash-side reconciliation ledger entry.
+    let effectiveTenderType: string = refund_method === 'cash' ? 'cash' : 'card';
+    let effectiveMethod: string = refund_method;
+    if (refund_method === 'original_tender') {
+      // JOIN through transactions for explicit org scoping — mirrors
+      // the cash-tendered cap query earlier in this file.
+      const { rows: origTenderRows } = await client.query(
+        `SELECT tt.tender_type, SUM(tt.amount)::numeric AS total
+           FROM transaction_tenders tt
+           JOIN transactions t ON t.id = tt.transaction_id AND t.organization_id = $2
+          WHERE tt.transaction_id = $1 AND tt.amount > 0
+            AND tt.tender_type NOT IN ('gift_card', 'store_credit', 'loyalty')
+          GROUP BY tt.tender_type
+          ORDER BY total DESC
+          LIMIT 1`,
+        [transaction_id, orgId],
+      );
+      const dominantTender = origTenderRows[0]?.tender_type as string | undefined;
+      if (dominantTender === 'cash') {
+        effectiveTenderType = 'cash';
+        effectiveMethod = 'cash'; // drives the cash-specific paths below
+      } else {
+        effectiveTenderType = dominantTender ?? 'card';
+      }
+    }
+
     // Create refund record based on method
     if (refund_method === 'original_tender' || refund_method === 'cash') {
-      // Record as transaction tender (refund) — negative amount convention
       await client.query(
         `INSERT INTO transaction_tenders (id, transaction_id, tender_type, amount, metadata)
          VALUES (gen_random_uuid(), $1, $2, $3, $4)`,
         [
           transaction_id,
-          refund_method === 'cash' ? 'cash' : 'card',
+          effectiveTenderType,
           -refund_amount,
-          JSON.stringify({ is_return: 'true', reason: reason || 'other' }),
+          JSON.stringify({ is_return: 'true', reason: reason || 'other', resolved_from: refund_method }),
         ]
       );
+      // R47-M4: the cross-shift pay_out + open-shift-required path
+      // now keys on `effectiveMethod` (which resolves 'original_tender'
+      // on a cash-origin sale to 'cash') so those refunds also get
+      // the physical-cash-leaves-drawer gate + cross-shift pay_out.
       // R44-C1 / R45-C1: conditional pay_out for cross-shift cash
       // refunds. See /api/returns/route.ts PUT for the full rationale.
       // R45-C1 extension: also check the original txn's created_at
@@ -696,7 +731,7 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
       // shift-close filters transactions by both session AND time-
       // window; the negative tender is invisible if the original txn
       // is same-session but predates the open shift's start.
-      if (refund_method === 'cash') {
+      if (effectiveMethod === 'cash') {
         const { rows: origSessRows } = await client.query(
           `SELECT register_session_id, created_at FROM transactions
             WHERE id = $1 AND organization_id = $2`,

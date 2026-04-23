@@ -84,29 +84,50 @@ export async function POST(req: NextRequest) {
   // R28-M3: default-deny on x-forwarded-for. See lib/net/client-ip.ts.
   const { clientIpFrom } = await import("@/lib/net/client-ip");
   const clientIp = clientIpFrom(req.headers);
+  // R47-M: structured 429 log for ops alerting. Returns 200 to avoid
+  // user-enumeration oracle, but the rate-limit HIT is logged so
+  // Logpush can see the flood. Actor is the short IP/email prefix.
+  const { logRateLimited } = await import("@/lib/logging/rate-limit-log");
+  const ipActor = clientIp;
+  const emailActor = email.slice(0, 3) + "***";
+
   const ipRl = checkRateLimit(`pwd-reset-ip:${clientIp}`, { maxAttempts: 5, windowMs: 600_000 });
   if (!ipRl.allowed) {
+    logRateLimited({ bucket: "pwd-reset-ip", layer: "mem", actor: ipActor });
     return finish(ok()); // still 200 — no signal to attacker
   }
   const emailRl = checkRateLimit(`pwd-reset-email:${email}`, { maxAttempts: 3, windowMs: 900_000 });
   if (!emailRl.allowed) {
+    logRateLimited({ bucket: "pwd-reset-email", layer: "mem", actor: emailActor });
     return finish(ok());
   }
   try {
     const { checkKvRateLimit } = await import("@/lib/auth/kv-rate-limit");
     const kvIpRl = await checkKvRateLimit(`pwd-reset-ip:${clientIp}`, { maxAttempts: 10, windowMs: 600_000 });
-    if (!kvIpRl.allowed) return finish(ok());
+    if (!kvIpRl.allowed) {
+      logRateLimited({ bucket: "pwd-reset-ip", layer: "kv", actor: ipActor });
+      return finish(ok());
+    }
     const kvEmailRl = await checkKvRateLimit(`pwd-reset-email:${email}`, { maxAttempts: 5, windowMs: 900_000 });
-    if (!kvEmailRl.allowed) return finish(ok());
+    if (!kvEmailRl.allowed) {
+      logRateLimited({ bucket: "pwd-reset-email", layer: "kv", actor: emailActor });
+      return finish(ok());
+    }
   } catch {
     // Fail-open on KV; in-memory + DB layers still cap.
   }
   try {
     const { checkDbRateLimit } = await import("@/lib/auth/db-rate-limit");
     const dbIpRl = await checkDbRateLimit(`pwd-reset-ip:${clientIp}`, { maxAttempts: 15, windowMs: 900_000 });
-    if (!dbIpRl.allowed) return finish(ok());
+    if (!dbIpRl.allowed) {
+      logRateLimited({ bucket: "pwd-reset-ip", layer: "db", actor: ipActor });
+      return finish(ok());
+    }
     const dbEmailRl = await checkDbRateLimit(`pwd-reset-email:${email}`, { maxAttempts: 6, windowMs: 900_000 });
-    if (!dbEmailRl.allowed) return finish(ok());
+    if (!dbEmailRl.allowed) {
+      logRateLimited({ bucket: "pwd-reset-email", layer: "db", actor: emailActor });
+      return finish(ok());
+    }
   } catch {
     // Fail-open on DB.
   }

@@ -650,6 +650,30 @@ async function handlePayOut(orgId: string, locationId: string, actorEmployeeId: 
                RETURNING id, created_at`,
               [shift_id, locationId, actorEmployeeId, numericAmount, reason, note || null, orgId],
             );
+            // R47-H1: audit INSIDE the cashier-with-approval branch too.
+            // R46-H3 added the audit INSERT to the `else` (manager /
+            // sub-threshold) branch at :657 but left this higher-risk
+            // branch (cashier extracting cash under a manager approval)
+            // without a standalone audit row. Payload includes
+            // approval_id so the approval→payout link is traceable.
+            await payoutClient.query(
+              `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+               VALUES (gen_random_uuid(), $1, $2, $3, 'shift', $4, 'pay_out', $5, now())`,
+              [
+                orgId,
+                locationId,
+                actorEmployeeId,
+                String(shift_id),
+                JSON.stringify({
+                  pay_in_out_id: insertRes.rows[0].id,
+                  amount: numericAmount.toFixed(2),
+                  reason: String(reason),
+                  note: note ? String(note) : null,
+                  approval_id,
+                  via: "cashier_with_approval",
+                }),
+              ],
+            );
             await payoutClient.query("COMMIT");
             payoutResult = { kind: "ok", id: insertRes.rows[0].id, created_at: insertRes.rows[0].created_at };
           }

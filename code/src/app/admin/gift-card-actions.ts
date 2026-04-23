@@ -266,32 +266,61 @@ export async function disableGiftCardAction(
     return { success: false, error: stepUp.error };
   }
   if (isPg()) {
-    // Snapshot the balance BEFORE disabling so the audit row shows what was
-    // wiped out. Without this, a compromised manager can zero a card and
-    // there's no record of how much was erased.
-    const { rows: before } = await orgQuery(
-      ctx.employee.organizationId,
-      `SELECT code, balance::text, status FROM gift_cards WHERE id = $1 AND organization_id = $2 LIMIT 1`,
-      [giftCardId, ctx.employee.organizationId],
-    );
-    if (before.length === 0) {
-      throw new Error("Gift card not found");
+    // R47-H2: wrap SELECT-before + UPDATE + audit in a single orgTx
+    // with FOR UPDATE on the SELECT. Prior shape ran three separate
+    // orgQuery calls (each its own short tx) + post-commit
+    // waitUntilOrAwait audit. Two managers disabling the same card
+    // concurrently could interleave SELECT/UPDATE; a failed audit
+    // write left the liability wipe committed without an audit row.
+    // Mirrors the REST path's R46-H2 fix.
+    const orgId = ctx.employee.organizationId;
+    const client = await orgTx(orgId);
+    try {
+      const { rows: before } = await client.query(
+        `SELECT code, balance::text, status FROM gift_cards
+          WHERE id = $1 AND organization_id = $2 LIMIT 1 FOR UPDATE`,
+        [giftCardId, orgId],
+      );
+      if (before.length === 0) {
+        await client.query("ROLLBACK");
+        throw new Error("Gift card not found");
+      }
+      // R47-M (idempotent-audit guard): skip UPDATE + audit when the
+      // card is already disabled. Prior shape wrote an audit row on
+      // every repeat call — attacker could flood audit_events.
+      if (before[0].status === "disabled") {
+        await client.query("ROLLBACK");
+        revalidatePath("/admin");
+        return { success: true };
+      }
+      await client.query(
+        `UPDATE gift_cards SET status = 'disabled', updated_at = now()
+          WHERE id = $1 AND organization_id = $2`,
+        [giftCardId, orgId],
+      );
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'gift_card', $5, 'gift_card_disabled', $6, now())`,
+        [
+          randomUUID(),
+          orgId,
+          null,
+          ctx.employee.id,
+          giftCardId,
+          JSON.stringify({
+            code: `****${String(before[0].code ?? "").slice(-4)}`,
+            balance_at_disable: before[0].balance,
+            prior_status: before[0].status,
+          }),
+        ],
+      );
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
     }
-    await orgQuery(
-      ctx.employee.organizationId,
-      `UPDATE gift_cards SET status = 'disabled', updated_at = now() WHERE id = $1 AND organization_id = $2`,
-      [giftCardId, ctx.employee.organizationId],
-    );
-    // Audit event (non-fatal)
-    await waitUntilOrAwait(pgInsertAuditEvent(
-      ctx.employee.organizationId, null, ctx.employee.id,
-      "gift_card", giftCardId, "gift_card_disabled",
-      {
-        code: `****${String(before[0].code ?? "").slice(-4)}`,
-        balance_at_disable: before[0].balance,
-        prior_status: before[0].status,
-      },
-    ).catch((err) => console.error("[disableGiftCardAction] audit failed:", safeErr(err))));
   } else {
     await mutateStore((store) => {
       const gc = store.giftCards.find((g) => g.id === giftCardId);

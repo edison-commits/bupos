@@ -35,6 +35,12 @@ export function PayInOutModal({ direction, onConfirm, onCancel }: PayInOutModalP
   const [note, setNote] = useState("");
   const [showNumpad, setShowNumpad] = useState(true);
   const [showNoteKbd, setShowNoteKbd] = useState(false);
+  // R47-H4: double-submit guard. `payInOutAction` has no idempotency
+  // key; a fast double-tap on Confirm creates two `pay_in_outs` rows
+  // and inflates/deflates expectedCash on shift close. Flip
+  // `submitting` synchronously in the click handler before firing
+  // `onConfirm`; the second click sees the disabled button + no-ops.
+  const [submitting, setSubmitting] = useState(false);
 
   const parsedAmount = Number(amount) || 0;
   const isValid = parsedAmount > 0 && reason.length > 0;
@@ -99,15 +105,19 @@ export function PayInOutModal({ direction, onConfirm, onCancel }: PayInOutModalP
           </button>
           <button
             type="button"
-            disabled={!isValid}
-            onClick={() => onConfirm(parsedAmount, reason, note.trim())}
+            disabled={!isValid || submitting}
+            onClick={() => {
+              if (submitting) return;
+              setSubmitting(true);
+              onConfirm(parsedAmount, reason, note.trim());
+            }}
             className={`touch-button flex-1 rounded-xl text-sm font-semibold text-white ${
               direction === "pay_in"
                 ? "bg-teal-700 hover:bg-teal-800"
                 : "bg-amber-600 hover:bg-amber-700"
             } disabled:cursor-not-allowed disabled:opacity-40`}
           >
-            {title} {formatCurrency(parsedAmount)}
+            {submitting ? "Processing…" : `${title} ${formatCurrency(parsedAmount)}`}
           </button>
         </div>
       </div>

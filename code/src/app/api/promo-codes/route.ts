@@ -435,6 +435,24 @@ export const POST = withAdminAuth("pricing.manage", async (req, ctx) => {
           );
         }
 
+        // R47-M: audit the redemption INSIDE the tx. Prior shape had
+        // zero audit_events entry for this path (create + disable
+        // both audit; redeem was the gap). Attacker with pricing.
+        // manage could drive repeat `redeem` calls through this admin
+        // endpoint silently.
+        await client.query(
+          `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+           VALUES ($1, $2, $3, $4, 'promo_code', $5, 'promo_code_redeemed', $6, now())`,
+          [
+            randomUUID(), orgId, null, employee.id, promoCodeId,
+            JSON.stringify({
+              transaction_id: transactionId,
+              discount_amount: discountAmount,
+              new_count: newCount,
+            }),
+          ],
+        );
+
         await client.query("COMMIT");
         return NextResponse.json({
           redeemed: true,
