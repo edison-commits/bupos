@@ -612,6 +612,17 @@ export function AdminConsole({
                           }}
                         >
                           <input type="hidden" name="employeeId" value={employee.id} />
+                          {/* R77-SEC-H: explicit "activate" |
+                              "deactivate" instead of a blind toggle.
+                              Prior shape let an attacker with a
+                              stolen cookie chain deactivate →
+                              reactivate to hide activity. Server now
+                              rejects missing/invalid action. */}
+                          <input
+                            type="hidden"
+                            name="action"
+                            value={employee.isActive ? "deactivate" : "activate"}
+                          />
                           <button type="submit" className={`rounded-full px-3 py-1 text-xs font-semibold text-white ${employee.isActive ? "bg-zinc-800" : "bg-red-700"}`}>
                             {employee.isActive ? "Active" : "Inactive"}
                           </button>

@@ -325,6 +325,47 @@ export const PUT = withAdminAuth("inventory.adjust", async (request, ctx) => {
     const client = await orgTx(orgId);
     let updatedOrder: Record<string, unknown>;
     try {
+      // R77-DB-H2: state-machine + FOR UPDATE on the PO row.
+      // Prior shape accepted any status transition unconditionally —
+      // a 'received' PO (inventory already credited via PATCH) could
+      // be PUT back to 'cancelled' or 'draft', or a 'cancelled' PO
+      // reactivated to 'submitted'. Allowed transitions:
+      //   draft → submitted
+      //   draft → cancelled
+      //   submitted → partial
+      //   submitted → received
+      //   submitted → cancelled
+      //   partial → received
+      //   partial → cancelled
+      // Forbidden: any → draft (regression), received → anything
+      // (inventory committed), cancelled → anything (terminal).
+      const { rows: curRows } = await client.query(
+        `SELECT status FROM purchase_orders WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
+        [id, orgId],
+      );
+      if (curRows.length === 0) {
+        await client.query('ROLLBACK');
+        return NextResponse.json({ error: 'PO not found' }, { status: 404 });
+      }
+      const curStatus = curRows[0].status as string;
+      if (status !== undefined && status !== curStatus) {
+        const allowedByFrom: Record<string, string[]> = {
+          draft:     ['submitted', 'cancelled'],
+          submitted: ['partial', 'received', 'cancelled'],
+          partial:   ['received', 'cancelled'],
+          received:  [],
+          cancelled: [],
+        };
+        const allowed = allowedByFrom[curStatus] ?? [];
+        if (!allowed.includes(status)) {
+          await client.query('ROLLBACK');
+          return NextResponse.json(
+            { error: `PO cannot transition from '${curStatus}' to '${status}'.` },
+            { status: 409 },
+          );
+        }
+      }
+
       const { rows } = await client.query(
         `UPDATE purchase_orders SET ${sets.join(', ')} WHERE id = $${idx} AND organization_id = $${idx + 1} RETURNING *`,
         values,

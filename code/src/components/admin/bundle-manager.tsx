@@ -22,6 +22,14 @@ export function BundleManager({ bundles, variants, products }: BundleManagerProp
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  // R77-FE-M: dedicated submit flag. `isPending` from useTransition
+  // only tracks the trailing router.refresh() — not the password
+  // prompt + fetch window. A fast double-click during the 500ms-to-
+  // several-second network window submits two identical POSTs,
+  // creating duplicate bundles (cash-equivalent pricing so the
+  // duplication is money-equivalent). setCreateSubmitting guards
+  // that window.
+  const [createSubmitting, setCreateSubmitting] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [formData, setFormData] = useState({
@@ -66,6 +74,12 @@ export function BundleManager({ bundles, variants, products }: BundleManagerProp
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // R77-FE-M: guard double-submit. Synchronous check-and-set so
+    // two handlers running from a fast double-click serialize —
+    // the first flips createSubmitting=true before the second
+    // reads it. All early-return paths (validation, password
+    // cancel) clear the flag; the fetch path clears via finally.
+    if (createSubmitting) return;
     setError(null);
 
     // Client-side sanity checks. Server validates again via Zod.
@@ -98,8 +112,11 @@ export function BundleManager({ bundles, variants, products }: BundleManagerProp
     });
     if (!pwd) return;
 
+    // R77-FE-M: gate is active from here through finally.
+    setCreateSubmitting(true);
     // R75-L: wrap fetch in try/catch — prior shape let a network
     // fault throw to React's unhandled-rejection with no UI feedback.
+    // R77-FE-M: finally clears createSubmitting regardless of path.
     try {
       const res = await fetch("/api/bundles", {
         method: "POST",
@@ -128,6 +145,8 @@ export function BundleManager({ bundles, variants, products }: BundleManagerProp
       startTransition(() => router.refresh());
     } catch (e) {
       setError(e instanceof Error ? e.message : "Network error");
+    } finally {
+      setCreateSubmitting(false);
     }
   };
 
@@ -382,7 +401,7 @@ export function BundleManager({ bundles, variants, products }: BundleManagerProp
               <div className="flex gap-2 pt-3">
                 <button
                   type="submit"
-                  disabled={isPending}
+                  disabled={isPending || createSubmitting}
                   className="touch-button flex-1 rounded-2xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-800 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isPending ? "Creating…" : "Create bundle"}

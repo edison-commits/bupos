@@ -649,16 +649,34 @@ export const PUT = withAdminAuth('approval.void_transaction', async (request, ct
             // sale refunded via original_tender skipped the pay_out
             // → shift-close couldn't see the outflow.
             if (effectiveMethod === 'cash') {
+              // R77-DB-H1: FOR UPDATE SKIP LOCKED on the open-shift
+              // SELECT. Prior shape did a plain SELECT with no lock;
+              // closeShiftEnhancedAction (R76-DB-H2) takes FOR UPDATE
+              // on the shift row + advisory lock, and this SELECT
+              // without a lock did NOT wait on it. Interleaving:
+              //   closeShift: FOR UPDATE shifts; aggregate
+              //     pay_in_outs (sees nothing); UPDATE status='closed';
+              //     COMMIT.
+              //   returns:    plain SELECT returns the still-open
+              //     snapshot; INSERT pay_in_outs references the now-
+              //     closed shift id → invisible to shift-close and
+              //     to the next shift-close. Physical cash left
+              //     drawer with zero reconciliation ledger.
+              // Mirror layaway-action.ts / admin/layaway-actions.ts
+              // pattern — SKIP LOCKED means "if a close is
+              // currently holding this row, return 0 rows and
+              // reject cleanly rather than block or read stale".
               const { rows: shiftRows } = await client.query(
                 `SELECT id, register_session_id, opened_at FROM shifts
                   WHERE organization_id = $1 AND location_id = $2 AND status = 'open'
-                  ORDER BY opened_at DESC LIMIT 1`,
+                  ORDER BY opened_at DESC LIMIT 1
+                  FOR UPDATE SKIP LOCKED`,
                 [orgId, retRow.location_id],
               );
               if (shiftRows.length === 0) {
                 await client.query('ROLLBACK');
                 return NextResponse.json(
-                  { error: 'Cash refund requires an open shift at the return location.' },
+                  { error: 'Cash refund requires an open shift at the return location (or shift is being closed — retry).' },
                   { status: 409 },
                 );
               }

@@ -111,10 +111,14 @@ export function useOnlineStatus() {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
       clearInterval(interval);
-      // R76-FE-M: abort any in-flight health ping so it doesn't
-      // land stale setState after unmount.
-      abortRef.current?.abort();
+      // R76-FE-M / R77-FE-L: flip mountedRef FIRST, then abort.
+      // Prior ordering was backwards — if abort() synchronously
+      // triggers a handler that reads mountedRef, it would still
+      // see true. Defensive ordering so a future edit that adds
+      // a setState in the AbortError catch branch doesn't silently
+      // leak setState on unmount.
       mountedRef.current = false;
+      abortRef.current?.abort();
     };
     // isOnline is intentionally in deps so the interval recycles
     // on state flip.

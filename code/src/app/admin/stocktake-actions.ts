@@ -381,16 +381,34 @@ export async function acceptStocktakeAction(stocktakeId: string, actorPassword?:
       const isManagerOrOwner2 = ctx.employee.roleKey === 'owner' || ctx.employee.roleKey === 'manager';
       const perLineDeltaCap = isManagerOrOwner2 ? 5_000 : 500;
 
+      // R77-DB-M1: aggregate by product_variant_id BEFORE building
+      // the unnest arrays. stocktake_lines has no UNIQUE on
+      // (stocktake_id, product_variant_id); if two lines target the
+      // same variant (bulk recount that added a second line) the
+      // unnest($1::uuid[], $2::int[]) delta-join emits two rows
+      // joining the SAME inventory_levels row → PostgreSQL applies
+      // only ONE delta nondeterministically, silently dropping the
+      // other. Also inventory_adjustments would write two rows with
+      // contradictory resulting_on_hand values. Same class as
+      // R75-H3 (layaway cancel) and R76-SEC-H1 (transfer ship).
+      // Strategy: keep only the LAST line per variant — ABSOLUTE-
+      // mode stocktake semantics say "counted_qty is the declared
+      // truth", so the most-recent count wins.
+      const latestByVariant = new Map<string, { counted: number }>();
+      for (const line of typedLines) {
+        const counted = Number(line.counted_qty) || 0;
+        latestByVariant.set(line.product_variant_id, { counted });
+      }
+
       const updateIds: string[] = [];
       const updateCounts: number[] = [];
       const adjInvLevelIds: string[] = [];
       const adjVariantIds: string[] = [];
       const adjDeltas: number[] = [];
       const adjResulting: number[] = [];
-      for (const line of typedLines) {
-        const locked = lockedMap.get(line.product_variant_id);
+      for (const [variantId, { counted }] of latestByVariant) {
+        const locked = lockedMap.get(variantId);
         if (!locked) continue; // no inventory row for this variant — skip
-        const counted = Number(line.counted_qty) || 0;
         const appliedDelta = counted - locked.priorOnHand;
         if (appliedDelta === 0) continue;
         if (Math.abs(appliedDelta) > perLineDeltaCap) {
@@ -403,7 +421,7 @@ export async function acceptStocktakeAction(stocktakeId: string, actorPassword?:
         updateIds.push(locked.id);
         updateCounts.push(counted);
         adjInvLevelIds.push(locked.id);
-        adjVariantIds.push(line.product_variant_id);
+        adjVariantIds.push(variantId);
         adjDeltas.push(appliedDelta);
         adjResulting.push(counted);
       }

@@ -170,6 +170,11 @@ export function InventoryBrowser({ categories }: { categories: Category[] }) {
 
   useEffect(() => {
     fetchInventory(1);
+    // R77-FE-M: abort in-flight fetch on unmount so a pending
+    // response doesn't call setState on torn-down component.
+    return () => {
+      fetchAbortRef.current?.abort();
+    };
   }, [fetchInventory]);
 
   const handlePageChange = (newPage: number) => {

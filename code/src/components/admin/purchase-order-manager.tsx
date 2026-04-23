@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { formatCurrency } from '@/lib/format';
 
 interface Supplier { id: string; name: string; is_active: boolean; }
@@ -93,7 +93,14 @@ export function PurchaseOrderManager() {
       if (!res.ok) throw new Error('Failed to load purchase orders');
       const data = await res.json();
       setOrders(data.orders || []);
-    } catch { /* */ } finally { setLoading(false); }
+    } catch (e) {
+      // R77-FE-M: surface load errors instead of rendering an
+      // empty PO list with no indication the fetch failed.
+      setMessage({
+        type: 'error',
+        text: e instanceof Error ? e.message : 'Failed to load purchase orders.',
+      });
+    } finally { setLoading(false); }
   }, []);
 
   const fetchSuppliers = useCallback(async () => {
@@ -102,7 +109,14 @@ export function PurchaseOrderManager() {
       if (!res.ok) throw new Error('Failed to load suppliers');
       const data = await res.json();
       setSuppliers((data.suppliers || []).filter((s: Supplier) => s.is_active));
-    } catch { /* */ }
+    } catch (e) {
+      // R77-FE-M: surface supplier-load errors so the user knows
+      // why the supplier dropdown is empty.
+      setMessage({
+        type: 'error',
+        text: e instanceof Error ? e.message : 'Failed to load suppliers.',
+      });
+    }
   }, []);
 
   useEffect(() => { fetchOrders(); fetchSuppliers(); }, [fetchOrders, fetchSuppliers]);
@@ -132,13 +146,24 @@ export function PurchaseOrderManager() {
     setView('create');
   };
 
+  // R77-FE-M: AbortController for variant search — rapid typing
+  // can otherwise let an older slow response overwrite a newer
+  // fast one. Mirror inventory-browser R76-FE-M pattern.
+  const searchAbortRef = useRef<AbortController | null>(null);
   // Search products for adding lines
   const searchVariants = async () => {
     if (!variantSearch.trim()) return;
+    searchAbortRef.current?.abort();
+    const controller = new AbortController();
+    searchAbortRef.current = controller;
     setSearchingVariants(true);
     try {
-      const res = await fetch(`/api/inventory?search=${encodeURIComponent(variantSearch)}&pageSize=20`);
+      const res = await fetch(`/api/inventory?search=${encodeURIComponent(variantSearch)}&pageSize=20`, {
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) return;
       const data = await res.json();
+      if (controller.signal.aborted) return;
       setVariantResults((data.items || []).map((i: Record<string, unknown>) => ({
         variant_id: i.variant_id,
         variant_name: i.variant_name,
@@ -151,7 +176,15 @@ export function PurchaseOrderManager() {
         on_hand: Number(i.on_hand),
         reorder_point: Number(i.reorder_point),
       })));
-    } catch { /* */ } finally { setSearchingVariants(false); }
+    } catch (e) {
+      if ((e as { name?: string })?.name === 'AbortError') return;
+      setMessage({
+        type: 'error',
+        text: e instanceof Error ? e.message : 'Failed to search variants.',
+      });
+    } finally {
+      if (!controller.signal.aborted) setSearchingVariants(false);
+    }
   };
 
   const addLine = (item: InventoryItem) => {
@@ -253,7 +286,14 @@ export function PurchaseOrderManager() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: detail.id, receives }),
       });
-      if (!res.ok) { const err = await res.json(); setMessage({ type: 'error', text: err.error }); return; }
+      if (!res.ok) {
+        // R77-FE-M: guard res.json() — CF 502 / proxy timeout
+        // returns non-JSON → .json() throws. Fallback object
+        // makes the error surface actionable instead of generic.
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        setMessage({ type: 'error', text: err.error ?? 'Unknown error' });
+        return;
+      }
       setMessage({ type: 'success', text: 'Items received and inventory updated.' });
       openDetail(detail.id);
       fetchOrders();

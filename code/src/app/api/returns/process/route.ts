@@ -637,28 +637,27 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
     // in product_variants would require an extra lookup — use UPSERT and
     // accept that a deleted variant produces an orphan row (same risk the
     // pre-bundle code carried).
+    // R77-DB-M2: UPSERT instead of UPDATE-then-INSERT. Prior shape
+    // hit R31-H6 race: two concurrent refund-restocks on a variant
+    // with no inventory_levels row at restockLocationId → both
+    // UPDATEs affect 0 rows → both INSERTs race → one wins, the
+    // other hits 23505 and rolls back the entire tx. ON CONFLICT
+    // DO UPDATE makes this safe under concurrency AND lets the
+    // entire restock run in a single round-trip. Mirror of
+    // /api/purchase-orders PATCH (R31-H6) and register/return-
+    // action.ts (R30-C7).
     for (const [variantId, qty] of restockByVariant) {
       if (qty <= 0) continue;
-      // Gate inventory writes by org so a restock can never land on a
-      // same-id foreign inventory row. inventory_levels has UNIQUE
-      // (organization_id, product_variant_id, location_id) so the filter
-      // is both safe and precise.
       // R30-H1: restock at the ORIGINAL sale's location, not the
       // caller's. See txnResult SELECT above for rationale.
-      const invResult = await client.query(
-        `UPDATE inventory_levels
-         SET on_hand = on_hand + $1, updated_at = NOW()
-         WHERE product_variant_id = $2 AND location_id = $3 AND organization_id = $4
-         RETURNING id`,
-        [qty, variantId, restockLocationId, orgId]
+      await client.query(
+        `INSERT INTO inventory_levels (organization_id, product_variant_id, location_id, on_hand, received_at, updated_at)
+         VALUES ($1, $2, $3, $4, NOW(), NOW())
+         ON CONFLICT (product_variant_id, location_id)
+         DO UPDATE SET on_hand = inventory_levels.on_hand + EXCLUDED.on_hand,
+                       updated_at = NOW()`,
+        [orgId, variantId, restockLocationId, qty]
       );
-      if (invResult.rowCount === 0) {
-        await client.query(
-          `INSERT INTO inventory_levels (organization_id, product_variant_id, location_id, on_hand, received_at, updated_at)
-           VALUES ($1, $2, $3, $4, NOW(), NOW())`,
-          [orgId, variantId, restockLocationId, qty]
-        );
-      }
     }
 
     // Reject refund methods the schema permits but the handler doesn't
@@ -740,10 +739,17 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
         const origRow = origSessRows[0] as { register_session_id: string | null; created_at: string } | undefined;
         const origSessionId = origRow?.register_session_id ?? null;
         const origCreatedAt = origRow?.created_at ? new Date(origRow.created_at).getTime() : 0;
+        // R77-DB-H1: FOR UPDATE SKIP LOCKED (parity with
+        // /api/returns PUT + admin/layaway-actions.ts). Prior shape
+        // plain SELECT did not wait on closeShiftEnhancedAction's
+        // FOR UPDATE, so a concurrent shift close could commit
+        // between this SELECT and the pay_in_outs INSERT below,
+        // orphaning the pay_out against a just-closed shift.
         const { rows: openShiftRows } = await client.query(
           `SELECT id, register_session_id, opened_at FROM shifts
             WHERE organization_id = $1 AND location_id = $2 AND status = 'open'
-            ORDER BY opened_at DESC LIMIT 1`,
+            ORDER BY opened_at DESC LIMIT 1
+            FOR UPDATE SKIP LOCKED`,
           [orgId, restockLocationId],
         );
         const openShift = openShiftRows[0] as { id: string; register_session_id: string; opened_at: string } | undefined;

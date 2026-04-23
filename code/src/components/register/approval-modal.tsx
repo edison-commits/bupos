@@ -228,7 +228,18 @@ export function ApprovalModal({ request, onApproved, onDenied }: ApprovalModalPr
           </div>
 
           {error && (
-            <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-center text-sm font-medium text-red-700">{error}</p>
+            // R77-FE-M: role="alert" + aria-live so screen-reader
+            // users get feedback on manager-approval denial. This
+            // is the highest-stakes modal in the UI — a blind
+            // cashier entering the PIN gets no audible signal
+            // when the approval fails without this.
+            <p
+              role="alert"
+              aria-live="assertive"
+              className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-center text-sm font-medium text-red-700"
+            >
+              {error}
+            </p>
           )}
         </div>
 

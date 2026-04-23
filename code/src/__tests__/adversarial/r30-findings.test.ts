@@ -130,7 +130,11 @@ describe("R30 findings", () => {
     });
     it("uses restockLocationId (not ctx.locationId) in inventory writes", () => {
       expect(src).toMatch(/restockLocationId = origLocationId \?\? locationId/);
-      expect(src).toMatch(/VALUES \(\$1, \$2, \$3, \$4, NOW\(\), NOW\(\)\)`,\s*\[orgId, variantId, restockLocationId, qty\]/);
+      // R77-DB-M2 refactored UPDATE-then-INSERT to a single UPSERT.
+      // Keep the assertion on parameter-list shape (orgId, variantId,
+      // restockLocationId, qty) — the SQL shape is tolerated either
+      // way since the UPSERT is strictly safer under concurrency.
+      expect(src).toMatch(/\[orgId, variantId, restockLocationId, qty\]/);
     });
   });
 

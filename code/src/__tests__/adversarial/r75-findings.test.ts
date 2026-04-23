@@ -195,7 +195,9 @@ describe("R75 audit fixes — round 19 (HIGH streak ended)", () => {
   describe("R75-L: bundle-manager fetch handlers wrap errors", () => {
     const src = read("src/components/admin/bundle-manager.tsx");
     it("handleCreateSubmit wraps fetch in try/catch with setError", () => {
-      expect(src).toMatch(/handleCreateSubmit[\s\S]{0,2500}\} catch \(e\) \{[\s\S]{0,400}setError\(e instanceof Error/);
+      // R77-FE-M added the createSubmitting flag + setCreateSubmitting
+      // calls inside handleCreateSubmit, widening the function.
+      expect(src).toMatch(/handleCreateSubmit[\s\S]{0,3500}\} catch \(e\) \{[\s\S]{0,400}setError\(e instanceof Error/);
     });
     it("handleToggleActive has a catch setting network error", () => {
       expect(src).toMatch(/handleToggleActive[\s\S]{0,1200}\} catch \(e\) \{[\s\S]{0,200}setError\(e instanceof Error/);

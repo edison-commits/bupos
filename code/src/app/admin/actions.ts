@@ -704,6 +704,13 @@ export async function toggleEmployeeAction(formData: FormData) {
   const { employee: actor } = await requireAdminPermission("employee.manage");
   const employeeId = String(formData.get("employeeId") ?? "");
   const actorPassword = String(formData.get("actorPassword") ?? "");
+  // R77-SEC-H: explicit "activate" | "deactivate" instead of a
+  // toggle. Prior shape (`SET is_active = NOT is_active`) let a
+  // stolen-cookie attacker chain deactivate→reactivate to hide
+  // activity and didn't distinguish the two operations in audit
+  // payload. REST /api/employees PATCH was hardened to explicit
+  // action in R28-H4; this Server Action never matched.
+  const explicitAction = String(formData.get("action") ?? "").trim();
 
   // R49: step-up re-auth. Mirrors the REST /api/employees PATCH gate
   // (bucketKey 'employees-patch-stepup') so both surfaces share the
@@ -719,6 +726,18 @@ export async function toggleEmployeeAction(formData: FormData) {
   });
   if (!stepUp.ok) {
     redirect(`/admin?error=${encodeURIComponent(stepUp.error)}`);
+  }
+
+  // R77-SEC-H: parity with REST /api/employees PATCH (R30-H3) —
+  // self-deactivation is forbidden and owner-on-owner deactivation
+  // is forbidden. These are only meaningful when we know the
+  // direction, so validate `explicitAction` first.
+  if (explicitAction !== "activate" && explicitAction !== "deactivate") {
+    redirect("/admin?error=Missing+or+invalid+action");
+  }
+  const isSelf = actor.id === employeeId;
+  if (isSelf && explicitAction === "deactivate") {
+    redirect("/admin?error=You+cannot+deactivate+yourself");
   }
 
   let newStatus: boolean | null = null;
@@ -740,7 +759,8 @@ export async function toggleEmployeeAction(formData: FormData) {
     type ToggleEmpOutcome =
       | { kind: "ok" }
       | { kind: "not_found" }
-      | { kind: "denied" };
+      | { kind: "denied" }
+      | { kind: "noop" };
     const { orgTx } = await import("@/lib/db");
     const client = await orgTx(orgId);
     let outcome: ToggleEmpOutcome = { kind: "ok" };
@@ -755,22 +775,41 @@ export async function toggleEmployeeAction(formData: FormData) {
         outcome = { kind: "not_found" };
       } else {
         targetRole = empRows[0].role_key as string;
+        const wasActive = empRows[0].is_active as boolean;
+        const targetActive = explicitAction === "activate";
         if (!canManageEmployeeRole(actor.roleKey, targetRole as RoleKey)) {
           await client.query("ROLLBACK").catch(() => {});
           outcome = { kind: "denied" };
+        } else if (
+          // R77-SEC-H: R30-H3 parity — owner-on-owner deactivation
+          // locks out a co-owner. One owner with compromised cookie
+          // could silently deactivate every peer and corner the org
+          // pending DB-side intervention.
+          !isSelf && actor.roleKey === "owner" && targetRole === "owner" && !targetActive
+        ) {
+          await client.query("ROLLBACK").catch(() => {});
+          outcome = { kind: "denied" };
+        } else if (wasActive === targetActive) {
+          // No-op — the requested state matches current. Silent
+          // success would mask toggle-DoS attempts in audit.
+          await client.query("ROLLBACK").catch(() => {});
+          outcome = { kind: "noop" };
         } else {
-          newStatus = !(empRows[0].is_active as boolean);
+          newStatus = targetActive;
           await client.query(
-            `UPDATE employees SET is_active = NOT is_active, updated_at = $1
-             WHERE id = $2 AND organization_id = $3`,
-            [new Date().toISOString(), employeeId, orgId],
+            `UPDATE employees SET is_active = $1, updated_at = $2
+             WHERE id = $3 AND organization_id = $4`,
+            [targetActive, new Date().toISOString(), employeeId, orgId],
           );
           await client.query(
             `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
-             VALUES ($1, $2, $3, $4, 'employee', $5, 'employee_status_changed', $6, now())`,
+             VALUES ($1, $2, $3, $4, 'employee', $5, $6, $7, now())`,
             [
               randomUUID(), orgId, null, actor.id, employeeId,
-              JSON.stringify({ action: newStatus ? "activated" : "deactivated", target_role: targetRole }),
+              // R77-SEC-H: match REST event_kind so audit filters don't
+              // have to special-case the surface.
+              targetActive ? "employee_activated" : "employee_deactivated",
+              JSON.stringify({ action: targetActive ? "activated" : "deactivated", target_role: targetRole }),
             ],
           );
           await client.query("COMMIT");
@@ -785,9 +824,27 @@ export async function toggleEmployeeAction(formData: FormData) {
     if (outcome.kind === "ok") {
       // Mirror pgToggleEmployee's cache invalidation on the happy path.
       invalidateEmployeesCache(orgId);
+      // R77-SEC-H: on DEACTIVATE, wipe the victim's sessions so a
+      // cookie compromise can't outlive the status flip. Matches
+      // REST /api/employees PATCH invalidateEmployeeSessions shape
+      // (no shared module exists — inline the same DELETE).
+      if (newStatus === false) {
+        const { getPool } = await import("@/lib/supabase-rest");
+        const pool = await getPool();
+        await pool.query(
+          `DELETE FROM sessions
+             WHERE employee_id = $1
+               AND employee_id IN (SELECT id FROM employees WHERE organization_id = $2)`,
+          [employeeId, orgId],
+        ).catch(() => {
+          // Non-fatal — audit already committed; session cleanup
+          // failure logged by pool internals.
+        });
+      }
     }
     if (outcome.kind === "not_found") redirect("/admin?error=Employee+not+found");
     if (outcome.kind === "denied") redirect("/admin?error=You+cannot+change+that+employee");
+    if (outcome.kind === "noop") redirect(`/admin?notice=Employee+already+${explicitAction}d`);
   } else {
     await mutateStore((store) => {
       const employee = store.employees.find((entry) => entry.id === employeeId);
@@ -795,8 +852,9 @@ export async function toggleEmployeeAction(formData: FormData) {
       if (!canManageEmployeeRole(actor.roleKey, employee!.roleKey)) {
         redirect("/admin?error=You+cannot+change+that+employee");
       }
-      newStatus = !employee!.isActive;
-      employee!.isActive = newStatus;
+      const targetActive = explicitAction === "activate";
+      newStatus = targetActive;
+      employee!.isActive = targetActive;
       employee!.updatedAt = now();
     });
   }

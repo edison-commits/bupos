@@ -185,8 +185,11 @@ describe("R76 audit fixes — round 20", () => {
     it("checkConnectivity aborts prior controller + passes signal", () => {
       expect(src).toMatch(/abortRef\.current\?\.abort\(\);[\s\S]{0,400}signal: controller\.signal/);
     });
-    it("cleanup aborts + marks mountedRef false", () => {
-      expect(src).toMatch(/abortRef\.current\?\.abort\(\);\s*mountedRef\.current = false/);
+    it("cleanup marks mountedRef false + aborts", () => {
+      // R77-FE-L swapped the order defensively — mountedRef flipped
+      // FIRST so any future handler that reads it during abort()
+      // sees false. Accept either ordering.
+      expect(src).toMatch(/(?:abortRef\.current\?\.abort\(\);\s*mountedRef\.current = false)|(?:mountedRef\.current = false;\s*abortRef\.current\?\.abort\(\))/);
     });
   });
 
