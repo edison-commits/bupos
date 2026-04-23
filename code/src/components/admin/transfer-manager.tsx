@@ -264,7 +264,24 @@ export function TransferManager({
                       )}
                       {tr.status === "in_transit" && (
                         <button
-                          onClick={() => { startTransition(() => receiveTransferAction(tr.id)); }}
+                          onClick={async () => {
+                            // R72-C: step-up on receive — mirror of ship prompt.
+                            const pwd = await promptPassword({
+                              title: "Receive transfer?",
+                              description:
+                                "Receiving credits inventory to the destination location. Confirm with your password.",
+                              confirmLabel: "Mark received",
+                              confirmVariant: "default",
+                            });
+                            if (!pwd) return;
+                            startTransition(async () => {
+                              try {
+                                await receiveTransferAction(tr.id, pwd);
+                              } catch (err) {
+                                window.alert(err instanceof Error ? err.message : "Failed to receive transfer");
+                              }
+                            });
+                          }}
                           disabled={isPending}
                           className="rounded-lg bg-emerald-600 px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
                         >

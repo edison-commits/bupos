@@ -260,7 +260,12 @@ export function LoyaltyTiers({ customers, currentConfig }: LoyaltyTiersProps) {
             merchants can't build false expectations. Remove this
             fieldset wrapper when /api/loyalty-tiers persistence
             ships. */}
-        <fieldset disabled className="grid gap-4 opacity-75">
+        <fieldset disabled className="grid gap-4 opacity-75" aria-label="Tier Configuration (Preview — not yet persistent)">
+          {/* R72-D: aria-label on the fieldset so screen reader
+              users get context for why every control is disabled.
+              Without this, focusing into the group reads each
+              disabled input without any explanation. */}
+          <legend className="sr-only">Tier Configuration (Preview — not yet persistent)</legend>
           {tiers.map((tier) => (
             <div key={tier.id} className="rounded-2xl bg-zinc-50 border border-zinc-200 p-4">
               <div

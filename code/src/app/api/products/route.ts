@@ -277,12 +277,25 @@ export const POST = withAdminAuth("catalog.manage", async (request, ctx) => {
       const finalSlug = rawSlug && rawSlug.length > 0
         ? rawSlug
         : name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
-      const result = await client.query(
-        `INSERT INTO categories (id, organization_id, name, slug, sort_order, created_at, updated_at)
-         VALUES (gen_random_uuid(), $1, $2, $3, 0, NOW(), NOW())
-         RETURNING id, name, slug`,
-        [orgId, name, finalSlug]
-      );
+      let result;
+      try {
+        result = await client.query(
+          `INSERT INTO categories (id, organization_id, name, slug, sort_order, created_at, updated_at)
+           VALUES (gen_random_uuid(), $1, $2, $3, 0, NOW(), NOW())
+           RETURNING id, name, slug`,
+          [orgId, name, finalSlug]
+        );
+      } catch (err) {
+        // R72-A: friendly 409 on `uniq_categories_org_slug` collision
+        // (prior shape returned generic 500). Mirror barcode-lookup's
+        // pattern at line ~215.
+        const e = err as { code?: string };
+        if (e.code === '23505') {
+          await client.query('ROLLBACK');
+          return NextResponse.json({ error: `A category with slug "${finalSlug}" already exists` }, { status: 409 });
+        }
+        throw err;
+      }
       // R68-M1: audit INSIDE the tx. Server Action
       // `createCategoryAction` emits a catalog_update event; REST
       // surface was the lossier twin. Mirror it.
@@ -459,12 +472,23 @@ export const POST = withAdminAuth("catalog.manage", async (request, ctx) => {
     }
     const { name, slug, category_id, description, image_url, is_active = true } = body;
     const is_touch_favorite = body.is_touch_favorite ?? false;
-    const result = await client.query(
-      `INSERT INTO products (id, organization_id, category_id, name, slug, description, image_url, is_active, is_touch_favorite, created_at, updated_at)
-       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
-       RETURNING id, name, slug, category_id, description, image_url, is_active, is_touch_favorite`,
-      [orgId, category_id || null, name, slug, description || null, image_url || null, is_active, is_touch_favorite]
-    );
+    let result;
+    try {
+      result = await client.query(
+        `INSERT INTO products (id, organization_id, category_id, name, slug, description, image_url, is_active, is_touch_favorite, created_at, updated_at)
+         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+         RETURNING id, name, slug, category_id, description, image_url, is_active, is_touch_favorite`,
+        [orgId, category_id || null, name, slug, description || null, image_url || null, is_active, is_touch_favorite]
+      );
+    } catch (err) {
+      // R72-A: friendly 409 on `uniq_products_org_slug` collision.
+      const e = err as { code?: string };
+      if (e.code === '23505') {
+        await client.query('ROLLBACK');
+        return NextResponse.json({ error: `A product with slug "${slug}" already exists` }, { status: 409 });
+      }
+      throw err;
+    }
     const newProduct = result.rows[0];
     // R49: audit INSIDE the tx. Prior shape committed then called
     // pgInsertAuditEvent via waitUntilOrAwait — on failure the product
@@ -623,10 +647,26 @@ export const PUT = withAdminAuth("catalog.manage", async (request, ctx) => {
         paramIndex++;
       }
 
-      const result = await client.query(
-        `UPDATE products SET ${fields.join(', ')} WHERE id = $${idSlot} AND organization_id = $${orgSlot}${extraWhere} RETURNING id, name, slug, category_id, description, image_url, is_active, is_touch_favorite, updated_at`,
-        whereValues
-      );
+      let result;
+      try {
+        result = await client.query(
+          `UPDATE products SET ${fields.join(', ')} WHERE id = $${idSlot} AND organization_id = $${orgSlot}${extraWhere} RETURNING id, name, slug, category_id, description, image_url, is_active, is_touch_favorite, updated_at`,
+          whereValues
+        );
+      } catch (err) {
+        // R72-A: friendly 409 on `uniq_products_org_slug` collision
+        // when the UPDATE changes slug. Same class as the POST
+        // product-create handling above.
+        const e = err as { code?: string };
+        if (e.code === '23505') {
+          await client.query('ROLLBACK');
+          return NextResponse.json(
+            { error: `A product with slug "${updates.slug ?? '?'}" already exists` },
+            { status: 409 },
+          );
+        }
+        throw err;
+      }
 
       if (result.rows.length === 0) {
         await client.query('ROLLBACK');

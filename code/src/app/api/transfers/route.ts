@@ -394,32 +394,13 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
       const { transferId } = body;
       if (!transferId) return NextResponse.json({ error: "transferId required" }, { status: 400 });
 
-      // R70-M1: step-up re-auth on SHIP. A transfer in status='requested'
-      // was created by a (possibly different) actor; SHIP is the step
-      // that actually drains source inventory, so it's the fraud-
-      // relevant event. Prior shape had step-up on CREATE (R68-H2)
-      // but SHIP was ungated — a stolen manager cookie could ship
-      // any requested transfer off-books. New bucket
-      // 'transfer-ship-stepup' so a genuine serializing rate-limit
-      // is per-actor per-ship.
-      const { requireStepUp } = await import("@/lib/auth/step-up");
-      const stepUp = await requireStepUp({
-        actorId: employeeId,
-        orgId,
-        actorPassword: (body as { actorPassword?: string })?.actorPassword,
-        bucketKey: "transfer-ship-stepup",
-      });
-      if (!stepUp.ok) {
-        return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
-      }
-
-      // R13-M-4: the old idempotency check returned `_idempotent: true` to
-      // ANY caller once the transfer moved past status='requested', even
-      // with a different Idempotency-Key. That claimed idempotency on
-      // requests the RPC had never seen. Now we only return `_idempotent`
-      // when the stored key actually matches; otherwise a request
-      // targeting an already-shipped transfer gets the normal "not in
-      // requested status" error below.
+      // R72-C: idempotency-key short-circuit MOVED ABOVE step-up so
+      // legitimate retries don't consume step-up budget (3/5min mem
+      // + 4/5min KV). Prior R70-M1 ordering evaluated step-up first
+      // — a caller retrying after transient failure could exhaust
+      // the step-up bucket after ~3 tries even though the first
+      // ship already committed. Mirrors the CREATE branch which
+      // short-circuits idempotent repeats BEFORE step-up.
       if (idempotencyKey) {
         const existing = await orgQuery(
           orgId,
@@ -433,6 +414,21 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
         ) {
           return NextResponse.json({ id: transferId, status: existing.rows[0].status, _idempotent: true });
         }
+      }
+
+      // R70-M1: step-up re-auth on SHIP. A transfer in status='requested'
+      // was created by a (possibly different) actor; SHIP is the step
+      // that actually drains source inventory, so it's the fraud-
+      // relevant event. New bucket 'transfer-ship-stepup'.
+      const { requireStepUp } = await import("@/lib/auth/step-up");
+      const stepUp = await requireStepUp({
+        actorId: employeeId,
+        orgId,
+        actorPassword: (body as { actorPassword?: string })?.actorPassword,
+        bucketKey: "transfer-ship-stepup",
+      });
+      if (!stepUp.ok) {
+        return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
       }
 
       const client = await orgTx(orgId);
@@ -568,6 +564,8 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
       const { transferId } = body;
       if (!transferId) return NextResponse.json({ error: "transferId required" }, { status: 400 });
 
+      // R72-C: idempotency short-circuit BEFORE step-up so retries
+      // don't burn the bucket. Same rationale as R72-C on ship.
       if (idempotencyKey) {
         const existing = await orgQuery(
           orgId,
@@ -577,6 +575,22 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
         if (existing.rows.length > 0 && existing.rows[0].status === 'received') {
           return NextResponse.json({ id: transferId, status: 'received', _idempotent: true });
         }
+      }
+
+      // R72-C: step-up re-auth on RECEIVE — mirror of R70-M1 on
+      // SHIP. Receiving credits destination inventory; a stolen
+      // cookie could inflate destination stock by auto-receiving
+      // an in_transit transfer. Bucket 'transfer-receive-stepup'
+      // distinct from ship so the aggregate cap is per-action.
+      const { requireStepUp } = await import("@/lib/auth/step-up");
+      const stepUp = await requireStepUp({
+        actorId: employeeId,
+        orgId,
+        actorPassword: (body as { actorPassword?: string })?.actorPassword,
+        bucketKey: "transfer-receive-stepup",
+      });
+      if (!stepUp.ok) {
+        return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
       }
 
       const client = await orgTx(orgId);
@@ -701,15 +715,41 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
       // R27-C9: owner bypass above granted access regardless of
       // location ownership — it MUST be constrained by organization_id
       // here so an owner at ORG A can't cancel ORG B's transfers.
-      const result = await orgQuery(
-        orgId,
-        `UPDATE transfers SET status = 'cancelled', cancelled_by = $1, cancelled_at = now(), updated_at = now()
-         WHERE id = $2 AND organization_id = $3 AND status = 'requested'
-         RETURNING id`,
-        [employeeId || null, transferId, orgId],
-      );
-      if (result.rows.length === 0) {
-        return NextResponse.json({ error: "Transfer not found or not in requested status" }, { status: 400 });
+      //
+      // R72-B: wrap UPDATE + audit in one orgTx. Cancel is the third
+      // state-change (alongside ship + receive) that needed audit
+      // coverage — a tampered transfers row post-cancel would
+      // otherwise leave no forensic trail.
+      const client = await orgTx(orgId);
+      try {
+        const result = await client.query(
+          `UPDATE transfers SET status = 'cancelled', cancelled_by = $1, cancelled_at = now(), updated_at = now()
+           WHERE id = $2 AND organization_id = $3 AND status = 'requested'
+           RETURNING id, source_location_id, destination_location_id`,
+          [employeeId || null, transferId, orgId],
+        );
+        if (result.rows.length === 0) {
+          await client.query("ROLLBACK");
+          return NextResponse.json({ error: "Transfer not found or not in requested status" }, { status: 400 });
+        }
+        const cancelled = result.rows[0] as { source_location_id: string; destination_location_id: string };
+        await client.query(
+          `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+           VALUES ($1, $2, $3, $4, 'transfer', $5, 'transfer_cancelled', $6, now())`,
+          [
+            randomUUID(), orgId, cancelled.source_location_id, employeeId, transferId,
+            JSON.stringify({
+              source_location_id: cancelled.source_location_id,
+              destination_location_id: cancelled.destination_location_id,
+            }),
+          ],
+        );
+        await client.query("COMMIT");
+      } catch (e) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw e;
+      } finally {
+        client.release();
       }
       return NextResponse.json({ id: transferId, status: "cancelled" }, { status: 200 });
     }

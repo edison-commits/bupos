@@ -119,11 +119,26 @@ export async function activateGiftCardAction(formData: FormData) {
       }
 
       const gcId = randomUUID();
-      await client.query(
-        `INSERT INTO gift_cards (id, organization_id, code, balance, initial_balance, status, customer_id, activated_by, activated_at, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $4, 'active', $5, $6, now(), now(), now())`,
-        [gcId, orgId, code, amount, customerId || null, ctx.employee.id],
-      );
+      try {
+        await client.query(
+          `INSERT INTO gift_cards (id, organization_id, code, balance, initial_balance, status, customer_id, activated_by, activated_at, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $4, 'active', $5, $6, now(), now(), now())`,
+          [gcId, orgId, code, amount, customerId || null, ctx.employee.id],
+        );
+      } catch (err) {
+        // R72-A: friendly handling of `uniq_gift_cards_active_code_per_org`
+        // (partial unique index, migration 035). Pre-tx existence
+        // check at line ~67 is racy; the advisory lock is per-
+        // actor, not per-code, so a second activation of the same
+        // code can slip past and hit 23505 here. Mirror the REST
+        // path's friendly error.
+        const e = err as { code?: string };
+        if (e.code === "23505") {
+          await client.query("ROLLBACK");
+          throw new Error(`Gift card code "${code}" already exists`);
+        }
+        throw err;
+      }
       await client.query(
         `INSERT INTO gift_card_transactions (id, gift_card_id, transaction_type, amount, balance_after, employee_id, reason, created_at)
          VALUES ($1, $2, 'activation', $3, $3, $4, 'New gift card activated', now())`,

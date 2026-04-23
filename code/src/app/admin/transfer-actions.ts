@@ -308,9 +308,22 @@ export async function shipTransferAction(transferId: string, actorPassword?: str
   revalidatePath("/admin");
 }
 
-export async function receiveTransferAction(transferId: string) {
+export async function receiveTransferAction(transferId: string, actorPassword?: string) {
   const ctx = await requireAdminPermission("inventory.adjust");
   if (!ctx) throw new Error("Not authenticated");
+
+  // R72-C: step-up on RECEIVE (parity with R70-M1 ship). Receiving
+  // credits destination inventory — same inventory-mutation surface
+  // as ship. Bucket 'transfer-receive-stepup' separate from ship
+  // so the aggregate cap is per-action.
+  const { requireStepUp } = await import("@/lib/auth/step-up");
+  const stepUp = await requireStepUp({
+    actorId: ctx.employee.id,
+    orgId: ctx.employee.organizationId,
+    actorPassword: actorPassword ?? "",
+    bucketKey: "transfer-receive-stepup",
+  });
+  if (!stepUp.ok) throw new Error(stepUp.error);
 
   if (isPg()) {
     const orgId = ctx.employee.organizationId;
@@ -441,13 +454,40 @@ export async function cancelTransferAction(transferId: string) {
       tRows[0].source_location_id,
       tRows[0].destination_location_id,
     );
-    const result = await orgQuery(
-      orgId,
-      `UPDATE transfers SET status = 'cancelled', cancelled_by = $1, cancelled_at = now(), updated_at = now()
-       WHERE id = $2 AND organization_id = $3 AND status = 'requested' RETURNING id`,
-      [ctx.employee.id, transferId, orgId],
-    );
-    if (result.rows.length === 0) throw new Error("Can only cancel requested transfers");
+    // R72-B: wrap UPDATE + audit in one orgTx. Prior shape was two
+    // bare orgQuery calls (SELECT then UPDATE); cancel is a state-
+    // change worth logging for forensic review ("who cancelled
+    // which transfer before shipping?"). R70-L1 added ship/receive
+    // audits; cancel was the third-state gap.
+    const client = await orgTx(orgId);
+    try {
+      const upd = await client.query(
+        `UPDATE transfers SET status = 'cancelled', cancelled_by = $1, cancelled_at = now(), updated_at = now()
+         WHERE id = $2 AND organization_id = $3 AND status = 'requested' RETURNING id`,
+        [ctx.employee.id, transferId, orgId],
+      );
+      if (upd.rows.length === 0) {
+        await client.query("ROLLBACK");
+        throw new Error("Can only cancel requested transfers");
+      }
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'transfer', $5, 'transfer_cancelled', $6, now())`,
+        [
+          randomUUID(), orgId, tRows[0].source_location_id, ctx.employee.id, transferId,
+          JSON.stringify({
+            source_location_id: tRows[0].source_location_id,
+            destination_location_id: tRows[0].destination_location_id,
+          }),
+        ],
+      );
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
   } else {
     await mutateStore((store) => {
       const transfer = store.transfers.find((t) => t.id === transferId);

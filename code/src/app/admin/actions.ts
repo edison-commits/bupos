@@ -304,13 +304,24 @@ export async function createProductAction(formData: FormData) {
     // delete-or-retry. The alternative (making the FK DEFERRABLE via
     // migration + refactoring all three helpers to share a client)
     // is a much bigger surface and can land separately.
-    await pgCreateProduct({
-      id: productId, organizationId: orgId, categoryId, name, slug,
-      description: String(formData.get("description") ?? "").trim() || undefined,
-      imageUrl: String(formData.get("imageUrl") ?? "").trim() || undefined,
-      isActive: true, isTouchFavorite: formData.get("isTouchFavorite") === "on",
-      defaultVariantId: undefined, modifierGroupIds: [],
-    });
+    try {
+      await pgCreateProduct({
+        id: productId, organizationId: orgId, categoryId, name, slug,
+        description: String(formData.get("description") ?? "").trim() || undefined,
+        imageUrl: String(formData.get("imageUrl") ?? "").trim() || undefined,
+        isActive: true, isTouchFavorite: formData.get("isTouchFavorite") === "on",
+        defaultVariantId: undefined, modifierGroupIds: [],
+      });
+    } catch (err) {
+      // R72-A: friendly slug-conflict handling. `uniq_products_org_slug`
+      // fires when two products collapse to the same slug. Prior
+      // shape surfaced a generic 500 via the outer catch.
+      const e = err as { code?: string };
+      if (e.code === "23505") {
+        redirect(`/admin?error=${encodeURIComponent(`A product with slug "${slug}" already exists`)}`);
+      }
+      throw err;
+    }
     try {
       await pgCreateVariant({
         id: variantId, organizationId: orgId, productId, sku,
@@ -804,23 +815,43 @@ export async function editCategoryAction(formData: FormData) {
     // tx); on audit-tx failure the rename landed without a trail.
     const { orgTx } = await import("@/lib/db");
     const client = await orgTx(orgId);
+    let slugConflict = false;
     try {
-      await client.query(
-        `UPDATE categories SET name = $1, slug = $2, image_url = $3, updated_at = $4
-         WHERE id = $5 AND organization_id = $6`,
-        [name, slug, imageUrl ?? null, new Date().toISOString(), categoryId, orgId],
-      );
-      await client.query(
-        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
-         VALUES ($1, $2, $3, $4, 'category', $5, 'catalog_update', $6, now())`,
-        [randomUUID(), orgId, null, employee.id, categoryId, JSON.stringify({ action: "updated", name })],
-      );
-      await client.query("COMMIT");
+      try {
+        await client.query(
+          `UPDATE categories SET name = $1, slug = $2, image_url = $3, updated_at = $4
+           WHERE id = $5 AND organization_id = $6`,
+          [name, slug, imageUrl ?? null, new Date().toISOString(), categoryId, orgId],
+        );
+      } catch (err) {
+        // R72-A: parity with R70-L3 createCategoryAction. Slug
+        // regenerated from name — renaming into a collision fires
+        // `uniq_categories_org_slug`. Prior shape bubbled as
+        // generic 500; now a friendly redirect.
+        const e = err as { code?: string };
+        if (e.code === "23505") {
+          await client.query("ROLLBACK").catch(() => {});
+          slugConflict = true;
+        } else {
+          throw err;
+        }
+      }
+      if (!slugConflict) {
+        await client.query(
+          `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+           VALUES ($1, $2, $3, $4, 'category', $5, 'catalog_update', $6, now())`,
+          [randomUUID(), orgId, null, employee.id, categoryId, JSON.stringify({ action: "updated", name })],
+        );
+        await client.query("COMMIT");
+      }
     } catch (e) {
       await client.query("ROLLBACK").catch(() => {});
       throw e;
     } finally {
       client.release();
+    }
+    if (slugConflict) {
+      redirect(`/admin?error=${encodeURIComponent(`A category with slug "${slug}" already exists`)}`);
     }
   } else {
     await mutateStore((store) => {
@@ -928,27 +959,46 @@ export async function editProductAction(formData: FormData) {
     // SET list, then audit before COMMIT.
     const { orgTx } = await import("@/lib/db");
     const client = await orgTx(orgId);
+    let slugConflict = false;
     try {
-      await client.query(
-        `UPDATE products SET name = $1, slug = $2, category_id = $3, description = $4,
-                             image_url = $5, is_active = $6, is_touch_favorite = $7, updated_at = $8
-         WHERE id = $9 AND organization_id = $10`,
-        [
-          name, slug, categoryId, description ?? null, imageUrl ?? null,
-          isActive, isTouchFavorite, new Date().toISOString(), productId, orgId,
-        ],
-      );
-      await client.query(
-        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
-         VALUES ($1, $2, $3, $4, 'product', $5, 'catalog_update', $6, now())`,
-        [randomUUID(), orgId, null, employee.id, productId, JSON.stringify({ action: "updated", name })],
-      );
-      await client.query("COMMIT");
+      try {
+        await client.query(
+          `UPDATE products SET name = $1, slug = $2, category_id = $3, description = $4,
+                               image_url = $5, is_active = $6, is_touch_favorite = $7, updated_at = $8
+           WHERE id = $9 AND organization_id = $10`,
+          [
+            name, slug, categoryId, description ?? null, imageUrl ?? null,
+            isActive, isTouchFavorite, new Date().toISOString(), productId, orgId,
+          ],
+        );
+      } catch (err) {
+        // R72-A: parity with R70-L3. Product rename regenerates
+        // slug; `uniq_products_org_slug` fires if another product
+        // already occupies it. Friendly redirect instead of 500.
+        const e = err as { code?: string };
+        if (e.code === "23505") {
+          await client.query("ROLLBACK").catch(() => {});
+          slugConflict = true;
+        } else {
+          throw err;
+        }
+      }
+      if (!slugConflict) {
+        await client.query(
+          `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+           VALUES ($1, $2, $3, $4, 'product', $5, 'catalog_update', $6, now())`,
+          [randomUUID(), orgId, null, employee.id, productId, JSON.stringify({ action: "updated", name })],
+        );
+        await client.query("COMMIT");
+      }
     } catch (e) {
       await client.query("ROLLBACK").catch(() => {});
       throw e;
     } finally {
       client.release();
+    }
+    if (slugConflict) {
+      redirect(`/admin?error=${encodeURIComponent(`A product with slug "${slug}" already exists`)}`);
     }
   } else {
     await mutateStore((store) => {

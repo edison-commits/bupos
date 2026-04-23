@@ -510,13 +510,26 @@ export async function cancelStocktakeAction(stocktakeId: string) {
       const { rows } = await client.query(
         `UPDATE stocktakes SET status = 'cancelled', updated_at = NOW()
          WHERE id = $1 AND organization_id = $2 AND status IN ('in_progress', 'pending_review')
-         RETURNING id`,
+         RETURNING id, location_id`,
         [stocktakeId, orgId],
       );
       if (rows.length === 0) {
         await client.query("ROLLBACK");
         throw new Error("Stocktake cannot be cancelled in its current state");
       }
+      // R72-B: audit in-tx. createStocktakeAction and
+      // acceptStocktakeAction both emit events; cancel was the
+      // third-state gap. An admin who aborts a cycle count after
+      // reviewing counted_qty should be logged for forensic
+      // review.
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'stocktake', $5, 'stocktake_cancelled', $6, now())`,
+        [
+          randomUUID(), orgId, rows[0].location_id, ctx.employee.id, stocktakeId,
+          JSON.stringify({ location_id: rows[0].location_id }),
+        ],
+      );
       await client.query("COMMIT");
     } catch (e) {
       await client.query("ROLLBACK").catch(() => {});

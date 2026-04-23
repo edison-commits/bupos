@@ -87,8 +87,10 @@ describe("R68 audit fixes — round 16", () => {
   describe("R68-M1 MEDIUM: category-create branch writes catalog_update audit", () => {
     const src = read("src/app/api/products/route.ts");
     it("audit_events INSERT before COMMIT in category branch", () => {
+      // R72-A widened the window when 23505 slug-conflict handling
+      // was inserted between the INSERT and the audit.
       const block = src.slice(src.indexOf("Handle category creation"));
-      expect(block.slice(0, 3000)).toMatch(/INSERT INTO audit_events[\s\S]{0,400}'catalog_update'[\s\S]{0,300}COMMIT/);
+      expect(block.slice(0, 4000)).toMatch(/INSERT INTO audit_events[\s\S]{0,400}'catalog_update'[\s\S]{0,800}COMMIT/);
     });
   });
 

@@ -70,7 +70,8 @@ describe("R70 audit fixes — round 17", () => {
       expect(src).toMatch(/Preview:\s*<\/strong>\s*tier configuration is not yet/);
     });
     it("tier editor wrapped in <fieldset disabled>", () => {
-      expect(src).toMatch(/<fieldset disabled className="grid gap-4 opacity-75">/);
+      // R72-D added aria-label for screen-reader accessibility.
+      expect(src).toMatch(/<fieldset disabled className="grid gap-4 opacity-75"(?:\s+aria-label=[^>]+)?>/);
     });
     it("Add Custom Tier button disabled", () => {
       expect(src).toMatch(/disabled\s*\n\s*title="Custom tier persistence not yet available"/);
