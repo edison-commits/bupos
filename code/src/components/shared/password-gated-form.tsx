@@ -131,7 +131,6 @@ export function PasswordGatedForm({
               try {
                 shouldGate = gateCondition(fd, form);
               } catch (predErr) {
-                // eslint-disable-next-line no-console
                 console.error(
                   "[PasswordGatedForm] gateCondition threw; defaulting to gate:",
                   safeErr(predErr),
