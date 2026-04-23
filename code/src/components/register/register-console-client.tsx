@@ -506,6 +506,7 @@ export function RegisterConsoleClient({
             onCloseShift={handleCloseShift}
             onCancel={() => setShowEODWizard(false)}
             dailyReportUrl="https://jkdgdcfpgxjfdlccvqjf.supabase.co/functions/v1/daily-report"
+            processing={closing}
           />
         )}
 

@@ -16,6 +16,12 @@ interface EODWizardProps {
   onCloseShift: (declaredCash: number, note: string, blind: boolean) => Promise<void>;
   onCancel: () => void;
   dailyReportUrl?: string;
+  // R79-SEC-M: cross-modal processing flag from parent so the Close
+  // button is disabled even after a local `loading` reset (e.g. the
+  // wizard unmounts on error + re-opens while the parent's
+  // closeShiftEnhancedAction is still in flight). Mirrors the
+  // R78-FE-H1 shift-close-modal processing prop.
+  processing?: boolean;
 }
 
 type Step = 1 | 2 | 3 | 4;
@@ -44,6 +50,7 @@ export function EODWizard({
   onCloseShift,
   onCancel,
   dailyReportUrl,
+  processing = false,
 }: EODWizardProps) {
   const [currentStep, setCurrentStep] = useState<Step>(1);
   const [declaredCash, setDeclaredCash] = useState<number>(0);
@@ -349,10 +356,10 @@ export function EODWizard({
                 <button
                   type="button"
                   onClick={handleCloseShiftClick}
-                  disabled={loading}
+                  disabled={loading || processing}
                   className="touch-button flex-1 rounded-2xl bg-teal-700 px-4 py-3 text-sm font-semibold text-white hover:bg-teal-800 disabled:opacity-50"
                 >
-                  {loading ? "Closing…" : "Close shift"}
+                  {loading || processing ? "Closing…" : "Close shift"}
                 </button>
               )}
             </>

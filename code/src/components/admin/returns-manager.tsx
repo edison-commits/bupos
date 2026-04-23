@@ -140,8 +140,15 @@ export function ReturnsManager() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ transaction_id: transactionId.trim(), customer_name: customerName || null, reason, refund_method: refundMethod, notes: notes || null, lines }),
       });
+      // R79-FE-M: check !res.ok BEFORE res.json() so non-JSON
+      // gateway responses don't throw into the generic catch.
+      // Also coalesce missing `data.error` fields.
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        setMessage({ type: 'error', text: err.error ?? 'Failed to create return' });
+        return;
+      }
       const data = await res.json();
-      if (!res.ok) { setMessage({ type: 'error', text: data.error }); return; }
       setMessage({ type: 'success', text: `Return ${data.return_number} created.` });
       setView('list'); fetchReturns();
     } catch { setMessage({ type: 'error', text: 'Failed to create return.' }); }

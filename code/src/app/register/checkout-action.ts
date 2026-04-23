@@ -277,6 +277,30 @@ export async function checkoutAction(
         redirect("/register?error=Cart+already+checked+out");
       }
 
+      // R79-DB-H1 (HIGH): serialize against closeShiftEnhancedAction.
+      // register_sessions is locked above, but closeShiftEnhancedAction
+      // (R76-DB-H2) takes FOR UPDATE on BOTH shifts AND
+      // register_sessions. If the close wins the shift lock first,
+      // aggregates cashSales, flips shifts.status='closed', commits —
+      // we'd unblock on register_sessions, then INSERT transaction +
+      // transaction_tenders for an already-closed shift (no status
+      // check on the write path). Cash enters the drawer with zero
+      // shift-variance ledger. Mirror /api/returns R77-DB-H1 +
+      // register/return-action R78-SEC-H2 shape: FOR UPDATE SKIP
+      // LOCKED on the open shift at this location; if the shift is
+      // currently being closed, reject the checkout cleanly so the
+      // cashier can wait for the next shift to open.
+      const { rows: shiftLockRows } = await client.query(
+        `SELECT id FROM shifts
+           WHERE organization_id = $1 AND location_id = $2 AND status = 'open'
+           ORDER BY opened_at DESC LIMIT 1
+           FOR UPDATE SKIP LOCKED`,
+        [context.employee.organizationId, context.location.id],
+      );
+      if (shiftLockRows.length === 0) {
+        redirect("/register?error=Shift+is+closed+or+being+closed.+Ask+a+manager+to+open+the+next+shift.");
+      }
+
       // --- Apply customer.tax_exempt override before computing totals ---
       // Without this lookup, migration 014's tax_exempt column has no live
       // consumer — tax-exempt customers are silently charged full tax, the

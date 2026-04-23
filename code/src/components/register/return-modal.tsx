@@ -97,8 +97,22 @@ export function ReturnModal({
   const [selectedTxn, setSelectedTxn] = useState<TxnSummary | null>(null);
   const [returnItems, setReturnItems] = useState<ReturnItem[]>([]);
   const [loadingSnapshot, setLoadingSnapshot] = useState(false);
+  // R79-FE-M: double-submit guard on Process-return. Parent's
+  // onConfirm is async + refund mutations are not idempotent — a
+  // fast double-tap would otherwise fire two refund POSTs, causing
+  // double-restock + double store-credit issuance.
+  const [submitting, setSubmitting] = useState(false);
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
   const [refundMethod, setRefundMethod] = useState<RefundMethod>("cash");
+
+  // R79-FE-M: Esc closes when not submitting.
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !submitting) onCancel();
+    };
+    document.addEventListener("keydown", h);
+    return () => document.removeEventListener("keydown", h);
+  }, [onCancel, submitting]);
   const [reason, setReason] = useState(RETURN_REASONS[0].value);
   const [note, setNote] = useState("");
   // Effective tax rate of the ORIGINAL sale — used to show the customer-
@@ -240,7 +254,7 @@ export function ReturnModal({
   // ── Step 1: Search transactions ─────────────────────────
   if (step === "search") {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div role="dialog" aria-modal="true" aria-label="Process return" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
         <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl">
           <div className="border-b border-zinc-100 px-5 py-4">
             <div className="flex items-center justify-between">
@@ -307,7 +321,7 @@ export function ReturnModal({
       );
     };
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div role="dialog" aria-modal="true" aria-label="Process return" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
         <div className="flex max-h-[90vh] w-full max-w-lg flex-col rounded-2xl bg-white shadow-2xl">
           <div className="border-b border-zinc-100 px-5 py-4">
             <h2 className="text-lg font-bold">Return items</h2>
@@ -456,7 +470,7 @@ export function ReturnModal({
 
   // ── Step 3: Confirm return ──────────────────────────────
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div role="dialog" aria-modal="true" aria-label="Process return" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="w-full max-w-sm rounded-2xl bg-white shadow-2xl">
         <div className="border-b border-zinc-100 px-5 py-4">
           <h2 className="text-lg font-bold">Confirm return</h2>
@@ -480,14 +494,22 @@ export function ReturnModal({
           </button>
           <button
             type="button"
+            disabled={submitting}
             onClick={() => {
               if (!selectedTxn) return;
+              // R79-FE-M: flip synchronously so a second click can't
+              // slip in before the async onConfirm runs. Parent
+              // unmounts the modal on success; on failure the modal
+              // stays mounted but `submitting` stays true, keeping
+              // the button disabled until re-mount.
+              if (submitting) return;
+              setSubmitting(true);
               const items = returnItems.filter((i) => i.returnQuantity > 0);
               onConfirm(selectedTxn.transactionId, items, refundMethod, reason, note);
             }}
-            className="touch-button flex-1 rounded-xl bg-red-600 text-sm font-semibold text-white hover:bg-red-700"
+            className="touch-button flex-1 rounded-xl bg-red-600 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Process return
+            {submitting ? "Processing…" : "Process return"}
           </button>
         </div>
       </div>

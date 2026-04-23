@@ -233,8 +233,14 @@ export function PurchaseOrderManager() {
           })),
         }),
       });
+      // R79-FE-M: check !res.ok BEFORE parsing JSON so a non-JSON
+      // gateway response doesn't throw into the generic catch.
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        setMessage({ type: 'error', text: err.error ?? 'Failed to create PO' });
+        return;
+      }
       const data = await res.json();
-      if (!res.ok) { setMessage({ type: 'error', text: data.error }); return; }
       setMessage({ type: 'success', text: `Purchase order ${data.po_number} created.` });
       setView('list');
       fetchOrders();

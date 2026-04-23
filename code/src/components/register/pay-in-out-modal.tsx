@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { VirtualNumpad } from "@/components/ui/virtual-numpad";
 import { VirtualKeyboard } from "@/components/ui/virtual-keyboard";
 import { formatCurrency } from "@/lib/format";
@@ -49,8 +49,17 @@ export function PayInOutModal({ direction, onConfirm, onCancel }: PayInOutModalP
     ? "Add cash to the drawer (e.g. change replenishment)."
     : "Remove cash from the drawer (e.g. bank deposit).";
 
+  // R79-FE-M: Esc closes the modal when not mid-submit.
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !submitting) onCancel();
+    };
+    document.addEventListener("keydown", h);
+    return () => document.removeEventListener("keydown", h);
+  }, [onCancel, submitting]);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div role="dialog" aria-modal="true" aria-label={title} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="w-full max-w-sm rounded-2xl bg-white shadow-2xl">
         <div className="border-b border-zinc-100 px-6 py-5">
           <h2 className="text-xl font-bold">{title}</h2>

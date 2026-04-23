@@ -427,8 +427,15 @@ export async function receiveTransferAction(transferId: string, actorPassword?: 
       );
       for (const line of lines.rows) {
         await client.query(
+          // R79-DB-M1: default reorder_point=5 for first-time
+          // receives at a new location (parity with /api/purchase-
+          // orders PATCH + /api/transfers RECEIVE REST after R76-
+          // DB-M). Prior default 0 hid the variant from low-stock /
+          // reorder-suggestion queries until manually set. The
+          // DO UPDATE branch does not touch reorder_point so
+          // existing rows keep their configured value.
           `INSERT INTO inventory_levels (id, organization_id, product_variant_id, location_id, on_hand, reserved, reorder_point, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, 0, 0, now(), now())
+           VALUES ($1, $2, $3, $4, $5, 0, 5, now(), now())
            ON CONFLICT (product_variant_id, location_id)
            DO UPDATE SET on_hand = inventory_levels.on_hand + $5, updated_at = now()`,
           [randomUUID(), orgId, line.product_variant_id, transfer.destination_location_id, line.qty],

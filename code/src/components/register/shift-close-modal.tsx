@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { NumpadInput } from "./numpad-input";
 import { formatCurrency } from "@/lib/format";
 
@@ -85,10 +85,21 @@ export function ShiftCloseModal({
     return hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
   });
 
+  // R79-FE-M: Esc closes the modal (standard a11y pattern).
+  // Skip when processing so a stray Esc during the server round-
+  // trip doesn't leave the cashier mid-close with no visible UI.
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !processing) onCancel();
+    };
+    document.addEventListener("keydown", h);
+    return () => document.removeEventListener("keydown", h);
+  }, [onCancel, processing]);
+
   // ── Summary screen ──────────────────────────────────────
   if (mode === "summary") {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div role="dialog" aria-modal="true" aria-label="Close shift" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
         <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl">
           <div className="border-b border-zinc-100 px-6 py-5">
             <h2 className="text-xl font-bold">Close shift</h2>
@@ -158,7 +169,7 @@ export function ShiftCloseModal({
   // ── Drawer count screen ─────────────────────────────────
   if (mode === "count") {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div role="dialog" aria-modal="true" aria-label="Close shift" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
         <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl">
           <div className="border-b border-zinc-100 px-6 py-5">
             <h2 className="text-xl font-bold">Count drawer</h2>
@@ -285,7 +296,7 @@ export function ShiftCloseModal({
 
   // ── Confirmation screen ─────────────────────────────────
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div role="dialog" aria-modal="true" aria-label="Close shift — confirm" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl">
         <div className="border-b border-zinc-100 px-6 py-5">
           <h2 className="text-xl font-bold">

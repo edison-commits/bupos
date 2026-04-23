@@ -214,11 +214,15 @@ export function BarcodeLookup({ categories }: { categories: Category[] }) {
         }),
       });
 
-      const data = await res.json();
+      // R79-FE-M: check !res.ok BEFORE res.json() so a non-JSON
+      // gateway response doesn't throw into the outer catch with
+      // a generic error, losing the actual HTTP status.
       if (!res.ok) {
-        setSaveMessage({ type: 'error', text: data.error || 'Failed to save product' });
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        setSaveMessage({ type: 'error', text: err.error || 'Failed to save product' });
         return;
       }
+      const data = await res.json();
 
       setSaveMessage({ type: 'success', text: data.message });
       setShowForm(false);

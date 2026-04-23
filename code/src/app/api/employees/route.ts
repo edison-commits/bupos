@@ -592,13 +592,13 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
 
     // If role changed, invalidate all of the target employee's sessions immediately
     // so that the new (possibly lower) permissions take effect without waiting for expiry.
-    if (roleKey !== undefined) {
-      await invalidateEmployeeSessions(id, orgId);
-    }
-    // R27-M4: invalidate sessions on email change too so the old
-    // email can't be used to re-authenticate with a stale cookie
-    // after the login-email changes.
-    if (email !== undefined) {
+    // R79-SEC-H1: invalidate on ANY scope-changing field — roleKey OR
+    // email OR locationIds. Prior shape missed locationIds: an owner
+    // could remove Employee X from Location A, but Employee X's live
+    // register session at A continued ringing sales on an
+    // unauthorized location until natural expiry. Mirrors
+    // R77-SEC-H class (stolen-cookie outlives authority change).
+    if (roleKey !== undefined || email !== undefined || locationIds !== undefined) {
       await invalidateEmployeeSessions(id, orgId);
     }
 

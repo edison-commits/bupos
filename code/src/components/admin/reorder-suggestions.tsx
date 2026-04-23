@@ -100,8 +100,15 @@ export function ReorderSuggestions() {
           lines,
         }),
       });
+      // R79-FE-M: check !res.ok BEFORE parsing JSON. CF 502 /
+      // proxy HTML response would otherwise throw from res.json()
+      // and lose the actual HTTP status in the outer generic catch.
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        setMessage({ type: 'error', text: err.error || 'Failed to create PO' });
+        return;
+      }
       const data = await res.json();
-      if (!res.ok) { setMessage({ type: 'error', text: data.error || 'Failed to create PO' }); return; }
       setMessage({ type: 'success', text: `Purchase order ${data.po_number} created with ${lines.length} items. Go to Purchase Orders to review and submit.` });
       // Remove this group from the list
       setGroups((prev) => prev.filter((g) => g.supplier_id !== group.supplier_id));
