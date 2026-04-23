@@ -6,10 +6,11 @@ import type { LayawayPayment } from "@/lib/domain/types";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "@/lib/uuid";
 import { orgTx } from "@/lib/supabase-rest";
-import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 
-import { safeErr } from "@/lib/logging/safe-err";
-import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
+// R44-MED / R46-M4 moved all audit writes in-tx on this surface, and
+// R74-B kept that invariant. The legacy post-commit
+// `waitUntilOrAwait(pgInsertAuditEvent(...))` plumbing is no longer
+// reached — imports dropped to keep the module surface honest.
 const isPg = () => !!process.env.USE_POSTGRES;
 
 export async function makeLayawayPaymentAction(formData: FormData) {
