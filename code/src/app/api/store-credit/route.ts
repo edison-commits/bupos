@@ -6,6 +6,9 @@ import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 import { validateBody, storeCreditSchema } from "@/lib/validation/schemas";
 import { formatCurrency } from "@/lib/format";
+// R94-sweep: customers.store_credit_balance is in the readStore
+// snapshot — bust after issuance.
+import { invalidateStoreCache } from "@/lib/persistence/postgres-read-store";
 
 
 import { safeErr } from "@/lib/logging/safe-err";
@@ -284,6 +287,7 @@ export const POST = withAdminAuth('approval.store_credit', async (req, ctx) => {
         ],
       );
       await client.query("COMMIT");
+      invalidateStoreCache(orgId);
       return NextResponse.json({ id: entryId, customerId, newBalance, amount }, { status: 201 });
     } catch (e) {
       await client.query("ROLLBACK");

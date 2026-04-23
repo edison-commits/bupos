@@ -4,6 +4,9 @@ import { withDualAuth, withAdminAuth } from "@/lib/api/with-auth";
 import { pgCloseShift } from "@/lib/persistence/postgres-store";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { validateBody, shiftCloseSchema } from "@/lib/validation/schemas";
+// R94-sweep: `shifts` is in the get_full_store cache. Shift close
+// mutates status + closing_* fields — bust the readStore cache.
+import { invalidateStoreCache } from "@/lib/persistence/postgres-read-store";
 
 import { safeErr } from "@/lib/logging/safe-err";
 /**
@@ -238,6 +241,7 @@ export const POST = withAdminAuth('register.open', async (req, ctx) => {
       closeClient.release();
     }
     void pgCloseShift; // kept for legacy callers; not used on this path.
+    invalidateStoreCache(orgId);
 
     return NextResponse.json({
       success: true,

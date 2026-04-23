@@ -3,6 +3,9 @@ import { orgQuery } from "@/lib/supabase-rest";
 import { withAdminAuth } from "@/lib/api/with-auth";
 import { validateBody, loyaltyAdjustSchema } from "@/lib/validation/schemas";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
+// R94-sweep: bust readStore cache so admin dashboards see
+// freshly-adjusted loyalty_points immediately.
+import { invalidateStoreCache } from "@/lib/persistence/postgres-read-store";
 
 
 import { safeErr } from "@/lib/logging/safe-err";
@@ -356,6 +359,7 @@ export const POST = withAdminAuth("employee.manage", async (req, ctx) => {
     } finally {
       client.release();
     }
+    invalidateStoreCache(orgId);
     const updateResult = { rows: [{ id: customer_id, loyalty_points: newPoints, previous_points: previousPoints }] };
 
     const currentPoints = previousPoints;

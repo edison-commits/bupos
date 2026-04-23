@@ -4,6 +4,9 @@ import { withDualAuth, withAdminAuth } from '@/lib/api/with-auth';
 import { validateBody, settingsUpdateSchema } from '@/lib/validation/schemas';
 import { checkRateLimit } from '@/lib/auth/rate-limit';
 import { randomUUID } from '@/lib/uuid';
+// R94-sweep: organization + locations + receipt rows are all in
+// the get_full_store cache. Every PUT must bust it.
+import { invalidateStoreCache } from '@/lib/persistence/postgres-read-store';
 
 import { safeErr } from "@/lib/logging/safe-err";
 export const GET = withDualAuth("catalog.manage", async (req, ctx) => {
@@ -159,6 +162,7 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
             ],
           );
           await client.query("COMMIT");
+          invalidateStoreCache(orgId);
         } catch (e) {
           await client.query("ROLLBACK").catch(() => {});
           throw e;
@@ -251,6 +255,7 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
             ],
           );
           await client.query("COMMIT");
+          invalidateStoreCache(orgId);
         } catch (e) {
           await client.query("ROLLBACK").catch(() => {});
           throw e;
@@ -323,6 +328,7 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
             ],
           );
           await client.query("COMMIT");
+          invalidateStoreCache(orgId);
         } catch (e) {
           await client.query("ROLLBACK").catch(() => {});
           throw e;

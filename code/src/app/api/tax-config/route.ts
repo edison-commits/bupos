@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { orgQuery } from "@/lib/supabase-rest";
 import { withDualAuth, withAdminAuth } from "@/lib/api/with-auth";
 import { validateBody, taxConfigUpdateSchema } from "@/lib/validation/schemas";
+// R94-sweep: `locations.tax_rate` is in the readStore snapshot —
+// bust after every tax-config PUT.
+import { invalidateStoreCache } from "@/lib/persistence/postgres-read-store";
 
 
 import { safeErr } from "@/lib/logging/safe-err";
@@ -146,6 +149,7 @@ export const PUT = withAdminAuth('employee.manage', async (req, ctx) => {
       client.release();
     }
 
+    invalidateStoreCache(orgId);
     return NextResponse.json({
       location: { id: locationId, name: finalLocName, tax_rate: finalTaxRate },
       taxRatePercent: Number((finalTaxRate * 100).toFixed(4)),
