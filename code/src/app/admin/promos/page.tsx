@@ -5,6 +5,11 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 import { authFetch } from "@/lib/api/client";
 import type { PromoCode, ProductVariant, Product } from "@/lib/domain/types";
 import { formatCurrency } from "@/lib/format";
+// R53: step-up re-auth for high-risk promo creates. Server
+// /api/promo-codes POST gates on bucketKey:'promo-code-create-stepup'
+// for high-value-or-unbounded promos; prior UI didn't thread
+// actorPassword so every high-risk create threw.
+import { usePasswordGate } from "@/components/shared/password-gate";
 
 type PromoType = "fixed" | "percent" | "bogo" | "free_item";
 
@@ -60,6 +65,7 @@ export default function AdminPromosPage() {
   const [form, setForm] = useState<NewPromoForm>(emptyForm);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [promptPassword, passwordGate] = usePasswordGate();
 
   // Search box for the free-variant picker. Long catalogs would otherwise
   // render thousands of <option>s and lag the modal.
@@ -173,6 +179,32 @@ export default function AdminPromosPage() {
     const startsAt = form.startsAt ? new Date(form.startsAt).toISOString() : new Date().toISOString();
     const expiresAt = form.expiresAt ? new Date(form.expiresAt).toISOString() : undefined;
 
+    // R53: step-up re-auth for high-risk promos. Server gates create on
+    // bucketKey:'promo-code-create-stepup' for promos that either
+    //   (a) carry a >= $50 fixed discount (big one-shot liability), or
+    //   (b) are unbounded in redemptions (maxRedemptions = 0 / blank
+    //       / the 10_000_000 sentinel) — one stolen code could be
+    //       redeemed indefinitely.
+    // Low-risk promos (percent-off, BOGO, capped small fixed) skip
+    // the prompt so legitimate promo authoring stays quick.
+    const isUnbounded = maxRedemptions === 0;
+    const isHighValueFixed = form.type === "fixed" && value >= 50;
+    const isHighRisk = isUnbounded || isHighValueFixed;
+    let actorPassword: string | undefined;
+    if (isHighRisk) {
+      const reason = isUnbounded
+        ? "This promo has no redemption cap — anyone with the code could use it indefinitely."
+        : `This is a ${formatCurrency(value)} fixed discount — confirm you want to create a promo with this liability.`;
+      const pwd = await promptPassword({
+        title: `Create high-risk promo ${form.code.trim().toUpperCase()}?`,
+        description: `${reason} Confirm with your password.`,
+        confirmLabel: "Create promo",
+        confirmVariant: "default",
+      });
+      if (!pwd) return;
+      actorPassword = pwd;
+    }
+
     setSubmitting(true);
     try {
       const res = await authFetch("/api/promo-codes", {
@@ -191,6 +223,7 @@ export default function AdminPromosPage() {
           startsAt,
           ...(expiresAt ? { expiresAt } : {}),
           ...(typeMeta.showVariant ? { freeVariantId: form.freeVariantId } : {}),
+          ...(actorPassword ? { actorPassword } : {}),
         }),
       });
       if (!res.ok) {
@@ -339,6 +372,9 @@ export default function AdminPromosPage() {
           </table>
         </div>
       </div>
+
+      {/* R53: shared password gate renders nothing until prompted. */}
+      {passwordGate}
 
       {/* --- Create modal ------------------------------------------ */}
       {showCreate && (

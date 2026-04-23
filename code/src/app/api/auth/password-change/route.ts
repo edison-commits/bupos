@@ -115,6 +115,17 @@ export async function POST(req: NextRequest) {
     // Workers isolate freeze the audit could be lost — and password
     // rotation is precisely the event that forensic review depends
     // on. Everything atomic now.
+    //
+    // R54-Framework-1: derive `newHash` (PBKDF2 100k iters, ~100ms
+    // of blocking CPU) OUTSIDE the tx so the `FOR UPDATE` row lock
+    // on auth_credentials isn't held during hashing. Matches the
+    // sibling pattern in /api/auth/password-reset-confirm (R28-L6
+    // comment). Under two concurrent rotations against the same
+    // employee, the second rotation would otherwise wait ~100ms+
+    // on the lock while also holding a pool connection; Workers'
+    // per-call `makePool(1)` makes this a contention cliff.
+    const newHash = await hashSecret(newPassword);
+
     const orgId = ctx.employee.organizationId;
     const client = await orgTx(orgId);
     try {
@@ -170,10 +181,8 @@ export async function POST(req: NextRequest) {
         throw err;
       }
 
-      // Derive the new hash and UPDATE auth_credentials. Append the
-      // OLD hash to the history at the same time so a future rotation
-      // sees it.
-      const newHash = await hashSecret(newPassword);
+      // Append the OLD hash to the history at the same time so a
+      // future rotation sees it. (newHash was derived pre-tx above.)
       const nextHistory = appendHistory(currentHash, history);
       await client.query(
         `UPDATE auth_credentials

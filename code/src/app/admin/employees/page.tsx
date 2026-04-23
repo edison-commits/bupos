@@ -7,6 +7,15 @@ import { Plus, Search, Edit2, Lock, Eye, EyeOff } from 'lucide-react';
 import { authFetch } from '@/lib/api/client';
 import { FETCH_TIMEOUT_MS } from '@/lib/config/timing';
 import { useDebouncedValue } from '@/lib/hooks/use-debounced-value';
+// R53: step-up re-auth on employee mutations. Server /api/employees
+// gates on:
+//   - POST  employees-create-stepup       (always)
+//   - PUT   employees-put-stepup          (roleKey/locationIds/pin change)
+//   - PATCH employees-patch-stepup        (reset-pin, toggle-status
+//                                          i.e. active-flag flip)
+// Prior UI didn't thread actorPassword so every sensitive mutation
+// threw with a generic "password required" error.
+import { usePasswordGate } from "@/components/shared/password-gate";
 
 const ROLES: Record<string, { label: string; color: string }> = {
   owner: { label: 'Owner', color: 'bg-red-100 text-red-800' },
@@ -58,6 +67,7 @@ export default function EmployeeManagement() {
   const [showPinModal, setShowPinModal] = useState(false);
   const [showPin, setShowPin] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [promptPassword, passwordGate] = usePasswordGate();
 
   // Form state
   const [formData, setFormData] = useState({
@@ -154,13 +164,23 @@ export default function EmployeeManagement() {
 
   const handleCreateEmployee = async () => {
     if (submitting) return;
+    // R53: server POST gates unconditionally on employees-create-
+    // stepup (R54-C1). Prompt before every create.
+    const pwd = await promptPassword({
+      title: `Create employee ${formData.displayName || `${formData.firstName} ${formData.lastName}`.trim() || 'new'}?`,
+      description:
+        "Creating an employee provisions PIN-based register access. Confirm with your password.",
+      confirmLabel: "Create employee",
+      confirmVariant: "default",
+    });
+    if (!pwd) return;
     setSubmitting(true);
     setError(null);
     try {
       const response = await authFetch('/api/employees', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
+        body: JSON.stringify({ ...formData, actorPassword: pwd }),
       });
 
       if (!response.ok) {
@@ -182,6 +202,42 @@ export default function EmployeeManagement() {
   const handleUpdateEmployee = async () => {
     if (!selectedEmployee) return;
     if (submitting) return;
+
+    // R53: server PUT gates on employees-put-stepup when any of
+    // roleKey, locationIds, or pin (if an explicit pin was typed) are
+    // changed relative to the loaded snapshot. Low-blast-radius
+    // fields (firstName/lastName/displayName/email/pinHint) skip the
+    // prompt. Compare against the `selectedEmployee` snapshot set in
+    // openEditModal.
+    const roleChanged = selectedEmployee.roleKey !== formData.roleKey;
+    const priorLocs = [...selectedEmployee.locationIds].sort();
+    const nextLocs = [...formData.locationIds].sort();
+    const locationsChanged =
+      priorLocs.length !== nextLocs.length ||
+      priorLocs.some((id, i) => id !== nextLocs[i]);
+    // An explicit non-empty pin means the user is re-setting it from
+    // the edit form (separate from the Reset PIN modal path, which is
+    // PATCH). Treat that as sensitive too.
+    const pinChanged = Boolean(formData.pin && formData.pin.trim().length > 0);
+    const sensitiveChanged = roleChanged || locationsChanged || pinChanged;
+
+    let actorPassword: string | undefined;
+    if (sensitiveChanged) {
+      const reasons: string[] = [];
+      if (roleChanged) reasons.push("role");
+      if (locationsChanged) reasons.push("location assignment");
+      if (pinChanged) reasons.push("PIN");
+      const pwd = await promptPassword({
+        title: `Update ${selectedEmployee.displayName}'s ${reasons.join(", ")}?`,
+        description:
+          "Role, location, or PIN changes affect what this employee can do at the register. Confirm with your password.",
+        confirmLabel: "Save changes",
+        confirmVariant: "default",
+      });
+      if (!pwd) return;
+      actorPassword = pwd;
+    }
+
     setSubmitting(true);
     setError(null);
 
@@ -192,6 +248,7 @@ export default function EmployeeManagement() {
         body: JSON.stringify({
           id: selectedEmployee.id,
           ...formData,
+          ...(actorPassword ? { actorPassword } : {}),
         }),
       });
 
@@ -214,6 +271,16 @@ export default function EmployeeManagement() {
 
   const handleResetPin = async () => {
     if (!selectedEmployee) return;
+    // R53: server PATCH reset-pin gates on employees-patch-stepup.
+    // Always prompt — resetting a PIN is a credential-change action.
+    const pwd = await promptPassword({
+      title: `Reset PIN for ${selectedEmployee.displayName}?`,
+      description:
+        "Resetting the PIN revokes the employee's current register access. Confirm with your password.",
+      confirmLabel: "Reset PIN",
+      confirmVariant: "default",
+    });
+    if (!pwd) return;
     setError(null);
 
     try {
@@ -224,6 +291,7 @@ export default function EmployeeManagement() {
           action: 'reset-pin',
           id: selectedEmployee.id,
           pin: formData.pin,
+          actorPassword: pwd,
         }),
       });
 
@@ -242,6 +310,19 @@ export default function EmployeeManagement() {
   };
 
   const handleToggleStatus = async (employee: Employee) => {
+    // R53: server PATCH toggle-status gates on employees-patch-
+    // stepup. Always prompt — flipping isActive is a privilege
+    // change: deactivation locks the employee out, activation grants
+    // register access.
+    const pwd = await promptPassword({
+      title: `${employee.isActive ? "Deactivate" : "Activate"} ${employee.displayName}?`,
+      description: employee.isActive
+        ? "Deactivation immediately prevents this employee from logging in at the register. Confirm with your password."
+        : "Activation restores this employee's register access. Confirm with your password.",
+      confirmLabel: employee.isActive ? "Deactivate" : "Activate",
+      confirmVariant: employee.isActive ? "destructive" : "default",
+    });
+    if (!pwd) return;
     try {
       const response = await authFetch('/api/employees', {
         method: 'PATCH',
@@ -249,6 +330,7 @@ export default function EmployeeManagement() {
         body: JSON.stringify({
           action: 'toggle-status',
           id: employee.id,
+          actorPassword: pwd,
         }),
       });
 
@@ -689,6 +771,8 @@ export default function EmployeeManagement() {
           </div>
         </div>
       )}
+      {/* R53: shared password gate renders nothing until prompted. */}
+      {passwordGate}
     </div>
   );
 }

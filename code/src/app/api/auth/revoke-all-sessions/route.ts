@@ -19,7 +19,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminSession } from "@/lib/auth/session";
 import { verifySecret, runDecoyVerify } from "@/lib/auth/crypto";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
-import { getPool, orgTx } from "@/lib/supabase-rest";
+import { orgTx } from "@/lib/supabase-rest";
 import { randomUUID } from "@/lib/uuid";
 import { safeErr } from "@/lib/logging/safe-err";
 import { checkOrigin } from "@/lib/api/with-auth";
@@ -106,45 +106,43 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const pool = await getPool();
-    // R36-H6: org-scope the credential lookup as defense-in-depth.
-    // The cookie-derived `ctx.employee.id` is already tenant-verified,
-    // but pool.query runs as the `postgres` role with BYPASSRLS — so
-    // if a future bug ever collides employee UUIDs across tenants (or
-    // an employee row gets re-pointed), the raw lookup would fire
-    // against the wrong tenant's hash. Mirror the employees PATCH
-    // step-up lookup pattern (src/app/api/employees/route.ts:633):
-    // require the employee row to exist in this org.
-    const { rows: credRows } = await pool.query(
-      `SELECT password_hash FROM auth_credentials
-        WHERE employee_id = $1
-          AND employee_id IN (SELECT id FROM employees WHERE organization_id = $2)`,
-      [ctx.employee.id, ctx.employee.organizationId],
-    );
-    const currentHash = credRows[0]?.password_hash as string | undefined;
-    if (!currentHash) {
-      // No credential for this session — equalize timing and reject.
-      await runDecoyVerify(currentPassword);
-      return NextResponse.json({ error: "Password incorrect." }, { status: 401 });
-    }
-    if (!(await verifySecret(currentPassword, currentHash))) {
-      return NextResponse.json({ error: "Password incorrect." }, { status: 401 });
-    }
-  } catch (err) {
-    console.error("[revoke-all-sessions] re-auth:", safeErr(err));
-    return NextResponse.json({ error: "Re-auth failed." }, { status: 500 });
-  }
-
-  try {
-    // R52-E: wrap DELETE sessions + audit INSERT in one orgTx. Prior
-    // shape ran the DELETE via pool.query() auto-commit and then a
-    // fire-and-forget `waitUntilOrAwait(pgInsertAuditEvent)` — on
-    // Workers isolate freeze the audit was drop-prone. `sessions_revoked`
-    // is the forensic anchor for "when did the admin nuke all
-    // sessions after discovering the compromise"; atomic now.
+    // R52-E: wrap re-auth lookup + DELETE sessions + audit INSERT in
+    // ONE orgTx. Prior shape ran the credential SELECT and DELETE
+    // via pool.query() auto-commit (plus a fire-and-forget audit),
+    // leaving a ~1-50ms TOCTOU window where a concurrent
+    // /api/auth/password-change could rotate credentials between the
+    // verify step and the DELETE — the attacker's cookie verifying
+    // against the prior password but wiping new-password-era
+    // sessions. Unifying under one orgTx with `SELECT FOR UPDATE`
+    // on auth_credentials (mirrors R52-C password-change) closes
+    // the window and makes the audit row atomic.
+    //
+    // R54-L1: collapsed the 2-try-block shape into one.
     const orgId = ctx.employee.organizationId;
     const client = await orgTx(orgId);
     try {
+      // R36-H6: org-scope the credential lookup as defense-in-depth.
+      // Mirror the employees PATCH pattern (require the employee row
+      // to exist in this org).
+      const { rows: credRows } = await client.query(
+        `SELECT password_hash FROM auth_credentials
+          WHERE employee_id = $1
+            AND employee_id IN (SELECT id FROM employees WHERE organization_id = $2)
+          FOR UPDATE`,
+        [ctx.employee.id, orgId],
+      );
+      const currentHash = credRows[0]?.password_hash as string | undefined;
+      if (!currentHash) {
+        // No credential for this session — equalize timing and reject.
+        await client.query("ROLLBACK");
+        await runDecoyVerify(currentPassword);
+        return NextResponse.json({ error: "Password incorrect." }, { status: 401 });
+      }
+      if (!(await verifySecret(currentPassword, currentHash))) {
+        await client.query("ROLLBACK");
+        return NextResponse.json({ error: "Password incorrect." }, { status: 401 });
+      }
+
       // R36-H6: scope the DELETE by the employee's org too so a
       // pathological cross-tenant id collision can't wipe another
       // tenant's admin sessions. Redundant under correct ctx but cheap

@@ -646,7 +646,7 @@ export const DELETE = withAdminAuth("catalog.manage", async (request, ctx) => {
 
 // R27-H2: admin-only (see POST above).
 export const PATCH = withAdminAuth("catalog.manage", async (request, ctx) => {
-  const { orgId } = ctx;
+  const { orgId, employee } = ctx;
   const pool = await getPool();
   const client = await pool.connect();
   try {
@@ -654,6 +654,26 @@ export const PATCH = withAdminAuth("catalog.manage", async (request, ctx) => {
     const { action } = body;
 
     if (action === 'import_csv') {
+      // R54-M3: step-up re-auth on CSV bulk-import. The import
+      // handler creates variants with arbitrary price + cost fields
+      // from the CSV. Single-variant reprice (R52-A) is gated with
+      // bucketKey:'variant-price-stepup'; the bulk path was a bypass
+      // — attacker with stolen cookie could mint N $0.01 variants
+      // for self-checkout. Share the same bucket so the aggregate-
+      // per-actor cap covers both surfaces. CSV imports are low-
+      // frequency (setup / batch onboarding) so unconditional gating
+      // is acceptable UX.
+      const { requireStepUp } = await import('@/lib/auth/step-up');
+      const stepUp = await requireStepUp({
+        actorId: employee.id,
+        orgId,
+        actorPassword: (body as { actorPassword?: string })?.actorPassword,
+        bucketKey: 'variant-price-stepup',
+      });
+      if (!stepUp.ok) {
+        return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
+      }
+
       const iv = validateBody(productImportSchema, { action: 'import', rows: body.rows });
       if (!iv.success) return NextResponse.json({ error: iv.error }, { status: 400 });
       const rows = iv.data.rows as Record<string, string | number>[];

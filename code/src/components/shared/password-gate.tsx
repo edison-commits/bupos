@@ -121,6 +121,18 @@ export function usePasswordGate(): [
     return () => window.removeEventListener("keydown", onKey);
   }, [state]);
 
+  // R54-Framework-3: track the current pending resolver via a ref
+  // rather than side-effecting inside the setState updater. React's
+  // strict-mode double-invokes updater functions in dev; resolving
+  // `prev.resolve(null)` inside the updater would fire twice (still
+  // idempotent null→null, but violates the purity contract). A
+  // mirrored ref dodges that and also lets promptPassword resolve
+  // synchronously before scheduling the state change.
+  const pendingRef = useRef<Resolver | null>(null);
+  useEffect(() => {
+    pendingRef.current = state?.resolve ?? null;
+  }, [state]);
+
   const promptPassword = useCallback(
     (opts: PasswordPromptOptions) => {
       return new Promise<string | null>((resolve) => {
@@ -133,10 +145,13 @@ export function usePasswordGate(): [
         // the prior Promise permanently unresolved, leaking
         // `isPending` from a `startTransition` that wrapped the
         // await, and locking up the UI.
-        setState((prev) => {
-          if (prev) prev.resolve(null);
-          return { opts, resolve };
-        });
+        //
+        // R54-Framework-3: use a ref, not a side-effecting setState
+        // updater, so strict-mode double-invocation is purity-safe.
+        const priorResolver = pendingRef.current;
+        pendingRef.current = resolve;
+        if (priorResolver) priorResolver(null);
+        setState({ opts, resolve });
       });
     },
     [],

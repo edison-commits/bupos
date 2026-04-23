@@ -117,10 +117,32 @@ export function ExpenseTracker() {
   };
 
   const handleDelete = async (id: string) => {
+    // R54-H1: step-up re-auth on delete. Server /api/expenses DELETE
+    // gates on bucketKey:'expense-delete-stepup' — a stolen admin
+    // cookie could otherwise scrub fraud evidence.
+    const pwd = await promptPassword({
+      title: "Delete expense?",
+      description:
+        "Deleting expenses removes audit evidence. This can't be undone. Confirm with your password.",
+      confirmLabel: "Delete",
+      confirmVariant: "destructive",
+    });
+    if (!pwd) return;
     try {
-      await fetch('/api/expenses', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
+      const res = await fetch('/api/expenses', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, actorPassword: pwd }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Failed to delete' }));
+        setMessage({ type: 'error', text: err.error || 'Failed to delete expense' });
+        return;
+      }
       fetchExpenses();
-    } catch { /* */ }
+    } catch {
+      setMessage({ type: 'error', text: 'Failed to delete expense.' });
+    }
   };
 
   const update = (field: string, value: string | boolean) => setForm((p) => ({ ...p, [field]: value }));

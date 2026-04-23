@@ -45,7 +45,10 @@ describe("R51 audit fixes: admin-console PasswordGate wiring", () => {
     });
     it("supports optional gateCondition predicate for conditional gating", () => {
       expect(src).toMatch(/gateCondition\?\: \(formData: FormData, form: HTMLFormElement\) => boolean/);
-      expect(src).toMatch(/!gateCondition \|\| gateCondition\(fd, form\)/);
+      // R54-Framework-2: the predicate call moved into a try/catch
+      // block so a throwing predicate can't leave the button stuck.
+      // The invocation shape is still present; just wrapped.
+      expect(src).toMatch(/shouldGate = gateCondition\(fd, form\)/);
     });
     it("scrubs caught errors via safeErr before logging", () => {
       expect(src).toMatch(/import \{ safeErr \}/);

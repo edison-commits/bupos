@@ -10,25 +10,19 @@ import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { mutateStore } from "@/lib/persistence/store";
 import type { RoleKey } from "@/lib/domain/types";
 import {
-  pgCreateCategory,
   pgCreateProduct,
   pgCreateVariant,
   VariantUniquenessConflictError,
   pgCreateInventoryLevel,
   pgAdjustInventory,
-  pgCreateEmployee,
-  pgToggleEmployee,
-  pgReadEmployeeById,
   pgFindCredentialByEmail,
   pgInsertAuditEvent,
-  pgUpdateOrganization,
-  pgUpdateLocation,
-  pgUpdateCategory,
-  pgDeleteCategory,
   pgUpdateProduct,
   pgDeleteProduct,
-  pgUpdateVariant,
-  pgDeleteVariant,
+  invalidateProductsCache,
+  invalidateVariantsCache,
+  invalidateLocationsCache,
+  invalidateEmployeesCache,
 } from "@/lib/persistence/postgres-store";
 
 import { safeErr } from "@/lib/logging/safe-err";
@@ -169,11 +163,32 @@ export async function createCategoryAction(formData: FormData) {
   if (isPg()) {
     const id = randomUUID();
     const orgId = employee.organizationId;
-    await pgCreateCategory({
-      id, organizationId: orgId, name, slug,
-      sortOrder: 0, imageUrl,
-    });
-    await pgInsertAuditEvent(orgId, null, employee.id, "category", id, "catalog_update", { action: "created", name });
+    // R54-M: INSERT + audit inline in one orgTx so the create is
+    // atomic with its audit row. Prior shape: pgCreateCategory (own
+    // tx) then pgInsertAuditEvent (separate tx) — if the second tx
+    // failed, the category landed without an audit trail. Matches
+    // the in-tx audit pattern established in R49 for REST routes.
+    const { orgTx } = await import("@/lib/db");
+    const ts = new Date().toISOString();
+    const client = await orgTx(orgId);
+    try {
+      await client.query(
+        `INSERT INTO categories (id, organization_id, slug, name, sort_order, image_url, parent_category_id, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)`,
+        [id, orgId, slug, name, 0, imageUrl ?? null, null, ts],
+      );
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'category', $5, 'catalog_update', $6, now())`,
+        [randomUUID(), orgId, null, employee.id, id, JSON.stringify({ action: "created", name })],
+      );
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
   } else {
     await mutateStore((store) => {
       store.categories.push({
@@ -282,6 +297,15 @@ export async function createProductAction(formData: FormData) {
     });
     // Now that the variant exists, point product.default_variant_id at it.
     await pgUpdateProduct(productId, { defaultVariantId: variantId }, orgId);
+    // R54-M: drift retained — createProductAction's pg flow is FOUR
+    // already-separate txs (pgCreateProduct → pgCreateVariant →
+    // pgCreateInventoryLevel → pgUpdateProduct.default_variant_id),
+    // each inside its own orgTx internally, because the
+    // `fk_products_default_variant_id` FK is NOT DEFERRABLE (R23-H-2
+    // rationale in comments above). Collapsing into one tx would
+    // require migrating the FK to DEFERRABLE INITIALLY DEFERRED —
+    // out of scope for R54. Until then the audit row is already
+    // effectively post-create; track for a future refactor.
     await pgInsertAuditEvent(orgId, locationId, employee.id, "product", productId, "catalog_update", { action: "created", name, sku });
   } else {
     await mutateStore((store) => {
@@ -425,6 +449,16 @@ export async function adjustInventoryAction(formData: FormData) {
       }
     }
     const { level } = await pgAdjustInventory(inventoryLevelId, delta, employee.id, reason, employee.organizationId);
+    // R54-M: drift retained — pgAdjustInventory is too complex to
+    // inline (SELECT FOR UPDATE on inventory_levels, applied-delta
+    // computation vs on_hand floor, INSERT into inventory_adjustments
+    // + cache cascade). Collapsing it would require either
+    // duplicating all that logic here or widening the pg* signature
+    // to accept an optional `client?: PoolClient` — the latter is
+    // Approach 3 (too invasive for this round per R54 charter).
+    // Track for a future refactor; the window for audit loss is
+    // only a transient audit-tx failure after the inventory UPDATE
+    // committed, which is logged structured by pgInsertAuditEvent.
     await pgInsertAuditEvent(level.organizationId, level.locationId, employee.id, "inventory_level", inventoryLevelId, "inventory_adjustment", { delta, reason });
   } else {
     await mutateStore((store) => {
@@ -495,15 +529,46 @@ export async function createEmployeeAction(formData: FormData) {
   if (isPg()) {
     const employeeId = randomUUID();
     const orgId = employee.organizationId;
-    await pgCreateEmployee({
-      id: employeeId, organizationId: orgId, roleKey, firstName, lastName,
-      displayName: `${firstName} ${lastName[0] ?? ""}.`.trim(),
-      email, pinHash: await hashSecret(pin),
-      passwordHash: password ? await hashSecret(password) : undefined,
-      pinHint: `4-digit ${roleKey.replace("_", " ")} PIN`,
-      isActive: true, locationIds: employee.locationIds,
-    });
-    await pgInsertAuditEvent(orgId, null, employee.id, "employee", employeeId, "catalog_update", { action: "created_employee", name: `${firstName} ${lastName}` });
+    // R54-M: INSERT employees + auth_credentials + audit ALL in one
+    // orgTx. Prior shape: pgCreateEmployee (own tx wrapping the two
+    // INSERTs) → pgInsertAuditEvent (separate tx). Auth-capable
+    // employee creation is a privilege-elevation action; the audit
+    // row must land with the mint or not at all.
+    const pinHash = await hashSecret(pin);
+    const passwordHash = password ? await hashSecret(password) : undefined;
+    const displayName = `${firstName} ${lastName[0] ?? ""}.`.trim();
+    const pinHint = `4-digit ${roleKey.replace("_", " ")} PIN`;
+    const ts = new Date().toISOString();
+    const { orgTx } = await import("@/lib/db");
+    const client = await orgTx(orgId);
+    try {
+      await client.query(
+        `INSERT INTO employees (id, organization_id, role_key, first_name, last_name, display_name, email, pin_hint, is_active, location_ids, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::uuid[], $11, $11)`,
+        [employeeId, orgId, roleKey, firstName, lastName, displayName, email ?? null, pinHint, true, employee.locationIds, ts],
+      );
+      // check-pool-org-filter: scoped-by-just-created-employee
+      // employee_id was just INSERTed above into this org; auth_credentials
+      // has no organization_id column (tenancy derives through employees FK).
+      await client.query(
+        `INSERT INTO auth_credentials (employee_id, email, password_hash, pin_hash, pin_last_rotated_at, failed_pin_attempts, last_failed_pin_at, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, 0, NULL, $5, $5)`,
+        [employeeId, email ?? null, passwordHash ?? null, pinHash, ts],
+      );
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'employee', $5, 'catalog_update', $6, now())`,
+        [randomUUID(), orgId, null, employee.id, employeeId, JSON.stringify({ action: "created_employee", name: `${firstName} ${lastName}` })],
+      );
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
+    // Mirror pgCreateEmployee's cache invalidation.
+    invalidateEmployeesCache(orgId);
   } else {
     const timestamp = now();
     const pinHashVal = await hashSecret(pin);
@@ -554,19 +619,71 @@ export async function toggleEmployeeAction(formData: FormData) {
 
   let newStatus: boolean | null = null;
   if (isPg()) {
-    const target = await pgReadEmployeeById(employeeId, actor.organizationId);
-    if (!target) redirect("/admin?error=Employee+not+found");
-    if (!canManageEmployeeRole(actor.roleKey, target!.roleKey)) {
-      redirect("/admin?error=You+cannot+change+that+employee");
+    // R54-M: lock + role-check + toggle + audit ALL in one orgTx.
+    //
+    // Prior shape did pgReadEmployeeById (own conn, no lock) → role
+    // permission check → pgToggleEmployee (own tx: SELECT FOR UPDATE
+    // + UPDATE) → pgInsertAuditEvent (separate tx). Two drift vectors:
+    //   • Audit could drop if its tx failed after the toggle landed.
+    //   • A concurrent toggle between the read and the FOR UPDATE
+    //     could flip the row twice in aggregate (not a security
+    //     break, but audit rows could misreport net direction).
+    //
+    // Inline all four steps: SELECT FOR UPDATE (same as
+    // pgToggleEmployee), permission check on the locked row's
+    // role, UPDATE, audit, COMMIT.
+    const orgId = actor.organizationId;
+    type ToggleEmpOutcome =
+      | { kind: "ok" }
+      | { kind: "not_found" }
+      | { kind: "denied" };
+    const { orgTx } = await import("@/lib/db");
+    const client = await orgTx(orgId);
+    let outcome: ToggleEmpOutcome = { kind: "ok" };
+    let targetRole = "";
+    try {
+      const { rows: empRows } = await client.query(
+        `SELECT role_key, is_active FROM employees WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
+        [employeeId, orgId],
+      );
+      if (empRows.length === 0) {
+        await client.query("ROLLBACK").catch(() => {});
+        outcome = { kind: "not_found" };
+      } else {
+        targetRole = empRows[0].role_key as string;
+        if (!canManageEmployeeRole(actor.roleKey, targetRole as RoleKey)) {
+          await client.query("ROLLBACK").catch(() => {});
+          outcome = { kind: "denied" };
+        } else {
+          newStatus = !(empRows[0].is_active as boolean);
+          await client.query(
+            `UPDATE employees SET is_active = NOT is_active, updated_at = $1
+             WHERE id = $2 AND organization_id = $3`,
+            [new Date().toISOString(), employeeId, orgId],
+          );
+          await client.query(
+            `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+             VALUES ($1, $2, $3, $4, 'employee', $5, 'employee_status_changed', $6, now())`,
+            [
+              randomUUID(), orgId, null, actor.id, employeeId,
+              JSON.stringify({ action: newStatus ? "activated" : "deactivated", target_role: targetRole }),
+            ],
+          );
+          await client.query("COMMIT");
+        }
+      }
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
     }
-    newStatus = !target!.isActive;
-    const toggled = await pgToggleEmployee(employeeId, actor.organizationId);
-    if (!toggled) redirect("/admin?error=Employee+not+found");
-    await pgInsertAuditEvent(
-      actor.organizationId, null, actor.id,
-      "employee", employeeId, "employee_status_changed",
-      { action: newStatus ? "activated" : "deactivated", target_role: target!.roleKey },
-    );
+    if (outcome.kind === "ok") {
+      // Mirror pgToggleEmployee's cache invalidation on the happy path.
+      invalidateEmployeesCache(orgId);
+    }
+    if (outcome.kind === "not_found") redirect("/admin?error=Employee+not+found");
+    if (outcome.kind === "denied") redirect("/admin?error=You+cannot+change+that+employee");
   } else {
     await mutateStore((store) => {
       const employee = store.employees.find((entry) => entry.id === employeeId);
@@ -600,8 +717,29 @@ export async function editCategoryAction(formData: FormData) {
 
   if (isPg()) {
     const orgId = employee.organizationId;
-    await pgUpdateCategory(categoryId, { name, slug, imageUrl }, employee.organizationId);
-    await pgInsertAuditEvent(orgId, null, employee.id, "category", categoryId, "catalog_update", { action: "updated", name });
+    // R54-M: UPDATE + audit inline in one orgTx. Prior shape ran
+    // pgUpdateCategory (own tx) then pgInsertAuditEvent (separate
+    // tx); on audit-tx failure the rename landed without a trail.
+    const { orgTx } = await import("@/lib/db");
+    const client = await orgTx(orgId);
+    try {
+      await client.query(
+        `UPDATE categories SET name = $1, slug = $2, image_url = $3, updated_at = $4
+         WHERE id = $5 AND organization_id = $6`,
+        [name, slug, imageUrl ?? null, new Date().toISOString(), categoryId, orgId],
+      );
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'category', $5, 'catalog_update', $6, now())`,
+        [randomUUID(), orgId, null, employee.id, categoryId, JSON.stringify({ action: "updated", name })],
+      );
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
   } else {
     await mutateStore((store) => {
       const category = store.categories.find((c) => c.id === categoryId);
@@ -638,8 +776,28 @@ export async function deleteCategoryAction(formData: FormData) {
 
   if (isPg()) {
     const orgId = employee.organizationId;
-    await pgDeleteCategory(categoryId, employee.organizationId);
-    await pgInsertAuditEvent(orgId, null, employee.id, "category", categoryId, "catalog_update", { action: "deleted" });
+    // R54-M: DELETE + audit inline in one orgTx. Prior shape split
+    // DELETE and audit across two separate txs; audit-tx failure
+    // left the delete permanent with no trail.
+    const { orgTx } = await import("@/lib/db");
+    const client = await orgTx(orgId);
+    try {
+      await client.query(
+        `DELETE FROM categories WHERE id = $1 AND organization_id = $2`,
+        [categoryId, orgId],
+      );
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'category', $5, 'catalog_update', $6, now())`,
+        [randomUUID(), orgId, null, employee.id, categoryId, JSON.stringify({ action: "deleted" })],
+      );
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
   } else {
     await mutateStore((store) => {
       const index = store.categories.findIndex((c) => c.id === categoryId);
@@ -681,8 +839,35 @@ export async function editProductAction(formData: FormData) {
 
   if (isPg()) {
     const orgId = employee.organizationId;
-    await pgUpdateProduct(productId, { name, slug, categoryId, description, imageUrl, isActive, isTouchFavorite }, employee.organizationId);
-    await pgInsertAuditEvent(orgId, null, employee.id, "product", productId, "catalog_update", { action: "updated", name });
+    // R54-M: UPDATE + audit inline in one orgTx. Prior shape split
+    // pgUpdateProduct and pgInsertAuditEvent into two separate txs;
+    // post-commit audit failure left catalog edits with no trail.
+    // Mirror the shape of pgUpdateProduct with a pre-built dynamic
+    // SET list, then audit before COMMIT.
+    const { orgTx } = await import("@/lib/db");
+    const client = await orgTx(orgId);
+    try {
+      await client.query(
+        `UPDATE products SET name = $1, slug = $2, category_id = $3, description = $4,
+                             image_url = $5, is_active = $6, is_touch_favorite = $7, updated_at = $8
+         WHERE id = $9 AND organization_id = $10`,
+        [
+          name, slug, categoryId, description ?? null, imageUrl ?? null,
+          isActive, isTouchFavorite, new Date().toISOString(), productId, orgId,
+        ],
+      );
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'product', $5, 'catalog_update', $6, now())`,
+        [randomUUID(), orgId, null, employee.id, productId, JSON.stringify({ action: "updated", name })],
+      );
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
   } else {
     await mutateStore((store) => {
       const product = store.products.find((p) => p.id === productId);
@@ -723,8 +908,30 @@ export async function deleteProductAction(formData: FormData) {
 
   if (isPg()) {
     const orgId = employee.organizationId;
-    await pgDeleteProduct(productId, employee.organizationId);
-    await pgInsertAuditEvent(orgId, null, employee.id, "product", productId, "catalog_update", { action: "deleted" });
+    // R54-M: DELETE + audit inline in one orgTx. Prior shape split
+    // pgDeleteProduct and pgInsertAuditEvent into two separate txs.
+    const { orgTx } = await import("@/lib/db");
+    const client = await orgTx(orgId);
+    try {
+      await client.query(
+        `DELETE FROM products WHERE id = $1 AND organization_id = $2`,
+        [productId, orgId],
+      );
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'product', $5, 'catalog_update', $6, now())`,
+        [randomUUID(), orgId, null, employee.id, productId, JSON.stringify({ action: "deleted" })],
+      );
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
+    // Mirror pgDeleteProduct's cache invalidation so POS terminals
+    // see the removal before the 30s TTL.
+    invalidateProductsCache(orgId);
   } else {
     await mutateStore((store) => {
       const index = store.products.findIndex((p) => p.id === productId);
@@ -778,46 +985,114 @@ export async function editVariantAction(formData: FormData) {
   if (isPg()) {
     const orgId = employee.organizationId;
 
-    // R49: step-up re-auth when price OR cost actually CHANGES. Snapshot
-    // the pre-value and compare — the form posts the same fields every
-    // time (including unchanged price), so gating on field presence
-    // would friction every edit. Comparing real before/after bounds
-    // the step-up ask to genuine price moves — the fraud-relevant edit.
-    const { orgQuery } = await import("@/lib/supabase-rest");
-    const { rows: priorRows } = await orgQuery(
-      orgId,
-      `SELECT price, cost FROM product_variants WHERE id = $1 AND organization_id = $2 LIMIT 1`,
-      [variantId, orgId],
-    );
-    const prior = priorRows[0] as { price: string; cost: string | null } | undefined;
-    const priorPrice = prior ? Number(prior.price) : null;
-    const priorCost = prior?.cost != null ? Number(prior.cost) : null;
-    const priceChanged = priorPrice !== null && Math.abs(priorPrice - price) > 0.005;
-    const costChanged = cost !== undefined && priorCost !== null && Math.abs(priorCost - cost) > 0.005;
-    if (priceChanged || costChanged) {
-      const { requireStepUp } = await import('@/lib/auth/step-up');
-      const stepUp = await requireStepUp({
-        actorId: employee.id,
-        orgId,
-        actorPassword,
-        bucketKey: 'variant-price-stepup',
-      });
-      if (!stepUp.ok) {
-        redirect(`/admin?error=${encodeURIComponent(stepUp.error)}`);
-      }
-    }
-
+    // R54-M (R53-M2 fix): prior → step-up → UPDATE → audit all in ONE
+    // orgTx with SELECT … FOR UPDATE on the prior row.
+    //
+    // The previous shape had two audit-drift AND TOCTOU problems:
+    //   1. The prior SELECT happened via orgQuery (its own tx) so a
+    //      concurrent PUT could reprice the row between our read and
+    //      our UPDATE — the step-up check gated on a stale snapshot.
+    //   2. pgUpdateVariant (own tx) + pgInsertAuditEvent (separate tx):
+    //      audit drop on post-commit audit-tx failure.
+    //
+    // Inline SELECT FOR UPDATE locks the row for the duration of the
+    // step-up hash + UPDATE; mirrors the /api/products PUT variant
+    // branch exactly. Any other writer waits or aborts cleanly.
+    type EditVariantOutcome =
+      | { kind: "ok" }
+      | { kind: "not_found" }
+      | { kind: "stepup_failed"; error: string }
+      | { kind: "conflict"; message: string };
+    const { orgTx } = await import("@/lib/db");
+    const client = await orgTx(orgId);
+    let outcome: EditVariantOutcome = { kind: "ok" };
     try {
-      await pgUpdateVariant(variantId, { name, sku, barcode, price, cost, sizeLabel, colorLabel, isActive }, employee.organizationId);
-    } catch (err) {
-      // R22-M-1: reactivating / renaming into a conflicting SKU/barcode
-      // collides with uniq_product_variants_org_{sku,barcode}_active.
-      if (err instanceof VariantUniquenessConflictError) {
-        redirect(`/admin?error=${encodeURIComponent(err.message)}`);
+      const { rows: priorRows } = await client.query(
+        `SELECT price, cost FROM product_variants WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
+        [variantId, orgId],
+      );
+      const prior = priorRows[0] as { price: string; cost: string | null } | undefined;
+      if (!prior) {
+        await client.query("ROLLBACK").catch(() => {});
+        outcome = { kind: "not_found" };
+      } else {
+        const priorPrice = Number(prior.price);
+        const priorCost = prior.cost != null ? Number(prior.cost) : null;
+        const priceChanged = Math.abs(priorPrice - price) > 0.005;
+        const costChanged = cost !== undefined && priorCost !== null && Math.abs(priorCost - cost) > 0.005;
+        let stepUpOk = true;
+        let stepUpErr = "";
+        if (priceChanged || costChanged) {
+          const { requireStepUp } = await import('@/lib/auth/step-up');
+          const stepUp = await requireStepUp({
+            actorId: employee.id,
+            orgId,
+            actorPassword,
+            bucketKey: 'variant-price-stepup',
+          });
+          if (!stepUp.ok) {
+            stepUpOk = false;
+            stepUpErr = stepUp.error;
+          }
+        }
+        if (!stepUpOk) {
+          await client.query("ROLLBACK").catch(() => {});
+          outcome = { kind: "stepup_failed", error: stepUpErr };
+        } else {
+          try {
+            await client.query(
+              `UPDATE product_variants SET name = $1, sku = $2, barcode = $3, price = $4, cost = $5,
+                                            size_label = $6, color_label = $7, is_active = $8, updated_at = $9
+               WHERE id = $10 AND organization_id = $11`,
+              [
+                name, sku, barcode ?? null, price, cost ?? null,
+                sizeLabel ?? null, colorLabel ?? null, isActive, new Date().toISOString(),
+                variantId, orgId,
+              ],
+            );
+          } catch (err) {
+            // R22-M-1: partial-unique index collision on (org, sku) /
+            // (org, barcode) WHERE is_active. Mirror pgUpdateVariant's
+            // translation to a typed error so the UI copy stays the same.
+            const e = err as { code?: string; constraint?: string };
+            if (e.code === "23505") {
+              if (e.constraint === "uniq_product_variants_org_sku_active") {
+                await client.query("ROLLBACK").catch(() => {});
+                outcome = { kind: "conflict", message: new VariantUniquenessConflictError("sku").message };
+              } else if (e.constraint === "uniq_product_variants_org_barcode_active") {
+                await client.query("ROLLBACK").catch(() => {});
+                outcome = { kind: "conflict", message: new VariantUniquenessConflictError("barcode").message };
+              } else {
+                throw err;
+              }
+            } else {
+              throw err;
+            }
+          }
+          if (outcome.kind === "ok") {
+            await client.query(
+              `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+               VALUES ($1, $2, $3, $4, 'variant', $5, 'catalog_update', $6, now())`,
+              [randomUUID(), orgId, null, employee.id, variantId, JSON.stringify({ action: "updated", name, sku })],
+            );
+            await client.query("COMMIT");
+          }
+        }
       }
-      throw err;
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
     }
-    await pgInsertAuditEvent(orgId, null, employee.id, "variant", variantId, "catalog_update", { action: "updated", name, sku });
+    if (outcome.kind === "ok") {
+      // Mirror pgUpdateVariant's cache invalidation on the happy path.
+      invalidateVariantsCache(orgId);
+    }
+    // Redirects deferred past the tx so we don't leak the client.
+    if (outcome.kind === "not_found") redirect("/admin?error=Variant+not+found");
+    if (outcome.kind === "stepup_failed") redirect(`/admin?error=${encodeURIComponent(outcome.error)}`);
+    if (outcome.kind === "conflict") redirect(`/admin?error=${encodeURIComponent(outcome.message)}`);
   } else {
     await mutateStore((store) => {
       const variant = store.variants.find((v) => v.id === variantId);
@@ -859,8 +1134,28 @@ export async function deleteVariantAction(formData: FormData) {
 
   if (isPg()) {
     const orgId = employee.organizationId;
-    await pgDeleteVariant(variantId, employee.organizationId);
-    await pgInsertAuditEvent(orgId, null, employee.id, "variant", variantId, "catalog_update", { action: "deleted" });
+    // R54-M: DELETE + audit inline in one orgTx.
+    const { orgTx } = await import("@/lib/db");
+    const client = await orgTx(orgId);
+    try {
+      await client.query(
+        `DELETE FROM product_variants WHERE id = $1 AND organization_id = $2`,
+        [variantId, orgId],
+      );
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'variant', $5, 'catalog_update', $6, now())`,
+        [randomUUID(), orgId, null, employee.id, variantId, JSON.stringify({ action: "deleted" })],
+      );
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
+    // Mirror pgDeleteVariant's cache invalidation.
+    invalidateVariantsCache(orgId);
   } else {
     await mutateStore((store) => {
       const index = store.variants.findIndex((v) => v.id === variantId);
@@ -894,7 +1189,11 @@ export async function updateOrganizationAction(formData: FormData) {
   const orgId = employee.organizationId;
 
   if (isPg()) {
-    await pgUpdateOrganization(orgId, {
+    // R54-M: UPDATE + audit inline in one orgTx. Prior shape split
+    // pgUpdateOrganization (own tx) and pgInsertAuditEvent (separate
+    // tx); on audit-tx failure the org identity change landed without
+    // an audit trail. Mirrors the /api/settings 'store' branch shape.
+    const orgData: Record<string, unknown> = {
       name: String(formData.get("name") ?? "").trim() || undefined,
       legalName: String(formData.get("legalName") ?? "").trim() || undefined,
       phone: String(formData.get("phone") ?? "").trim(),
@@ -902,8 +1201,41 @@ export async function updateOrganizationAction(formData: FormData) {
       website: String(formData.get("website") ?? "").trim(),
       receiptHeader: String(formData.get("receiptHeader") ?? "").trim(),
       receiptFooter: String(formData.get("receiptFooter") ?? "").trim(),
-    });
-    await pgInsertAuditEvent(orgId, null, employee.id, "organization", orgId, "settings_update", { action: "updated_organization" });
+    };
+    const colMap: Record<string, string> = {
+      name: "name", legalName: "legal_name", phone: "phone", email: "email",
+      website: "website", receiptHeader: "receipt_header", receiptFooter: "receipt_footer",
+    };
+    const sets: string[] = [];
+    const vals: unknown[] = [];
+    let i = 1;
+    for (const [key, col] of Object.entries(colMap)) {
+      const v = orgData[key];
+      if (v !== undefined) { sets.push(`${col} = $${i++}`); vals.push(v); }
+    }
+    const { orgTx } = await import("@/lib/db");
+    const client = await orgTx(orgId);
+    try {
+      if (sets.length > 0) {
+        sets.push(`updated_at = $${i++}`); vals.push(new Date().toISOString());
+        vals.push(orgId);
+        // check-pool-org-filter: scoped-by-id-is-org-id-on-organizations-table
+        // `organizations.id` IS the tenant scope (root of tenancy tree);
+        // same rationale as pgUpdateOrganization's comment.
+        await client.query(`UPDATE organizations SET ${sets.join(", ")} WHERE id = $${i}`, vals);
+      }
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'organization', $5, 'settings_update', $6, now())`,
+        [randomUUID(), orgId, null, employee.id, orgId, JSON.stringify({ action: "updated_organization" })],
+      );
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
   } else {
     await mutateStore((store) => {
       store.organization.name = String(formData.get("name") ?? "").trim() || store.organization.name;
@@ -927,54 +1259,108 @@ export async function updateLocationAction(formData: FormData) {
   const taxRatePercent = Number.parseFloat(taxRateRaw);
   const taxRate = Number.isFinite(taxRatePercent) ? taxRatePercent / 100 : undefined;
 
-  // R44-H: step-up when tax rate is being changed. Server-action form
-  // submissions carry `actorPassword` in the FormData when the UI
-  // prompts via <PasswordGate>. Other fields (name/address/phone) are
-  // low-blast-radius and don't need the gate.
-  //
-  // R52-G: snapshot-compare against prior taxRate so the gate fires
-  // ONLY when the value actually changed. Prior shape gated on
-  // `taxRate !== undefined` — but the form posts taxRate on every
-  // save (defaultValue is set), so every single save triggered the
-  // step-up. Legitimate name/address/phone edits errored with
-  // "password required" on every attempt. Mirror the editVariant
-  // pattern: compare new tax vs prior with a small epsilon to
-  // absorb floating-point noise, gate only on real change.
-  if (taxRate !== undefined && isPg()) {
-    const { orgQuery } = await import("@/lib/supabase-rest");
-    const { rows: priorRows } = await orgQuery(
-      employee.organizationId,
-      `SELECT tax_rate FROM locations WHERE id = $1 AND organization_id = $2 LIMIT 1`,
-      [locationId, employee.organizationId],
-    );
-    const priorTax = priorRows[0]?.tax_rate != null ? Number(priorRows[0].tax_rate) : null;
-    const taxChanged = priorTax === null || Math.abs(priorTax - taxRate) > 0.00005;
-    if (taxChanged) {
-      const actorPassword = String(formData.get("actorPassword") ?? "");
-      const { requireStepUp } = await import("@/lib/auth/step-up");
-      const stepUp = await requireStepUp({
-        actorId: employee.id,
-        orgId: employee.organizationId,
-        actorPassword,
-        bucketKey: "tax-rate-stepup",
-      });
-      if (!stepUp.ok) {
-        redirect(`/admin?error=${encodeURIComponent(stepUp.error)}`);
-      }
-    }
-  }
-
   if (isPg()) {
-    await pgUpdateLocation(locationId, {
-      name: String(formData.get("locationName") ?? "").trim() || undefined,
-      address1: String(formData.get("address1") ?? "").trim() || undefined,
-      city: String(formData.get("city") ?? "").trim() || undefined,
-      region: String(formData.get("region") ?? "").trim() || undefined,
-      postalCode: String(formData.get("postalCode") ?? "").trim() || undefined,
-      phone: String(formData.get("locationPhone") ?? "").trim(),
-      taxRate,
-    }, employee.organizationId);
-    await pgInsertAuditEvent(employee.organizationId, locationId, employee.id, "location", locationId, "settings_update", { action: "updated_location", taxRate });
+    // R54-M (R53-M1 fix): prior SELECT → step-up → UPDATE → audit ALL
+    // in one orgTx. Prior shape ran a separate-tx orgQuery for the
+    // prior tax snapshot, then pgUpdateLocation (own tx), then
+    // pgInsertAuditEvent (separate tx):
+    //   • Audit drift: the location change landed but audit could
+    //     drop if its tx failed (R53-M1).
+    //   • TOCTOU: a concurrent edit could retarget tax_rate between
+    //     our snapshot and our UPDATE, silently bypassing the step-up.
+    //
+    // SELECT … FOR UPDATE locks the row for the duration of the
+    // step-up hash + UPDATE; mirrors the /api/settings location
+    // branch shape.
+    //
+    // R44-H: step-up when tax rate is being changed. Other fields
+    // (name/address/phone) are low-blast-radius and don't need the
+    // gate. R52-G: snapshot-compare with epsilon so legitimate
+    // name/address edits don't trigger the password challenge.
+    const orgId = employee.organizationId;
+    const { orgTx } = await import("@/lib/db");
+    type UpdLocOutcome = { kind: "ok" } | { kind: "stepup_failed"; error: string };
+    const client = await orgTx(orgId);
+    let outcome: UpdLocOutcome = { kind: "ok" };
+    try {
+      let priorTax: number | null = null;
+      if (taxRate !== undefined) {
+        const { rows: priorRows } = await client.query(
+          `SELECT tax_rate FROM locations WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
+          [locationId, orgId],
+        );
+        priorTax = priorRows[0]?.tax_rate != null ? Number(priorRows[0].tax_rate) : null;
+        const taxChanged = priorTax === null || Math.abs(priorTax - taxRate) > 0.00005;
+        if (taxChanged) {
+          const actorPassword = String(formData.get("actorPassword") ?? "");
+          const { requireStepUp } = await import("@/lib/auth/step-up");
+          const stepUp = await requireStepUp({
+            actorId: employee.id,
+            orgId,
+            actorPassword,
+            bucketKey: "tax-rate-stepup",
+          });
+          if (!stepUp.ok) {
+            await client.query("ROLLBACK").catch(() => {});
+            outcome = { kind: "stepup_failed", error: stepUp.error };
+          }
+        }
+      }
+
+      if (outcome.kind === "ok") {
+        // Build dynamic SET list (mirrors pgUpdateLocation).
+        const locData: Record<string, unknown> = {
+          name: String(formData.get("locationName") ?? "").trim() || undefined,
+          address1: String(formData.get("address1") ?? "").trim() || undefined,
+          city: String(formData.get("city") ?? "").trim() || undefined,
+          region: String(formData.get("region") ?? "").trim() || undefined,
+          postalCode: String(formData.get("postalCode") ?? "").trim() || undefined,
+          phone: String(formData.get("locationPhone") ?? "").trim(),
+          taxRate,
+        };
+        const colMap: Record<string, string> = {
+          name: "name", address1: "address1", city: "city", region: "region",
+          postalCode: "postal_code", phone: "phone", taxRate: "tax_rate",
+        };
+        const sets: string[] = [];
+        const vals: unknown[] = [];
+        let i = 1;
+        for (const [key, col] of Object.entries(colMap)) {
+          const v = locData[key];
+          if (v !== undefined) { sets.push(`${col} = $${i++}`); vals.push(v); }
+        }
+        if (sets.length > 0) {
+          sets.push(`updated_at = $${i++}`); vals.push(new Date().toISOString());
+          vals.push(locationId);
+          vals.push(orgId);
+          await client.query(
+            `UPDATE locations SET ${sets.join(", ")} WHERE id = $${i} AND organization_id = $${i + 1}`,
+            vals,
+          );
+        }
+        await client.query(
+          `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+           VALUES ($1, $2, $3, $4, 'location', $5, 'settings_update', $6, now())`,
+          [
+            randomUUID(), orgId, locationId, employee.id, locationId,
+            JSON.stringify({ action: "updated_location", taxRate }),
+          ],
+        );
+        await client.query("COMMIT");
+      }
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
+    if (outcome.kind === "ok") {
+      // Mirror pgUpdateLocation's cache invalidation on the happy path.
+      invalidateLocationsCache(orgId);
+    }
+    if (outcome.kind === "stepup_failed") {
+      redirect(`/admin?error=${encodeURIComponent(outcome.error)}`);
+    }
   }
 
   revalidatePath("/admin");

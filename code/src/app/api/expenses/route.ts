@@ -171,6 +171,25 @@ export const DELETE = withAdminAuth("employee.manage", async (request, ctx) => {
     if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
     const { id } = v.data;
 
+    // R54-H1: step-up re-auth. DELETE is an evidence-destruction
+    // vector — a stolen admin cookie can scrub the cash-short
+    // cover-up trail the POST comment explicitly warned about.
+    // POST gates on amount >= $500 with `expense-create-stepup`;
+    // DELETE mirrors the same bucket (sharing the aggregate cap)
+    // but gates unconditionally since the attacker can delete any
+    // amount. The expense's own audit row remains in audit_events
+    // after DELETE, but the source-of-truth row is gone.
+    const { requireStepUp } = await import("@/lib/auth/step-up");
+    const stepUp = await requireStepUp({
+      actorId: ctx.employee.id,
+      orgId,
+      actorPassword: (body as { actorPassword?: string })?.actorPassword,
+      bucketKey: 'expense-delete-stepup',
+    });
+    if (!stepUp.ok) {
+      return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
+    }
+
     // R49: wrap SELECT + DELETE + audit in one orgTx so the audit row
     // is atomic with the destructive mutation. An attacker-induced
     // post-commit audit failure would otherwise destroy the evidence

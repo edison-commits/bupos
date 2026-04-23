@@ -8,6 +8,12 @@ import { getTaxRate, getCitiesForState, US_STATES } from '@/lib/tax-rates';
 import { authFetch } from '@/lib/api/client';
 import { FETCH_TIMEOUT_MS } from '@/lib/config/timing';
 import { formatCurrency } from "@/lib/format";
+// R53: step-up re-auth when tax rate changes. Server /api/settings
+// PUT gates bucketKey:'tax-rate-stepup' specifically on taxRate
+// drift; other location fields (name/address/city/phone/etc) stay
+// cookie-only. Prior UI didn't thread actorPassword so every
+// tax-rate edit threw.
+import { usePasswordGate } from "@/components/shared/password-gate";
 
 interface StoreSettings {
   store: {
@@ -942,6 +948,7 @@ export default function SettingsPage() {
     location: null,
     receipt: null,
   });
+  const [promptPassword, passwordGate] = usePasswordGate();
 
   useEffect(() => {
     fetchSettings();
@@ -1004,6 +1011,22 @@ export default function SettingsPage() {
   };
 
   const handleSaveLocation = async (data: StoreSettings['location']) => {
+    // R53: compare the submitted taxRate against the snapshot fetched
+    // from the server. If it drifted, the server will require
+    // step-up; prompt for password and thread it through. Any other
+    // location-field drift (name, address, etc.) stays cookie-only.
+    let actorPassword: string | undefined;
+    if (data.taxRate !== settings.location.taxRate) {
+      const pwd = await promptPassword({
+        title: `Change tax rate to ${data.taxRate.toFixed(2)}%?`,
+        description:
+          "Tax-rate changes affect every future sale at this location and flow through to your tax report. Confirm with your password.",
+        confirmLabel: "Save tax rate",
+        confirmVariant: "default",
+      });
+      if (!pwd) return;
+      actorPassword = pwd;
+    }
     try {
       setSavingSection('location');
       setSectionErrors((prev) => ({ ...prev, location: null }));
@@ -1015,7 +1038,11 @@ export default function SettingsPage() {
         const response = await authFetch('/api/settings', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ section: 'location', data }),
+          body: JSON.stringify({
+            section: 'location',
+            data,
+            ...(actorPassword ? { actorPassword } : {}),
+          }),
           signal: controller.signal,
           cache: 'no-store',
         });
@@ -1124,6 +1151,8 @@ export default function SettingsPage() {
           />
         </div>
       </div>
+      {/* R53: shared password gate renders nothing until prompted. */}
+      {passwordGate}
     </div>
   );
 }

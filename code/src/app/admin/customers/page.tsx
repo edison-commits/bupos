@@ -196,6 +196,36 @@ export default function CustomerManagement() {
   const handleCreateOrUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
+
+    // R53: step-up re-auth when editing PII-sensitive fields. Mirror
+    // the R52-L pattern from src/components/admin/customer-database.
+    // Create (POST) has no step-up; PUT gates on
+    // bucketKey:'customer-pii-edit-stepup' when any of email, phone,
+    // address, or notes changes relative to the loaded customer.
+    let actorPassword: string | undefined;
+    if (modalMode === 'edit' && selectedCustomer) {
+      const priorEmail = selectedCustomer.email ?? '';
+      const priorPhone = selectedCustomer.phone ?? '';
+      const priorAddress = selectedCustomer.address ?? '';
+      const priorNotes = selectedCustomer.notes ?? '';
+      const sensitiveChanged =
+        priorEmail !== formData.email ||
+        priorPhone !== formData.phone ||
+        priorAddress !== formData.address ||
+        priorNotes !== formData.notes;
+      if (sensitiveChanged) {
+        const pwd = await promptPassword({
+          title: `Update ${selectedCustomer.first_name} ${selectedCustomer.last_name}'s contact details?`,
+          description:
+            "Changing phone, email, address, or notes is PII-sensitive and requires step-up re-auth. Confirm with your password.",
+          confirmLabel: "Save changes",
+          confirmVariant: "default",
+        });
+        if (!pwd) return;
+        actorPassword = pwd;
+      }
+    }
+
     setSubmitting(true);
     setError(null);
     setSuccess(null);
@@ -204,7 +234,11 @@ export default function CustomerManagement() {
       const method = modalMode === 'create' ? 'POST' : 'PUT';
       const body = modalMode === 'create'
         ? formData
-        : { id: selectedCustomer?.id, ...formData };
+        : {
+            id: selectedCustomer?.id,
+            ...formData,
+            ...(actorPassword ? { actorPassword } : {}),
+          };
 
       const response = await authFetch('/api/customers', {
         method,

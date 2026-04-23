@@ -4,6 +4,13 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { ProductBundle, Product, ProductVariant } from "@/lib/domain/types";
 import { formatCurrency } from "@/lib/format";
+// R53: step-up re-auth on bundle create. Server /api/bundles POST
+// gates unconditionally on bucketKey:'bundle-price-stepup' (bundle
+// pricing is cash-impacting). PATCH gates only when bundlePrice is
+// in the body; the current PATCH here only toggles isActive, so no
+// prompt is needed there. Prior UI didn't thread actorPassword so
+// every bundle create threw.
+import { usePasswordGate } from "@/components/shared/password-gate";
 
 interface BundleManagerProps {
   bundles: ProductBundle[];
@@ -24,6 +31,7 @@ export function BundleManager({ bundles, variants, products }: BundleManagerProp
     compareAtPrice: "",
     items: [{ variantId: "", quantity: 1 }],
   });
+  const [promptPassword, passwordGate] = usePasswordGate();
 
   const resetForm = () => {
     setFormData({
@@ -79,6 +87,17 @@ export function BundleManager({ bundles, variants, products }: BundleManagerProp
       return;
     }
 
+    // R53: server gates bundle create on bundle-price-stepup
+    // unconditionally. Prompt for password before POST.
+    const pwd = await promptPassword({
+      title: `Create bundle "${formData.name.trim()}" at ${formatCurrency(bundlePrice)}?`,
+      description:
+        "Bundle prices affect every cart that applies them and flow through to the margin report. Confirm with your password.",
+      confirmLabel: "Create bundle",
+      confirmVariant: "default",
+    });
+    if (!pwd) return;
+
     const res = await fetch("/api/bundles", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -88,6 +107,7 @@ export function BundleManager({ bundles, variants, products }: BundleManagerProp
         bundlePrice,
         compareAtPrice,
         items,
+        actorPassword: pwd,
       }),
     });
 
@@ -374,6 +394,8 @@ export function BundleManager({ bundles, variants, products }: BundleManagerProp
           </button>
         )}
       </div>
+      {/* R53: shared password gate renders nothing until prompted. */}
+      {passwordGate}
     </div>
   );
 }

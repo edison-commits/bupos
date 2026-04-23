@@ -6,6 +6,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { authFetch } from '@/lib/api/client';
 import { formatCurrency } from '@/lib/format';
 import { useDebouncedValue } from '@/lib/hooks/use-debounced-value';
+// R53: step-up re-auth when editing a variant's price or cost.
+// Server /api/products PUT gates bucketKey:'variant-price-stepup'
+// when price or cost drifts; name/SKU/stock etc stay cookie-only.
+// Prior UI didn't thread actorPassword so every price/cost edit
+// threw.
+import { usePasswordGate } from "@/components/shared/password-gate";
 interface ProductVariant {
   id: string;
   sku: string;
@@ -77,6 +83,7 @@ export default function ProductsPage() {
   const [saving, setSaving] = useState(false);
   const [newCategory, setNewCategory] = useState('');
   const [showCategoryForm, setShowCategoryForm] = useState(false);
+  const [promptPassword, passwordGate] = usePasswordGate();
 
   // Fetch products — keyed on debounced search to avoid hitting the API on every keystroke.
   const fetchProducts = useCallback(async () => {
@@ -155,12 +162,42 @@ export default function ProductsPage() {
   };
 
   const handleEditVariant = async (variantId: string, formData: Partial<ProductVariant>) => {
+    // R53: prompt for step-up password if price or cost drifted from
+    // the variant's snapshot. `modal.data` holds the original row
+    // that opened the edit modal; treat it as the snapshot for diff.
+    const snapshot = modal.data as Partial<ProductVariant> | undefined;
+    const priceChanged =
+      snapshot !== undefined && formData.price !== undefined &&
+      Number(snapshot.price) !== Number(formData.price);
+    const costChanged =
+      snapshot !== undefined && formData.cost !== undefined &&
+      Number(snapshot.cost) !== Number(formData.cost);
+    let actorPassword: string | undefined;
+    if (priceChanged || costChanged) {
+      const bits: string[] = [];
+      if (priceChanged) bits.push("price");
+      if (costChanged) bits.push("cost");
+      const pwd = await promptPassword({
+        title: `Update variant ${bits.join(" and ")}?`,
+        description:
+          "Price and cost changes affect every cart, margin report, and cost-of-goods figure going forward. Confirm with your password.",
+        confirmLabel: "Save changes",
+        confirmVariant: "default",
+      });
+      if (!pwd) return;
+      actorPassword = pwd;
+    }
     setSaving(true);
     try {
       const response = await authFetch(`/api/products`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ variant_id: variantId, expectedUpdatedAt: formData.updatedAt, ...formData }),
+        body: JSON.stringify({
+          variant_id: variantId,
+          expectedUpdatedAt: formData.updatedAt,
+          ...formData,
+          ...(actorPassword ? { actorPassword } : {}),
+        }),
       });
       if (response.status === 409) {
         window.alert('Product was modified by another user. Please refresh and try again.');
@@ -484,6 +521,8 @@ export default function ProductsPage() {
           saving={saving}
         />
       )}
+      {/* R53: shared password gate renders nothing until prompted. */}
+      {passwordGate}
     </div>
   );
 }

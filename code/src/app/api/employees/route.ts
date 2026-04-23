@@ -127,6 +127,27 @@ export const POST = withAdminAuth('employee.manage', async (request, ctx) => {
       );
     }
 
+    // R54-C1 (CRITICAL): step-up re-auth on employee provisioning.
+    // Prior shape had only RBAC + rate-limit; a stolen admin cookie
+    // could directly `fetch('/api/employees', {method:'POST', body:
+    // {roleKey:'owner', pin:'000000', password:'x', ...}})` to mint
+    // a SHADOW OWNER ACCOUNT without the password re-auth gate. The
+    // parallel Server Action `createEmployeeAction` already gates
+    // on bucketKey:'employees-create-stepup' (R49); that bucket is
+    // reused here so the aggregate-per-actor cap covers both
+    // surfaces. Comment at actions.ts:475-476 explicitly claimed
+    // this gate existed on POST — it did not, until this fix.
+    const { requireStepUp } = await import('@/lib/auth/step-up');
+    const stepUp = await requireStepUp({
+      actorId: actor.id,
+      orgId,
+      actorPassword: (body as { actorPassword?: string })?.actorPassword,
+      bucketKey: 'employees-create-stepup',
+    });
+    if (!stepUp.ok) {
+      return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
+    }
+
     // R27-H1: privileged roles (owner/manager) unlock admin-level
     // endpoints via withDualAuth's role check, so their PIN needs
     // more bits than a cashier's 4-digit PIN. Require 6 digits —

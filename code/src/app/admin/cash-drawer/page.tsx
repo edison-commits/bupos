@@ -7,6 +7,13 @@ import { ChevronLeft, DollarSign, AlertCircle, CheckCircle2, Plus, Minus } from 
 import { useRouter } from 'next/navigation';
 import { authFetch } from '@/lib/api/client';
 import { formatCurrency } from '@/lib/format';
+// R53: step-up re-auth on manager-direct cash pay_outs. Server
+// /api/cash-drawer gates bucketKey:'cash-payout-stepup' only when the
+// actor is a manager (managers bypass the approval flow a cashier
+// would take). The UI can't cleanly know actor role here, so we
+// prompt on every pay_out and let the server validate — for
+// non-managers the actorPassword is simply ignored.
+import { usePasswordGate } from "@/components/shared/password-gate";
 
 interface Shift {
   id: string;
@@ -55,6 +62,7 @@ export default function CashDrawerPage() {
   const [declaredCash, setDeclaredCash] = useState<string>('');
   const [closeNote, setCloseNote] = useState<string>('');
   const [isClosing, setIsClosing] = useState(false);
+  const [promptPassword, passwordGate] = usePasswordGate();
 
   useEffect(() => {
     fetchData();
@@ -125,6 +133,22 @@ export default function CashDrawerPage() {
       return;
     }
 
+    // R53: prompt for step-up password on pay_out only. Server gates
+    // the manager-direct payout branch on bucketKey:'cash-payout-
+    // stepup'; pay_in has no gate and skips the prompt entirely.
+    let actorPassword: string | undefined;
+    if (direction === 'pay_out') {
+      const pwd = await promptPassword({
+        title: `Record ${formatCurrency(Number(payAmount))} pay out?`,
+        description:
+          "Pay outs remove cash from the drawer. Managers must confirm with a password (cashiers still require an approval exception).",
+        confirmLabel: "Record pay out",
+        confirmVariant: "destructive",
+      });
+      if (!pwd) return;
+      actorPassword = pwd;
+    }
+
     try {
       setIsProcessing(true);
       setError(null);
@@ -138,6 +162,7 @@ export default function CashDrawerPage() {
           amount: Number(payAmount),
           reason: payReason,
           note: payNote || undefined,
+          ...(actorPassword ? { actorPassword } : {}),
         }),
       });
 
@@ -672,6 +697,8 @@ export default function CashDrawerPage() {
           </div>
         )}
       </div>
+      {/* R53: shared password gate renders nothing until prompted. */}
+      {passwordGate}
     </div>
   );
 }

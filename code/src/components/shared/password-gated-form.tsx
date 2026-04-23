@@ -120,7 +120,25 @@ export function PasswordGatedForm({
 
           const run = async () => {
             const fd = new FormData(form);
-            const shouldGate = !gateCondition || gateCondition(fd, form);
+            // R54-Framework-2: wrap gateCondition in try/catch so a
+            // buggy predicate (e.g. the form.querySelector call
+            // throws on a stale-ref shape) can't leave the submit
+            // button permanently disabled. Default to gating on
+            // exception — safer to over-prompt than to skip a
+            // legitimately required step-up prompt.
+            let shouldGate = true;
+            if (gateCondition) {
+              try {
+                shouldGate = gateCondition(fd, form);
+              } catch (predErr) {
+                // eslint-disable-next-line no-console
+                console.error(
+                  "[PasswordGatedForm] gateCondition threw; defaulting to gate:",
+                  safeErr(predErr),
+                );
+                shouldGate = true;
+              }
+            }
             if (shouldGate) {
               const pwd = await promptPassword(prompt);
               if (!pwd) {

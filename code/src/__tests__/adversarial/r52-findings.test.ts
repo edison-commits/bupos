@@ -196,8 +196,16 @@ describe("R52 audit fixes", () => {
 
   describe("R52-O: usePasswordGate resolves a re-entrant prompt's prior resolver", () => {
     const src = read("src/components/shared/password-gate.tsx");
-    it("setState((prev) => ...) calls prev.resolve(null) before overwriting", () => {
-      expect(src).toMatch(/setState\(\(prev\) => \{[\s\S]{0,200}if \(prev\) prev\.resolve\(null\);/);
+    it("re-entrant prompt resolves prior resolver before taking over", () => {
+      // R54-Framework-3: migrated from a side-effecting `setState((prev) =>
+      // ...)` updater (impure under strict-mode double-invocation) to a
+      // `pendingRef` that tracks the current resolver. The mechanism is
+      // the same — a re-entrant promptPassword call resolves the prior
+      // caller with null before installing its own resolver — but now
+      // it's purity-safe.
+      expect(src).toMatch(/const pendingRef = useRef<Resolver \| null>/);
+      expect(src).toMatch(/const priorResolver = pendingRef\.current/);
+      expect(src).toMatch(/if \(priorResolver\) priorResolver\(null\)/);
     });
   });
 

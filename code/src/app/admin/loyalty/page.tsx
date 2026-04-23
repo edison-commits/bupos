@@ -7,6 +7,13 @@ import { AlertCircle, Award, DollarSign, Loader2, Search, TrendingUp, Users, X }
 import { authFetch } from '@/lib/api/client';
 import { FETCH_TIMEOUT_MS } from '@/lib/config/timing';
 import { formatCurrency } from '@/lib/format';
+// R53: step-up re-auth when minting loyalty points. Server
+// /api/loyalty POST gates bucketKey:'loyalty-adjust-stepup' when the
+// adjustment is positive (points-minting — real economic value
+// created out of thin air). Zero or negative adjustments skip the
+// prompt. Prior UI didn't thread actorPassword so every positive
+// adjustment threw.
+import { usePasswordGate } from "@/components/shared/password-gate";
 interface LoyaltyOverview {
   total_customers_enrolled: number;
   active_loyalty_customers: number;
@@ -88,6 +95,7 @@ export default function LoyaltyDashboard() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchError, setSearchError] = useState<string | null>(null);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [promptPassword, passwordGate] = usePasswordGate();
 
   useEffect(() => {
     loadLoyaltyData();
@@ -147,6 +155,23 @@ export default function LoyaltyDashboard() {
       return;
     }
 
+    // R53: points-minting (positive adjustment) triggers server
+    // step-up on bucketKey:'loyalty-adjust-stepup'. Clawbacks (zero
+    // or negative) skip the prompt so correcting a mistake doesn't
+    // require re-auth every time.
+    let actorPassword: string | undefined;
+    if (amount > 0) {
+      const pwd = await promptPassword({
+        title: `Mint ${amount.toLocaleString()} loyalty points?`,
+        description:
+          "Adding points creates real economic value the customer can redeem. Confirm with your password.",
+        confirmLabel: "Add points",
+        confirmVariant: "default",
+      });
+      if (!pwd) return;
+      actorPassword = pwd;
+    }
+
     setAdjustmentLoading(true);
     try {
       const response = await authFetch('/api/loyalty', {
@@ -156,6 +181,7 @@ export default function LoyaltyDashboard() {
           customer_id: adjustmentCustomerId,
           adjustment: amount,
           reason: adjustmentReason,
+          ...(actorPassword ? { actorPassword } : {}),
         }),
       });
 
@@ -638,6 +664,8 @@ export default function LoyaltyDashboard() {
           </div>
         </div>
       )}
+      {/* R53: shared password gate renders nothing until prompted. */}
+      {passwordGate}
     </div>
   );
 }

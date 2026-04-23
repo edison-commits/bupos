@@ -7,6 +7,11 @@ import { ChevronLeft, DollarSign, TrendingUp, AlertCircle, CheckCircle2, Clock }
 import { useRouter } from 'next/navigation';
 import { authFetch } from '@/lib/api/client';
 import { formatCurrency } from '@/lib/format';
+// R53: step-up re-auth before closing a shift. Server /api/shift-close
+// gates on bucketKey:'shift-close-stepup'; prior UI didn't thread
+// actorPassword so every close threw with a generic "password
+// required" error.
+import { usePasswordGate } from "@/components/shared/password-gate";
 interface ShiftData {
   shift: {
     id: string;
@@ -37,6 +42,7 @@ export default function ShiftClosePage() {
   const [notes, setNotes] = useState<string>('');
   const [isClosing, setIsClosing] = useState(false);
   const [closeSuccess, setCloseSuccess] = useState(false);
+  const [promptPassword, passwordGate] = usePasswordGate();
 
   useEffect(() => {
     fetchShiftData();
@@ -72,6 +78,18 @@ export default function ShiftClosePage() {
       return;
     }
 
+    // R53: step-up re-auth. Server unconditionally requires a
+    // confirmed password for shift closure (money-movement + Z-report
+    // finalization).
+    const pwd = await promptPassword({
+      title: `Close shift for ${data.shift.employeeName}?`,
+      description:
+        "Closing finalizes the Z-report and records the declared cash. Confirm with your password.",
+      confirmLabel: "Close shift",
+      confirmVariant: "default",
+    });
+    if (!pwd) return;
+
     try {
       setIsClosing(true);
       setError(null);
@@ -83,6 +101,7 @@ export default function ShiftClosePage() {
           shiftId: data.shift.id,
           declaredCash: Number(declaredCash),
           notes: notes || undefined,
+          actorPassword: pwd,
         }),
       });
 
@@ -412,6 +431,8 @@ export default function ShiftClosePage() {
           </div>
         ) : null}
       </div>
+      {/* R53: shared password gate renders nothing until prompted. */}
+      {passwordGate}
     </div>
   );
 }
