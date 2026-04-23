@@ -171,7 +171,10 @@ export default function PurchaseOrdersPage() {
     }
     setSearchLoading(true);
     try {
-      const res = await authFetch(`/api/products?search=${encodeURIComponent(query)}`);
+      // R60-B4: active=true filter so soft-deleted products (R58-2
+      // shift) don't show up in the PO picker. Creating a PO for an
+      // inactive product is a data-integrity hazard.
+      const res = await authFetch(`/api/products?search=${encodeURIComponent(query)}&active=true`);
       if (!res.ok) throw new Error('Search failed');
       const data = await res.json();
       // Extract variants from products

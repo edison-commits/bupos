@@ -970,12 +970,30 @@ export async function deleteProductAction(formData: FormData) {
         await client.query("ROLLBACK");
         redirect("/admin?error=Product+not+found");
       }
+      // R60-A3: cascade soft-delete to variants in the SAME tx.
+      // Prior shape (R58-2) only deactivated the product row; the
+      // variants stayed active, which left direct variant lookups
+      // (barcode-lookup, offline-sync, checkout-action) returning
+      // a "deleted" SKU. Checkout paths only check variant.is_active,
+      // so a soft-deleted product could still be rung up. This
+      // cascade matches the hard-delete semantics the prior shape
+      // relied on via FK CASCADE.
+      const varRes = await client.query(
+        `UPDATE product_variants SET is_active = false, updated_at = NOW()
+          WHERE product_id = $1 AND organization_id = $2`,
+        [productId, orgId],
+      );
       await client.query(
         `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
          VALUES ($1, $2, $3, $4, 'product', $5, 'product_deleted', $6, now())`,
         [
           randomUUID(), orgId, null, employee.id, productId,
-          JSON.stringify({ id: productId, name: res.rows[0]?.name, soft_delete: true }),
+          JSON.stringify({
+            id: productId,
+            name: res.rows[0]?.name,
+            soft_delete: true,
+            variants_deactivated: varRes.rowCount ?? 0,
+          }),
         ],
       );
       await client.query("COMMIT");
@@ -988,6 +1006,7 @@ export async function deleteProductAction(formData: FormData) {
     // Mirror pgDeleteProduct's cache invalidation so POS terminals
     // see the removal before the 30s TTL.
     invalidateProductsCache(orgId);
+    invalidateVariantsCache(orgId);
   } else {
     await mutateStore((store) => {
       const index = store.products.findIndex((p) => p.id === productId);

@@ -325,6 +325,15 @@ const locationSettingsSchema = z.object({
   postalCode: z.string().max(20).optional(),
   phone: z.string().max(40).optional(),
   taxRate: z.number().min(0).max(1).optional(),
+  // R60-A1 (CRITICAL): the admin UI serializes the full
+  // `StoreSettings['location']` shape on every save — including
+  // `isActive` — so a `.strict()` schema without this field rejected
+  // every Location Details save with "Unrecognized key: 'isActive'".
+  // Accepting it here is safe because `buildDynamicUpdate` below
+  // only writes keys that exist in the route-level fieldMap; if a
+  // future PR wants to wire location activation it needs to thread
+  // the column into that map explicitly.
+  isActive: z.boolean().optional(),
 }).strict();
 const receiptSettingsSchema = z.object({
   header: z.string().max(2000).optional(),

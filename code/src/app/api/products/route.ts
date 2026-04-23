@@ -264,14 +264,28 @@ export const POST = withAdminAuth("catalog.manage", async (request, ctx) => {
         await client.query('ROLLBACK');
         return NextResponse.json({ error: 'SKU is required for variants' }, { status: 400 });
       }
-      // R58-1: coerce via Number() + Number.isFinite instead of
-      // `typeof === 'number'`. Prior shape accepted JSON strings
-      // like `"0.01"` — `typeof "0.01" === 'number'` is false, so
-      // the step-up gate skipped entirely, but PostgreSQL coerces
-      // the string into the numeric column at bind-time. Net: a
-      // stolen pricing.manage cookie could POST {..., price:"0.01"}
-      // to bypass the variant-price-stepup password challenge.
-      // Coerce early; reject non-finite / negative inputs with 400.
+      // R58-1 / R60-B2: coerce via Number() + Number.isFinite, but
+      // first REJECT non-numeric types. Prior R58-1 accepted
+      // `Number(null)=0`, `Number([])=0`, `Number("")=0`,
+      // `Number(false)=0` which all pass Number.isFinite — so a
+      // request like `{"price":null}` would silently reprice to $0
+      // rather than being a no-op. Acceptable inputs are `number`
+      // and `string` (the original string-coercion use case);
+      // everything else becomes a 400.
+      const isAcceptablePriceInput = (v: unknown): v is number | string | undefined =>
+        v === undefined || typeof v === 'number' || typeof v === 'string';
+      if (!isAcceptablePriceInput(rawPrice)) {
+        await client.query('ROLLBACK');
+        return NextResponse.json({ error: 'Price must be a number' }, { status: 400 });
+      }
+      if (!isAcceptablePriceInput(rawCost)) {
+        await client.query('ROLLBACK');
+        return NextResponse.json({ error: 'Cost must be a number' }, { status: 400 });
+      }
+      if (!isAcceptablePriceInput(compare_at_price)) {
+        await client.query('ROLLBACK');
+        return NextResponse.json({ error: 'compare_at_price must be a number' }, { status: 400 });
+      }
       const priceNum = rawPrice !== undefined ? Number(rawPrice) : undefined;
       const costNum = rawCost !== undefined ? Number(rawCost) : undefined;
       if (priceNum !== undefined && (!Number.isFinite(priceNum) || priceNum < 0)) {
@@ -334,11 +348,17 @@ export const POST = withAdminAuth("catalog.manage", async (request, ctx) => {
         await client.query('ROLLBACK');
         return NextResponse.json({ error: `SKU "${sku}" already exists` }, { status: 409 });
       }
-      // R58-1: bind the coerced numeric values (not raw `rawPrice` /
-      // `rawCost` which could be strings slipping past typeof checks
-      // upstream). compare_at_price has no separate step-up gate but
-      // gets the same Number() coercion for consistency.
+      // R58-1 / R60-B1: bind the coerced numeric values. Also
+      // validate compare_at_price the same way — the column has no
+      // CHECK constraint (unlike product_bundles.compare_at_price)
+      // so a negative value would persist. Not a fraud-relevant
+      // surface but the resulting "was" strikethrough would be
+      // deceptive.
       const compareAtPriceNum = compare_at_price !== undefined ? Number(compare_at_price) : undefined;
+      if (compareAtPriceNum !== undefined && (!Number.isFinite(compareAtPriceNum) || compareAtPriceNum < 0)) {
+        await client.query('ROLLBACK');
+        return NextResponse.json({ error: 'compare_at_price must be a non-negative number' }, { status: 400 });
+      }
       const result = await client.query(
         `INSERT INTO product_variants (id, organization_id, product_id, sku, barcode, name, size_label, color_label, price, compare_at_price, cost, is_active, created_at, updated_at)
          VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, NOW(), NOW())
@@ -538,13 +558,21 @@ export const PUT = withAdminAuth("catalog.manage", async (request, ctx) => {
           { status: 403 },
         );
       }
-      // R58-1: coerce via Number() + Number.isFinite. Prior
-      // `typeof === 'number'` checks returned false for JSON-string
-      // inputs like `"0.01"`, letting the step-up gate slip while
-      // PostgreSQL coerced the string into the numeric column at
-      // bind time. A stolen pricing.manage cookie could thus
-      // reprice via {..., price:"0.01"}. Coerce once, use the
-      // resulting number for every downstream check + bind.
+      // R58-1 / R60-B2: coerce via Number() + Number.isFinite after
+      // rejecting non-numeric types. Prior R58-1 accepted
+      // `Number(null)=0`, `Number([])=0` etc — a `{"price":null}`
+      // PUT would silently reprice to $0 instead of being a no-op.
+      // Reject anything that isn't number/string.
+      const isAcceptableUpdate = (v: unknown): v is number | string | undefined =>
+        v === undefined || typeof v === 'number' || typeof v === 'string';
+      if (!isAcceptableUpdate(updates.price)) {
+        await client.query('ROLLBACK');
+        return NextResponse.json({ error: 'Price must be a number' }, { status: 400 });
+      }
+      if (!isAcceptableUpdate(updates.cost)) {
+        await client.query('ROLLBACK');
+        return NextResponse.json({ error: 'Cost must be a number' }, { status: 400 });
+      }
       const priceNum = updates.price !== undefined ? Number(updates.price) : undefined;
       const costNum = updates.cost !== undefined ? Number(updates.cost) : undefined;
       if (priceNum !== undefined && (!Number.isFinite(priceNum) || priceNum < 0)) {
@@ -674,6 +702,15 @@ export const PUT = withAdminAuth("catalog.manage", async (request, ctx) => {
 // R27-H2: admin-only (see POST above).
 export const DELETE = withAdminAuth("catalog.manage", async (request, ctx) => {
   const { orgId } = ctx;
+  // R60-B3: rate-limit parity with POST/PUT. Prior shape had none —
+  // a stolen catalog.manage cookie could rapid-fire DELETEs to soft-
+  // delete every product in the catalog (each DELETE is O(1); step-
+  // up is NOT required since soft-delete doesn't move money). Same
+  // per-org bucket shape as POST.
+  const rl = checkRateLimit(`products:del:${orgId}`);
+  if (!rl.allowed) {
+    return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
+  }
   const pool = await getPool();
   const client = await pool.connect();
   try {
@@ -697,6 +734,17 @@ export const DELETE = withAdminAuth("catalog.manage", async (request, ctx) => {
       return NextResponse.json({ error: 'Product not found' }, { status: 404 });
     }
 
+    // R60-A3: cascade soft-delete to variants in the SAME tx, so
+    // direct variant lookups (barcode scan, checkout variant-lookup,
+    // offline-sync) can't still ring up a "deleted" product. Mirrors
+    // the hard-delete semantics the prior shape relied on via FK
+    // CASCADE.
+    const variantRes = await client.query(
+      `UPDATE product_variants SET is_active = false, updated_at = NOW()
+       WHERE product_id = $1 AND organization_id = $2`,
+      [id, orgId]
+    );
+
     // R56-A3: audit INSIDE the tx. The REST DELETE was the lossier
     // surface — the parallel Server Action `deleteProductAction`
     // already audits (admin/actions.ts). A stolen catalog.manage
@@ -708,12 +756,18 @@ export const DELETE = withAdminAuth("catalog.manage", async (request, ctx) => {
        VALUES ($1, $2, $3, $4, 'product', $5, 'product_deleted', $6, now())`,
       [
         randomUUID(), orgId, null, ctx.employee.id, result.rows[0].id,
-        JSON.stringify({ id: result.rows[0].id, name: result.rows[0].name, soft_delete: true }),
+        JSON.stringify({
+          id: result.rows[0].id,
+          name: result.rows[0].name,
+          soft_delete: true,
+          variants_deactivated: variantRes.rowCount ?? 0,
+        }),
       ],
     );
 
     await client.query('COMMIT');
     invalidateProductsCache(orgId);
+    invalidateVariantsCache(orgId);
     return NextResponse.json({ message: 'Product deleted', id: result.rows[0].id });
   } catch (error) {
     await client.query('ROLLBACK');
@@ -730,6 +784,14 @@ export const DELETE = withAdminAuth("catalog.manage", async (request, ctx) => {
 // R27-H2: admin-only (see POST above).
 export const PATCH = withAdminAuth("catalog.manage", async (request, ctx) => {
   const { orgId, employee } = ctx;
+  // R60-B3: rate-limit parity with POST/PUT. The CSV import branch
+  // has its own step-up gate (which rate-limits at the aggregate
+  // step-up bucket layer), but the basic shape-only PATCH branches
+  // had no throttle.
+  const rl = checkRateLimit(`products:patch:${orgId}`);
+  if (!rl.allowed) {
+    return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
+  }
   const pool = await getPool();
   const client = await pool.connect();
   try {

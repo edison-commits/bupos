@@ -577,7 +577,7 @@ function LocationSection({
           {suggestedRate !== null && (
             <p className="text-xs text-zinc-500 mt-1">
               {formData.city && formData.region
-                ? `Suggested combined rate for ${formData.city}, ${formData.region}: {formatCurrency((suggestedRate * 100))}%`
+                ? `Suggested combined rate for ${formData.city}, ${formData.region}: ${(suggestedRate * 100).toFixed(2)}%`
                 : `Select city & state to see suggested rate`}
             </p>
           )}

@@ -169,20 +169,35 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
       }
 
       case 'location': {
-        // R44-H: require step-up re-auth when `taxRate` is in the
-        // field set. Tax rate mutation is the highest-fraud-risk
-        // admin change (R39-A1-2). Gate bucket `tax-rate-stepup`
-        // matches the sibling /api/tax-config path.
-        if ((data as { taxRate?: unknown }).taxRate !== undefined) {
-          const { requireStepUp } = await import('@/lib/auth/step-up');
-          const stepUp = await requireStepUp({
-            actorId: ctx.employee.id,
+        // R44-H / R60-A2: require step-up re-auth when `taxRate` is
+        // ACTUALLY BEING CHANGED (not merely present in the
+        // payload). The admin UI serializes the full location shape
+        // on every save, so `taxRate !== undefined` was true even
+        // for non-tax edits (phone, address, etc.) — every save
+        // then failed with "password required". Now we snapshot-
+        // compare the DB prior value with the same 0.00005 epsilon
+        // the Server Action `updateLocationAction` uses (REST
+        // parity closed).
+        const submittedTax = (data as { taxRate?: number }).taxRate;
+        if (submittedTax !== undefined) {
+          const { rows: priorRows } = await orgQuery(
             orgId,
-            actorPassword: (raw as { actorPassword?: string })?.actorPassword,
-            bucketKey: 'tax-rate-stepup',
-          });
-          if (!stepUp.ok) {
-            return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
+            `SELECT tax_rate FROM locations WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+            [locationId, orgId],
+          );
+          const priorTax = priorRows[0]?.tax_rate != null ? Number(priorRows[0].tax_rate) : null;
+          const taxChanged = priorTax === null || Math.abs(priorTax - submittedTax) > 0.00005;
+          if (taxChanged) {
+            const { requireStepUp } = await import('@/lib/auth/step-up');
+            const stepUp = await requireStepUp({
+              actorId: ctx.employee.id,
+              orgId,
+              actorPassword: (raw as { actorPassword?: string })?.actorPassword,
+              bucketKey: 'tax-rate-stepup',
+            });
+            if (!stepUp.ok) {
+              return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
+            }
           }
         }
         const upd = buildDynamicUpdate(

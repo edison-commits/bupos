@@ -113,7 +113,9 @@ export default function LabelsPage() {
     }
     setSearchLoading(true);
     try {
-      const res = await authFetch(`/api/products?search=${encodeURIComponent(query)}`);
+      // R60-B4: active=true filter so soft-deleted products (R58-2)
+      // don't show up in the label-print picker.
+      const res = await authFetch(`/api/products?search=${encodeURIComponent(query)}&active=true`);
       if (!res.ok) throw new Error('Search failed');
       const data = await res.json();
       // Extract variants from products

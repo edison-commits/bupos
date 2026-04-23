@@ -40,16 +40,23 @@ export const GET = withDualAuth("catalog.manage", async (request, ctx) => {
     // in case the LEFT JOIN ever turns into an inner join after a refactor.
     const { rows } = await orgQuery(
       orgId,
+      // R60-A3: filter on p.is_active AND pv.is_active so a soft-
+      // deleted product (R58-2 switched delete to soft-delete) can't
+      // be rung up via barcode scan. Prior shape had no is_active
+      // filter — a scanned SKU returned the dead product and leaked
+      // its on_hand count even though the POS client filters by
+      // isActive downstream.
       `SELECT pv.id as variant_id, pv.sku, pv.size_label, pv.color_label, pv.price,
               p.id as product_id, p.name as product_name, p.slug as product_slug, p.category_id,
               COALESCE(il.on_hand, 0) as on_hand
        FROM product_variants pv
-       JOIN products p ON pv.product_id = p.id AND p.organization_id = $1
+       JOIN products p ON pv.product_id = p.id AND p.organization_id = $1 AND p.is_active = true
        LEFT JOIN inventory_levels il
          ON il.product_variant_id = pv.id
         AND il.location_id = $3
         AND il.organization_id = $1
        WHERE pv.organization_id = $1
+         AND pv.is_active = true
          AND (pv.sku = $2 OR pv.barcode = $2)
        LIMIT 1`,
       [orgId, normalizedCode, locationId]

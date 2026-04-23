@@ -1013,9 +1013,17 @@ function AddVariantModal({ onSave, onClose, saving }: ModalProps) {
           <input type="text" placeholder="Variant Name" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
           <input type="text" placeholder="Size" value={formData.size_label} onChange={e => setFormData({ ...formData, size_label: e.target.value })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
           <input type="text" placeholder="Color" value={formData.color_label} onChange={e => setFormData({ ...formData, color_label: e.target.value })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
-          <input type="number" placeholder="Price" step="0.01" value={formData.price} onChange={e => setFormData({ ...formData, price: parseFloat(e.target.value) })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
-          <input type="number" placeholder="Compare at Price" step="0.01" value={formData.compare_at_price || ''} onChange={e => setFormData({ ...formData, compare_at_price: e.target.value ? parseFloat(e.target.value) : null })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
-          <input type="number" placeholder="Cost" step="0.01" value={formData.cost} onChange={e => setFormData({ ...formData, cost: parseFloat(e.target.value) })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
+          {/* R60-B6: `parseFloat("")` is NaN → JSON.stringify emits
+              `null` → server Number(null)=0, silently setting price
+              to $0 without the step-up prompt (priceChanged=false).
+              Coalesce to 0 on empty input so the UI's shown value
+              matches what's submitted. A pricing manager clearing a
+              field sees "0" (obvious wrong value) rather than silent
+              zero-pricing. Also: R60-B2 server now rejects null so
+              this closes both ends of the funnel. */}
+          <input type="number" placeholder="Price" step="0.01" value={formData.price ?? 0} onChange={e => setFormData({ ...formData, price: parseFloat(e.target.value) || 0 })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
+          <input type="number" placeholder="Compare at Price" step="0.01" value={formData.compare_at_price ?? ''} onChange={e => setFormData({ ...formData, compare_at_price: e.target.value ? (parseFloat(e.target.value) || 0) : null })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
+          <input type="number" placeholder="Cost" step="0.01" value={formData.cost ?? 0} onChange={e => setFormData({ ...formData, cost: parseFloat(e.target.value) || 0 })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
         </div>
         <div className="mt-4 flex gap-2">
           <button onClick={onClose} className="flex-1 rounded-lg border-2 border-emerald-300 px-5 py-4 text-lg font-bold text-emerald-700 hover:bg-emerald-50">Cancel</button>
@@ -1038,9 +1046,10 @@ function EditVariantModal({ variant, onSave, onClose, saving }: ModalProps) {
       <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-lg">
         <h2 className="mb-4 text-lg font-bold text-emerald-900">Edit Variant</h2>
         <div className="space-y-3">
-          <input type="number" placeholder="Price" step="0.01" value={formData.price || 0} onChange={e => setFormData({ ...formData, price: parseFloat(e.target.value) })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
-          <input type="number" placeholder="Cost" step="0.01" value={formData.cost || 0} onChange={e => setFormData({ ...formData, cost: parseFloat(e.target.value) })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
-          <input type="number" placeholder="Stock" value={formData.stock || 0} onChange={e => setFormData({ ...formData, stock: parseInt(e.target.value) })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
+          {/* R60-B6: same NaN-silent-zero fix as CreateVariantModal. */}
+          <input type="number" placeholder="Price" step="0.01" value={formData.price || 0} onChange={e => setFormData({ ...formData, price: parseFloat(e.target.value) || 0 })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
+          <input type="number" placeholder="Cost" step="0.01" value={formData.cost || 0} onChange={e => setFormData({ ...formData, cost: parseFloat(e.target.value) || 0 })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
+          <input type="number" placeholder="Stock" value={formData.stock || 0} onChange={e => setFormData({ ...formData, stock: parseInt(e.target.value) || 0 })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
         </div>
         <div className="mt-4 flex gap-2">
           <button onClick={onClose} className="flex-1 rounded-lg border-2 border-emerald-300 px-5 py-4 text-lg font-bold text-emerald-700 hover:bg-emerald-50">Cancel</button>
