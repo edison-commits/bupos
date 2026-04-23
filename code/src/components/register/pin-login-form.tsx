@@ -15,22 +15,18 @@ function getDeviceId(): string {
 
 export function PinLoginForm({ locationId }: { locationId: string }) {
   const [pin, setPin] = useState("");
-  // R43-LOW: lazy-initialize deviceId synchronously on the client so
-  // the hidden input is present on first render. Prior shape set it
-  // via useEffect which runs post-paint; a fast submission (paired
-  // PIN pad, autosubmit, keyboard user) could dispatch the form
-  // before the input was in the DOM, sending no deviceId. Guard with
-  // typeof window so SSR returns empty string (hidden input then
-  // renders conditionally — not submitted).
-  const [deviceId, setDeviceId] = useState<string>(() => {
-    if (typeof window === "undefined") return "";
-    return getDeviceId();
-  });
+  // R43-fix: back to useEffect-set pattern. Lazy init at mount time
+  // diverges from the SSR output (server renders "", client's first
+  // render computes the UUID), which fires React #418 hydration
+  // mismatch AND breaks the interactive flow on hydration errors. The
+  // server-side register-login route synthesizes a device id when
+  // missing, so the theoretical "fast submit" race R43-LOW flagged is
+  // benign — better to keep hydration consistent.
+  const [deviceId, setDeviceId] = useState<string>("");
 
   useEffect(() => {
-    // If SSR emitted "", hydrate with the real device id now.
-    if (!deviceId) setDeviceId(getDeviceId());
-  }, [deviceId]);
+    setDeviceId(getDeviceId());
+  }, []);
 
   return (
     <div className="grid gap-4">

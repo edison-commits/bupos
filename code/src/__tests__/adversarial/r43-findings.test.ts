@@ -223,10 +223,16 @@ describe("R43 audit fixes", () => {
     });
   });
 
-  describe("R43-LOW: pin-login-form deviceId lazy initialization", () => {
+  describe("R43-LOW: pin-login-form deviceId (hydration-safe)", () => {
     const src = read("src/components/register/pin-login-form.tsx");
-    it("useState takes a lazy initializer", () => {
-      expect(src).toMatch(/useState<string>\(\(\) => \{/);
+    // R43-fix: reverted from lazy init to useEffect-set because the lazy
+    // initializer diverges SSR (returns "") from client first render
+    // (returns uuid), triggering React hydration error #418. The
+    // server-side register-login route synthesizes a device id when
+    // missing, so the theoretical race is benign.
+    it("uses useState(\"\") + useEffect pattern (avoids hydration mismatch)", () => {
+      expect(src).toMatch(/useState<string>\(""\)/);
+      expect(src).toMatch(/useEffect\(\(\) => \{\s*setDeviceId\(getDeviceId\(\)\)/);
     });
   });
 

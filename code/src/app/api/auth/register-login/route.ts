@@ -4,6 +4,8 @@ import { addDays } from "@/lib/utils/date";
 import { hasPermission } from "@/lib/domain/permissions";
 import type { RoleKey } from "@/lib/domain/types";
 import { getPool } from "@/lib/supabase-rest";
+// R43-fix: static import so the bundler definitely includes the module.
+import { logRateLimited } from "@/lib/logging/rate-limit-log";
 
 // R41-2: opaque cookie name (see session.ts for rationale).
 const REGISTER_COOKIE = "bupos_r";
@@ -77,9 +79,6 @@ export async function POST(request: Request) {
         return Array.from(new Uint8Array(hash)).slice(0, 8).map((b) => b.toString(16).padStart(2, "0")).join("");
       })()
     : pin; // Fallback for environments without WebCrypto — still better than prefix+length
-  // R43-M: structured 429 log emitter for alerting on stuffing flood.
-  const { logRateLimited } = await import("@/lib/logging/rate-limit-log");
-
   const pinBucket = checkRateLimit(`register-pin:${pinFingerprint}`, { maxAttempts: 5, windowMs: 300_000 });
   if (!pinBucket.allowed) {
     logRateLimited({ bucket: "register-pin", layer: "mem", actor: pinFingerprint.slice(0, 6) });

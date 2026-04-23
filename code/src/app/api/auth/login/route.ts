@@ -4,6 +4,9 @@ import { randomUUID } from "@/lib/uuid";
 import { addDays } from "@/lib/utils/date";
 import { getPool } from "@/lib/supabase-rest";
 import { safeErr } from "@/lib/logging/safe-err";
+// R43-fix: static import so the bundler definitely includes the module
+// and a missing-chunk at runtime on Workers can't brick the login path.
+import { logRateLimited } from "@/lib/logging/rate-limit-log";
 
 // R41-2: opaque cookie name (see session.ts for rationale).
 const ADMIN_COOKIE = "bupos_a";
@@ -36,7 +39,6 @@ export async function POST(request: Request) {
   // R43-M: emit structured warn on every 429 so Logpush / Axiom can
   // alert on credential-stuffing flare-ups. Actor is email-prefix
   // only — never the full address (PII).
-  const { logRateLimited } = await import("@/lib/logging/rate-limit-log");
   const actorPrefix = email.slice(0, 3) + "***";
 
   const rl = checkRateLimit(`admin-login:${email}`);
