@@ -182,6 +182,15 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
   const employeeId = ctx.employee.id;
   const idempotencyKey = req.headers.get('Idempotency-Key');
 
+  // R64-L1: per-actor rate limit (60/60s). Transfers move inventory
+  // between locations; a compromised cookie could spam creates to
+  // flood inventory_adjustments with zero step-up barrier.
+  const { checkRateLimit } = await import('@/lib/auth/rate-limit');
+  const rl = checkRateLimit(`transfers:post:${orgId}:${employeeId}`, { maxAttempts: 60, windowMs: 60_000 });
+  if (!rl.allowed) {
+    return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
+  }
+
   try {
 
     const body = await req.json();
@@ -278,13 +287,28 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
         // list views.
         const variantIds = Array.from(new Set(lines.map((l: { productVariantId: string }) => l.productVariantId)));
         if (variantIds.length > 0) {
+          // R64-M4: also require variants to be ACTIVE. A transfer
+          // on a soft-deleted variant creates zombie inventory
+          // attributed to a "deleted" product — admin transfer
+          // listings then show the dead SKU, inventory_adjustments
+          // misattribute stock. Include is_active column so the
+          // error branch can distinguish cross-org (400) from
+          // soft-deleted (409).
           const { rows: vCheck } = await client.query(
-            `SELECT id FROM product_variants WHERE id = ANY($1::uuid[]) AND organization_id = $2`,
+            `SELECT id, is_active FROM product_variants WHERE id = ANY($1::uuid[]) AND organization_id = $2`,
             [variantIds, orgId],
           );
           if (vCheck.length !== variantIds.length) {
             await client.query("ROLLBACK");
             return NextResponse.json({ error: "One or more product variants do not belong to this organization" }, { status: 400 });
+          }
+          const inactiveVariants = vCheck.filter((v: { is_active: boolean }) => !v.is_active);
+          if (inactiveVariants.length > 0) {
+            await client.query("ROLLBACK");
+            return NextResponse.json(
+              { error: "One or more product variants are inactive and cannot be transferred" },
+              { status: 409 },
+            );
           }
         }
 

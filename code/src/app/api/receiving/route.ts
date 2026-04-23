@@ -89,7 +89,7 @@ export const GET = withDualAuth("inventory.adjust", async (request, ctx) => {
           p.name as product_name,
           COALESCE(il.on_hand, 0) as on_hand
         FROM product_variants pv
-        JOIN products p ON pv.product_id = p.id AND p.organization_id = $1
+        JOIN products p ON pv.product_id = p.id AND p.organization_id = $1 AND p.is_active = true
         LEFT JOIN inventory_levels il ON pv.id = il.product_variant_id
           AND il.location_id = $2
           AND il.organization_id = $1
@@ -97,6 +97,11 @@ export const GET = withDualAuth("inventory.adjust", async (request, ctx) => {
           AND (UPPER(pv.sku) LIKE $3 OR UPPER(p.name) LIKE $3 OR UPPER(pv.name) LIKE $3)
           AND pv.is_active = true
         LIMIT 20`,
+        // R64-M5: added `p.is_active = true` so a receiving clerk
+        // scanning at the dock can't find a soft-deleted product.
+        // Defense-in-depth against R64-H1 CSV-reactivate, and
+        // against any future reactivation path that misses
+        // propagating is_active down to variants.
         [orgId, locationId, searchTerm]
       );
 

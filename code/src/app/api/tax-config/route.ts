@@ -65,6 +65,21 @@ export const GET = withDualAuth("catalog.manage", async (req, ctx) => {
 // instead of catalog.manage (which inventory_clerk also has).
 export const PUT = withAdminAuth('employee.manage', async (req, ctx) => {
   const { orgId, employee } = ctx;
+  // R64-M3: per-actor rate limit at 10/5min. Parity with /api/
+  // settings PUT (R47-M4 / M-rate-limit) — both endpoints mutate
+  // the same `locations.tax_rate` column; a stolen owner cookie
+  // could hammer tax flips through this twin endpoint to find a
+  // sweet spot (R39-A1-2 "owner flips rate mid-day, pockets
+  // delta"). Step-up gates COLD starts but a fresh step-up window
+  // would allow unbounded follow-on flips without this cap.
+  const { checkRateLimit } = await import('@/lib/auth/rate-limit');
+  const rl = checkRateLimit(`tax-config-put:${orgId}:${employee.id}`, { maxAttempts: 10, windowMs: 300_000 });
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: 'Too many tax updates. Try again shortly.' },
+      { status: 429 },
+    );
+  }
   try {
     const body = await req.json();
     const v = validateBody(taxConfigUpdateSchema, body);

@@ -181,8 +181,11 @@ export const GET = withAdminAuth('employee.manage', async (request, ctx) => {
 });
 
 export const POST = withAdminAuth('employee.manage', async (request, ctx) => {
-  const { orgId, employee: _employee } = ctx;
-  const rl = checkRateLimit(`customers:post:${orgId}`);
+  const { orgId, employee } = ctx;
+  // R64-L2: per-actor bucket at 60/60s. Prior default (3/5min
+  // per-org) throttled one admin's CRUD below the other admin's
+  // usage.
+  const rl = checkRateLimit(`customers:post:${orgId}:${employee.id}`, { maxAttempts: 60, windowMs: 60_000 });
   if (!rl.allowed) {
     return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
   }
@@ -211,7 +214,8 @@ export const POST = withAdminAuth('employee.manage', async (request, ctx) => {
 
 export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
   const { orgId, employee } = ctx;
-  const rl = checkRateLimit(`customers:put:${orgId}`);
+  // R64-L2: per-actor bucket at 60/60s.
+  const rl = checkRateLimit(`customers:put:${orgId}:${employee.id}`, { maxAttempts: 60, windowMs: 60_000 });
   if (!rl.allowed) {
     return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
   }

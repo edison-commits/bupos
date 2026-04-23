@@ -132,6 +132,15 @@ export const GET = withDualAuth("catalog.manage", async (_req, ctx) => {
 /** POST /api/bundles — create a bundle with its items in one transaction. */
 export const POST = withAdminAuth("pricing.manage", async (req, ctx) => {
   const { orgId, employee } = ctx;
+  // R64-L1: per-actor rate limit. Prior shape had no throttle; a
+  // compromised pricing.manage cookie could hammer the step-up
+  // endpoint at whatever rate the step-up bucket absorbs. 60/60s
+  // matches the R62-L1 /api/products precedent.
+  const { checkRateLimit } = await import('@/lib/auth/rate-limit');
+  const rl = checkRateLimit(`bundles:post:${orgId}:${employee.id}`, { maxAttempts: 60, windowMs: 60_000 });
+  if (!rl.allowed) {
+    return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
+  }
   try {
     const body = await req.json();
     const v = validateBody(bundleCreateSchema, body);
@@ -278,6 +287,12 @@ export const POST = withAdminAuth("pricing.manage", async (req, ctx) => {
 /** PATCH /api/bundles — update bundle metadata (name, price, active flag). */
 export const PATCH = withAdminAuth("pricing.manage", async (req, ctx) => {
   const { orgId, employee } = ctx;
+  // R64-L1: per-actor rate limit.
+  const { checkRateLimit } = await import('@/lib/auth/rate-limit');
+  const rl = checkRateLimit(`bundles:patch:${orgId}:${employee.id}`, { maxAttempts: 60, windowMs: 60_000 });
+  if (!rl.allowed) {
+    return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
+  }
   try {
     const body = await req.json();
     const v = validateBody(bundleUpdateSchema, body);
@@ -313,7 +328,21 @@ export const PATCH = withAdminAuth("pricing.manage", async (req, ctx) => {
     // bundlePrice is explicitly in the patch body (parity with
     // /api/products variant-reprice path). Non-price PATCH fields
     // (name, image, isActive toggle) stay cookie-authenticated.
+    //
+    // R64-H2: snapshot-compare bundle_price BEFORE step-up and re-
+    // check inside the orgTx with SELECT … FOR UPDATE + drift
+    // guard. Without this, a concurrent reprice between step-up
+    // and UPDATE could let a stolen cookie reprice to $0.01 using
+    // a legitimate actor's step-up window. Mirrors the R56-B1
+    // editVariantAction and R62-M1 settings patterns.
+    let priorBundlePriceSnap: number | null = null;
     if (bundlePrice !== undefined) {
+      const { rows: snapRows } = await orgQuery(
+        orgId,
+        `SELECT bundle_price FROM product_bundles WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+        [id, orgId],
+      );
+      priorBundlePriceSnap = snapRows[0]?.bundle_price != null ? Number(snapRows[0].bundle_price) : null;
       const { requireStepUp } = await import('@/lib/auth/step-up');
       const stepUp = await requireStepUp({
         actorId: employee.id,
@@ -332,6 +361,31 @@ export const PATCH = withAdminAuth("pricing.manage", async (req, ctx) => {
     const client = await orgTx(orgId);
     let bundleRow: BundleRow | undefined;
     try {
+      // R64-H2: if bundlePrice is being changed, re-read with
+      // FOR UPDATE and compare to snapshot. Reject on drift.
+      if (bundlePrice !== undefined) {
+        const { rows: lockedRows } = await client.query(
+          `SELECT bundle_price FROM product_bundles
+            WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
+          [id, orgId],
+        );
+        if (lockedRows.length === 0) {
+          await client.query("ROLLBACK");
+          return NextResponse.json({ error: "Bundle not found" }, { status: 404 });
+        }
+        const lockedBundlePrice = lockedRows[0]?.bundle_price != null ? Number(lockedRows[0].bundle_price) : null;
+        const drifted =
+          (priorBundlePriceSnap === null && lockedBundlePrice !== null) ||
+          (priorBundlePriceSnap !== null && lockedBundlePrice === null) ||
+          (priorBundlePriceSnap !== null && lockedBundlePrice !== null && Math.abs(priorBundlePriceSnap - lockedBundlePrice) > 0.005);
+        if (drifted) {
+          await client.query("ROLLBACK");
+          return NextResponse.json(
+            { error: "Bundle price was changed by another user. Please refresh and try again." },
+            { status: 409 },
+          );
+        }
+      }
       // R27-C12: explicit organization_id filter. Without it, PATCH
       // could rewrite any tenant's bundle price/name/slug to whatever
       // the attacker wanted.
@@ -453,6 +507,12 @@ export const PATCH = withAdminAuth("pricing.manage", async (req, ctx) => {
 /** DELETE /api/bundles — hard-delete (cascades to bundle_items). */
 export const DELETE = withAdminAuth("pricing.manage", async (req, ctx) => {
   const { orgId, employee } = ctx;
+  // R64-L1: per-actor rate limit.
+  const { checkRateLimit } = await import('@/lib/auth/rate-limit');
+  const rl = checkRateLimit(`bundles:del:${orgId}:${employee.id}`, { maxAttempts: 60, windowMs: 60_000 });
+  if (!rl.allowed) {
+    return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
+  }
   try {
     const body = await req.json();
     const v = validateBody(bundleDeleteSchema, body);

@@ -81,6 +81,12 @@ export const GET = withDualAuth("audit.view", async (request, ctx) => {
 // shouldn't be able to enter expenses. GET stays dual for visibility.
 export const POST = withAdminAuth("employee.manage", async (request, ctx) => {
   const { orgId, locationId } = ctx;
+  // R64-L1: per-actor rate limit (60/60s).
+  const { checkRateLimit } = await import('@/lib/auth/rate-limit');
+  const rl = checkRateLimit(`expenses:post:${orgId}:${ctx.employee.id}`, { maxAttempts: 60, windowMs: 60_000 });
+  if (!rl.allowed) {
+    return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
+  }
   try {
     const body = await request.json();
     const v = validateBody(expenseCreateSchema, body);
@@ -165,6 +171,12 @@ export const POST = withAdminAuth("employee.manage", async (request, ctx) => {
 // audit trail — fraud-evidence-scrubbing vector.
 export const DELETE = withAdminAuth("employee.manage", async (request, ctx) => {
   const { orgId } = ctx;
+  // R64-L1: per-actor rate limit (60/60s).
+  const { checkRateLimit } = await import('@/lib/auth/rate-limit');
+  const rl = checkRateLimit(`expenses:delete:${orgId}:${ctx.employee.id}`, { maxAttempts: 60, windowMs: 60_000 });
+  if (!rl.allowed) {
+    return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
+  }
   try {
     const body = await request.json();
     const v = validateBody(expenseDeleteSchema, body);

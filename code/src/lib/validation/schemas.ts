@@ -123,35 +123,40 @@ const variantUpdateSchema = z.object({
   cost: nonnegativeNumber.optional(),
 });
 
-// R62-L2: `.strict()` parity with productUpdateSchema. Top-level
-// POST body shape includes the variant-create nested object but
-// also (on the variant-create branch) product_id + actorPassword.
+// R62-L2 / R64-C1: `.strict()` with `variant` OPTIONAL. The POST
+// handler has two branches:
+//   (a) `body.product_id && body.variant` → variant-create on an
+//       existing product. Both required in this branch.
+//   (b) `body.category` → category-create (unrelated to product
+//       fields).
+//   (c) default → product-create via productCreateSchema shape
+//       alone (AddProductModal in the admin UI uses this and
+//       doesn't submit a nested `variant`).
+// R62-L2 initially made `variant` required, which broke (c). Now
+// it's optional; the handler's own branching still requires it on
+// (a).
 export const productCreateSchema = z.object({
   name: requiredString,
   slug: optionalString,
-  category_id: uuid,
+  category_id: uuid.optional(),
   description: optionalString,
   image_url: optionalString,
   is_active: z.boolean().optional(),
   is_touch_favorite: z.boolean().optional(),
-  variant: variantCreateSchema,
+  variant: variantCreateSchema.optional(),
   // Used by the variant-create branch (POST with product_id +
   // variant.*).
   product_id: uuid.optional(),
   actorPassword: z.string().max(200).optional(),
 }).strict();
 
-// R62-L2: `productUpdateSchema` now `.strict()` AND lists the top-
-// level variant-update fields the PUT handler actually reads. Prior
-// shape only validated `product_id` + product metadata; then the
-// handler read `body.variant_id`, `body.price`, `body.cost`,
-// `body.expectedUpdatedAt`, `body.actorPassword`, and
-// `body.is_touch_favorite` (the favorite toggle) straight from raw
-// body — none of those were in the schema, so Zod silently passed
-// every shape through. `.strict()` makes typos reject with a 400
-// instead of silently missing the branch.
+// R62-L2 / R64-C1: `.strict()` with product_id OPTIONAL at the
+// schema level (either branch is valid: product-update requires
+// product_id, variant-update requires variant_id; the handler's
+// branching does the actual presence check). The schema guards
+// unknown keys and validates types of the fields it lists.
 export const productUpdateSchema = z.object({
-  product_id: uuid,
+  product_id: uuid.optional(),
   name: requiredString.optional(),
   slug: optionalString,
   category_id: uuid.optional(),

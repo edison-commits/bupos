@@ -50,7 +50,13 @@ export const GET = withDualAuth("inventory.adjust", async (request, ctx) => {
 });
 
 export const POST = withAdminAuth('catalog.manage', async (request, ctx) => {
-  const { orgId } = ctx;
+  const { orgId, employee } = ctx;
+  // R64-L1: per-actor rate limit (60/60s).
+  const { checkRateLimit } = await import('@/lib/auth/rate-limit');
+  const rl = checkRateLimit(`suppliers:post:${orgId}:${employee.id}`, { maxAttempts: 60, windowMs: 60_000 });
+  if (!rl.allowed) {
+    return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
+  }
   try {
     const body = await request.json();
     const v = validateBody(supplierCreateSchema, body);
@@ -97,7 +103,13 @@ export const POST = withAdminAuth('catalog.manage', async (request, ctx) => {
 });
 
 export const PUT = withAdminAuth('catalog.manage', async (request, ctx) => {
-  const { orgId } = ctx;
+  const { orgId, employee } = ctx;
+  // R64-L1: per-actor rate limit (60/60s).
+  const { checkRateLimit } = await import('@/lib/auth/rate-limit');
+  const rl = checkRateLimit(`suppliers:put:${orgId}:${employee.id}`, { maxAttempts: 60, windowMs: 60_000 });
+  if (!rl.allowed) {
+    return NextResponse.json({ error: 'Too many requests. Try again shortly.' }, { status: 429 });
+  }
   try {
     const body = await request.json();
     const v = validateBody(supplierUpdateSchema, body);

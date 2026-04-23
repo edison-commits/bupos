@@ -1068,6 +1068,14 @@ export default function SettingsPage() {
           cache: 'no-store',
         });
         clearTimeout(timeout);
+        // R64-M1: surface the server's 409 drift message so a user
+        // racing a concurrent tax-rate edit sees "refresh and retry"
+        // instead of the generic "Failed to save location settings".
+        // Matches the products-page 409 handling.
+        if (response.status === 409) {
+          const body = await response.json().catch(() => ({ error: 'Location tax rate was changed by another user. Please refresh and try again.' }));
+          throw new Error(body.error || 'Location tax rate was changed by another user. Please refresh and try again.');
+        }
         if (!response.ok) {
           throw new Error('Failed to save location settings');
         }

@@ -65,7 +65,10 @@ describe("R52 audit fixes", () => {
       expect(matches.length).toBeGreaterThanOrEqual(2);
     });
     it("PATCH gates only when bundlePrice is in the body", () => {
-      expect(src).toMatch(/if \(bundlePrice !== undefined\)[\s\S]{0,400}bucket-price-stepup|if \(bundlePrice !== undefined\)[\s\S]{0,400}bundle-price-stepup/);
+      // R64-H2 added a snapshot-compare SELECT between the
+      // `if (bundlePrice !== undefined)` check and the step-up
+      // call, widening the window. Accept either shape.
+      expect(src).toMatch(/if \(bundlePrice !== undefined\)[\s\S]{0,1200}bundle-price-stepup/);
     });
   });
 

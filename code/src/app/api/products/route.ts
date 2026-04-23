@@ -339,8 +339,15 @@ export const POST = withAdminAuth("catalog.manage", async (request, ctx) => {
       // R58-2's soft-delete model. The new variant would be
       // is_active=true by default and reachable from any code path
       // that trusts variant.is_active alone.
+      // R64-M2: FOR SHARE prevents a concurrent soft-delete
+      // (UPDATE products SET is_active=false) from landing between
+      // this check and the variant INSERT below — which would re-
+      // create the orphan state migration 073 backfilled. FOR SHARE
+      // (not FOR UPDATE) is the minimum lock: we're not mutating
+      // the parent row, just requiring it to exist + be active
+      // through our commit.
       const parentCheck = await client.query(
-        `SELECT is_active FROM products WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+        `SELECT is_active FROM products WHERE id = $1 AND organization_id = $2 LIMIT 1 FOR SHARE`,
         [body.product_id, orgId],
       );
       if (parentCheck.rows.length === 0) {
@@ -462,6 +469,26 @@ export const PUT = withAdminAuth("catalog.manage", async (request, ctx) => {
     if (!pv.success) return NextResponse.json({ error: pv.error }, { status: 400 });
     const id = pv.data.product_id;
     const updates = body;
+
+    // R64-C1: schema makes `product_id` optional so a variant-only
+    // update (with just variant_id + price/cost) passes Zod. But
+    // ANY product-update mutation (name/slug/description/etc) still
+    // needs `product_id`. Reject early rather than landing a UPDATE
+    // with `id = undefined` which returns 0 rows and confuses the
+    // optimistic-locking 409 branch.
+    const wantsProductUpdate = !!(
+      updates.name || updates.slug ||
+      updates.description !== undefined || updates.image_url !== undefined ||
+      updates.is_active !== undefined || updates.is_touch_favorite !== undefined ||
+      updates.category_id !== undefined
+    );
+    const wantsVariantUpdate = !!(updates.variant_id && (updates.price !== undefined || updates.cost !== undefined));
+    if (wantsProductUpdate && !id) {
+      return NextResponse.json({ error: 'product_id is required for product updates' }, { status: 400 });
+    }
+    if (!wantsProductUpdate && !wantsVariantUpdate) {
+      return NextResponse.json({ error: 'Nothing to update' }, { status: 400 });
+    }
 
     await client.query('BEGIN');
     await client.query("SELECT set_config('app.current_org_id', $1, true)", [orgId]);
@@ -869,8 +896,18 @@ export const PATCH = withAdminAuth("catalog.manage", async (request, ctx) => {
       );
       const catMap = new Map(catsResult.rows.map((r: Record<string, string>) => [r.name.toLowerCase(), r.id]));
 
+      // R64-H1: filter out soft-deleted products from the name
+      // lookup so CSV imports can't implicitly re-activate a product
+      // by re-importing a row with the same name. Prior shape
+      // matched inactive products, then inserted new variants with
+      // is_active=true under them — resurrecting the "deleted"
+      // catalog item via any read path that trusts
+      // product_variants.is_active alone (checkout-action, offline-
+      // sync, receiving). Admin can still re-import under a new
+      // name (creates a fresh product) or explicitly reactivate the
+      // old product first.
       const existingResult = await client.query(
-        `SELECT id, name, category_id FROM products WHERE organization_id = $1`,
+        `SELECT id, name, category_id FROM products WHERE organization_id = $1 AND is_active = true`,
         [orgId]
       );
       const productsByName = new Map(existingResult.rows.map((r: Record<string, string>) => [r.name.toLowerCase(), { id: r.id, categoryId: r.category_id }]));

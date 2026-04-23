@@ -123,10 +123,23 @@ export default function ProductsPage() {
   const handleAddProduct = async (formData: Partial<Product>) => {
     setSaving(true);
     try {
+      // R64-C1: whitelist only the fields productCreateSchema
+      // accepts. Prior shape spread full Product shape (incl. id,
+      // variants, category_name, etc.) which R62-L2's `.strict()`
+      // rejected with 400.
+      const payload: Record<string, unknown> = {
+        name: formData.name,
+        slug: formData.slug,
+        category_id: formData.category_id || undefined,
+        description: formData.description ?? undefined,
+        image_url: formData.image_url ?? undefined,
+        is_active: formData.is_active,
+        is_touch_favorite: formData.is_touch_favorite,
+      };
       const response = await authFetch('/api/products', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(payload),
       });
       if (!response.ok) throw new Error('Failed to create product');
       setModal({ type: null });
@@ -141,10 +154,26 @@ export default function ProductsPage() {
   const handleEditProduct = async (productId: string, formData: Partial<Product>) => {
     setSaving(true);
     try {
+      // R64-C1: whitelist — productUpdateSchema `.strict()` rejects
+      // unknown keys. The Product shape the UI holds includes read-
+      // only metadata (variants, category_name, variant_count, etc.)
+      // which isn't in the schema. Also: schema requires
+      // `product_id`, not `id`.
+      const payload: Record<string, unknown> = {
+        product_id: productId,
+        expectedUpdatedAt: formData.updatedAt,
+        name: formData.name,
+        slug: formData.slug,
+        category_id: formData.category_id || undefined,
+        description: formData.description ?? undefined,
+        image_url: formData.image_url ?? undefined,
+        is_active: formData.is_active,
+        is_touch_favorite: formData.is_touch_favorite,
+      };
       const response = await authFetch(`/api/products`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: productId, expectedUpdatedAt: formData.updatedAt, ...formData }),
+        body: JSON.stringify(payload),
       });
       if (response.status === 409) {
         window.alert('Product was modified by another user. Please refresh and try again.');
@@ -197,15 +226,32 @@ export default function ProductsPage() {
     }
     setSaving(true);
     try {
+      // R64-C1: whitelist to the fields productUpdateSchema accepts
+      // + the variant-branch fields (variant_id, price, cost,
+      // expectedUpdatedAt, actorPassword). Prior shape spread the
+      // full Partial<ProductVariant> including `id`, `sku`,
+      // `barcode`, `name`, etc. which the handler's variant-UPDATE
+      // branch doesn't read AND which R62-L2's `.strict()` rejects.
+      // The variant-update handler only cares about price/cost
+      // for the reprice branch; everything else goes through the
+      // separate variant-update object (not this endpoint).
+      //
+      // product_id is required by schema but the variant-update
+      // branch only uses variant_id. Pass the parent id via
+      // modal.data.productId if present so the schema passes.
+      const parentIdFromModal = (modal.data as { productId?: string } | undefined)?.productId;
+      const payload: Record<string, unknown> = {
+        variant_id: variantId,
+        expectedUpdatedAt: formData.updatedAt,
+        price: formData.price,
+        cost: formData.cost,
+        ...(parentIdFromModal ? { product_id: parentIdFromModal } : {}),
+        ...(actorPassword ? { actorPassword } : {}),
+      };
       const response = await authFetch(`/api/products`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          variant_id: variantId,
-          expectedUpdatedAt: formData.updatedAt,
-          ...formData,
-          ...(actorPassword ? { actorPassword } : {}),
-        }),
+        body: JSON.stringify(payload),
       });
       if (response.status === 409) {
         window.alert('Product was modified by another user. Please refresh and try again.');
