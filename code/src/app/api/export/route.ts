@@ -73,10 +73,19 @@ export const GET = withAdminAuth("reports.export", async (req, ctx) => {
            LEFT JOIN employees e ON e.id = t.employee_id AND e.organization_id = $1
            LEFT JOIN customers c ON c.id = t.customer_id AND c.organization_id = $1
            WHERE t.organization_id = $1
-             AND t.created_at >= $2 AND t.created_at <= ($3 || 'T23:59:59.999Z')
+             AND t.created_at >= $2 AND t.created_at < $3
            ORDER BY t.created_at DESC
            LIMIT $4`,
-          [orgId, from + "T00:00:00.000Z", to, TRANSACTIONS_EXPORT_LIMIT + 1],
+          // R83-LOW: use buildOrgDayRange for org-TZ-aware day bounds.
+          // Prior shape ("T00:00:00.000Z" / "T23:59:59.999Z") hardcoded
+          // UTC — an auditor pulling "Monday's transactions" got
+          // UTC-Monday not org-Monday. Parity with R82-DB-H3 and
+          // R83-SEC-H2 dashboard fixes.
+          await (async () => {
+            const { buildOrgDayRange } = await import("@/lib/reports/day-range");
+            const { fromTs, toTs } = await buildOrgDayRange(orgId, from, to);
+            return [orgId, fromTs, toTs, TRANSACTIONS_EXPORT_LIMIT + 1];
+          })(),
         );
         if (rows.rows.length > TRANSACTIONS_EXPORT_LIMIT) {
           return NextResponse.json(

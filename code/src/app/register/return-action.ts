@@ -520,9 +520,22 @@ export async function processReturnAction(input: ReturnInput): Promise<ReturnRes
       );
 
       // 3. Return event
+      // R83-DB-H1 (HIGH): emit as `event_kind='transaction_placeholder'`
+      // with `is_return: "true"` in the payload so client-side admin
+      // widgets hydrating from `get_full_store` (dashboard-kpis,
+      // sales-reports, tax-report, daily-manager-report, etc.)
+      // correctly identify this as a return event. Prior shape used
+      // `event_kind='return_processed'` without an is_return flag —
+      // every widget filtering on
+      // `eventKind === 'transaction_placeholder' && payload.is_return === 'true'`
+      // missed register-side refunds entirely → Tax Report understated
+      // totalReturns, DashboardKPIs' todayNet equaled todayGross,
+      // DailyManagerReport's dayReturns was always empty. The JSON
+      // fallback path at line ~948 already uses the correct shape;
+      // this PG path just needed to match.
       await client.query(
         `INSERT INTO transaction_events (id, transaction_id, actor_employee_id, event_kind, notes, payload)
-         VALUES ($1, $2, $3, 'return_processed', $4, $5)`,
+         VALUES ($1, $2, $3, 'transaction_placeholder', $4, $5)`,
         [
           randomUUID(), returnTransactionId, context.employee.id,
           `Return processed by ${context.employee.displayName}: ${input.items.length} item(s), -${formatCurrency(refundGrandTotal)} via ${input.refundMethod}`,
@@ -537,6 +550,7 @@ export async function processReturnAction(input: ReturnInput): Promise<ReturnRes
             refund_method: input.refundMethod,
             reason: input.reason,
             note: input.note,
+            is_return: "true",
           }),
         ],
       );

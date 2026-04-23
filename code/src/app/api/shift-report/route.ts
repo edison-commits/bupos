@@ -96,9 +96,15 @@ export const GET = withDualAuth("register.open", async (req, ctx) => {
       [locationId, fromTs, toTs, orgId],
     );
 
-    const completed = txns.rows.filter((t: Record<string, unknown>) => t.status === "completed");
+    // R83-DB-H2 (HIGH): sign-based refund filter (parity with R82-
+    // DB-H2/H3 on dashboard + eod-report). Register returns write
+    // status='completed' with NEGATIVE grand_total — `status='refunded'`
+    // catches ZERO rows in the register flow. Split completed into
+    // `sales` (positive) and `refunded` (negative).
+    const completedAll = txns.rows.filter((t: Record<string, unknown>) => t.status === "completed");
+    const completed = completedAll.filter((t: Record<string, unknown>) => Number(t.grand_total) >= 0);
     const voided = txns.rows.filter((t: Record<string, unknown>) => t.status === "voided");
-    const refunded = txns.rows.filter((t: Record<string, unknown>) => t.status === "refunded");
+    const refunded = completedAll.filter((t: Record<string, unknown>) => Number(t.grand_total) < 0);
 
     // Tender breakdown
     const txnIds = completed.map((t: Record<string, unknown>) => t.id);
@@ -141,9 +147,25 @@ export const GET = withDualAuth("register.open", async (req, ctx) => {
     }
 
     // Hourly breakdown
+    // R83-MED: bucket on ORG TIMEZONE. Prior `getHours()` used
+    // server-local (UTC on Workers). 9pm PDT showed as hour=4 next
+    // day for Pacific-TZ stores.
+    // check-pool-org-filter: scoped-by-id — organizations.id IS
+    // the tenancy key for the organizations table itself (one row
+    // per tenant), so WHERE id = $orgId is already the org filter.
+    const orgTzRow = await orgQuery(orgId, `SELECT timezone FROM organizations WHERE id = $1`, [orgId]);
+    const orgTz = (orgTzRow.rows[0]?.timezone as string | null) ?? 'UTC';
+    const hourFormatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: orgTz,
+      hour: 'numeric',
+      hour12: false,
+    });
     const hourlyMap = new Map<number, { count: number; total: number }>();
     for (const t of completed) {
-      const hour = new Date(t.created_at as string).getHours();
+      // hour: 'numeric' returns e.g. "14" or "0" in 24-hour mode.
+      const parts = hourFormatter.formatToParts(new Date(t.created_at as string));
+      const hourPart = parts.find((p) => p.type === 'hour')?.value ?? '0';
+      const hour = parseInt(hourPart, 10) || 0;
       const existing = hourlyMap.get(hour) ?? { count: 0, total: 0 };
       existing.count += 1;
       existing.total += Number(t.grand_total);

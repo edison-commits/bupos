@@ -303,16 +303,20 @@ async function getSalesByHour(orgId: string, locationId: string, from: string, t
   // Prior shape included voided/refunded/pending rows, inflating
   // hourly revenue and letting a cashier hide a void from hourly
   // drill-downs.
+  // R83-MED: bucket hourly on ORG TIMEZONE, not UTC. Prior
+  // `AT TIME ZONE 'UTC'` was a hardcoded literal even though
+  // buildOrgDayRange already positions the window in org TZ.
+  // Mirror R82-DB-H3 eod-report + R83-MED dashboard pattern.
   const result = await orgQuery(orgId,
     `SELECT
-      EXTRACT(HOUR FROM created_at AT TIME ZONE 'UTC') as hour,
+      EXTRACT(HOUR FROM created_at AT TIME ZONE COALESCE((SELECT timezone FROM organizations WHERE id = $1), 'UTC')) as hour,
       SUM(grand_total) as revenue,
       COUNT(*) as transaction_count
     FROM transactions
     WHERE organization_id = $1 AND location_id = $2
       AND status = 'completed'
       AND created_at >= $3 AND created_at < $4
-    GROUP BY EXTRACT(HOUR FROM created_at AT TIME ZONE 'UTC')
+    GROUP BY EXTRACT(HOUR FROM created_at AT TIME ZONE COALESCE((SELECT timezone FROM organizations WHERE id = $1), 'UTC'))
     ORDER BY hour ASC`,
     [orgId, locationId, fromDate, toDate]
   );

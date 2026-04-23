@@ -34,21 +34,33 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
   }
   const range = sp.get("range") || "today";
 
+  // R83-SEC-H2 (HIGH): use buildOrgDayRange instead of raw UTC
+  // timestamps so dashboard aggregates honor the organization's
+  // timezone. Prior shape bucketed on UTC midnight — a Pacific-TZ
+  // store's "today" cut off at 4pm local (UTC midnight), and the
+  // first 8 hours of tomorrow counted as today. Dashboard
+  // disagreed with /api/reports summary for the same date.
+  // Parity with R16-L-2 reports route + R82-DB-H3 eod-report.
+  const { buildOrgDayRange } = await import("@/lib/reports/day-range");
   const now = new Date();
   const todayStr = now.toISOString().slice(0, 10);
-  let fromDate: string;
-  const toDate = `${todayStr}T23:59:59.999Z`;
+  let fromDay: string;
+  let toDay: string;
 
   if (range === "week") {
     const d = new Date(now); d.setDate(d.getDate() - 7);
-    fromDate = `${d.toISOString().slice(0, 10)}T00:00:00.000Z`;
+    fromDay = d.toISOString().slice(0, 10);
+    toDay = todayStr;
   } else if (range === "month") {
     const d = new Date(now); d.setDate(d.getDate() - 30);
-    fromDate = `${d.toISOString().slice(0, 10)}T00:00:00.000Z`;
+    fromDay = d.toISOString().slice(0, 10);
+    toDay = todayStr;
   } else {
     const date = sp.get("date") || todayStr;
-    fromDate = `${date}T00:00:00.000Z`;
+    fromDay = date;
+    toDay = date;
   }
+  const { fromTs: fromDate, toTs: toDate } = await buildOrgDayRange(orgId, fromDay, toDay);
 
   try {
   // Run all 6 queries on ONE shared Neon client. The frontend polls this
@@ -99,7 +111,7 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
          COALESCE(MAX(grand_total) FILTER (WHERE status = 'completed'), 0)::numeric AS largest_sale,
          COALESCE(SUM(CASE WHEN grand_total < 0 THEN ABS(grand_total) ELSE 0 END) FILTER (WHERE status = 'completed'), 0)::numeric AS refund_total
        FROM transactions
-       WHERE organization_id = $1 AND location_id = $2 AND created_at >= $3 AND created_at <= $4`,
+       WHERE organization_id = $1 AND location_id = $2 AND created_at >= $3 AND created_at < $4`,
       [orgId, locationId, fromDate, toDate],
     );
 
@@ -107,20 +119,23 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
       `SELECT tt.tender_type, SUM(tt.amount)::numeric AS total, COUNT(*)::int AS count
        FROM transaction_tenders tt
        JOIN transactions t ON t.id = tt.transaction_id
-       WHERE t.organization_id = $1 AND t.location_id = $2 AND t.created_at >= $3 AND t.created_at <= $4 AND t.status = 'completed'
+       WHERE t.organization_id = $1 AND t.location_id = $2 AND t.created_at >= $3 AND t.created_at < $4 AND t.status = 'completed'
        GROUP BY tt.tender_type
        ORDER BY total DESC`,
       [orgId, locationId, fromDate, toDate],
     );
 
+    // R83-MED: bucket hourly on ORG TIMEZONE, not UTC. Prior shape
+     // showed 9pm PDT sales as hour=4 (next-day UTC) for Pacific-TZ
+     // stores. Mirror R82-DB-H3 eod-report pattern.
     hourlyResult = await client.query(
       `SELECT
-         EXTRACT(HOUR FROM created_at)::int AS hour,
+         EXTRACT(HOUR FROM created_at AT TIME ZONE COALESCE((SELECT timezone FROM organizations WHERE id = $1), 'UTC'))::int AS hour,
          COUNT(*)::int AS count,
          SUM(grand_total)::numeric AS total
        FROM transactions
-       WHERE organization_id = $1 AND location_id = $2 AND created_at >= $3 AND created_at <= $4 AND status = 'completed'
-       GROUP BY EXTRACT(HOUR FROM created_at)
+       WHERE organization_id = $1 AND location_id = $2 AND created_at >= $3 AND created_at < $4 AND status = 'completed'
+       GROUP BY EXTRACT(HOUR FROM created_at AT TIME ZONE COALESCE((SELECT timezone FROM organizations WHERE id = $1), 'UTC'))
        ORDER BY hour`,
       [orgId, locationId, fromDate, toDate],
     );
@@ -136,7 +151,7 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
               AVG(t.grand_total)::numeric AS avg_ticket
        FROM transactions t
        LEFT JOIN employees e ON e.id = t.employee_id AND e.organization_id = $1
-       WHERE t.organization_id = $1 AND t.location_id = $2 AND t.created_at >= $3 AND t.created_at <= $4 AND t.status = 'completed'
+       WHERE t.organization_id = $1 AND t.location_id = $2 AND t.created_at >= $3 AND t.created_at < $4 AND t.status = 'completed'
        GROUP BY t.employee_id, e.display_name
        ORDER BY total_sales DESC`,
       [orgId, locationId, fromDate, toDate],
@@ -159,7 +174,7 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
               e.display_name AS employee_name
        FROM transactions t
        LEFT JOIN employees e ON e.id = t.employee_id AND e.organization_id = $1
-       WHERE t.organization_id = $1 AND t.location_id = $2 AND t.created_at >= $3 AND t.created_at <= $4
+       WHERE t.organization_id = $1 AND t.location_id = $2 AND t.created_at >= $3 AND t.created_at < $4
        ORDER BY t.created_at DESC
        LIMIT 10`,
       [orgId, locationId, fromDate, toDate],

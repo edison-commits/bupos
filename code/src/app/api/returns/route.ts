@@ -894,6 +894,24 @@ export const PUT = withAdminAuth('approval.void_transaction', async (request, ct
                   [pointsToReverse, origCustomerId, orgId],
                 );
               }
+
+              // R83-SEC-H1 (HIGH): reverse denormalized total_spend +
+              // visit_count on the PUT-approval path too. R82-DB-H1
+              // added this to register/return-action.ts and
+              // /api/returns/process but missed this third twin —
+              // the admin-approval PUT. Parity matters because the
+              // customer list view reads total_spend directly.
+              const wasPriorFullyRefunded = priorRefundTotal >= origGrandTotal - 0.005;
+              const isNowFullyRefunded = newCumulative >= origGrandTotal - 0.005;
+              const visitCountDelta = !wasPriorFullyRefunded && isNowFullyRefunded ? 1 : 0;
+              await client.query(
+                `UPDATE customers
+                    SET total_spend = GREATEST(0, total_spend - $1),
+                        visit_count = GREATEST(0, visit_count - $2),
+                        updated_at = NOW()
+                  WHERE id = $3 AND organization_id = $4`,
+                [refundAmount, visitCountDelta, origCustomerId, orgId],
+              );
             }
             await client.query('RELEASE SAVEPOINT sp_loyalty');
           } catch (err) {
