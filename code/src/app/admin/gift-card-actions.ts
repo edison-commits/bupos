@@ -5,6 +5,10 @@ import { requireAdminPermission } from "@/lib/authz";
 import { orgTx, orgQuery } from "@/lib/supabase-rest";
 import type { GiftCard, GiftCardTransaction } from "@/lib/domain/types";
 import { revalidatePath } from "next/cache";
+// R84-final: admin-mutation cache invalidation parity with R84-hand
+// register-side. Admin readStore has 30s TTL — without this, admin
+// dashboards serve stale data immediately post-mutation.
+import { invalidateStoreCache } from "@/lib/persistence/postgres-read-store";
 import { randomUUID } from "@/lib/uuid";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { formatCurrency } from "@/lib/format";
@@ -181,6 +185,7 @@ export async function activateGiftCardAction(formData: FormData) {
     });
   }
 
+  invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin");
 }
 
@@ -301,6 +306,7 @@ export async function reloadGiftCardAction(formData: FormData) {
     });
   }
 
+  invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin");
 }
 
@@ -357,7 +363,8 @@ export async function disableGiftCardAction(
       // every repeat call — attacker could flood audit_events.
       if (before[0].status === "disabled") {
         await client.query("ROLLBACK");
-        revalidatePath("/admin");
+        invalidateStoreCache(ctx.employee.organizationId);
+  revalidatePath("/admin");
         return { success: true };
       }
       await client.query(
@@ -396,6 +403,7 @@ export async function disableGiftCardAction(
       gc.updatedAt = new Date().toISOString();
     });
   }
+  invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin");
   return { success: true };
 }

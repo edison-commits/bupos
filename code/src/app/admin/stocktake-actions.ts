@@ -6,6 +6,9 @@ import type { Stocktake, StocktakeLine } from "@/lib/domain/types";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "@/lib/uuid";
 import { orgTx } from "@/lib/supabase-rest";
+// R84-final: bust readStore cache so admin dashboards don't serve
+// stale inventory totals after stocktake accept.
+import { invalidateStoreCache } from "@/lib/persistence/postgres-read-store";
 
 const isPg = () => !!process.env.USE_POSTGRES;
 
@@ -183,6 +186,7 @@ export async function createStocktakeAction(formData: FormData) {
     });
   }
 
+  invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin");
 }
 
@@ -265,6 +269,7 @@ export async function recordCountAction(formData: FormData) {
     });
   }
 
+  invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin");
 }
 
@@ -520,6 +525,7 @@ export async function acceptStocktakeAction(stocktakeId: string, actorPassword?:
   // 30s TTL after every stocktake accept.
   const { invalidateInventoryCache: invInv } = await import("@/lib/cache/inventory-cache");
   invInv(ctx.employee.organizationId);
+  invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin");
 }
 
@@ -571,5 +577,6 @@ export async function cancelStocktakeAction(stocktakeId: string) {
     });
   }
 
+  invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin");
 }

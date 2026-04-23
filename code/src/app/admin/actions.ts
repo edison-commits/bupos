@@ -2,6 +2,12 @@
 
 import { randomUUID } from "@/lib/uuid";
 import { revalidatePath } from "next/cache";
+// R84-final: admin-mutation cache invalidation. Every admin Server
+// Action that mutates org-scoped data must bust the readStore
+// cache (30s TTL) so the subsequent revalidatePath("/admin")
+// re-render reads fresh data. Parity with R84-hand's register-
+// side fix.
+import { invalidateStoreCache } from "@/lib/persistence/postgres-read-store";
 import { redirect } from "next/navigation";
 import { hashSecret } from "@/lib/auth/crypto";
 import { canManageEmployeeRole, requireAdminPermission } from "@/lib/authz";
@@ -236,6 +242,7 @@ export async function createCategoryAction(formData: FormData) {
     });
   }
 
+  invalidateStoreCache(employee.organizationId);
   revalidatePath("/admin");
   redirect("/admin?notice=Category+created");
 }
@@ -404,6 +411,7 @@ export async function createProductAction(formData: FormData) {
     });
   }
 
+  invalidateStoreCache(employee.organizationId);
   revalidatePath("/admin");
   redirect("/admin?notice=Product+created");
 }
@@ -541,6 +549,7 @@ export async function adjustInventoryAction(formData: FormData) {
     });
   }
 
+  invalidateStoreCache(employee.organizationId);
   revalidatePath("/admin");
   redirect("/admin?notice=Inventory+updated");
 }
@@ -696,6 +705,7 @@ export async function createEmployeeAction(formData: FormData) {
     });
   }
 
+  invalidateStoreCache(employee.organizationId);
   revalidatePath("/admin");
   redirect("/admin?notice=Employee+created");
 }
@@ -859,6 +869,7 @@ export async function toggleEmployeeAction(formData: FormData) {
     });
   }
 
+  invalidateStoreCache(actor.organizationId);
   revalidatePath("/admin");
   redirect("/admin?notice=Employee+status+updated");
 }
@@ -944,6 +955,7 @@ export async function editCategoryAction(formData: FormData) {
     });
   }
 
+  invalidateStoreCache(employee.organizationId);
   revalidatePath("/admin");
   redirect("/admin?notice=Category+updated");
 }
@@ -999,6 +1011,7 @@ export async function deleteCategoryAction(formData: FormData) {
     });
   }
 
+  invalidateStoreCache(employee.organizationId);
   revalidatePath("/admin");
   redirect("/admin?notice=Category+deleted");
 }
@@ -1095,6 +1108,7 @@ export async function editProductAction(formData: FormData) {
     });
   }
 
+  invalidateStoreCache(employee.organizationId);
   revalidatePath("/admin");
   redirect("/admin?notice=Product+updated");
 }
@@ -1193,6 +1207,7 @@ export async function deleteProductAction(formData: FormData) {
     });
   }
 
+  invalidateStoreCache(employee.organizationId);
   revalidatePath("/admin");
   redirect("/admin?notice=Product+deleted");
 }
@@ -1400,6 +1415,7 @@ export async function editVariantAction(formData: FormData) {
     });
   }
 
+  invalidateStoreCache(employee.organizationId);
   revalidatePath("/admin");
   redirect("/admin?notice=Variant+updated");
 }
@@ -1455,6 +1471,7 @@ export async function deleteVariantAction(formData: FormData) {
     });
   }
 
+  invalidateStoreCache(employee.organizationId);
   revalidatePath("/admin");
   redirect("/admin?notice=Variant+deleted");
 }
@@ -1524,6 +1541,7 @@ export async function updateOrganizationAction(formData: FormData) {
     });
   }
 
+  invalidateStoreCache(employee.organizationId);
   revalidatePath("/admin");
   redirect("/admin?notice=Store+settings+updated");
 }
@@ -1674,6 +1692,7 @@ export async function updateLocationAction(formData: FormData) {
     }
   }
 
+  invalidateStoreCache(employee.organizationId);
   revalidatePath("/admin");
   redirect("/admin?notice=Location+settings+updated");
 }

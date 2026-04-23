@@ -6,6 +6,9 @@ import type { LayawayPayment } from "@/lib/domain/types";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "@/lib/uuid";
 import { orgTx } from "@/lib/supabase-rest";
+// R84-final: bust readStore cache so admin dashboards don't serve
+// stale data for 30s after layaway mutations.
+import { invalidateStoreCache } from "@/lib/persistence/postgres-read-store";
 
 // R44-MED / R46-M4 moved all audit writes in-tx on this surface, and
 // R74-B kept that invariant. The legacy post-commit
@@ -265,6 +268,7 @@ export async function makeLayawayPaymentAction(formData: FormData) {
     });
   }
 
+  invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin");
 }
 
@@ -534,6 +538,7 @@ export async function cancelLayawayAction(
   // POS grid picks up the change within TTL.
   const { invalidateInventoryCache: invInv } = await import("@/lib/cache/inventory-cache");
   invInv(ctx.employee.organizationId);
+  invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin");
 }
 
@@ -590,5 +595,6 @@ export async function collectLayawayAction(layawayId: string) {
     });
   }
 
+  invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin");
 }

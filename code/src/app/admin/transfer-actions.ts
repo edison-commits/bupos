@@ -6,6 +6,9 @@ import { orgQuery, orgTx } from "@/lib/supabase-rest";
 import type { Transfer, TransferLine } from "@/lib/domain/types";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "@/lib/uuid";
+// R84-final: bust readStore cache so admin dashboards don't serve
+// stale inventory after transfer ship/receive/cancel.
+import { invalidateStoreCache } from "@/lib/persistence/postgres-read-store";
 
 const isPg = () => !!process.env.USE_POSTGRES;
 
@@ -154,6 +157,7 @@ export async function createTransferAction(formData: FormData) {
     });
   }
 
+  invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin");
 }
 
@@ -346,6 +350,7 @@ export async function shipTransferAction(transferId: string, actorPassword?: str
     });
   }
 
+  invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin");
 }
 
@@ -491,6 +496,7 @@ export async function receiveTransferAction(transferId: string, actorPassword?: 
     });
   }
 
+  invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin");
 }
 
@@ -563,5 +569,6 @@ export async function cancelTransferAction(transferId: string) {
     });
   }
 
+  invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin");
 }

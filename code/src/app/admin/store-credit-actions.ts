@@ -6,6 +6,9 @@ import { orgTx } from "@/lib/supabase-rest";
 import type { StoreCreditEntry } from "@/lib/domain/types";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "@/lib/uuid";
+// R84-final: bust readStore cache so customer-detail + dashboards
+// don't serve stale store-credit balances for 30s after issuance.
+import { invalidateStoreCache } from "@/lib/persistence/postgres-read-store";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { formatCurrency } from "@/lib/format";
 const isPg = () => !!process.env.USE_POSTGRES;
@@ -164,5 +167,6 @@ export async function issueStoreCreditAction(formData: FormData) {
     });
   }
 
+  invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin");
 }
