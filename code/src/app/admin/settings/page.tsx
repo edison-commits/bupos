@@ -403,7 +403,11 @@ function LocationSection({
           </div>
           <div>
             <label className="text-sm font-medium text-gray-600">Tax Rate</label>
-            <p className="text-lg text-gray-900 mt-1">{data.taxRate.toFixed(2)}%</p>
+            {/* R58-0: DB stores tax_rate as a decimal (0.0875), GET
+                returns it as-is, but the display label is "%" — so
+                show it scaled ×100 to match. Prior shape rendered
+                "0.09%" for an 8.75% tax. */}
+            <p className="text-lg text-gray-900 mt-1">{(data.taxRate * 100).toFixed(2)}%</p>
             {suggestedRate !== null && suggestedRate !== data.taxRate && (
               <p className="text-xs text-zinc-400 mt-0.5">
                 Suggested: {(suggestedRate * 100).toFixed(2)}% for {data.city}
@@ -539,22 +543,32 @@ function LocationSection({
             Tax Rate
           </label>
           <div className="flex gap-2">
+            {/* R58-0: convert decimal (stored) <-> percent (UI) at
+                the input boundary. formData.taxRate stays in the DB
+                shape (0.0875 for 8.75%) so handleSaveLocation can
+                pass it straight through to /api/settings; the input
+                displays and parses percent. */}
             <input
               type="number"
               step="0.01"
               min="0"
               max="100"
-              value={formData.taxRate}
-              onChange={(e) => handleChange('taxRate', parseFloat(e.target.value) || 0)}
+              value={Number((formData.taxRate * 100).toFixed(4))}
+              onChange={(e) => handleChange('taxRate', (parseFloat(e.target.value) || 0) / 100)}
               className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
               placeholder="e.g. 8.75"
             />
             {suggestedRate !== null && suggestedRate !== formData.taxRate && (
               <button
                 type="button"
-                onClick={() => handleChange('taxRate', Math.round(suggestedRate * 10000) / 100)}
+                // R58-0: `suggestedRate` is already a decimal (0.0875
+                // for 8.75%) from getTaxRate(). formData.taxRate is
+                // now the stored decimal too, so "Apply" just copies
+                // the suggested value. Prior shape multiplied by 100
+                // (making formData.taxRate = 8.75, a 875% rate).
+                onClick={() => handleChange('taxRate', suggestedRate)}
                 className="shrink-0 px-3 py-2 text-sm font-semibold bg-teal-50 text-teal-700 rounded-lg hover:bg-teal-100 border border-teal-200 transition-colors"
-                title={`Apply {formatCurrency((suggestedRate * 100))}%`}
+                title={`Apply ${(suggestedRate * 100).toFixed(2)}%`}
               >
                 Apply {(suggestedRate * 100).toFixed(2)}%
               </button>
@@ -1023,7 +1037,9 @@ export default function SettingsPage() {
     // user didn't touch the field.
     if (Math.abs(data.taxRate - settings.location.taxRate) > 1e-6) {
       const pwd = await promptPassword({
-        title: `Change tax rate to ${data.taxRate.toFixed(2)}%?`,
+        // R58-0: taxRate is a decimal (0.0875 for 8.75%); display as
+        // percent so the prompt matches what the user just typed.
+        title: `Change tax rate to ${(data.taxRate * 100).toFixed(2)}%?`,
         description:
           "Tax-rate changes affect every future sale at this location and flow through to your tax report. Confirm with your password.",
         confirmLabel: "Save tax rate",

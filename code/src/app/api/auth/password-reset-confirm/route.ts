@@ -77,21 +77,78 @@ export async function POST(req: NextRequest) {
     // see ~100ms of per-request pressure under concurrent resets.
     const newHash = await hashSecret(newPassword);
 
+    // R58-4: also move the reset-token lookup + password-reuse check
+    // OUTSIDE the tx. Prior shape held `auth_credentials FOR UPDATE`
+    // across `assertNotReused` which iterates up to 5 PBKDF2
+    // verifications (~500ms CPU). That starved concurrent
+    // /password-change flows for the same employee. Mirrors the
+    // R56-B3 pattern on password-change.
+    //
+    // The token is still consumed atomically in the tx below (via
+    // DELETE … RETURNING, ensuring single-use semantics against a
+    // concurrent reset replay).
+    const { sha256Hex } = await import("@/lib/auth/crypto");
+    const tokenHash = await sha256Hex(token);
+
     const pool = await getPool();
+
+    // (1) Non-locking lookup to identify the target employee +
+    // pull the password-reuse history. The token row is NOT
+    // consumed here — the tx below re-checks and deletes.
+    const { rows: snapResetRows } = await pool.query(
+      `SELECT employee_id, organization_id
+         FROM password_resets
+        WHERE token_hash = $1
+          AND used_at IS NULL
+          AND expires_at > now()
+        LIMIT 1`,
+      [tokenHash],
+    );
+    const snapReset = snapResetRows[0] as { employee_id: string; organization_id: string } | undefined;
+    if (!snapReset) {
+      return NextResponse.json(
+        { error: "This reset link is invalid or has expired. Request a new one." },
+        { status: 400 },
+      );
+    }
+    const employeeId: string = snapReset.employee_id;
+    const organizationId: string = snapReset.organization_id;
+
+    // (2) Snapshot the credential's current hash + history.
+    const { rows: snapCredRows } = await pool.query(
+      `SELECT password_hash, prior_password_hashes, updated_at
+         FROM auth_credentials
+        WHERE employee_id = $1 LIMIT 1`,
+      [employeeId],
+    );
+    const snapCred = snapCredRows[0] as
+      | { password_hash: string | null; prior_password_hashes: unknown; updated_at: string | Date }
+      | undefined;
+    const snapHash = snapCred?.password_hash ?? null;
+    const snapUpdatedAt = snapCred ? new Date(snapCred.updated_at).getTime() : 0;
+
+    // (3) assertNotReused OUTSIDE any tx (so the ~500ms PBKDF2
+    // iteration doesn't hold a credential row lock).
+    if (snapHash) {
+      const history = parseHistory(snapCred!.prior_password_hashes);
+      try {
+        await assertNotReused(newPassword, history);
+      } catch (err) {
+        if (err instanceof PasswordReuseError) {
+          return NextResponse.json({ error: err.message }, { status: err.status });
+        }
+        throw err;
+      }
+    }
+
+    // (4) Tx: atomically consume the token, re-read credential with
+    // FOR UPDATE + TOCTOU guard, UPDATE, revoke sessions, audit.
     const client = await pool.connect();
-    let employeeId: string | null = null;
-    let organizationId: string | null = null;
     try {
       await client.query("BEGIN");
 
-      // Atomically consume the token.
-      // check-pool-org-filter: scoped-by-password-reset-token-is-proof
-      // The 256-bit token is the cryptographic proof of email ownership.
-      // The caller hasn't authenticated via cookie; tenant is derived
-      // from the matched row.
-      // R32-D3: compare against hashed token. DB never stores the raw.
-      const { sha256Hex } = await import("@/lib/auth/crypto");
-      const tokenHash = await sha256Hex(token);
+      // R32-D3: consume the token (DELETE … RETURNING is atomic vs
+      // a concurrent replay).
       const { rows: resetRows } = await client.query(
         `DELETE FROM password_resets
           WHERE token_hash = $1
@@ -101,41 +158,47 @@ export async function POST(req: NextRequest) {
         [tokenHash],
       );
       const reset = resetRows[0] as { employee_id: string; organization_id: string; email: string } | undefined;
-      if (!reset) {
+      if (!reset || reset.employee_id !== employeeId) {
+        // A concurrent reset consumed this token, OR the snapshot
+        // we read is for a different employee (shouldn't happen
+        // given token uniqueness). Reject; the original snapshot
+        // assertions no longer apply.
         await client.query("ROLLBACK").catch(() => {});
         return NextResponse.json(
           { error: "This reset link is invalid or has expired. Request a new one." },
           { status: 400 },
         );
       }
-      employeeId = reset.employee_id;
-      organizationId = reset.organization_id;
 
-      // R40-1: password-reuse history check. Load the CURRENT hash +
-      // history under the same tx, verify the new password isn't in
-      // the last-N, then atomically rotate + append-old. If the user
-      // picks a recent password, reject with 400 — the token stays
-      // consumed (the DELETE above already ran) so they must request
-      // a new reset link, which is acceptable UX for attempting
-      // to reuse a known-bad password.
-      const { rows: credRows } = await client.query(
-        `SELECT password_hash, prior_password_hashes FROM auth_credentials WHERE employee_id = $1 FOR UPDATE`,
+      // R58-4: TOCTOU guard via SELECT FOR UPDATE + (hash, updated_at)
+      // equality. If the credential rotated during our reuse-check
+      // window (e.g. the user changed their password via
+      // /password-change in parallel), reject — the reuse-check was
+      // against stale data.
+      const { rows: lockedRows } = await client.query(
+        `SELECT password_hash, prior_password_hashes, updated_at
+           FROM auth_credentials
+          WHERE employee_id = $1 FOR UPDATE`,
         [employeeId],
       );
-      const oldHash = credRows[0]?.password_hash as string | undefined;
-      const historyRaw = credRows[0]?.prior_password_hashes;
-      if (oldHash) {
-        const history = parseHistory(historyRaw);
-        try {
-          await assertNotReused(newPassword, history);
-        } catch (err) {
-          if (err instanceof PasswordReuseError) {
-            await client.query("ROLLBACK").catch(() => {});
-            return NextResponse.json({ error: err.message }, { status: err.status });
-          }
-          throw err;
+      const locked = lockedRows[0] as
+        | { password_hash: string | null; prior_password_hashes: unknown; updated_at: string | Date }
+        | undefined;
+      if (locked) {
+        const lockedUpdatedAt = new Date(locked.updated_at).getTime();
+        const updatedAtDrifted = Math.abs(lockedUpdatedAt - snapUpdatedAt) > 0;
+        const hashDrifted = (locked.password_hash ?? null) !== snapHash;
+        if (updatedAtDrifted || hashDrifted) {
+          await client.query("ROLLBACK").catch(() => {});
+          return NextResponse.json(
+            { error: "Password was changed in another session. Please request a new reset link." },
+            { status: 409 },
+          );
         }
-        const nextHistory = appendHistory(oldHash, history);
+      }
+
+      if (snapHash) {
+        const nextHistory = appendHistory(snapHash, parseHistory(snapCred!.prior_password_hashes));
         await client.query(
           `UPDATE auth_credentials
               SET password_hash = $1,
@@ -146,7 +209,6 @@ export async function POST(req: NextRequest) {
         );
       } else {
         // No existing hash (unusual — reset on a never-signed-in account).
-        // Just set the hash; nothing to append.
         await client.query(
           `UPDATE auth_credentials
               SET password_hash = $1,

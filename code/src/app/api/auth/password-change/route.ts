@@ -197,8 +197,19 @@ export async function POST(req: NextRequest) {
         await client.query("ROLLBACK");
         return NextResponse.json({ error: "Not signed in." }, { status: 401 });
       }
+      // R58-3: TOCTOU guard uses BOTH updated_at AND password_hash
+      // equality. Prior shape relied only on `updated_at`, which
+      // `new Date().getTime()` truncates to millisecond precision —
+      // two rotations within the same millisecond would slip past.
+      // password_hash is the deterministic anchor: PBKDF2 output
+      // depends on the password + salt, so any rotation changes it
+      // regardless of clock precision (and the reuse-history check
+      // upstream rejects same-password re-rotation). Mirrors the
+      // revoke-all-sessions pattern (R56-B4).
       const lockedUpdatedAt = new Date(locked.updated_at).getTime();
-      if (Math.abs(lockedUpdatedAt - snapUpdatedAt) > 0) {
+      const updatedAtDrifted = Math.abs(lockedUpdatedAt - snapUpdatedAt) > 0;
+      const hashDrifted = locked.password_hash !== currentHash;
+      if (updatedAtDrifted || hashDrifted) {
         // Credential rotated between snapshot and lock — another
         // /password-change or /password-reset-confirm landed in
         // parallel. Reject; caller retries with the fresh state.

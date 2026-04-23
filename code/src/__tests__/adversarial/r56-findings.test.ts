@@ -44,9 +44,13 @@ describe("R56 audit fixes — round 11", () => {
       const block = src.slice(src.indexOf("Handle variant creation"));
       expect(block).toMatch(/hasPermission\(employee\.roleKey,\s*["']pricing\.manage["']\)/);
     });
-    it("variant-create gates on requireStepUp when price > 0", () => {
+    it("variant-create gates on requireStepUp unconditionally (R58-5 upgrade)", () => {
+      // R58-5 tightened: step-up now fires unconditionally on
+      // variant-create (not only when price > 0). A $0 variant is
+      // still accounting-noise-worthy (zero-dollar ring at checkout
+      // = shoplifting cover). Variant-create is low-frequency so
+      // always-gating is fine UX-wise.
       const block = src.slice(src.indexOf("Handle variant creation"));
-      expect(block).toMatch(/typeof price === 'number' && price > 0/);
       expect(block).toMatch(/bucketKey:\s*['"]variant-price-stepup['"]/);
     });
     it("variant-create writes a variant_created audit", () => {

@@ -259,24 +259,31 @@ export const POST = withAdminAuth("catalog.manage", async (request, ctx) => {
 
     // Handle variant creation
     if (body.product_id && body.variant) {
-      const { sku, barcode, name, size_label, color_label, price, compare_at_price, cost } = body.variant;
+      const { sku, barcode, name, size_label, color_label, price: rawPrice, compare_at_price, cost: rawCost } = body.variant;
       if (!sku) {
         await client.query('ROLLBACK');
         return NextResponse.json({ error: 'SKU is required for variants' }, { status: 400 });
       }
-      if (typeof price === 'number' && price < 0) {
+      // R58-1: coerce via Number() + Number.isFinite instead of
+      // `typeof === 'number'`. Prior shape accepted JSON strings
+      // like `"0.01"` — `typeof "0.01" === 'number'` is false, so
+      // the step-up gate skipped entirely, but PostgreSQL coerces
+      // the string into the numeric column at bind-time. Net: a
+      // stolen pricing.manage cookie could POST {..., price:"0.01"}
+      // to bypass the variant-price-stepup password challenge.
+      // Coerce early; reject non-finite / negative inputs with 400.
+      const priceNum = rawPrice !== undefined ? Number(rawPrice) : undefined;
+      const costNum = rawCost !== undefined ? Number(rawCost) : undefined;
+      if (priceNum !== undefined && (!Number.isFinite(priceNum) || priceNum < 0)) {
         await client.query('ROLLBACK');
-        return NextResponse.json({ error: 'Price cannot be negative' }, { status: 400 });
+        return NextResponse.json({ error: 'Price must be a non-negative number' }, { status: 400 });
+      }
+      if (costNum !== undefined && (!Number.isFinite(costNum) || costNum < 0)) {
+        await client.query('ROLLBACK');
+        return NextResponse.json({ error: 'Cost must be a non-negative number' }, { status: 400 });
       }
       // R56-A2: variant creation carries a `price` (and optional
-      // `cost`) — same fraud-relevant surface as a reprice. The PUT
-      // reprice branch at line ~470 gates `pricing.manage`; POST
-      // variant-create was asymmetric (only the route-level
-      // `catalog.manage` applied), letting an inventory_clerk mint a
-      // brand-new $0.01 variant via POST to bypass R33-H4's self-
-      // checkout defense. Close the gap with the same role check
-      // AND require step-up whenever a non-default price is being
-      // set (matches the PUT/variant-reprice bucket aggregate).
+      // `cost`) — same fraud-relevant surface as a reprice.
       const { hasPermission } = await import("@/lib/domain/permissions");
       if (!hasPermission(employee.roleKey, "pricing.manage")) {
         await client.query('ROLLBACK');
@@ -285,7 +292,13 @@ export const POST = withAdminAuth("catalog.manage", async (request, ctx) => {
           { status: 403 },
         );
       }
-      if (typeof price === 'number' && price > 0) {
+      // R58-5 (was R56-A2): unconditional step-up on variant-create.
+      // Prior shape skipped step-up when `price === 0` — a stolen
+      // cookie could still mint $0 variants (accounting noise /
+      // shoplifting-cover via zero-dollar rings at checkout). Variant
+      // create is low-frequency (setup / catalog expansion) so
+      // always-gating is acceptable UX.
+      {
         const { requireStepUp } = await import('@/lib/auth/step-up');
         const stepUp = await requireStepUp({
           actorId: employee.id,
@@ -321,11 +334,16 @@ export const POST = withAdminAuth("catalog.manage", async (request, ctx) => {
         await client.query('ROLLBACK');
         return NextResponse.json({ error: `SKU "${sku}" already exists` }, { status: 409 });
       }
+      // R58-1: bind the coerced numeric values (not raw `rawPrice` /
+      // `rawCost` which could be strings slipping past typeof checks
+      // upstream). compare_at_price has no separate step-up gate but
+      // gets the same Number() coercion for consistency.
+      const compareAtPriceNum = compare_at_price !== undefined ? Number(compare_at_price) : undefined;
       const result = await client.query(
         `INSERT INTO product_variants (id, organization_id, product_id, sku, barcode, name, size_label, color_label, price, compare_at_price, cost, is_active, created_at, updated_at)
          VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, NOW(), NOW())
          RETURNING id, sku, barcode, name, size_label, color_label, price, compare_at_price, cost, is_active`,
-        [orgId, body.product_id, sku, barcode, name, size_label, color_label, price, compare_at_price, cost]
+        [orgId, body.product_id, sku, barcode, name, size_label, color_label, priceNum, compareAtPriceNum, costNum]
       );
       // R56-A2: audit the variant creation — prior shape had no
       // audit row, making the variant unattributable post-creation.
@@ -520,29 +538,27 @@ export const PUT = withAdminAuth("catalog.manage", async (request, ctx) => {
           { status: 403 },
         );
       }
-      if (typeof updates.price === 'number' && updates.price < 0) {
+      // R58-1: coerce via Number() + Number.isFinite. Prior
+      // `typeof === 'number'` checks returned false for JSON-string
+      // inputs like `"0.01"`, letting the step-up gate slip while
+      // PostgreSQL coerced the string into the numeric column at
+      // bind time. A stolen pricing.manage cookie could thus
+      // reprice via {..., price:"0.01"}. Coerce once, use the
+      // resulting number for every downstream check + bind.
+      const priceNum = updates.price !== undefined ? Number(updates.price) : undefined;
+      const costNum = updates.cost !== undefined ? Number(updates.cost) : undefined;
+      if (priceNum !== undefined && (!Number.isFinite(priceNum) || priceNum < 0)) {
         await client.query('ROLLBACK');
-        return NextResponse.json({ error: 'Price cannot be negative' }, { status: 400 });
+        return NextResponse.json({ error: 'Price must be a non-negative number' }, { status: 400 });
       }
-      if (typeof updates.cost === 'number' && updates.cost < 0) {
+      if (costNum !== undefined && (!Number.isFinite(costNum) || costNum < 0)) {
         await client.query('ROLLBACK');
-        return NextResponse.json({ error: 'Cost cannot be negative' }, { status: 400 });
+        return NextResponse.json({ error: 'Cost must be a non-negative number' }, { status: 400 });
       }
-      // R52-A: step-up re-auth on variant reprice. The Server Action
-      // `editVariantAction` (/src/app/admin/actions.ts) added
-      // `bucketKey:'variant-price-stepup'` in R49 with a snapshot-
-      // compare (fire only on actual change). The REST parity
-      // (claimed at editVariantAction:773-775) was missing — a
-      // compromised owner/manager cookie could `fetch('/api/products',
-      // {method:'PUT', body:{...variant_id, price:0.01}})` and
-      // reprice without the password challenge. Close that bypass
-      // here with the same bucketKey so the step-up aggregate-per-
-      // actor cap applies across both surfaces.
-      //
-      // Snapshot-compare against the SELECT … FOR UPDATE prior row
-      // so `tsc --noEmit` remains typesafe and the price lock
-      // closes a TOCTOU race where two rapid PUTs would each see
-      // the pre-existing value.
+      // R52-A: step-up re-auth on variant reprice. Snapshot-compare
+      // against the SELECT … FOR UPDATE prior row; the lock closes
+      // the TOCTOU race where two rapid PUTs would each see the
+      // pre-existing value.
       const { rows: priorRows } = await client.query(
         `SELECT price, cost FROM product_variants WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
         [updates.variant_id, orgId],
@@ -554,11 +570,11 @@ export const PUT = withAdminAuth("catalog.manage", async (request, ctx) => {
       const prior = priorRows[0] as { price: string; cost: string | null };
       const priorPrice = Number(prior.price);
       const priorCost = prior.cost != null ? Number(prior.cost) : null;
-      const newPrice = typeof updates.price === 'number' ? updates.price : priorPrice;
-      const newCost = typeof updates.cost === 'number' ? updates.cost : priorCost;
-      const priceChanged = typeof updates.price === 'number' && Math.abs(priorPrice - newPrice) > 0.005;
+      const newPrice = priceNum !== undefined ? priceNum : priorPrice;
+      const newCost = costNum !== undefined ? costNum : priorCost;
+      const priceChanged = priceNum !== undefined && Math.abs(priorPrice - newPrice) > 0.005;
       const costChanged =
-        typeof updates.cost === 'number' &&
+        costNum !== undefined &&
         priorCost !== null &&
         newCost !== null &&
         Math.abs(priorCost - newCost) > 0.005;
@@ -579,14 +595,16 @@ export const PUT = withAdminAuth("catalog.manage", async (request, ctx) => {
       const values = [];
       let paramIndex = 1;
 
-      if (updates.price !== undefined) {
+      // R58-1: bind the coerced numeric values (not raw
+      // updates.price / updates.cost which could still be strings).
+      if (priceNum !== undefined) {
         fields.push(`price = $${paramIndex}`);
-        values.push(updates.price);
+        values.push(priceNum);
         paramIndex++;
       }
-      if (updates.cost !== undefined) {
+      if (costNum !== undefined) {
         fields.push(`cost = $${paramIndex}`);
-        values.push(updates.cost);
+        values.push(costNum);
         paramIndex++;
       }
 

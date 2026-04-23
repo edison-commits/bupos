@@ -943,19 +943,40 @@ export async function deleteProductAction(formData: FormData) {
 
   if (isPg()) {
     const orgId = employee.organizationId;
-    // R54-M: DELETE + audit inline in one orgTx. Prior shape split
-    // pgDeleteProduct and pgInsertAuditEvent into two separate txs.
+    // R54-M / R58-2: soft-delete + in-tx audit.
+    //
+    // R58-2 fixes the semantic divergence R57 flagged:
+    //   • REST /api/products DELETE soft-deletes (UPDATE is_active =
+    //     false) and emits event_kind = 'product_deleted'.
+    //   • Server Action was HARD deleting (DELETE FROM products)
+    //     and emitting event_kind = 'catalog_update' with
+    //     `action:"deleted"` — cascading through child tables and
+    //     breaking forensic queries that filter by event_kind.
+    // Unified on the soft-delete semantics (REST was already there)
+    // AND on event_kind = 'product_deleted' so a single audit-kind
+    // query finds every product removal regardless of surface. The
+    // admin list queries already filter on is_active elsewhere, so
+    // soft-delete behaves indistinguishably from hard-delete at the
+    // UI layer.
     const { orgTx } = await import("@/lib/db");
     const client = await orgTx(orgId);
     try {
-      await client.query(
-        `DELETE FROM products WHERE id = $1 AND organization_id = $2`,
+      const res = await client.query(
+        `UPDATE products SET is_active = false, updated_at = NOW()
+          WHERE id = $1 AND organization_id = $2 RETURNING id, name`,
         [productId, orgId],
       );
+      if (res.rows.length === 0) {
+        await client.query("ROLLBACK");
+        redirect("/admin?error=Product+not+found");
+      }
       await client.query(
         `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
-         VALUES ($1, $2, $3, $4, 'product', $5, 'catalog_update', $6, now())`,
-        [randomUUID(), orgId, null, employee.id, productId, JSON.stringify({ action: "deleted" })],
+         VALUES ($1, $2, $3, $4, 'product', $5, 'product_deleted', $6, now())`,
+        [
+          randomUUID(), orgId, null, employee.id, productId,
+          JSON.stringify({ id: productId, name: res.rows[0]?.name, soft_delete: true }),
+        ],
       );
       await client.query("COMMIT");
     } catch (e) {

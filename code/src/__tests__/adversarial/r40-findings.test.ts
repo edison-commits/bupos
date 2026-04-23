@@ -37,9 +37,16 @@ describe("R40 deferred fixes", () => {
       expect(changeRoute).toMatch(/appendHistory\(currentHash, history\)/);
     });
     it("password-reset-confirm also checks + appends history", () => {
+      // R58-4 moved the reuse-check + history read OUTSIDE the tx so
+      // the FOR UPDATE lock isn't held across the PBKDF2 iterations.
+      // Variable rename (oldHash → snapHash); history is now derived
+      // inline via parseHistory(snapCred.prior_password_hashes). Test
+      // accepts both old and new shapes.
       expect(resetRoute).toMatch(/prior_password_hashes/);
       expect(resetRoute).toMatch(/assertNotReused\(newPassword, history\)/);
-      expect(resetRoute).toMatch(/appendHistory\(oldHash, history\)/);
+      expect(resetRoute).toMatch(
+        /appendHistory\((?:oldHash, history|snapHash, parseHistory\([^)]*\))\)/,
+      );
     });
 
     it("parseHistory tolerates null / malformed / array / jsonb-string inputs", () => {
