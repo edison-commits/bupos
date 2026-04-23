@@ -3,6 +3,12 @@
 import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { authFetch } from '@/lib/api/client';
+// R45-M: sanitize URL-param content before rendering. This page was
+// the 4th URL-param banner surface R44-FE2 missed. An attacker's
+// `/admin/clock-in?error=Call+1-888-ATTACKERRR` otherwise renders
+// attacker-controlled text in an app-branded red banner on a
+// staff-reachable page.
+import { sanitizeNotice } from "@/lib/utils/sanitize-notice";
 
 interface Employee {
   id: string;
@@ -20,8 +26,8 @@ interface Location {
 function ClockInContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const notice = searchParams.get("notice");
-  const urlError = searchParams.get("error");
+  const notice = sanitizeNotice(searchParams.get("notice") ?? undefined) ?? undefined;
+  const urlError = sanitizeNotice(searchParams.get("error") ?? undefined) ?? undefined;
 
   const [locations, setLocations] = useState<Location[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -116,10 +122,10 @@ function ClockInContent() {
           </p>
         </div>
 
-        {/* Notice banner */}
+        {/* Notice banner — R45-M: notice is already sanitized above. */}
         {notice && (
           <div className="mb-6 rounded-2xl bg-green-50 border border-green-200 px-5 py-4 text-sm text-green-700 text-center font-medium">
-            {notice.replace("+", " ")}
+            {notice}
           </div>
         )}
 
@@ -223,10 +229,10 @@ function ClockInContent() {
           />
         </div>
 
-        {/* Error */}
+        {/* Error — R45-M: urlError already sanitized by sanitizeNotice above. */}
         {(error || urlError) && (
           <div className="mb-6 rounded-2xl bg-red-50 border border-red-200 px-5 py-4 text-sm text-red-700">
-            {error ?? urlError?.replace("+", " ")}
+            {error ?? urlError}
           </div>
         )}
 

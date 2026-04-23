@@ -147,13 +147,22 @@ describe("R41 deferred fixes", () => {
         const lines = src.split("\n");
         for (const line of lines) {
           if (!line.includes("basicuniformpos_")) continue;
-          // Allowed: OLD_*_COOKIE assignment, comments, or BroadcastChannel names.
+          // Allowed: OLD_*_COOKIE assignment, comments, BroadcastChannel
+          // names, or clear-cookie template lines (R45-LOW added
+          // `clearRegOld = [\`basicuniformpos_register_session=\`, ...]`
+          // to revoke-all-sessions — a clearing Set-Cookie header that
+          // MUST reference the legacy name to evict it from the jar).
           const allowed =
             /OLD_(ADMIN|REGISTER)_COOKIE\s*=\s*"basicuniformpos_/.test(line)
             || line.trimStart().startsWith("//")
             || line.trimStart().startsWith("*")
             || /basicuniformpos_customer_display/.test(line)
-            || /basicuniformpos_admin_session` vs `basicuniformpos_register_session/.test(line);
+            || /basicuniformpos_admin_session` vs `basicuniformpos_register_session/.test(line)
+            // R45-LOW: clearing header for the legacy register cookie.
+            // The template `\`basicuniformpos_register_session=\``
+            // inside a Max-Age=0 Set-Cookie is the ONLY way to evict
+            // the legacy cookie from a client jar; accept it.
+            || /basicuniformpos_register_session=/.test(line);
           expect(allowed, `Bare legacy cookie ref in ${p}: ${line.trim()}`).toBe(true);
         }
       }

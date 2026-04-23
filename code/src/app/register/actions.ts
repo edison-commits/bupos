@@ -640,7 +640,10 @@ export async function quickSwitchAction(pin: string): Promise<{ success: boolean
       // The latter uses a module-scope pool that binds its Neon WebSocket to
       // the first Worker request and fails on subsequent concurrent calls
       // (CF error 1102). Same reason as R9-C-1's fix above.
-      console.warn("[register_quick_switch] RPC unavailable; using column fallback:", msg);
+      // R45-M: log via safeErr. `msg` above is still used for the
+      // `/function .* does not exist/` regex classification; we just
+      // don't want it reaching the log sink with pg DETAIL fragments.
+      console.warn("[register_quick_switch] RPC unavailable; using column fallback:", safeErr(rpcErr));
       const { orgTx } = await import("@/lib/supabase-rest");
       const client = await orgTx(context.employee.organizationId);
       try {

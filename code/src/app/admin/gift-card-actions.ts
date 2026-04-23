@@ -41,6 +41,23 @@ export async function activateGiftCardAction(formData: FormData) {
 
   const ctx = await requireAdminPermission("catalog.manage");
   requireGiftCardAuthority(ctx.employee.roleKey);
+
+  // R45-H: step-up re-auth matches the REST mirror
+  // `/api/gift-cards` POST (bucket gift-card-activate-stepup).
+  // Gift-card activation is cash-equivalent minting; a stolen manager
+  // cookie without the password can otherwise mint up to $5k per call
+  // via the server-action path. `disableGiftCardAction` already
+  // requires step-up; parity gap closed.
+  const actorPassword = String(formData.get("actorPassword") ?? "");
+  const { requireStepUp } = await import("@/lib/auth/step-up");
+  const stepUp = await requireStepUp({
+    actorId: ctx.employee.id,
+    orgId: ctx.employee.organizationId,
+    actorPassword,
+    bucketKey: "gift-card-activate-stepup",
+  });
+  if (!stepUp.ok) throw new Error(stepUp.error);
+
   const rl = checkRateLimit(`gc-activate:${ctx.employee.id}`);
   if (!rl.allowed) throw new Error("Too many requests");
 
@@ -86,13 +103,16 @@ export async function activateGiftCardAction(formData: FormData) {
          VALUES ($1, $2, 'activation', $3, $3, $4, 'New gift card activated', now())`,
         [randomUUID(), gcId, amount, ctx.employee.id],
       );
+      // R45-M: audit INSIDE the transaction.
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'gift_card', $5, 'gift_card_activated', $6, now())`,
+        [
+          randomUUID(), orgId, null, ctx.employee.id, gcId,
+          JSON.stringify({ code: `****${code.slice(-4)}`, amount, customer_id: customerId || null }),
+        ],
+      );
       await client.query("COMMIT");
-      // Audit event (non-fatal — committed regardless)
-      await waitUntilOrAwait(pgInsertAuditEvent(
-        orgId, null, ctx.employee.id,
-        "gift_card", gcId, "gift_card_activated",
-        { code: `****${code.slice(-4)}`, amount, customer_id: customerId || null },
-      ).catch((err) => console.error("[activateGiftCardAction] audit failed:", safeErr(err))));
     } catch (e) {
       await client.query("ROLLBACK");
       throw e;
@@ -136,6 +156,19 @@ export async function reloadGiftCardAction(formData: FormData) {
 
   const ctx = await requireAdminPermission("catalog.manage");
   requireGiftCardAuthority(ctx.employee.roleKey);
+
+  // R45-H: step-up re-auth parity with REST mirror /api/gift-cards
+  // reload action (bucket gift-card-reload-stepup).
+  const actorPassword = String(formData.get("actorPassword") ?? "");
+  const { requireStepUp } = await import("@/lib/auth/step-up");
+  const stepUp = await requireStepUp({
+    actorId: ctx.employee.id,
+    orgId: ctx.employee.organizationId,
+    actorPassword,
+    bucketKey: "gift-card-reload-stepup",
+  });
+  if (!stepUp.ok) throw new Error(stepUp.error);
+
   const rl = checkRateLimit(`gc-reload:${ctx.employee.id}`);
   if (!rl.allowed) throw new Error("Too many requests");
 
@@ -167,13 +200,16 @@ export async function reloadGiftCardAction(formData: FormData) {
          VALUES ($1, $2, 'reload', $3, $4, $5, 'Gift card reloaded', now())`,
         [randomUUID(), giftCardId, amount, newBal, ctx.employee.id],
       );
+      // R45-M: audit INSIDE the transaction.
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'gift_card', $5, 'gift_card_reloaded', $6, now())`,
+        [
+          randomUUID(), orgId, null, ctx.employee.id, giftCardId,
+          JSON.stringify({ amount, new_balance: newBal }),
+        ],
+      );
       await client.query("COMMIT");
-      // Audit event (non-fatal — committed regardless)
-      await waitUntilOrAwait(pgInsertAuditEvent(
-        orgId, null, ctx.employee.id,
-        "gift_card", giftCardId, "gift_card_reloaded",
-        { amount, new_balance: newBal },
-      ).catch((err) => console.error("[reloadGiftCardAction] audit failed:", safeErr(err))));
     } catch (e) {
       await client.query("ROLLBACK");
       throw e;

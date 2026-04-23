@@ -83,13 +83,20 @@ export async function issueStoreCreditAction(formData: FormData) {
          VALUES ($1, $2, $3, 'issuance', $4, $5, $6, $7, now())`,
         [randomUUID(), orgId, customerId, amount, newBalance, ctx.employee.id, reason],
       );
+      // R45-M: audit INSIDE the transaction. Prior shape used
+      // waitUntilOrAwait(pgInsertAuditEvent(...)) AFTER COMMIT; if the
+      // audit write failed (DB hiccup, RLS drift, isolate freeze),
+      // money movement committed without an audit row. Mirrors the
+      // R44-MED layaway-actions fix.
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'customer', $5, 'store_credit_issued', $6, now())`,
+        [
+          randomUUID(), orgId, null, ctx.employee.id, customerId,
+          JSON.stringify({ amount, new_balance: newBalance, reason }),
+        ],
+      );
       await client.query("COMMIT");
-      // Audit event (non-fatal — committed regardless)
-      await waitUntilOrAwait(pgInsertAuditEvent(
-        orgId, null, ctx.employee.id,
-        "customer", customerId, "store_credit_issued",
-        { amount, new_balance: newBalance, reason },
-      ).catch((err) => console.error("[issueStoreCreditAction] audit failed:", safeErr(err))));
     } catch (e) {
       await client.query("ROLLBACK");
       throw e;

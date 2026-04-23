@@ -43,19 +43,24 @@ const read = (rel: string) => fs.readFileSync(path.join(REPO, rel), "utf8");
 const readRoot = (rel: string) => fs.readFileSync(path.resolve(REPO, "..", rel), "utf8");
 
 describe("R44 audit fixes", () => {
-  describe("R44-C1: admin cross-shift cash refund conditional pay_out", () => {
-    it("/api/returns PUT writes pay_in_outs only when origSession != openShift.register_session_id", () => {
+  describe("R44-C1 / R45-C1: admin cross-shift cash refund conditional pay_out", () => {
+    // R45-C1 extended the check to ALSO compare `created_at` vs
+    // `openShift.opened_at` (same register_session can span multiple
+    // shifts). The assertion is now on the `inShiftWindow` predicate
+    // + isCrossShift derivation rather than the direct session-equal
+    // compare.
+    it("/api/returns PUT writes pay_in_outs only when original txn is NOT in the current shift's window", () => {
       const src = read("src/app/api/returns/route.ts");
       expect(src).toMatch(/isCrossShift[\s\S]*?INSERT INTO pay_in_outs/);
-      expect(src).toMatch(/origSessionId !== openShift\.register_session_id/);
+      expect(src).toMatch(/inShiftWindow = sameSession && origCreatedAt >= openShiftOpenedAt/);
+      expect(src).toMatch(/const isCrossShift = !inShiftWindow/);
       expect(src).toMatch(/'pay_out'/);
-      // Rationale comment must mention cross-shift.
       expect(src).toMatch(/cross-shift/i);
     });
-    it("/api/returns/process adds the same cross-shift logic", () => {
+    it("/api/returns/process adds the same cross-shift-plus-window logic", () => {
       const src = read("src/app/api/returns/process/route.ts");
-      expect(src).toMatch(/R44-C1/);
-      expect(src).toMatch(/origSessionId !== openShift\.register_session_id/);
+      expect(src).toMatch(/R45-C1/);
+      expect(src).toMatch(/inShiftWindow = sameSession && origCreatedAt >= openShiftOpenedAt/);
       expect(src).toMatch(/INSERT INTO pay_in_outs[\s\S]*?'pay_out'/);
     });
   });

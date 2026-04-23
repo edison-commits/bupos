@@ -304,16 +304,23 @@ describe("R42 audit fixes", () => {
     });
   });
 
-  describe("R42-Q: NoticeToaster sanitizes URL-param content", () => {
+  describe("R42-Q / R45-M: NoticeToaster sanitizes URL-param content (via shared helper)", () => {
     const src = read("src/components/notice-toaster.tsx");
-    it("has a plain-text regex + blocked-pattern list", () => {
-      expect(src).toMatch(/PLAIN_TEXT_PATTERN/);
-      expect(src).toMatch(/BLOCKED_PATTERNS/);
+    const sharedSrc = read("src/lib/utils/sanitize-notice.ts");
+    // R45-M: the inline sanitizer in notice-toaster.tsx was replaced
+    // with `import { sanitizeNotice } from "@/lib/utils/sanitize-notice"`
+    // so the rule is canonical. Assert against the shared helper.
+    it("notice-toaster imports the shared sanitizer", () => {
+      expect(src).toMatch(/import \{ sanitizeNotice \} from ['"]@\/lib\/utils\/sanitize-notice['"]/);
     });
-    it("blocks http/https URLs, phone numbers, and @ chars", () => {
-      expect(src).toMatch(/https\?:\\\/\\\//);
-      expect(src).toMatch(/\\d\{3\}\[-\.\\s\]/);
-      expect(src).toMatch(/\/@\//);
+    it("shared sanitizer has plain-text + blocked-pattern logic", () => {
+      expect(sharedSrc).toMatch(/PLAIN_TEXT_PATTERN/);
+      expect(sharedSrc).toMatch(/BLOCKED_PATTERNS/);
+    });
+    it("shared sanitizer blocks http/https URLs, phone numbers, and @ chars", () => {
+      expect(sharedSrc).toMatch(/https\?:\\\/\\\//);
+      expect(sharedSrc).toMatch(/\\d\{3\}\[-\.\\s\]/);
+      expect(sharedSrc).toMatch(/\/@\//);
     });
   });
 

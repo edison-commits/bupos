@@ -1077,91 +1077,118 @@ export async function signOutRegister() {
 
   if (sessionId) {
     if (isPg()) {
-      // R44-FE1: always use the column-level path (was: try RPC first,
-      // fall back on error). The `register_sign_out` RPC from
-      // migration 040 auto-closes the open shift but emits NO
-      // `audit_events` row, so the R43-H7 audit INSERT below only ever
-      // fired on the fallback branch — which in prod (RPC provisioned)
-      // never runs. Result: every real cashier register-logout with an
-      // open shift silently auto-closed the shift with no audit
-      // trail. The column-level path is well-exercised, carries the
-      // audit emit, and costs one extra round-trip vs the RPC.
+      // R44-FE1 / R45-H1: always use the column-level path, all FIVE
+      // state mutations wrapped in ONE transaction for atomicity.
+      //
+      // Prior shape (R44-FE1) issued 5 separate `pool.query()` calls
+      // (each opening a one-shot Neon pool on Workers):
+      //   1. UPDATE register_sessions status='ended'
+      //   2. UPDATE shifts status='closed'
+      //   3. INSERT audit_events
+      //   4. UPDATE register_sessions active_shift_id=NULL
+      //   5. DELETE sessions
+      // A Worker isolate freeze, Neon WebSocket hiccup, or transient
+      // query error between steps left the register in an inconsistent
+      // state (e.g., shift closed but no audit row; or register_
+      // session ended but shift still open). The transaction block
+      // rolls the whole thing back on any failure — subsequent logout
+      // retry re-runs cleanly.
+      //
+      // R45-H1: do NOT fake closing_variance=0 / closing_expected_cash
+      // = opening_float. Prior values SILENTLY ERASED all cash sales
+      // from the shift's reconciliation ledger — a cashier with $500
+      // in cash sales logging out mid-shift got a "zero variance"
+      // close that hid any real discrepancy. Set the closing fields
+      // to NULL and mark the close note as "auto-closed (not
+      // reconciled)" so downstream reports render "unreconciled"
+      // instead of "perfect close."
       {
-        const pool = await pgGetPool();
+        const { orgTx } = await import("@/lib/supabase-rest");
         const timestamp = new Date().toISOString();
 
-        // check-pool-org-filter: scoped-by-auth-session-cookie
-        // sessionId is the cookie-proven auth session id; the update
-        // is scoped by the session row itself.
-        // R43-H7: also return organization_id + location_id so the
-        // shift auto-close audit below can attribute correctly.
-        const { rows: endedRows } = await pool.query(
-          `UPDATE register_sessions SET status = 'ended', ended_at = $1
-           WHERE auth_session_id = $2 AND status = 'active'
-           RETURNING id, employee_id, organization_id, location_id, active_shift_id`,
-          [timestamp, sessionId],
-        );
+        // We don't have orgId yet (that's returned by the first
+        // UPDATE). Open a connection from the default pool, begin tx
+        // manually, then SET LOCAL app.current_org_id once orgId is
+        // known. This matches the bespoke-tx pattern used elsewhere
+        // in session.ts.
+        const pool = await pgGetPool();
+        const client = await pool.connect();
+        try {
+          await client.query("BEGIN");
 
-        const registerSession = endedRows[0] as
-          | { id: string; employee_id: string; organization_id: string; location_id: string; active_shift_id: string | null }
-          | undefined;
+          // sessionId is cookie-proven; orgId comes out of RETURNING.
+          // check-pool-org-filter: scoped-by-auth-session-cookie
+          const { rows: endedRows } = await client.query(
+            `UPDATE register_sessions SET status = 'ended', ended_at = $1
+             WHERE auth_session_id = $2 AND status = 'active'
+             RETURNING id, employee_id, organization_id, location_id, active_shift_id`,
+            [timestamp, sessionId],
+          );
 
-        if (registerSession?.active_shift_id) {
-          // check-pool-org-filter: scoped-by-just-ended-register-session
-          // active_shift_id came from the just-ended register_sessions
-          // row whose auth_session_id matched the caller's cookie.
-          await pool.query(
-            `UPDATE shifts
-             SET status = 'closed',
-                 closed_at = $1,
-                 closing_expected_cash = opening_float,
-                 closing_declared_cash = opening_float,
-                 closing_variance = 0,
-                 closed_note = $2
-             WHERE id = $3 AND status = 'open'`,
-            [
-              timestamp,
-              "Auto-closed because register session ended without manual shift close.",
-              registerSession.active_shift_id,
-            ],
-          );
-          // R43-H7: audit the shift auto-close via `audit_events`, not
-          // `transaction_events`. Prior shape INSERTed into
-          // transaction_events and populated `transaction_id` with
-          // the string `txn_<shift_uuid>` — but transaction_events.
-          // transaction_id is declared `UUID NOT NULL REFERENCES
-          // transactions(id) ON DELETE CASCADE` (migration 001:302).
-          // Every auto-close INSERT therefore failed with SQLSTATE
-          // 22P02 (invalid UUID syntax), aborted the transaction,
-          // and prevented the subsequent `UPDATE register_sessions
-          // SET active_shift_id = NULL` from running. Register logout
-          // with an open shift quietly left the session in an
-          // inconsistent state.
-          //
-          // audit_events is the proper shift-scoped audit table and
-          // does not constrain entity_id to a UUID type (it's TEXT),
-          // so the shift_id interpolates cleanly.
-          await pool.query(
-            `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
-             VALUES ($1, $2, $3, $4, 'shift', $5, 'shift_auto_closed', $6, $7)`,
-            [
-              randomUUID(),
-              registerSession.organization_id,
-              registerSession.location_id,
-              registerSession.employee_id,
-              registerSession.active_shift_id,
-              JSON.stringify({
-                register_session_id: registerSession.id,
-                auto_closed: "true",
-                reason: "register_logout",
-              }),
-              timestamp,
-            ],
-          );
-          await pool.query(`UPDATE register_sessions SET active_shift_id = NULL WHERE id = $1`, [registerSession.id]);
+          const registerSession = endedRows[0] as
+            | { id: string; employee_id: string; organization_id: string; location_id: string; active_shift_id: string | null }
+            | undefined;
+
+          if (registerSession?.active_shift_id) {
+            // R45-M3: org filter defense-in-depth on the shift UPDATE.
+            // R45-H1: set closing_* to NULL (not faked opening_float)
+            // so unreconciled closes surface clearly in reports.
+            await client.query(
+              `UPDATE shifts
+               SET status = 'closed',
+                   closed_at = $1,
+                   closing_expected_cash = NULL,
+                   closing_declared_cash = NULL,
+                   closing_variance = NULL,
+                   closed_note = $2
+               WHERE id = $3 AND status = 'open' AND organization_id = $4`,
+              [
+                timestamp,
+                "Auto-closed on register logout — NOT reconciled. Declared cash + variance must be entered manually to close the books.",
+                registerSession.active_shift_id,
+                registerSession.organization_id,
+              ],
+            );
+            await client.query(
+              `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+               VALUES ($1, $2, $3, $4, 'shift', $5, 'shift_auto_closed', $6, $7)`,
+              [
+                randomUUID(),
+                registerSession.organization_id,
+                registerSession.location_id,
+                registerSession.employee_id,
+                registerSession.active_shift_id,
+                JSON.stringify({
+                  register_session_id: registerSession.id,
+                  auto_closed: "true",
+                  reason: "register_logout",
+                  unreconciled: "true",
+                }),
+                timestamp,
+              ],
+            );
+            await client.query(
+              `UPDATE register_sessions SET active_shift_id = NULL WHERE id = $1 AND organization_id = $2`,
+              [registerSession.id, registerSession.organization_id],
+            );
+          }
+
+          // Delete the auth session row too (pgDeleteSession logic
+          // inline so it's in the same tx).
+          await client.query(`DELETE FROM sessions WHERE id = $1`, [sessionId]);
+
+          await client.query("COMMIT");
+          // `orgTx` reference is intentionally kept as documentation
+          // of the org-gated tx style — inline client is used instead
+          // because orgId is only known AFTER the first UPDATE's
+          // RETURNING. Silence the unused-var lint.
+          void orgTx;
+        } catch (err) {
+          await client.query("ROLLBACK").catch(() => {});
+          throw err;
+        } finally {
+          client.release();
         }
-
-        await pgDeleteSession(sessionId);
       }
     } else {
       await mutateStore((store) => {

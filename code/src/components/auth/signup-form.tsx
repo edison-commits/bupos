@@ -7,7 +7,24 @@ export function SignupForm() {
   const [state, formAction, isPending] = useActionState(signupAction, null);
 
   return (
-    <form action={formAction} className="grid gap-4">
+    <form
+      action={formAction}
+      className="grid gap-4"
+      onSubmit={(e) => {
+        // R45-M: synchronous double-submit guard. `isPending` is a
+        // React state update that commits on the next render (~16ms
+        // window), so a fast double-tap can fire two concurrent
+        // signupAction invocations — each paying rate-limit ticks and
+        // attempting a second verification-email send. Mirror the
+        // login-form pattern: mutate the submit button's disabled
+        // attribute synchronously in the event handler.
+        const btn = e.currentTarget.querySelector<HTMLButtonElement>('button[type="submit"]');
+        if (btn) {
+          if (btn.disabled) { e.preventDefault(); return; }
+          btn.disabled = true;
+        }
+      }}
+    >
       <label className="grid gap-1.5 text-sm font-medium text-zinc-700">
         <span>Store name</span>
         <input

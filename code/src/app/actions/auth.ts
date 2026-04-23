@@ -395,8 +395,10 @@ export async function signupAction(_prev: { error: string } | null, formData: Fo
       );
     }
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : "Signup failed";
-    console.error("Signup error:", msg);
+    // R45-M: log via safeErr so pg DETAIL / bound params can't leak
+    // into Workers log retention. The `msg` string derivation pattern
+    // bypassed the `check-no-raw-err-log.mjs` CATCH_IDENT_RX gate.
+    console.error("Signup error:", safeErr(e));
     // Generic response regardless — don't leak internal errors OR email
     // existence.
   } finally {

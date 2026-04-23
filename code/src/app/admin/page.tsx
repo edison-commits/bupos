@@ -28,8 +28,14 @@ export default async function AdminPage({
   try {
     store = await readStore(session.employee.organizationId);
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    redirect(`/?error=${encodeURIComponent('Store load failed: ' + msg)}`);
+    // R45-M: never embed raw `err.message` in the redirect URL. pg
+    // errors carry DETAIL fragments / bound-param values / SQL
+    // identifiers that render verbatim in the target page's banner
+    // (encodeURIComponent preserves content). Log via safeErr for
+    // ops-side diagnosis; show a static string to the user.
+    const { safeErr } = await import("@/lib/logging/safe-err");
+    console.error("[admin/page] readStore failed:", safeErr(e));
+    redirect(`/?error=Store+load+failed`);
   }
   // The previous implementation called a module-scope `setDefaultTimeZone`,
   // which corrupted TZ state across concurrent Cloudflare Worker requests

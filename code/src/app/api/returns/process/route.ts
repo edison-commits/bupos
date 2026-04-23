@@ -688,28 +688,34 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
           JSON.stringify({ is_return: 'true', reason: reason || 'other' }),
         ]
       );
-      // R44-C1: conditional pay_out for cross-shift cash refunds.
-      // See /api/returns/route.ts PUT for the full rationale. Summary:
-      // shift-close's cashSales SUM only sees transaction_tenders
-      // attached to transactions in the CURRENT shift's session. If
-      // the original sale was on a different session, the negative
-      // tender is invisible to expectedCash and the cashier closes
-      // silently over. Record a pay_out in that case.
+      // R44-C1 / R45-C1: conditional pay_out for cross-shift cash
+      // refunds. See /api/returns/route.ts PUT for the full rationale.
+      // R45-C1 extension: also check the original txn's created_at
+      // against openShift.opened_at — a single register_session can
+      // span MULTIPLE shifts, so session-equality alone is insufficient.
+      // shift-close filters transactions by both session AND time-
+      // window; the negative tender is invisible if the original txn
+      // is same-session but predates the open shift's start.
       if (refund_method === 'cash') {
         const { rows: origSessRows } = await client.query(
-          `SELECT register_session_id FROM transactions
+          `SELECT register_session_id, created_at FROM transactions
             WHERE id = $1 AND organization_id = $2`,
           [transaction_id, orgId],
         );
-        const origSessionId = (origSessRows[0]?.register_session_id ?? null) as string | null;
+        const origRow = origSessRows[0] as { register_session_id: string | null; created_at: string } | undefined;
+        const origSessionId = origRow?.register_session_id ?? null;
+        const origCreatedAt = origRow?.created_at ? new Date(origRow.created_at).getTime() : 0;
         const { rows: openShiftRows } = await client.query(
-          `SELECT id, register_session_id FROM shifts
+          `SELECT id, register_session_id, opened_at FROM shifts
             WHERE organization_id = $1 AND location_id = $2 AND status = 'open'
             ORDER BY opened_at DESC LIMIT 1`,
           [orgId, restockLocationId],
         );
-        const openShift = openShiftRows[0] as { id: string; register_session_id: string } | undefined;
-        if (openShift && (!origSessionId || origSessionId !== openShift.register_session_id)) {
+        const openShift = openShiftRows[0] as { id: string; register_session_id: string; opened_at: string } | undefined;
+        const sameSession = !!openShift && !!origSessionId && origSessionId === openShift.register_session_id;
+        const openShiftOpenedAt = openShift ? new Date(openShift.opened_at).getTime() : 0;
+        const inShiftWindow = sameSession && origCreatedAt >= openShiftOpenedAt;
+        if (openShift && !inShiftWindow) {
           await client.query(
             `INSERT INTO pay_in_outs (id, organization_id, shift_id, location_id, employee_id, direction, amount, reason, note, created_at)
              VALUES (gen_random_uuid(), $1, $2, $3, $4, 'pay_out', $5, $6, $7, now())`,

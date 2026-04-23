@@ -16,6 +16,7 @@ export async function makeLayawayPaymentAction(formData: FormData) {
   const layawayId = formData.get("layawayId") as string;
   const amount = Number(formData.get("amount"));
   const tenderType = formData.get("tenderType") as string;
+  const actorPassword = String(formData.get("actorPassword") ?? "");
 
   if (!layawayId || !Number.isFinite(amount) || amount <= 0 || !tenderType) {
     throw new Error("Layaway ID, positive amount, and tender type are required");
@@ -33,6 +34,20 @@ export async function makeLayawayPaymentAction(formData: FormData) {
   if (ctx.employee.roleKey !== "owner" && ctx.employee.roleKey !== "manager") {
     throw new Error("Layaway payment processing requires manager authority");
   }
+
+  // R45-LOW: step-up re-auth. Cash-tender branch writes a pay_in
+  // to the open shift; a compromised manager cookie can inflate
+  // expectedCash on a shift close to hide siphoned cash. Scale is
+  // bounded by `balanceDue` but paired pay-in/pay-out across
+  // multiple layaways still enables laundering.
+  const { requireStepUp } = await import("@/lib/auth/step-up");
+  const stepUp = await requireStepUp({
+    actorId: ctx.employee.id,
+    orgId: ctx.employee.organizationId,
+    actorPassword,
+    bucketKey: "layaway-payment-stepup",
+  });
+  if (!stepUp.ok) throw new Error(stepUp.error);
 
   if (isPg()) {
     const orgId = ctx.employee.organizationId;
@@ -196,6 +211,7 @@ export async function cancelLayawayAction(
   layawayId: string,
   reason: string,
   disposition: LayawayCancelDisposition,
+  actorPassword?: string,
 ) {
   const ctx = await requireAdminPermission("catalog.manage");
   if (!ctx) throw new Error("Not authenticated");
@@ -205,6 +221,25 @@ export async function cancelLayawayAction(
   // session can't quietly pocket deposits without approval trail.
   if (disposition === "forfeit_with_approval" && ctx.employee.roleKey !== "owner") {
     throw new Error("Forfeiting a layaway deposit requires owner role");
+  }
+
+  // R45-M: step-up re-auth on the two refund branches. A stolen
+  // manager cookie can otherwise drain the open-shift cash drawer
+  // (refund_cash) or mint store credit (refund_store_credit) via
+  // crafted `cancelLayawayAction(layawayId, "...", "refund_cash")`
+  // calls. `forfeit_with_approval` already has the owner-role gate
+  // above, so it's safe without step-up (attacker needs both cookie
+  // + privilege escalation). The two refund dispositions move money
+  // and need the R42 step-up parity.
+  if (disposition === "refund_cash" || disposition === "refund_store_credit") {
+    const { requireStepUp } = await import("@/lib/auth/step-up");
+    const stepUp = await requireStepUp({
+      actorId: ctx.employee.id,
+      orgId: ctx.employee.organizationId,
+      actorPassword: actorPassword ?? "",
+      bucketKey: "layaway-cancel-stepup",
+    });
+    if (!stepUp.ok) throw new Error(stepUp.error);
   }
 
   if (isPg()) {

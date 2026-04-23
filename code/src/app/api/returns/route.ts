@@ -581,7 +581,7 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
             // only (no tender overlap), so no double-count.
             if (refundMethod === 'cash') {
               const { rows: shiftRows } = await client.query(
-                `SELECT id, register_session_id FROM shifts
+                `SELECT id, register_session_id, opened_at FROM shifts
                   WHERE organization_id = $1 AND location_id = $2 AND status = 'open'
                   ORDER BY opened_at DESC LIMIT 1`,
                 [orgId, retRow.location_id],
@@ -593,16 +593,31 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
                   { status: 409 },
                 );
               }
-              const openShift = shiftRows[0] as { id: string; register_session_id: string };
-              // Look up the ORIGINAL sale's register_session_id to
-              // determine same-shift vs cross-shift.
+              const openShift = shiftRows[0] as { id: string; register_session_id: string; opened_at: string };
+              // R45-C1: "cross-shift" is BOTH the session mismatch AND
+              // the time-window test. A single register_session can
+              // span MULTIPLE shifts (cashier closes Shift 1, opens
+              // Shift 2 on the same login — register_close_shift RPC
+              // doesn't end the register session). shift-close's
+              // expectedCash JOIN scopes by `register_session_id =
+              // s.register_session_id AND t.created_at BETWEEN
+              // s.opened_at AND s.closed_at`, so a negative tender on
+              // a same-session-but-earlier-shift transaction is
+              // INVISIBLE to the current shift close. R44-C1 only
+              // checked session; we now also require the original
+              // txn's timestamp to fall within the OPEN shift window.
               const { rows: origTxnRows } = await client.query(
-                `SELECT register_session_id FROM transactions
+                `SELECT register_session_id, created_at FROM transactions
                   WHERE id = $1 AND organization_id = $2`,
                 [retRow.transaction_id, orgId],
               );
-              const origSessionId = (origTxnRows[0]?.register_session_id ?? null) as string | null;
-              const isCrossShift = !origSessionId || origSessionId !== openShift.register_session_id;
+              const origRow = origTxnRows[0] as { register_session_id: string | null; created_at: string } | undefined;
+              const origSessionId = origRow?.register_session_id ?? null;
+              const origCreatedAt = origRow?.created_at ? new Date(origRow.created_at).getTime() : 0;
+              const openShiftOpenedAt = new Date(openShift.opened_at).getTime();
+              const sameSession = !!origSessionId && origSessionId === openShift.register_session_id;
+              const inShiftWindow = sameSession && origCreatedAt >= openShiftOpenedAt;
+              const isCrossShift = !inShiftWindow;
               if (isCrossShift) {
                 // Cross-shift: shift-close's cashSales aggregate won't
                 // see the negative tender; record the outflow via

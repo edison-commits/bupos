@@ -206,14 +206,17 @@ describe("R43 audit fixes", () => {
     });
   });
 
-  describe("R43-LOW: notice-toaster accepts Unicode", () => {
-    const src = read("src/components/notice-toaster.tsx");
+  describe("R43-LOW / R45-M: notice-toaster accepts Unicode (via shared helper)", () => {
+    // R45-M: the inline sanitizer was replaced with an import from
+    // `@/lib/utils/sanitize-notice`. Assert the rules on the shared
+    // helper source.
+    const sharedSrc = read("src/lib/utils/sanitize-notice.ts");
     it("uses \\p{L}\\p{N}\\p{P}\\p{Z}\\p{S} Unicode character classes with /u flag", () => {
-      expect(src).toMatch(/\\p\{L\}\\p\{N\}/);
-      expect(src).toMatch(/}\]\{1,200\}\$\/u/);
+      expect(sharedSrc).toMatch(/\\p\{L\}\\p\{N\}/);
+      expect(sharedSrc).toMatch(/}\]\{1,200\}\$\/u/);
     });
     it("still blocks http/www/phone/email/angle-bracket patterns", () => {
-      expect(src).toMatch(/BLOCKED_PATTERNS/);
+      expect(sharedSrc).toMatch(/BLOCKED_PATTERNS/);
     });
   });
 

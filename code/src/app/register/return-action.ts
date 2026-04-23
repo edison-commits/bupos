@@ -159,7 +159,7 @@ export async function processReturnAction(input: ReturnInput): Promise<ReturnRes
                  FROM transaction_tenders tt
                  JOIN transactions t ON t.id = tt.transaction_id
                 WHERE tt.transaction_id = $1 AND tt.amount > 0
-                  AND tt.tender_type NOT IN ('gift_card', 'store_credit')
+                  AND tt.tender_type NOT IN ('gift_card', 'store_credit', 'loyalty')
                   AND t.organization_id = $2`,
               [input.originalTransactionId, context.employee.organizationId],
             )
@@ -170,7 +170,7 @@ export async function processReturnAction(input: ReturnInput): Promise<ReturnRes
                  FROM transaction_tenders tt
                  JOIN transactions t ON t.id = tt.transaction_id
                 WHERE tt.transaction_id = $1 AND tt.amount < 0
-                  AND tt.tender_type NOT IN ('gift_card', 'store_credit')
+                  AND tt.tender_type NOT IN ('gift_card', 'store_credit', 'loyalty')
                   AND t.organization_id = $2`,
               [input.originalTransactionId, context.employee.organizationId],
             )

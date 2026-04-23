@@ -56,31 +56,31 @@ export async function POST(req: NextRequest) {
       { status: 503 },
     );
   }
-  if (!bearerMatches(authHeader, `Bearer ${opsSecret}`)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+  // R45-H (NEW H2): branch on x-cleanup-ts FIRST so the signed form
+  // can reach the replay-guard branch. Prior ordering had the plain-
+  // bearer length-check at line 59 reject any Authorization header
+  // that wasn't EXACTLY `Bearer <opsSecret>` — the signed form
+  // `Bearer <secret>:<ts>:<hex>` (~68 bytes longer) always failed
+  // the length equality inside `bearerMatches` and returned 401,
+  // making the replay-guard below structurally UNREACHABLE. Now:
+  //   - `x-cleanup-ts` present → require signed-bearer + HMAC
+  //   - `x-cleanup-ts` absent → accept plain `Bearer <opsSecret>`
+  // This preserves backward-compat for the cron trigger (which sends
+  // plain) while actually enforcing R38-C-H9's replay protection on
+  // any client that includes the timestamp header.
+  //
   // R38-C-H9: timestamp-bound replay protection. A compromised ops
   // laptop / log sink that leaks the bearer once lets an attacker
   // replay the header forever (and cleanup is destructive — wiping
-  // rate-limit buckets in particular disarms brute-force defense
-  // for ~60s per call). Require the caller to also supply an
-  // `x-cleanup-ts` header with a Unix-ms timestamp within ±60s of
-  // server time; the request bearer must include the ts in the HMAC
-  // so a captured header can't be replayed outside that window.
+  // rate-limit buckets disarms brute-force defense for ~60s per call).
   //
-  // Client calling pattern:
+  // Client calling pattern (signed form):
   //   const ts = Date.now();
   //   const hmac = hmacSha256(opsSecret, `${ts}`); // hex
   //   headers: {
   //     Authorization: `Bearer ${opsSecret}:${ts}:${hmac}`,
   //     'x-cleanup-ts': String(ts),
   //   }
-  //
-  // Backward-compat: plain `Bearer ${opsSecret}` still works so the
-  // scheduled() handler doesn't need updating simultaneously. The
-  // public manual-ops entry point (runbook) should use the signed
-  // form. Log which form was used so monitoring can track adoption.
   const tsHeader = req.headers.get("x-cleanup-ts");
   let usedReplayGuard = false;
   if (tsHeader) {
@@ -94,11 +94,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid signed bearer" }, { status: 401 });
     }
     const [, secret, _ts, providedHex] = match;
-    // R42-E: constant-time compare on the secret portion too — same
-    // timing-leak reasoning as the bearerMatches check above. Even with
-    // the HMAC verification below gating signed-bearer acceptance, the
-    // secret equality gate lets an attacker partially confirm the
-    // secret before the HMAC math runs.
+    // R42-E: constant-time compare on the secret portion.
     if (!bearerMatches(secret, opsSecret)) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -121,6 +117,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
     }
     usedReplayGuard = true;
+  } else {
+    // No timestamp → plain bearer (backward-compat for cron trigger).
+    if (!bearerMatches(authHeader, `Bearer ${opsSecret}`)) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
   }
 
   try {

@@ -60,15 +60,16 @@ jobs:
       - name: npm audit signatures (supply-chain)
         run: npm audit signatures
 
-      # R44-LOW: wire the CVE-level audit promised by R42-N's comment.
-      # Blocks on high/critical known vulnerabilities. The comment
-      # previously claimed this step existed; it was decorative.
-      # `--omit=dev` scopes to prod deps (dev-only dep vulns don't
-      # reach production). `continue-on-error: true` because
-      # false-positives on transitive deps are common; the job still
-      # annotates the PR. Flip to `false` once the dep tree is clean.
+      # R44-LOW / R45-LOW: CVE-level audit wired and now BLOCKING.
+      # Blocks on high/critical known vulnerabilities. `--omit=dev`
+      # scopes to prod deps (dev-only dep vulns don't reach
+      # production). R45-LOW flipped from continue-on-error: true
+      # so high-severity CVEs actually fail the workflow — a
+      # permissive step was effectively decorative. If a transient
+      # false-positive blocks a merge, address by pinning the
+      # offending dep or adding a documented allowlist in a
+      # follow-up PR (never by relaxing this gate).
       - name: npm audit (high/critical CVEs)
-        continue-on-error: true
         run: npm audit --audit-level=high --omit=dev
 
       # Catches the R9-C-2 / R11-C-1 / R11-C-2 shape — code references a

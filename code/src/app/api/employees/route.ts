@@ -550,6 +550,29 @@ export const PATCH = withAdminAuth('employee.manage', async (request, ctx) => {
     if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
     const { action, id, pin, actorPassword } = v.data;
 
+    // R45-M: step-up gate hoisted ABOVE the role-lookup so every
+    // probe — even ones that would fail the "target not found" or
+    // "insufficient permissions" check — pays a rate-limit tick.
+    // Prior ordering (role-lookup first) let an attacker without the
+    // actor password enumerate employee_ids / role tiers / self-vs-
+    // peer status at zero rate-limit cost: the 404 vs 403 difference
+    // discriminates which UUIDs exist, and the 403 message shape
+    // discriminates role tiers (per R29-M1 comment). Running step-up
+    // FIRST makes every non-authorized probe burn a bucket attempt,
+    // bounding enumeration by the step-up cap (3/5min in-mem + 4/5min
+    // KV + aggregate-per-actor). Mirrors /api/gift-cards POST's
+    // R33-M-stepup-order rationale.
+    const { requireStepUp } = await import('@/lib/auth/step-up');
+    const stepUp = await requireStepUp({
+      actorId: actor.id,
+      orgId,
+      actorPassword,
+      bucketKey: 'employees-patch-stepup',
+    });
+    if (!stepUp.ok) {
+      return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
+    }
+
     // Role-gate via orgQuery so RLS is evaluated even on the read.
     const { rows: targetRows } = await orgQuery(
       orgId,
@@ -603,34 +626,9 @@ export const PATCH = withAdminAuth('employee.manage', async (request, ctx) => {
       );
     }
 
-    // R28-H4: step-up auth is now required for ALL three actions
-    // (activate / deactivate / reset_pin). Previously only reset_pin
-    // required it (R27-M7). A session-theft attacker with a stolen
-    // manager cookie could otherwise silently deactivate every cashier
-    // (store-wide DoS) or re-activate fired hostile employees without
-    // re-presenting the actor's password.
-    //
-    // R44-MED: switch to the shared `requireStepUp` helper. Prior
-    // inline implementation drifted from the canonical shape on 3
-    // dimensions: (1) missing the aggregate `stepup-aggregate:${actorId}`
-    // KV bucket that bounds a compromised cookie's total guesses
-    // across every step-up endpoint, (2) missing the `step_up_verified`
-    // audit event that incident response uses to distinguish legit
-    // re-auth from compromised-cookie-with-phished-password, (3)
-    // missing `runDecoyVerify` on the `!actorHash` miss branch (the
-    // shared helper equalizes timing). Separate bucketKeys
-    // `employees-patch-stepup` vs the PUT's `employees-put-stepup`
-    // prevent cross-route approval reuse.
-    const { requireStepUp } = await import('@/lib/auth/step-up');
-    const stepUp = await requireStepUp({
-      actorId: actor.id,
-      orgId,
-      actorPassword,
-      bucketKey: 'employees-patch-stepup',
-    });
-    if (!stepUp.ok) {
-      return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
-    }
+    // R45-M: step-up moved to TOP of handler (see above). The prior
+    // duplicate call here was removed — running step-up twice burns
+    // two rate-limit slots per request.
 
     if (action === 'activate' || action === 'deactivate') {
       // R28-H4: explicit state set — no more `is_active = NOT is_active`

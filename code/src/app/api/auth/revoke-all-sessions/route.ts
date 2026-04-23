@@ -183,10 +183,21 @@ export async function POST(req: NextRequest) {
     // `basicuniformpos_*` name during the rollover window so a
     // rollover client doesn't keep a live legacy session pinned
     // after "sign out everywhere".
+    // R45-LOW: also clear `bupos_r` (register) and
+    // `bupos_register_device` cookies. R39-A1-5 made the DB DELETE
+    // wipe both scopes; mirroring on the client keeps UX consistent
+    // — the browser's cookie jar won't hold a now-invalid register
+    // cookie until natural expiry.
     const clearNew = [`${ADMIN_COOKIE}=`, ...clearAttrs].join("; ");
     const clearOld = [`${OLD_ADMIN_COOKIE}=`, ...clearAttrs].join("; ");
+    const clearReg = [`bupos_r=`, ...clearAttrs].join("; ");
+    const clearRegOld = [`basicuniformpos_register_session=`, ...clearAttrs].join("; ");
+    const clearRegDev = [`bupos_register_device=`, ...clearAttrs].join("; ");
     r.headers.append("Set-Cookie", clearNew);
     r.headers.append("Set-Cookie", clearOld);
+    r.headers.append("Set-Cookie", clearReg);
+    r.headers.append("Set-Cookie", clearRegOld);
+    r.headers.append("Set-Cookie", clearRegDev);
     return r;
   } catch (err) {
     console.error("[revoke-all-sessions] error:", safeErr(err));

@@ -17,6 +17,12 @@
 --    flow and RESTRICT forces DBAs through it. SET NULL weakens that
 --    guarantee (a hard-delete now silently orphans ledger rows).
 --    Revert to RESTRICT.
+--
+-- R45-LOW: explicit BEGIN/COMMIT to match the 067-069 pattern and
+-- ensure atomicity across the two DO blocks regardless of how the
+-- runner wraps the file.
+
+BEGIN;
 
 DO $$
 BEGIN
@@ -96,3 +102,5 @@ BEGIN
   END IF;
 END
 $$;
+
+COMMIT;
