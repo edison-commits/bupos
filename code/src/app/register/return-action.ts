@@ -835,6 +835,44 @@ export async function processReturnAction(input: ReturnInput): Promise<ReturnRes
         }
       }
 
+      // R82-DB-H1 (HIGH): reverse denormalized customers.total_spend
+      // + visit_count on refund. Prior shape reversed loyalty_points
+      // only — gross-lifetime `total_spend` column drifted from real
+      // net spend after every refund, and visit_count never
+      // decremented. /api/customers LIST endpoint reads total_spend
+      // directly; /api/customers DETAIL overrides with live SUM.
+      // Net effect: list + detail disagreed for every customer with
+      // refunds. Only decrement visit_count on a FULL refund
+      // (cumulative-refund >= original grand total) so partial
+      // refunds don't spuriously reduce lifetime-visit counts —
+      // matches the cumulative-share semantic used for loyalty.
+      if (origCustomerId && origGrandTotal > 0) {
+        const { rows: priorRefundRows2 } = await client.query(
+          `SELECT COALESCE(SUM(grand_total), 0)::numeric AS prior_refund
+             FROM transactions
+            WHERE organization_id = $1
+              AND status = 'completed'
+              AND cart_snapshot->>'originalTransactionId' = $2
+              AND id <> $3`,
+          [context.employee.organizationId, input.originalTransactionId, returnTransactionId],
+        );
+        const priorRefundAbs2 = Math.abs(Number(priorRefundRows2[0]?.prior_refund ?? 0)) || 0;
+        const newCumulativeAbs2 = priorRefundAbs2 + refundGrandTotal;
+        const wasPriorFullyRefunded = priorRefundAbs2 >= origGrandTotal - 0.005;
+        const isNowFullyRefunded = newCumulativeAbs2 >= origGrandTotal - 0.005;
+        // visit_count flips from 1→0 only on the refund that CROSSES
+        // the full-refund boundary (prior was not-yet-full, now-is-full).
+        const visitCountDelta = !wasPriorFullyRefunded && isNowFullyRefunded ? 1 : 0;
+        await client.query(
+          `UPDATE customers
+              SET total_spend = GREATEST(0, total_spend - $1),
+                  visit_count = GREATEST(0, visit_count - $2),
+                  updated_at = now()
+            WHERE id = $3 AND organization_id = $4`,
+          [refundGrandTotal, visitCountDelta, origCustomerId, context.employee.organizationId],
+        );
+      }
+
       // R49: audit INSIDE the tx. Returns dispense money (cash / store
       // credit / gift-card reversal) AND restock inventory; a post-
       // commit audit that fails is exactly the evidence-destruction
@@ -856,6 +894,10 @@ export async function processReturnAction(input: ReturnInput): Promise<ReturnRes
 
       await client.query("COMMIT");
 
+      // R82-DB-M4: invalidate /api/inventory cache so the POS grid
+      // sees the restocked on_hand immediately.
+      const { invalidateInventoryCache } = await import("@/lib/cache/inventory-cache");
+      invalidateInventoryCache(context.employee.organizationId);
       revalidatePath("/register");
       return { returnTransactionId, refundTotal: refundGrandTotal, refundMethod: input.refundMethod };
     } catch (e) {

@@ -117,12 +117,22 @@ async function generateReportData(orgId: string, locationId?: string): Promise<R
        SELECT ($1::date AT TIME ZONE COALESCE((SELECT timezone FROM organizations WHERE id = $2), 'UTC')) AS window_start,
               (($1::date + INTERVAL '1 day') AT TIME ZONE COALESCE((SELECT timezone FROM organizations WHERE id = $2), 'UTC')) AS window_end
      ),
+     -- R82-DB-H3 (HIGH): sign-based filters. Register returns write
+     -- status='completed' with NEGATIVE grand_total (there's no
+     -- status='returned' value in the register flow). Prior shape
+     -- showed ZERO returns on EOD for every store using the
+     -- register-side returns. payment_breakdown also missed a
+     -- status filter — summed transaction_tenders across voided +
+     -- pending rows. Now: completed+positive for sales,
+     -- completed+negative for refunds, positive tenders only in the
+     -- payment breakdown so negative-amount refund tenders don't
+     -- distort the sale-side totals.
      daily_sales AS (
        SELECT
-         COUNT(*) FILTER (WHERE status = 'completed')::int AS total_sales_count,
-         COALESCE(SUM(grand_total) FILTER (WHERE status = 'completed'), 0)::numeric AS total_sales_amount,
-         COUNT(*) FILTER (WHERE status = 'returned')::int AS total_returns_count,
-         COALESCE(SUM(grand_total) FILTER (WHERE status = 'returned'), 0)::numeric AS total_returns_amount
+         COUNT(*) FILTER (WHERE status = 'completed' AND grand_total >= 0)::int AS total_sales_count,
+         COALESCE(SUM(grand_total) FILTER (WHERE status = 'completed' AND grand_total >= 0), 0)::numeric AS total_sales_amount,
+         COUNT(*) FILTER (WHERE status = 'completed' AND grand_total < 0)::int AS total_returns_count,
+         COALESCE(SUM(ABS(grand_total)) FILTER (WHERE status = 'completed' AND grand_total < 0), 0)::numeric AS total_returns_amount
        FROM transactions
        WHERE organization_id = $2
          AND created_at >= (SELECT window_start FROM window_bounds)
@@ -139,6 +149,8 @@ async function generateReportData(orgId: string, locationId?: string): Promise<R
        WHERE t.created_at >= (SELECT window_start FROM window_bounds)
          AND t.created_at < (SELECT window_end FROM window_bounds)
          AND t.location_id = $3
+         AND t.status = 'completed'
+         AND tt.amount > 0
        GROUP BY tt.tender_type
      ),
      employee_performance AS (

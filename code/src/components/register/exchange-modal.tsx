@@ -416,21 +416,27 @@ export function ExchangeModal({
             disabled={loadingSnapshot || selectedCount === 0 || returnTotal < 0 || !selectedTxn || continuing}
             onClick={() => {
               if (!selectedTxn) return;
-              // R80-FE-M / R81-FE-H2: double-submit guard. Prior
-              // R80 shape set continuing=true before calling
-              // onConfirm but never reset it. If onConfirm threw
-              // synchronously or the parent kept the modal open
-              // on error (e.g. showing a toast), the button was
-              // dead forever. Wrap in try/catch so a sync throw
-              // resets the flag. onConfirm is a non-async
-              // callback that fires state setters in the parent;
-              // the modal typically unmounts on success, so the
-              // reset only matters on error paths.
+              // R80-FE-M / R81-FE-H2 / R82-SEC-H1: double-submit
+              // guard that handles BOTH sync throws AND async
+              // rejections. The parent's onConfirm is typed `void`
+              // but the actual handler (usePOSTerminal
+              // handleExchangeConfirm) is async and returns a
+              // Promise; R81's pure try/catch caught only sync
+              // throws, leaving continuing=true forever on real
+              // server-error paths. Promise.resolve() coerces both
+              // sync-void returns and promise returns, .finally()
+              // fires on fulfilled + rejected.
               if (continuing) return;
               setContinuing(true);
+              const items = returnItems.filter((i) => i.returnQuantity > 0);
               try {
-                const items = returnItems.filter((i) => i.returnQuantity > 0);
-                onConfirm(selectedTxn.transactionId, items, returnTotal, reason, note);
+                const result = onConfirm(selectedTxn.transactionId, items, returnTotal, reason, note) as unknown;
+                Promise.resolve(result as void | Promise<void>).finally(() => {
+                  // On success the parent unmounts this modal, so
+                  // this setState no-ops. On error the modal
+                  // stays mounted and we reset the flag.
+                  setContinuing(false);
+                });
               } catch {
                 setContinuing(false);
               }

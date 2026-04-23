@@ -79,16 +79,25 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
     // R27-C4: explicit organization_id filter on every query. All of
     // these had location_id-only scoping before, which matters now
     // because the postgres role bypasses RLS.
+    // R82-DB-H2 (HIGH): sign-based filters. Register returns write
+    // `status='completed'` with NEGATIVE grand_total (not
+    // status='refunded' — that value is never used in the
+    // register-side flow). Prior shape counted ZERO register
+    // returns as refunds, counted refund rows as transactions
+    // (inflating the count), averaged positive sales with negative
+    // refunds (nonsensical avg_ticket). Mirror /api/reports
+    // route.ts:149-151 which correctly splits by sign.
     metricsResult = await client.query(
       `SELECT
-         COUNT(*) FILTER (WHERE status = 'completed')::int AS transaction_count,
+         COUNT(*) FILTER (WHERE status = 'completed' AND grand_total >= 0)::int AS transaction_count,
          COUNT(*) FILTER (WHERE status = 'voided')::int AS void_count,
-         COUNT(*) FILTER (WHERE status = 'refunded')::int AS refund_count,
+         COUNT(*) FILTER (WHERE status = 'completed' AND grand_total < 0)::int AS refund_count,
          COALESCE(SUM(grand_total) FILTER (WHERE status = 'completed'), 0)::numeric AS gross_sales,
-         COALESCE(SUM(discount_total) FILTER (WHERE status = 'completed'), 0)::numeric AS total_discounts,
+         COALESCE(SUM(discount_total) FILTER (WHERE status = 'completed' AND grand_total >= 0), 0)::numeric AS total_discounts,
          COALESCE(SUM(tax_total) FILTER (WHERE status = 'completed'), 0)::numeric AS total_tax,
-         COALESCE(AVG(grand_total) FILTER (WHERE status = 'completed'), 0)::numeric AS avg_ticket,
-         COALESCE(MAX(grand_total) FILTER (WHERE status = 'completed'), 0)::numeric AS largest_sale
+         COALESCE(AVG(grand_total) FILTER (WHERE status = 'completed' AND grand_total > 0), 0)::numeric AS avg_ticket,
+         COALESCE(MAX(grand_total) FILTER (WHERE status = 'completed'), 0)::numeric AS largest_sale,
+         COALESCE(SUM(CASE WHEN grand_total < 0 THEN ABS(grand_total) ELSE 0 END) FILTER (WHERE status = 'completed'), 0)::numeric AS refund_total
        FROM transactions
        WHERE organization_id = $1 AND location_id = $2 AND created_at >= $3 AND created_at <= $4`,
       [orgId, locationId, fromDate, toDate],
@@ -117,7 +126,11 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
     );
 
     employeeResult = await client.query(
-      `SELECT t.employee_id, e.display_name,
+      // R82-DB-L5: COALESCE display_name so deleted-employee rows
+      // (employee_id → SET NULL in migration 046) don't show a
+      // NULL name in the UI. Parity with /api/reports route.
+      `SELECT t.employee_id,
+              COALESCE(e.display_name, CONCAT(e.first_name, ' ', e.last_name), 'Former Employee') AS display_name,
               COUNT(*)::int AS transaction_count,
               SUM(t.grand_total)::numeric AS total_sales,
               AVG(t.grand_total)::numeric AS avg_ticket

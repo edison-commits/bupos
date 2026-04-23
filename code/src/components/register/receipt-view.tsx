@@ -2,7 +2,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { Cart, CartTotals } from "@/lib/cart/types";
 import type { TenderEntry } from "./tender-panel";
 import { formatReceipt, type ReceiptData } from "@/lib/receipt/format-receipt";
@@ -45,6 +45,17 @@ export function ReceiptView({
   receiptHeader,
   receiptFooter,
 }: ReceiptViewProps) {
+  // R82-FE-H1: Esc dismisses (equivalent to "New Sale"). R81 added
+  // role=dialog so keyboard-shortcuts.tsx global Esc yielded — but
+  // there was no own Esc listener, so Esc did nothing.
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onNewSale();
+    };
+    document.addEventListener("keydown", h);
+    return () => document.removeEventListener("keydown", h);
+  }, [onNewSale]);
+
   return (
     <div role="dialog" aria-modal="true" aria-label="Receipt" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" id="receipt-modal">
       <style>{`

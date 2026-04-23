@@ -529,6 +529,11 @@ export async function cancelLayawayAction(
     });
   }
 
+  // R82-DB-M4: cancelLayawayAction restores reserved inventory +
+  // may write pay_out rows — invalidate the /api/inventory cache so
+  // POS grid picks up the change within TTL.
+  const { invalidateInventoryCache: invInv } = await import("@/lib/cache/inventory-cache");
+  invInv(ctx.employee.organizationId);
   revalidatePath("/admin");
 }
 

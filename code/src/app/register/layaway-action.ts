@@ -352,6 +352,12 @@ export async function createLayawayAction(
       client.release();
     }
 
+    // R82-DB-M4: invalidate the /api/inventory cache so the POS
+    // product grid + admin inventory views pick up the on_hand
+    // decrement (layaway reserves stock) within the cache TTL.
+    // Parity with checkout-action + /api/returns pattern.
+    const { invalidateInventoryCache } = await import("@/lib/cache/inventory-cache");
+    invalidateInventoryCache(context.employee.organizationId);
     revalidatePath("/register");
     return { layawayId };
   }

@@ -76,8 +76,12 @@ describe("R81 audit fixes — round 25", () => {
 
   describe("R81-FE-H2 HIGH: exchange-modal continuing flag resets on error", () => {
     const src = read("src/components/register/exchange-modal.tsx");
-    it("onConfirm call wrapped in try/catch with setContinuing(false)", () => {
-      expect(src).toMatch(/try \{[\s\S]{0,300}onConfirm\([\s\S]{0,300}\} catch \{\s*setContinuing\(false\);\s*\}/);
+    it("onConfirm call handles both sync throws + async rejections", () => {
+      // R82-SEC-H1 refactored the pure try/catch (which only
+      // caught sync throws) into a Promise.resolve().finally
+      // pattern that handles both sync-void returns and async-
+      // promise rejections. Accept either shape.
+      expect(src).toMatch(/onConfirm\([\s\S]{0,500}(\} catch \{\s*setContinuing\(false\)|Promise\.resolve\([\s\S]{0,200}\.finally\(\(\) => \{\s*setContinuing\(false\))/);
     });
   });
 

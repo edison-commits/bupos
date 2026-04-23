@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useEffect } from "react";
 import { S } from "./styles";
 
 import {
@@ -142,6 +142,23 @@ export function POSTerminal(props: POSTerminalProps) {
   }, [variants, products]);
 
   const openHeldCarts = useCallback(() => setShowHeldCarts(true), [setShowHeldCarts]);
+
+  // R82-FE-H1: Esc handlers for the three pos-terminal modals that
+  // R81 gave role=dialog to (so global keyboard-shortcuts.tsx Esc
+  // yielded) but no own Esc listener. Prior shape: Esc did nothing
+  // at all on these screens — regression from pre-R81 where Esc
+  // would at least void the cart. Now each modal closes on Esc.
+  useEffect(() => {
+    if (!returnResult && !layawayResult && !showHeldCarts) return;
+    const h = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (returnResult) setReturnResult(null);
+      else if (layawayResult) setLayawayResult(null);
+      else if (showHeldCarts) setShowHeldCarts(false);
+    };
+    document.addEventListener("keydown", h);
+    return () => document.removeEventListener("keydown", h);
+  }, [returnResult, layawayResult, showHeldCarts, setReturnResult, setLayawayResult, setShowHeldCarts]);
   const openCustomerSearch = useCallback(() => setShowCustomerSearch(true), [setShowCustomerSearch]);
   const openReturnModal = useCallback(() => setShowReturnModal(true), [setShowReturnModal]);
   const openExchangeModal = useCallback(() => setShowExchangeModal(true), [setShowExchangeModal]);

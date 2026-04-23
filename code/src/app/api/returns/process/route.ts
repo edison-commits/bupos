@@ -943,6 +943,23 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
             [pointsToReverse, origCustomerId, orgId],
           );
         }
+
+        // R82-DB-H1 (HIGH): reverse denormalized total_spend +
+        // visit_count on refund. Prior shape reversed loyalty only —
+        // list-view total_spend drifted from live-SUM detail view.
+        // visit_count decrements only on the refund that crosses the
+        // full-refund boundary (partial refunds don't reduce visits).
+        const wasPriorFullyRefunded = priorRefundTotal >= origGrandTotal - 0.005;
+        const isNowFullyRefunded = newCumulative >= origGrandTotal - 0.005;
+        const visitCountDelta = !wasPriorFullyRefunded && isNowFullyRefunded ? 1 : 0;
+        await client.query(
+          `UPDATE customers
+              SET total_spend = GREATEST(0, total_spend - $1),
+                  visit_count = GREATEST(0, visit_count - $2),
+                  updated_at = NOW()
+            WHERE id = $3 AND organization_id = $4`,
+          [refund_amount, visitCountDelta, origCustomerId, orgId],
+        );
       }
       await client.query('RELEASE SAVEPOINT sp_loyalty');
     } catch (err) {

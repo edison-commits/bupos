@@ -513,6 +513,13 @@ export async function acceptStocktakeAction(stocktakeId: string, actorPassword?:
     });
   }
 
+  // R82-DB-M4: invalidate /api/inventory cache — stocktake accept
+  // is the biggest single-call inventory delta in BuPOS (ABSOLUTE-
+  // mode sets on_hand across entire catalog). Without this, POS
+  // product grid + admin views show stale quantities for up to
+  // 30s TTL after every stocktake accept.
+  const { invalidateInventoryCache: invInv } = await import("@/lib/cache/inventory-cache");
+  invInv(ctx.employee.organizationId);
   revalidatePath("/admin");
 }
 

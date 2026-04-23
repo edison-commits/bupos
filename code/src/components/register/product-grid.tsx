@@ -205,6 +205,19 @@ export const ProductGrid = memo(function ProductGrid({ items, categories, onAddI
     setVariantPickerProduct(null);
   }
 
+  // R82-FE-H1: Esc closes the variant picker. R81 added role=dialog
+  // so keyboard-shortcuts global Esc yielded — but this component
+  // had no own Esc handler, so Esc did nothing. Cashiers hit Esc
+  // reflexively to dismiss the picker.
+  useEffect(() => {
+    if (!variantPickerProduct) return;
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setVariantPickerProduct(null);
+    };
+    document.addEventListener("keydown", h);
+    return () => document.removeEventListener("keydown", h);
+  }, [variantPickerProduct]);
+
   return (
     <div className="flex h-full flex-col">
       {/* Search bar with barcode scanner support and integrated icons */}
