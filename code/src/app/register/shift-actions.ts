@@ -118,7 +118,6 @@ export async function payInOutAction(input: PayInOutInput): Promise<{ success: b
     }
 
     invalidateStoreCache(context.employee.organizationId);
-    invalidateStoreCache(context.employee.organizationId);
   revalidatePath("/register");
     return { success: true };
   }
@@ -312,7 +311,6 @@ export async function closeShiftEnhancedAction(
       client.release();
     }
 
-    invalidateStoreCache(context.employee.organizationId);
     invalidateStoreCache(context.employee.organizationId);
   revalidatePath("/register");
     return { success: true };
