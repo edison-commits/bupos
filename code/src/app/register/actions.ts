@@ -2,6 +2,10 @@
 
 import { randomUUID } from "@/lib/uuid";
 import { revalidatePath } from "next/cache";
+// R85-fix: bust readStore cache after shift / register-session
+// mutations so /register/page.tsx sees the fresh state immediately.
+// Parity with R84-final admin-side fix + R84-hand checkout/return.
+import { invalidateStoreCache } from "@/lib/persistence/postgres-read-store";
 import { redirect } from "next/navigation";
 import { requireRegisterPermission, hasPermission } from "@/lib/authz";import { getRegisterSession, getAdminSession, signInRegister, signOutRegister } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
@@ -135,6 +139,7 @@ export async function registerLoginAction(formData: FormData) {
     );
   }
 
+  invalidateStoreCache(employee.organizationId);
   revalidatePath("/register");
   redirect("/register?notice=Clocked+in");
 }
@@ -211,6 +216,7 @@ export async function openShiftAction(formData: FormData) {
     });
   }
 
+  invalidateStoreCache(context.employee.organizationId);
   revalidatePath("/register");
   revalidatePath("/admin/clock-in");
   redirect("/register?notice=Shift+opened");
@@ -498,6 +504,7 @@ export async function closeShiftAction(formData: FormData) {
     });
   }
 
+  invalidateStoreCache(context.employee.organizationId);
   revalidatePath("/register");
   redirect("/register?notice=Shift+closed");
 }
@@ -523,6 +530,7 @@ export async function registerLogoutAction() {
     ).catch((err) => console.error("[registerLogoutAction] audit failed:", safeErr(err)));
   }
 
+  invalidateStoreCache(employee.organizationId);
   revalidatePath("/register");
   redirect("/register?notice=Register+session+closed");
 }
@@ -694,6 +702,7 @@ export async function quickSwitchAction(pin: string): Promise<{ success: boolean
       },
     );
 
+    invalidateStoreCache(context.employee.organizationId);
     revalidatePath("/register");
     return { success: true, newEmployeeName: newEmployee.displayName };
   }
@@ -738,6 +747,7 @@ export async function quickSwitchAction(pin: string): Promise<{ success: boolean
     });
   });
 
+  invalidateStoreCache(context.employee.organizationId);
   revalidatePath("/register");
   return { success: true, newEmployeeName: newEmployee.displayName };
 }

@@ -14,7 +14,6 @@ export async function runFlagEngineAction() {
     return generateAndPersistFlags(store);
   });
   invalidateStoreCache(employee.organizationId);
-  invalidateStoreCache(employee.organizationId);
   revalidatePath("/admin");
   return { generated: newFlags.length };
 }

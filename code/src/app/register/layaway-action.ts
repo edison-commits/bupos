@@ -2,6 +2,10 @@
 
 import { randomUUID } from "@/lib/uuid";
 import { revalidatePath } from "next/cache";
+// R85-fix: bust readStore cache so admin dashboards don't serve
+// stale inventory/layaway for 30s after register-side layaway
+// create. Parity with R84-final + R84-hand sweep.
+import { invalidateStoreCache } from "@/lib/persistence/postgres-read-store";
 import { requireRegisterPermission } from "@/lib/authz";
 import { mutateStore } from "@/lib/persistence/store";
 import { orgTx, orgQuery } from "@/lib/supabase-rest";
@@ -358,6 +362,7 @@ export async function createLayawayAction(
     // Parity with checkout-action + /api/returns pattern.
     const { invalidateInventoryCache } = await import("@/lib/cache/inventory-cache");
     invalidateInventoryCache(context.employee.organizationId);
+    invalidateStoreCache(context.employee.organizationId);
     revalidatePath("/register");
     return { layawayId };
   }
@@ -433,6 +438,7 @@ export async function createLayawayAction(
     });
   });
 
+  invalidateStoreCache(context.employee.organizationId);
   revalidatePath("/register");
   return { layawayId };
 }

@@ -2,6 +2,10 @@
 
 import { randomUUID } from "@/lib/uuid";
 import { revalidatePath } from "next/cache";
+// R85-fix: bust readStore cache so /register page reflects shift
+// open/close + pay_in/out immediately. Parity with R84-final
+// admin-side + R84-hand checkout/return sweep.
+import { invalidateStoreCache } from "@/lib/persistence/postgres-read-store";
 import { requireRegisterPermission } from "@/lib/authz";
 import { mutateStore } from "@/lib/persistence/store";
 import { generateAndPersistFlags } from "@/lib/behavior/flag-engine";
@@ -113,7 +117,9 @@ export async function payInOutAction(input: PayInOutInput): Promise<{ success: b
       client.release();
     }
 
-    revalidatePath("/register");
+    invalidateStoreCache(context.employee.organizationId);
+    invalidateStoreCache(context.employee.organizationId);
+  revalidatePath("/register");
     return { success: true };
   }
 
@@ -148,6 +154,7 @@ export async function payInOutAction(input: PayInOutInput): Promise<{ success: b
     });
   });
 
+  invalidateStoreCache(context.employee.organizationId);
   revalidatePath("/register");
   return { success: true };
 }
@@ -305,7 +312,9 @@ export async function closeShiftEnhancedAction(
       client.release();
     }
 
-    revalidatePath("/register");
+    invalidateStoreCache(context.employee.organizationId);
+    invalidateStoreCache(context.employee.organizationId);
+  revalidatePath("/register");
     return { success: true };
   }
 
@@ -351,6 +360,7 @@ export async function closeShiftEnhancedAction(
     generateAndPersistFlags(store);
   });
 
+  invalidateStoreCache(context.employee.organizationId);
   revalidatePath("/register");
   return { success: true };
 }

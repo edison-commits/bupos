@@ -363,8 +363,9 @@ export async function disableGiftCardAction(
       // every repeat call — attacker could flood audit_events.
       if (before[0].status === "disabled") {
         await client.query("ROLLBACK");
-        invalidateStoreCache(ctx.employee.organizationId);
-  revalidatePath("/admin");
+        // R85-fix: skip cache invalidation on idempotent no-op —
+        // nothing mutated, nothing to flush. Matches the R47-M
+        // audit-skip intent (no DB change → no downstream bust).
         return { success: true };
       }
       await client.query(
