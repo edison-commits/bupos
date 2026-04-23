@@ -67,9 +67,21 @@ export function StocktakeManager({
       {showCreate && (
         <form
           action={(fd) => {
+            // R75-F: surface Server Action errors. Prior shape
+            // called setShowCreate(false) unconditionally AFTER
+            // the await — a thrown error (RBAC reject, open-
+            // stocktake conflict, invalid inventory) cleared the
+            // form as if success and the user had no way to see
+            // what went wrong. Only close the form on success.
             startTransition(async () => {
-              await createStocktakeAction(fd);
-              setShowCreate(false);
+              try {
+                await createStocktakeAction(fd);
+                setShowCreate(false);
+              } catch (err) {
+                window.alert(
+                  `Could not start stocktake: ${err instanceof Error ? err.message : String(err)}`,
+                );
+              }
             });
           }}
           className="rounded-xl border border-zinc-200 bg-white p-4 space-y-3"
@@ -160,7 +172,23 @@ export function StocktakeManager({
                             <span className="text-right">
                               {st.status === "in_progress" ? (
                                 <form
-                                  action={(fd) => { startTransition(() => recordCountAction(fd)); }}
+                                  action={(fd) => {
+                                    // R75-F: surface Server Action errors.
+                                    // Prior shape silently dropped errors
+                                    // into the transition — every "Save"
+                                    // on a count row that hit RBAC / DB
+                                    // failure showed the same spinner
+                                    // clearing with no feedback.
+                                    startTransition(async () => {
+                                      try {
+                                        await recordCountAction(fd);
+                                      } catch (err) {
+                                        window.alert(
+                                          `Could not save count: ${err instanceof Error ? err.message : String(err)}`,
+                                        );
+                                      }
+                                    });
+                                  }}
                                   className="inline-flex items-center gap-1"
                                 >
                                   <input type="hidden" name="lineId" value={line.id} />

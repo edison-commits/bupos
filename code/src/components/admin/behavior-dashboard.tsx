@@ -52,17 +52,38 @@ export function BehaviorDashboard({
   const flaggedEmployeeIds = [...new Set(flags.map((f) => f.employeeId))];
 
   function handleScanNow() {
+    // R75-F: surface Server Action errors. Prior shape swallowed any
+    // thrown error from runFlagEngineAction (RBAC reject, DB hiccup,
+    // step-up requirement) into React's transition error boundary —
+    // the spinner cleared and no "Scan complete" toast fired, but no
+    // error surfaced either. Wrap in try/catch + reuse setScanResult.
     startTransition(async () => {
-      const result = await runFlagEngineAction();
-      setScanResult(`Scan complete: ${result.generated} new flag(s) generated.`);
+      try {
+        const result = await runFlagEngineAction();
+        setScanResult(`Scan complete: ${result.generated} new flag(s) generated.`);
+      } catch (err) {
+        setScanResult(
+          `Scan failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     });
   }
 
   function handleReview(flagId: string) {
+    // R75-F: surface errors. Prior shape called setReviewingId(null)
+    // unconditionally after await, so a thrown error cleared the
+    // review UI as if success. Mirror the handleScanNow shape — on
+    // error, keep the reviewing state open and surface the message.
     startTransition(async () => {
-      await reviewFlagAction(flagId, reviewNotes);
-      setReviewingId(null);
-      setReviewNotes("");
+      try {
+        await reviewFlagAction(flagId, reviewNotes);
+        setReviewingId(null);
+        setReviewNotes("");
+      } catch (err) {
+        setScanResult(
+          `Review failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     });
   }
 

@@ -432,7 +432,16 @@ export function PayrollSummary({ store }: { store: LocalStoreData }) {
                     step="0.01"
                     min="0"
                     value={rate}
-                    onChange={(e) => setHourlyRates({ ...hourlyRates, [emp.employeeId]: parseFloat(e.target.value) })}
+                    onChange={(e) => {
+                      // R75-F: guard against NaN. parseFloat("") is NaN
+                      // which propagates into grossPay = hours * rate →
+                      // the rendered amount and page totals become NaN.
+                      const parsed = parseFloat(e.target.value);
+                      setHourlyRates({
+                        ...hourlyRates,
+                        [emp.employeeId]: Number.isFinite(parsed) ? parsed : 0,
+                      });
+                    }}
                     className="w-20 px-2 py-1 text-sm border border-zinc-300 rounded touch-button"
                   />
                 </div>

@@ -98,31 +98,37 @@ export function BundleManager({ bundles, variants, products }: BundleManagerProp
     });
     if (!pwd) return;
 
-    const res = await fetch("/api/bundles", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: formData.name.trim(),
-        description: formData.description.trim() || undefined,
-        bundlePrice,
-        compareAtPrice,
-        items,
-        actorPassword: pwd,
-      }),
-    });
+    // R75-L: wrap fetch in try/catch — prior shape let a network
+    // fault throw to React's unhandled-rejection with no UI feedback.
+    try {
+      const res = await fetch("/api/bundles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: formData.name.trim(),
+          description: formData.description.trim() || undefined,
+          bundlePrice,
+          compareAtPrice,
+          items,
+          actorPassword: pwd,
+        }),
+      });
 
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({ error: "Failed to create bundle" }));
-      setError(body.error ?? "Failed to create bundle");
-      return;
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: "Failed to create bundle" }));
+        setError(body.error ?? "Failed to create bundle");
+        return;
+      }
+
+      resetForm();
+      setShowCreateForm(false);
+      // `router.refresh()` re-runs the admin server component so store.bundles
+      // picks up the new row. Wrapping in startTransition prevents the revalidation
+      // fetch from blocking the close animation.
+      startTransition(() => router.refresh());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Network error");
     }
-
-    resetForm();
-    setShowCreateForm(false);
-    // `router.refresh()` re-runs the admin server component so store.bundles
-    // picks up the new row. Wrapping in startTransition prevents the revalidation
-    // fetch from blocking the close animation.
-    startTransition(() => router.refresh());
   };
 
   const handleToggleActive = async (bundle: ProductBundle, nextActive: boolean) => {
@@ -140,6 +146,10 @@ export function BundleManager({ bundles, variants, products }: BundleManagerProp
         return;
       }
       startTransition(() => router.refresh());
+    } catch (e) {
+      // R75-L: add catch so a network error surfaces instead of
+      // escaping to React's unhandled-rejection handler.
+      setError(e instanceof Error ? e.message : "Network error");
     } finally {
       setBusyId(null);
     }
@@ -161,6 +171,9 @@ export function BundleManager({ bundles, variants, products }: BundleManagerProp
         return;
       }
       startTransition(() => router.refresh());
+    } catch (e) {
+      // R75-L: same pattern — surface network errors.
+      setError(e instanceof Error ? e.message : "Network error");
     } finally {
       setBusyId(null);
     }

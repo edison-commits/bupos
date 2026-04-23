@@ -15,6 +15,24 @@ const isPg = () => !!process.env.USE_POSTGRES;
  * Create a layaway from the current cart.
  * Reserves inventory and creates a layaway record with an initial deposit.
  */
+// R75-M (whitelist): layaway_payments.tender_type has no CHECK
+// constraint (migration 001), so without an app-level whitelist a
+// caller could submit "Cash" (capital C) or "cash " (trailing space)
+// and every strict-equality branch below (`tenderType === "cash"`,
+// `=== "store_credit"`) would fall through — skipping BOTH the
+// pay_in_outs write (R75-H1) AND the store_credit debit (R38-A-F4).
+// Layaway still records the raw string in layaway_payments so the
+// row looks plausible to a forensic reviewer. Normalize + validate
+// once at the top so every strict-equality check downstream sees a
+// canonical value.
+const ALLOWED_TENDERS = new Set([
+  "cash",
+  "card",
+  "store_credit",
+  "loyalty",
+  "gift_card",
+]);
+
 export async function createLayawayAction(
   cart: Cart,
   depositAmount: number,
@@ -31,6 +49,14 @@ export async function createLayawayAction(
   if (!cart.customerId) {
     throw new Error("A customer must be attached for layaway");
   }
+
+  // R75-M: normalize + whitelist tenderType. Downstream branches rely
+  // on strict equality against the canonical value.
+  const tender = String(tenderType ?? "").trim().toLowerCase();
+  if (!ALLOWED_TENDERS.has(tender)) {
+    throw new Error("Invalid tender type");
+  }
+  tenderType = tender;
 
   // R18-LOW-1: guard against NaN / Infinity / negative depositAmount.
   // TS-typed `number` at the server-action boundary isn't enough —
@@ -199,6 +225,42 @@ export async function createLayawayAction(
             [randomUUID(), context.employee.organizationId, cart.customerId, -depositAmount, newBalance, context.employee.id],
           );
         }
+
+        // R75-H1: cash deposits must record a pay_in_outs row so the
+        // open shift's drawer-reconciliation formula (shift-close
+        // route computes expectedCash from transaction_tenders +
+        // pay_in_outs) sees the cash inflow. Prior shape wrote ONLY
+        // layaway_payments for register-side cash deposits — shift-
+        // close was blind to the incoming cash and the cashier's
+        // declared drawer matched expected even after pocketing $N.
+        // Mirror of R42-P admin-side makeLayawayPaymentAction fix;
+        // pattern from cancelLayawayAction refund_cash branch.
+        if (tenderType === "cash") {
+          const { rows: shiftRows } = await client.query(
+            `SELECT id FROM shifts
+              WHERE organization_id = $1 AND location_id = $2 AND status = 'open'
+              ORDER BY opened_at DESC LIMIT 1
+              FOR UPDATE SKIP LOCKED`,
+            [context.employee.organizationId, context.location.id],
+          );
+          if (shiftRows.length === 0) {
+            throw new Error("Cash layaway deposit requires an open shift at this location");
+          }
+          await client.query(
+            `INSERT INTO pay_in_outs (id, organization_id, shift_id, location_id, employee_id, direction, amount, reason, note, created_at)
+             VALUES (gen_random_uuid(), $1, $2, $3, $4, 'pay_in', $5, $6, $7, now())`,
+            [
+              context.employee.organizationId,
+              shiftRows[0].id,
+              context.location.id,
+              context.employee.id,
+              depositAmount,
+              "layaway_payment",
+              `Layaway ${layawayId} initial deposit`,
+            ],
+          );
+        }
+
         await client.query(
           `INSERT INTO layaway_payments (id, layaway_id, tender_type, amount, employee_id, metadata)
            VALUES ($1, $2, $3, $4, $5, $6)`,

@@ -84,7 +84,17 @@ export function OfflineStatusBar() {
       // → "A manager must re-enter this sale") into "X failed — will
       // retry", burning silent retry cycles and hiding the real signal
       // from the cashier/manager standing at the register.
+      // R75-F: track whether this sync produced dead letters so the
+      // finally block can skip the 5s auto-clear. Dead-letter messages
+      // are actionable ("A manager must re-enter this sale") — if they
+      // vanish after 5s and pendingCount still counts the dead-letter
+      // rows, the cashier sees "N queued sale(s)" with no clue why
+      // they aren't clearing. Sticky until the user explicitly acts
+      // (or until the next successful sync, which sets syncResult to
+      // null at the top of handleSync).
+      let hasDeadLetters = false;
       if (result.deadLetters.length > 0) {
+        hasDeadLetters = true;
         const first = result.deadLetters[0]?.lastError;
         const extra = result.deadLetters.length > 1 ? ` (+${result.deadLetters.length - 1} more)` : "";
         setSyncResult((prev) =>
@@ -99,11 +109,22 @@ export function OfflineStatusBar() {
         );
       }
       setPendingCount(result.remaining);
+      if (mountedRef.current) setSyncing(false);
+      // Clear result message after 5s (R34-D16: canceled on unmount).
+      // R75-F: SKIP the auto-clear when dead letters exist — the user
+      // needs to see the actionable message until they act on it.
+      if (!hasDeadLetters) {
+        if (clearResultTimeoutRef.current) clearTimeout(clearResultTimeoutRef.current);
+        clearResultTimeoutRef.current = setTimeout(() => {
+          if (mountedRef.current) setSyncResult(null);
+        }, 5_000);
+      }
+      return;
     } catch {
       if (mountedRef.current) setSyncResult("Sync error — will retry");
     } finally {
       if (mountedRef.current) setSyncing(false);
-      // Clear result message after 5s (R34-D16: canceled on unmount).
+      // Non-dead-letter path only — dead-letter path returns early above.
       if (clearResultTimeoutRef.current) clearTimeout(clearResultTimeoutRef.current);
       clearResultTimeoutRef.current = setTimeout(() => {
         if (mountedRef.current) setSyncResult(null);

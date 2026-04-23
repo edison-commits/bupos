@@ -240,15 +240,23 @@ export const POST = withAdminAuth('approval.store_credit', async (req, ctx) => {
       // cross-org UPDATEs today, but an explicit `organization_id` in
       // the WHERE clause is cheap insurance against future policy
       // regressions (e.g. RLS swapped to advisory USING without CHECK).
+      // R75-M: `AND is_active = true`. Anonymized customers (GDPR
+      // right-to-be-forgotten DELETE) carry is_active=false and have
+      // their balance zeroed; without this filter, a late refund or
+      // manual issuance would write credit back onto the [deleted]
+      // record. The customer can never redeem (checkout filters
+      // is_active), so the balance becomes a permanent invisible
+      // liability and an erased PII record is being mutated with
+      // financial data post-erasure (GDPR compliance break).
       const updated = await client.query(
         `UPDATE customers SET store_credit_balance = store_credit_balance + $1, updated_at = now()
-         WHERE id = $2 AND organization_id = $3
+         WHERE id = $2 AND organization_id = $3 AND is_active = true
          RETURNING store_credit_balance`,
         [amount, customerId, orgId],
       );
       if (updated.rows.length === 0) {
         await client.query("ROLLBACK");
-        return NextResponse.json({ error: "Customer not found" }, { status: 404 });
+        return NextResponse.json({ error: "Customer not found or inactive" }, { status: 404 });
       }
 
       const newBalance = updated.rows[0].store_credit_balance;

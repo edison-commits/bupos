@@ -212,18 +212,29 @@ export function PurchaseOrderManager() {
 
   const handleStatusChange = async (status: string) => {
     if (!detail) return;
+    // R75-L: surface errors. Prior shape did `if (res.ok) { ... }`
+    // with no else branch and a bare `catch { /* */ }`. A RBAC
+    // reject / bad status transition / network fault left the
+    // modal visually unchanged and the user had no feedback.
+    setMessage(null);
     try {
       const res = await fetch('/api/purchase-orders', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: detail.id, status }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setDetail(data.order);
-        fetchOrders();
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: 'Failed' }));
+        setMessage({ type: 'error', text: body.error ?? 'Failed to update PO' });
+        return;
       }
-    } catch { /* */ }
+      const data = await res.json();
+      setDetail(data.order);
+      fetchOrders();
+      setMessage({ type: 'success', text: `Status updated to ${status}.` });
+    } catch (e) {
+      setMessage({ type: 'error', text: e instanceof Error ? e.message : 'Network error' });
+    }
   };
 
   const handleReceive = async () => {

@@ -789,19 +789,26 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
         `SELECT customer_id FROM transactions WHERE id = $1 AND organization_id = $2`,
         [transaction_id, orgId],
       );
+      // R75-M: `AND is_active = true` — anonymized customers
+      // (right-to-be-forgotten DELETE) have is_active=false +
+      // balance=0. A late refund targeting such a record would
+      // write store credit onto the [deleted] row; customer can
+      // never redeem (checkout filters is_active), balance is
+      // phantom liability + GDPR compliance break. Applies to
+      // both lookup branches below.
       let custResult: { rows: { id: string; store_credit_balance: number }[] };
       if (txnCust.rows[0]?.customer_id) {
         custResult = await client.query(
           // Lock the customer row so concurrent refunds don't read-compute-write
           // the same starting balance and lose one of the credits.
           `SELECT id, store_credit_balance FROM customers
-           WHERE id = $1 AND organization_id = $2 LIMIT 1 FOR UPDATE`,
+           WHERE id = $1 AND organization_id = $2 AND is_active = true LIMIT 1 FOR UPDATE`,
           [txnCust.rows[0].customer_id, orgId],
         );
       } else if (customer_name && customer_name.trim().length > 0) {
         custResult = await client.query(
           `SELECT id, store_credit_balance FROM customers
-           WHERE first_name || ' ' || last_name = $1 AND organization_id = $2
+           WHERE first_name || ' ' || last_name = $1 AND organization_id = $2 AND is_active = true
            LIMIT 1 FOR UPDATE`,
           [customer_name.trim(), orgId],
         );

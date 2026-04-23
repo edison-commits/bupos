@@ -676,18 +676,23 @@ export const PUT = withAdminAuth('approval.void_transaction', async (request, ct
                 WHERE id = $1 AND organization_id = $2`,
               [retRow.transaction_id, orgId],
             );
+            // R75-M: `AND is_active = true` — skip anonymized
+            // customers (GDPR erasure). A late refund targeting
+            // a [deleted] record would mutate erased PII and
+            // create invisible liability (checkout filters
+            // is_active on redeem).
             let custRows: Array<{ id: string; store_credit_balance: number | string }>;
             if (txnCustRows[0]?.customer_id) {
               const r = await client.query(
                 `SELECT id, store_credit_balance FROM customers
-                  WHERE id = $1 AND organization_id = $2 LIMIT 1 FOR UPDATE`,
+                  WHERE id = $1 AND organization_id = $2 AND is_active = true LIMIT 1 FOR UPDATE`,
                 [txnCustRows[0].customer_id, orgId],
               );
               custRows = r.rows;
             } else if (retRow.customer_name && retRow.customer_name.trim().length > 0) {
               const r = await client.query(
                 `SELECT id, store_credit_balance FROM customers
-                  WHERE first_name || ' ' || last_name = $1 AND organization_id = $2
+                  WHERE first_name || ' ' || last_name = $1 AND organization_id = $2 AND is_active = true
                   LIMIT 1 FOR UPDATE`,
                 [retRow.customer_name.trim(), orgId],
               );

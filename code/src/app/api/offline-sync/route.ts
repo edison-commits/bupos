@@ -1049,8 +1049,16 @@ export const POST = withDualAuth("register.open", async (request, ctx) => {
             t.type === "gift_card" && t.metadata?.gift_card_id,
         ) as Array<{ type: string; amount: number; metadata: { gift_card_id: string } }>;
         for (const tender of giftCardTenders) {
+          // R75-M: include `expires_at` in the SELECT + reject expired
+          // cards even when status is still 'active'. No scheduled
+          // job flips expired cards to status='expired' (see
+          // checkout-action.ts:1011-1030 for the register-side
+          // guard); without this check, an offline cart queued
+          // with an expired card replays here and burns balance that
+          // online checkout would have rejected — effectively
+          // extending the card's life past its stated expiration.
           const { rows: gcRows } = await syncClient.query(
-            `SELECT balance, status FROM gift_cards WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
+            `SELECT balance, status, expires_at FROM gift_cards WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
             [tender.metadata.gift_card_id, orgId],
           );
           const card = gcRows[0];
@@ -1058,6 +1066,13 @@ export const POST = withDualAuth("register.open", async (request, ctx) => {
             await syncClient.query("ROLLBACK");
             return NextResponse.json(
               { error: "Gift card insufficient balance during offline sync" },
+              { status: 409 },
+            );
+          }
+          if (card.expires_at && new Date(card.expires_at as string).getTime() < Date.now()) {
+            await syncClient.query("ROLLBACK");
+            return NextResponse.json(
+              { error: "Gift card expired during offline period" },
               { status: 409 },
             );
           }

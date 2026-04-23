@@ -718,16 +718,21 @@ export async function processReturnAction(input: ReturnInput): Promise<ReturnRes
             "Store-credit refund requires a customer on the original transaction. Use original tender or cash refund instead.",
           );
         }
+        // R75-M: `AND is_active = true` — anonymized customers
+        // (GDPR erasure) carry is_active=false + zeroed balance.
+        // Without this filter, a refund on a late return would
+        // write credit onto the [deleted] record (invisible
+        // liability) + mutate erased PII.
         const { rows: balRows } = await client.query(
           `UPDATE customers SET store_credit_balance = store_credit_balance + $1, updated_at = now()
-           WHERE id = $2 AND organization_id = $3 RETURNING store_credit_balance`,
+           WHERE id = $2 AND organization_id = $3 AND is_active = true RETURNING store_credit_balance`,
           [refundGrandTotal, origCustomerId, context.employee.organizationId],
         );
         if (balRows.length === 0) {
           // Customer was deleted / deactivated between the prior lookup
           // and this UPDATE. Refuse rather than orphan the refund.
           throw new Error(
-            "Customer on original transaction no longer exists. Use original tender or cash refund instead.",
+            "Customer on original transaction no longer exists or has been anonymized. Use original tender or cash refund instead.",
           );
         }
         await client.query(

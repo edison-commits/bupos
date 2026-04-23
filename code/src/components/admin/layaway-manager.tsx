@@ -174,7 +174,22 @@ export function LayawayManager({
 
                       {lay.status === "paid_in_full" && (
                         <button
-                          onClick={() => { startTransition(() => collectLayawayAction(lay.id)); }}
+                          onClick={() => {
+                            // R75-F: surface Server Action errors. Prior
+                            // shape swallowed throws into React's
+                            // transition boundary — Mark collected did
+                            // nothing visible on RBAC reject or
+                            // inventory-missing errors.
+                            startTransition(async () => {
+                              try {
+                                await collectLayawayAction(lay.id);
+                              } catch (err) {
+                                window.alert(
+                                  `Collect failed: ${err instanceof Error ? err.message : String(err)}`,
+                                );
+                              }
+                            });
+                          }}
                           disabled={isPending}
                           className="rounded-lg bg-blue-600 px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
                         >

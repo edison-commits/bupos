@@ -617,7 +617,13 @@ export function OrderCalendar({ suppliers, purchaseOrders, employees: _employees
                       <input
                         type="number"
                         value={editingEvent.amount || ''}
-                        onChange={(e) => setEditingEvent({ ...editingEvent, amount: parseFloat(e.target.value) })}
+                        onChange={(e) => {
+                          // R75-F: guard NaN — parseFloat("") === NaN
+                          // which serializes to null or 0 depending
+                          // on backend. Fall back to 0.
+                          const parsed = parseFloat(e.target.value);
+                          setEditingEvent({ ...editingEvent, amount: Number.isFinite(parsed) ? parsed : 0 });
+                        }}
                         className="w-full px-3 py-2 border border-zinc-300 rounded-lg text-zinc-700 text-sm"
                         placeholder="0.00"
                       />

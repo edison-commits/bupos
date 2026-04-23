@@ -267,6 +267,27 @@ export const PUT = withAdminAuth("inventory.adjust", async (request, ctx) => {
     if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
     const { id, status, notes, expected_at, ordered_at } = v.data;
 
+    // R75-M: allowedLocations scoping. GET (line 19) and PATCH (line
+    // 384-391) both check that the PO's location_id is in the
+    // caller's assigned-locations list; PUT did not. An
+    // inventory_clerk at Store A who learns a PO UUID from Store B
+    // (shared export, screenshot, guessing) could PUT { id, status:
+    // 'cancelled' } and void the foreign PO. 404 (not 403) so
+    // existence doesn't leak to unassigned roles.
+    if (ctx.allowedLocations !== null) {
+      const { rows: locCheck } = await orgQuery(
+        orgId,
+        `SELECT location_id FROM purchase_orders WHERE id = $1 AND organization_id = $2`,
+        [id, orgId],
+      );
+      if (locCheck.length === 0) {
+        return NextResponse.json({ error: 'PO not found' }, { status: 404 });
+      }
+      if (!ctx.allowedLocations.includes(locCheck[0].location_id as string)) {
+        return NextResponse.json({ error: 'PO not found' }, { status: 404 });
+      }
+    }
+
     // Build dynamic update
     const sets: string[] = ['updated_at = NOW()'];
     const values: unknown[] = [];
@@ -362,39 +383,58 @@ export const PATCH = withAdminAuth("inventory.adjust", async (request, ctx) => {
     if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
     const { id, receives } = v.data;
 
-    // Verify PO exists and is receivable.
-    // R28-H1: explicit org predicate (was relying on RLS under BYPASSRLS).
-    const { rows: poRows } = await orgQuery(
-      orgId,
-      `SELECT id, organization_id, location_id, supplier_id, status, notes, expected_at, ordered_at, received_at, created_at, updated_at
-         FROM purchase_orders
-        WHERE id = $1 AND organization_id = $2`,
-      [id, orgId],
-    );
-    if (poRows.length === 0) return NextResponse.json({ error: 'PO not found' }, { status: 404 });
-
-    const po = poRows[0];
-    if (po.status === 'cancelled') return NextResponse.json({ error: 'Cannot receive on a cancelled PO' }, { status: 400 });
-    if (po.status === 'received') return NextResponse.json({ error: 'PO is already fully received' }, { status: 400 });
-
-    // The PO is tied to a specific delivery location — reject receives
-    // from callers assigned elsewhere so stock never lands at the wrong
-    // store. Owners bypass; RLS-scoping alone isn't enough because every
-    // manager in the org has `inventory.adjust`.
-    const employeeLocIds = ctx.employee.locationIds ?? [];
-    const isOwner = ctx.employee.roleKey === "owner";
-    if (!isOwner && !employeeLocIds.includes(po.location_id)) {
-      return NextResponse.json(
-        { error: "You are not assigned to this PO's destination location" },
-        { status: 403 },
-      );
-    }
-
+    // R75-H2: PO status + location checks MUST be inside the tx with
+    // a FOR UPDATE on the PO row. Prior shape did a pre-tx orgQuery
+    // SELECT (no lock), compared status !== 'cancelled'/'received',
+    // then opened a tx and locked only `purchase_order_lines` — the
+    // PO row itself was never locked. A concurrent PUT cancel could
+    // flip status='cancelled' between the pre-tx read and the in-tx
+    // line updates; PATCH would then INSERT inventory deltas and
+    // overwrite status='cancelled' back to 'partial'/'received',
+    // un-cancelling a PO the admin just voided. Also add a status
+    // predicate to the final UPDATE so the UPDATE fails cleanly if
+    // another path concurrently flipped status after we locked.
     const pool2 = await getPool();
     const client = await pool2.connect();
+    let po: Record<string, unknown>;
     try {
       await client.query('BEGIN');
       await client.query("SELECT set_config('app.current_org_id', $1, true)", [orgId]);
+
+      // R28-H1 + R75-H2: org-scoped, row-locked existence + status check.
+      const { rows: poRows } = await client.query(
+        `SELECT id, organization_id, location_id, supplier_id, status, notes, expected_at, ordered_at, received_at, created_at, updated_at
+           FROM purchase_orders
+          WHERE id = $1 AND organization_id = $2
+          FOR UPDATE`,
+        [id, orgId],
+      );
+      if (poRows.length === 0) {
+        await client.query('ROLLBACK');
+        return NextResponse.json({ error: 'PO not found' }, { status: 404 });
+      }
+      po = poRows[0];
+      if (po.status === 'cancelled') {
+        await client.query('ROLLBACK');
+        return NextResponse.json({ error: 'Cannot receive on a cancelled PO' }, { status: 400 });
+      }
+      if (po.status === 'received') {
+        await client.query('ROLLBACK');
+        return NextResponse.json({ error: 'PO is already fully received' }, { status: 400 });
+      }
+
+      // Location scoping — owners bypass. Checked post-lock so a
+      // concurrent admin who just moved the PO to a different
+      // location can't race the permission check.
+      const employeeLocIds = ctx.employee.locationIds ?? [];
+      const isOwner = ctx.employee.roleKey === "owner";
+      if (!isOwner && !employeeLocIds.includes(po.location_id as string)) {
+        await client.query('ROLLBACK');
+        return NextResponse.json(
+          { error: "You are not assigned to this PO's destination location" },
+          { status: 403 },
+        );
+      }
 
       // Process each receive
       for (const recv of receives) {
@@ -482,11 +522,23 @@ export const PATCH = withAdminAuth("inventory.adjust", async (request, ctx) => {
       }
 
       // R26-F1: explicit org filter on PO update.
-      await client.query(
+      // R75-H2: status predicate — the FOR UPDATE above should
+      // serialize this, but add the predicate as defense in depth so
+      // a buggy path that acquired the lock in a different order
+      // can't overwrite 'cancelled' / 'received'.
+      const upd = await client.query(
         `UPDATE purchase_orders SET status = $1, received_at = $2, updated_at = NOW()
-         WHERE id = $3 AND organization_id = $4`,
+         WHERE id = $3 AND organization_id = $4
+           AND status NOT IN ('cancelled', 'received')`,
         [newStatus, allReceived ? new Date().toISOString() : null, id, orgId],
       );
+      if ((upd.rowCount ?? 0) === 0) {
+        await client.query('ROLLBACK');
+        return NextResponse.json(
+          { error: 'PO status changed concurrently (cancelled or fully received). Retry.' },
+          { status: 409 },
+        );
+      }
 
       // R74-H: audit INSIDE the tx. Receiving items moves inventory,
       // flips PO status, and triggers cost aging — a forensic trail

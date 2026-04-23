@@ -96,9 +96,15 @@ export async function issueStoreCreditAction(formData: FormData) {
       // for RLS), add AND organization_id = $3 so any RLS regression, policy
       // drift, or future BYPASSRLS role change can't let a manager in org A
       // credit a customer in org B via a guessed/leaked UUID.
+      // R75-M: `AND is_active = true` — anonymized customers (GDPR
+      // right-to-be-forgotten DELETE) carry is_active=false + zeroed
+      // balance. Without this filter, manual issuance writes credit
+      // back onto a [deleted] record that can never be redeemed,
+      // leaving a permanent phantom liability and mutating an
+      // erased PII record post-erasure.
       const updated = await client.query(
         `UPDATE customers SET store_credit_balance = store_credit_balance + $1, updated_at = now()
-         WHERE id = $2 AND organization_id = $3 RETURNING store_credit_balance`,
+         WHERE id = $2 AND organization_id = $3 AND is_active = true RETURNING store_credit_balance`,
         [amount, customerId, orgId],
       );
       if (updated.rows.length === 0) {

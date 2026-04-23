@@ -13,14 +13,32 @@ import { orgTx } from "@/lib/supabase-rest";
 // reached — imports dropped to keep the module surface honest.
 const isPg = () => !!process.env.USE_POSTGRES;
 
+// R75-M: admin-side tender whitelist (parity with register-side
+// createLayawayAction). layaway_payments.tender_type has no CHECK
+// constraint, so without normalization a caller could submit "Cash"
+// / "cash " / "CASH" — every strict-equality branch below (cash
+// pay_in, store_credit debit) would fall through, leaving the
+// layaway marked `paid_in_full` with no money-movement evidence.
+const ALLOWED_TENDERS = new Set([
+  "cash",
+  "card",
+  "store_credit",
+  "loyalty",
+  "gift_card",
+]);
+
 export async function makeLayawayPaymentAction(formData: FormData) {
   const layawayId = formData.get("layawayId") as string;
   const amount = Number(formData.get("amount"));
-  const tenderType = formData.get("tenderType") as string;
+  const rawTender = String(formData.get("tenderType") ?? "");
+  const tenderType = rawTender.trim().toLowerCase();
   const actorPassword = String(formData.get("actorPassword") ?? "");
 
   if (!layawayId || !Number.isFinite(amount) || amount <= 0 || !tenderType) {
     throw new Error("Layaway ID, positive amount, and tender type are required");
+  }
+  if (!ALLOWED_TENDERS.has(tenderType)) {
+    throw new Error("Invalid tender type");
   }
 
   // R36-H1 (authz): `catalog.manage` is ALSO held by `inventory_clerk`
@@ -420,22 +438,36 @@ export async function cancelLayawayAction(
       // Restore reserved inventory — createLayawayAction decremented on_hand to
       // reserve stock. Cancelling without restoring permanently destroys
       // inventory equal to the line quantities.
+      //
+      // R75-H3 (CRITICAL-adjacent): aggregate per-variant BEFORE the DB
+      // round-trip. BuPOS carts keep two lines of the same
+      // productVariantId but different modifiers as separate items
+      // (addItem's modifier-signature grouping). When the cart
+      // snapshot holds e.g. [{vid:A, qty:2}, {vid:A, qty:3}], the
+      // unnest($1::uuid[], $2::int[]) delta CTE emits TWO rows for
+      // variant A; PostgreSQL's UPDATE…FROM delta-join against the
+      // single inventory_levels row applies ONLY ONE of the matching
+      // deltas (nondeterministic which), so on_hand increases by
+      // either 2 or 3 — not 5. The register-side CREATE path already
+      // aggregates (see register/layaway-action.ts R36-H1); the
+      // CANCEL path silently destroyed 2–3 units per cancelled
+      // layaway with duplicate-variant carts. Mirror the aggregation
+      // pattern.
       const snapshot = typeof layaway.cart_snapshot === "string"
         ? JSON.parse(layaway.cart_snapshot)
         : layaway.cart_snapshot;
       const items = (snapshot?.items ?? []) as Array<{ productVariantId?: string; variantId?: string; quantity: number }>;
       if (Array.isArray(items) && items.length > 0) {
-        // Build aligned (variant_id, qty) pairs in one pass so the
-        // unnest($1::uuid[], $2::int[]) positional join doesn't pair a
-        // filtered variantIds[i] with an unfiltered quantities[i]. A cart
-        // snapshot missing a variantId on any line would otherwise shift
-        // subsequent quantities onto the wrong variant.
-        const valid = items
-          .map((i) => ({ vid: i.productVariantId ?? i.variantId ?? "", qty: Number(i.quantity) || 0 }))
-          .filter((x) => x.vid && x.qty > 0);
-        if (valid.length > 0) {
-          const variantIds = valid.map((x) => x.vid);
-          const quantities = valid.map((x) => x.qty);
+        const totalsByVariant = new Map<string, number>();
+        for (const it of items) {
+          const vid = it.productVariantId ?? it.variantId ?? "";
+          const qty = Number(it.quantity) || 0;
+          if (!vid || qty <= 0) continue;
+          totalsByVariant.set(vid, (totalsByVariant.get(vid) ?? 0) + qty);
+        }
+        if (totalsByVariant.size > 0) {
+          const variantIds = [...totalsByVariant.keys()];
+          const quantities = variantIds.map((v) => totalsByVariant.get(v) as number);
           await client.query(
             `UPDATE inventory_levels il
              SET on_hand = il.on_hand + delta.qty, updated_at = NOW()
