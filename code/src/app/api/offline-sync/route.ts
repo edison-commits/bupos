@@ -7,6 +7,11 @@ import type { RegisterConfig } from "@/lib/config/register-config";
 import { validateBody, offlineSyncSchema } from "@/lib/validation/schemas";
 import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 import { invalidateInventoryCache } from "@/lib/cache/inventory-cache";
+// R93-DB-M1: offline-sync mutates promo_codes (usage + status)
+// and writes transactions + gift_card balances. All of these are
+// reflected in get_full_store's snapshot, so the admin readStore
+// cache must be busted after every successful sync commit.
+import { invalidateStoreCache } from "@/lib/persistence/postgres-read-store";
 
 import { safeErr } from "@/lib/logging/safe-err";
 import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
@@ -1279,6 +1284,7 @@ export const POST = withDualAuth("register.open", async (request, ctx) => {
     }
 
     invalidateInventoryCache(orgId);
+    invalidateStoreCache(orgId);
     return NextResponse.json({ success: true, transactionId, inserted });
   } catch (error) {
     // Promo revalidation errors are structured 409s (Conflict) — the cart

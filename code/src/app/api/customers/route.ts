@@ -7,6 +7,11 @@ import { orgQuery } from '@/lib/supabase-rest';
 import { withAdminAuth } from '@/lib/api/with-auth';
 import { validateBody, customerCreateSchema, customerUpdateSchema } from '@/lib/validation/schemas';
 import { checkRateLimit } from '@/lib/auth/rate-limit';
+// R93-DB-M1: get_full_store hydrates `customers` into the 30s
+// readStore cache. REST /api/customers POST/PUT/DELETE must bust
+// that cache so admin KPIs + register customer-lookup see freshly
+// created/edited/anonymized customers immediately.
+import { invalidateStoreCache } from '@/lib/persistence/postgres-read-store';
 
 import { safeErr } from "@/lib/logging/safe-err";
 export const GET = withAdminAuth('employee.manage', async (request, ctx) => {
@@ -228,6 +233,7 @@ export const POST = withAdminAuth('employee.manage', async (request, ctx) => {
         ],
       );
       await client.query('COMMIT');
+      invalidateStoreCache(orgId);
       return NextResponse.json({ customer }, { status: 201 });
     } catch (e) {
       await client.query('ROLLBACK').catch(() => {});
@@ -375,6 +381,7 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
     } finally {
       client.release();
     }
+    invalidateStoreCache(orgId);
     return NextResponse.json({ customer }, { status: 200 });
   } catch (error) {
     console.error('Customers PUT error:', safeErr(error));
@@ -510,6 +517,7 @@ export const DELETE = withAdminAuth('employee.manage', async (request, ctx) => {
     } finally {
       client.release();
     }
+    invalidateStoreCache(orgId);
     return NextResponse.json({ success: true, anonymized: true });
   } catch (error) {
     console.error('Customers DELETE error:', safeErr(error));

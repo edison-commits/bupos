@@ -5,6 +5,9 @@ import { randomUUID } from "@/lib/uuid";
 import { validateBody, promoCodeSchema } from "@/lib/validation/schemas";
 import { formatCurrency } from "@/lib/format";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
+// R93-DB-M1: get_full_store hydrates `promo_codes`. Every
+// mutation here must bust the 30s readStore cache.
+import { invalidateStoreCache } from "@/lib/persistence/postgres-read-store";
 
 
 import { safeErr } from "@/lib/logging/safe-err";
@@ -294,6 +297,7 @@ export const POST = withAdminAuth("pricing.manage", async (req, ctx) => {
         client.release();
       }
 
+      invalidateStoreCache(orgId);
       return NextResponse.json({ id: promoId, code: code.toUpperCase(), status: "active" }, { status: 201 });
     }
 
@@ -498,6 +502,7 @@ export const POST = withAdminAuth("pricing.manage", async (req, ctx) => {
         );
 
         await client.query("COMMIT");
+        invalidateStoreCache(orgId);
         return NextResponse.json({
           redeemed: true,
           discountAmount,
@@ -571,6 +576,7 @@ export const POST = withAdminAuth("pricing.manage", async (req, ctx) => {
       } finally {
         client.release();
       }
+      invalidateStoreCache(orgId);
       return NextResponse.json({ id: promoCodeId, status: "disabled" });
     }
 
