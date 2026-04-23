@@ -3,6 +3,12 @@
 import { useState, useTransition } from "react";
 import { acceptStocktakeAction, cancelStocktakeAction, createStocktakeAction, recordCountAction } from "@/app/admin/stocktake-actions";
 import type { Stocktake, StocktakeLine, Location, ProductVariant, Product, Category, Employee } from "@/lib/domain/types";
+// R50/R51: step-up <PasswordGate> on stocktake Accept. Backend
+// (stocktake-actions.ts `acceptStocktakeAction`) gates on
+// requireStepUp with bucketKey 'stocktake-accept-stepup' — a
+// compromised manager cookie could doctor counted_qty on every
+// high-value SKU before Accept applies adjustments in ABSOLUTE mode.
+import { usePasswordGate } from "@/components/shared/password-gate";
 
 const STATUS_COLORS: Record<string, string> = {
   in_progress: "bg-blue-100 text-blue-800",
@@ -25,6 +31,7 @@ export function StocktakeManager({
   const [showCreate, setShowCreate] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const [promptPassword, passwordGate] = usePasswordGate();
 
   const locMap = new Map(locations.map((l) => [l.id, l]));
   const varMap = new Map(variants.map((v) => [v.id, v]));
@@ -186,7 +193,27 @@ export function StocktakeManager({
                     {st.status === "in_progress" && (
                       <div className="flex gap-2">
                         <button
-                          onClick={() => { startTransition(() => acceptStocktakeAction(st.id)); }}
+                          onClick={async () => {
+                            // R51: prompt for step-up password before
+                            // committing the counted_qty → absolute-
+                            // mode adjustments. Cancellation returns
+                            // null → bail without calling the action.
+                            const pwd = await promptPassword({
+                              title: `Accept stocktake and apply adjustments?`,
+                              description:
+                                "This writes every counted qty to inventory in absolute mode. Can't be undone. Confirm with your password.",
+                              confirmLabel: "Accept & apply",
+                              confirmVariant: "default",
+                            });
+                            if (!pwd) return;
+                            startTransition(async () => {
+                              try {
+                                await acceptStocktakeAction(st.id, pwd);
+                              } catch (err) {
+                                window.alert(err instanceof Error ? err.message : "Failed to accept stocktake");
+                              }
+                            });
+                          }}
                           disabled={isPending || countedCount === 0}
                           className="rounded-lg bg-emerald-600 px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
                         >
@@ -208,6 +235,8 @@ export function StocktakeManager({
           })}
         </div>
       )}
+      {/* R51: <PasswordGate> renders nothing when inactive; safe at root. */}
+      {passwordGate}
     </div>
   );
 }

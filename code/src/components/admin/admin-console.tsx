@@ -6,6 +6,11 @@ import { adminLogoutAction, adjustInventoryAction, createCategoryAction, createE
 // that mutates server state in this file is wrapped so a fast
 // double-tap can't fire two concurrent invocations.
 import { SubmitGuardForm } from "@/components/shared/submit-guard-form";
+// R50/R51: step-up <PasswordGate> wrapper. Three server actions in
+// this file gate on requireStepUp and read `actorPassword` from
+// FormData — the backend was wired in R49 but the UI prompt was
+// deferred. R50 audit flagged this; this wraps the three forms.
+import { PasswordGatedForm } from "@/components/shared/password-gated-form";
 
 // Lightweight/always-used components: keep static
 import { DashboardKPIs } from "@/components/admin/dashboard-kpis";
@@ -243,7 +248,32 @@ export function AdminConsole({
                           <details className="cursor-pointer">
                             <summary className="text-xs font-semibold text-teal-700 hover:text-teal-800">Edit {variant.sku}</summary>
                             <div className="mt-2 space-y-2 rounded-xl bg-zinc-50 p-3">
-                              <SubmitGuardForm action={editVariantAction} className="grid gap-2">
+                              <PasswordGatedForm
+                                action={editVariantAction}
+                                prompt={{
+                                  title: `Reprice ${variant.sku}?`,
+                                  description:
+                                    "Changing price or cost is fraud-relevant. Confirm with your password — non-pricing edits (SKU, barcode, labels) don't require step-up.",
+                                  confirmLabel: "Save variant",
+                                  confirmVariant: "default",
+                                }}
+                                gateCondition={(_fd, form) => {
+                                  // R51: mirror the server-side snapshot-compare
+                                  // in editVariantAction (src/app/admin/actions.ts).
+                                  // Step-up fires only when price or cost actually
+                                  // changes vs. the pre-edit value. Checking
+                                  // `.value !== .defaultValue` at submit-time
+                                  // matches the server's `Math.abs(prior - new) > 0.005`
+                                  // rule for practical UI purposes: identical
+                                  // values don't prompt; any digit change does.
+                                  const priceInp = form.querySelector<HTMLInputElement>('input[name="price"]');
+                                  const costInp = form.querySelector<HTMLInputElement>('input[name="cost"]');
+                                  const priceChanged = priceInp ? priceInp.value !== priceInp.defaultValue : false;
+                                  const costChanged = costInp ? costInp.value !== costInp.defaultValue : false;
+                                  return priceChanged || costChanged;
+                                }}
+                                className="grid gap-2"
+                              >
                                 <input type="hidden" name="variantId" value={variant.id} />
                                 <Input name="name" label="Variant name" defaultValue={variant.name} />
                                 <Input name="sku" label="SKU" defaultValue={variant.sku} />
@@ -256,8 +286,8 @@ export function AdminConsole({
                                   <input name="isActive" type="checkbox" defaultChecked={variant.isActive} className="h-4 w-4 rounded border-zinc-300" />
                                   Active
                                 </label>
-                                <button className="touch-button rounded-2xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white">Save variant</button>
-                              </SubmitGuardForm>
+                                <button type="submit" className="touch-button rounded-2xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white">Save variant</button>
+                              </PasswordGatedForm>
                               <SubmitGuardForm action={deleteVariantAction}>
                                 <input type="hidden" name="variantId" value={variant.id} />
                                 <button className="touch-button w-full rounded-2xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700">Delete variant</button>
@@ -551,12 +581,23 @@ export function AdminConsole({
                         <p className="text-sm text-zinc-600">{employee.roleKey} · {employee.email ?? "PIN-only register user"}</p>
                       </div>
                       {canManageThisEmployee ? (
-                        <SubmitGuardForm action={toggleEmployeeAction}>
+                        <PasswordGatedForm
+                          action={toggleEmployeeAction}
+                          prompt={{
+                            title: employee.isActive
+                              ? `Deactivate ${employee.displayName}?`
+                              : `Reactivate ${employee.displayName}?`,
+                            description:
+                              "Confirm with your password — toggling employee status is privileged and step-up re-auth is required.",
+                            confirmLabel: employee.isActive ? "Deactivate" : "Reactivate",
+                            confirmVariant: employee.isActive ? "destructive" : "default",
+                          }}
+                        >
                           <input type="hidden" name="employeeId" value={employee.id} />
-                          <button className={`rounded-full px-3 py-1 text-xs font-semibold text-white ${employee.isActive ? "bg-zinc-800" : "bg-red-700"}`}>
+                          <button type="submit" className={`rounded-full px-3 py-1 text-xs font-semibold text-white ${employee.isActive ? "bg-zinc-800" : "bg-red-700"}`}>
                             {employee.isActive ? "Active" : "Inactive"}
                           </button>
-                        </SubmitGuardForm>
+                        </PasswordGatedForm>
                       ) : (
                         <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-semibold text-zinc-600">Locked</span>
                       )}
@@ -569,7 +610,17 @@ export function AdminConsole({
 
           <SectionCard title="Create employee" description="Provision new register and admin roles.">
             {canManageEmployees && manageableRoles.length > 0 ? (
-              <SubmitGuardForm action={createEmployeeAction} className="grid gap-3 md:grid-cols-2">
+              <PasswordGatedForm
+                action={createEmployeeAction}
+                prompt={{
+                  title: "Create new employee?",
+                  description:
+                    "Provisioning an employee — especially an admin-capable role — is privilege-elevation. Confirm with your password.",
+                  confirmLabel: "Create employee",
+                  confirmVariant: "default",
+                }}
+                className="grid gap-3 md:grid-cols-2"
+              >
                 <Input name="firstName" label="First name" placeholder="Jordan" />
                 <Input name="lastName" label="Last name" placeholder="Lee" />
                 <label className="grid gap-1 text-sm font-medium text-zinc-700">
@@ -583,8 +634,8 @@ export function AdminConsole({
                 <Input name="pin" label="4-digit PIN" placeholder="4444" />
                 <Input name="email" label="Email (optional for cashier)" placeholder="jordan@basicuniformpos.local" />
                 <Input name="password" label="Password (needed for admin login roles)" type="password" placeholder="Temporary password" />
-                <button className="touch-button rounded-2xl bg-teal-700 px-5 text-sm font-semibold text-white md:col-span-2">Create employee</button>
-              </SubmitGuardForm>
+                <button type="submit" className="touch-button rounded-2xl bg-teal-700 px-5 text-sm font-semibold text-white md:col-span-2">Create employee</button>
+              </PasswordGatedForm>
             ) : (
               <LockedMessage message="This role cannot provision employees." />
             )}

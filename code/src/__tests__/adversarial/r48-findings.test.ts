@@ -37,10 +37,19 @@ describe("R48 audit fixes", () => {
     });
     it("13 admin-console forms converted from <form> to <SubmitGuardForm>", () => {
       const src = read("src/components/admin/admin-console.tsx");
-      const open = (src.match(/<SubmitGuardForm /g) ?? []).length;
-      const close = (src.match(/<\/SubmitGuardForm>/g) ?? []).length;
-      expect(open).toBeGreaterThanOrEqual(12);
-      expect(close).toBe(open);
+      // R51: three of the original `<SubmitGuardForm>` sites
+      // (createEmployee / toggleEmployee / editVariant) were migrated
+      // to `<PasswordGatedForm>`, which composes the same double-
+      // submit DOM-mutation guard with a step-up password prompt.
+      // Count both wrappers — the R48 intent was "every mutating
+      // form has a synchronous submit guard", which both satisfy.
+      const guardOpen = (src.match(/<SubmitGuardForm /g) ?? []).length;
+      const guardClose = (src.match(/<\/SubmitGuardForm>/g) ?? []).length;
+      const pwOpen = (src.match(/<PasswordGatedForm[\s>]/g) ?? []).length;
+      const pwClose = (src.match(/<\/PasswordGatedForm>/g) ?? []).length;
+      expect(guardOpen + pwOpen).toBeGreaterThanOrEqual(12);
+      expect(guardClose).toBe(guardOpen);
+      expect(pwClose).toBe(pwOpen);
     });
   });
 
