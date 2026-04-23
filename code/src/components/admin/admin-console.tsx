@@ -2,6 +2,10 @@
 import dynamic from "next/dynamic";
 import type { InputHTMLAttributes } from "react";
 import { adminLogoutAction, adjustInventoryAction, createCategoryAction, createEmployeeAction, createProductAction, toggleEmployeeAction, updateOrganizationAction, updateLocationAction, editCategoryAction, deleteCategoryAction, editProductAction, deleteProductAction, editVariantAction, deleteVariantAction } from "@/app/admin/actions";
+// R48: shared double-submit guard. Every `<form action={...Action}>`
+// that mutates server state in this file is wrapped so a fast
+// double-tap can't fire two concurrent invocations.
+import { SubmitGuardForm } from "@/components/shared/submit-guard-form";
 
 // Lightweight/always-used components: keep static
 import { DashboardKPIs } from "@/components/admin/dashboard-kpis";
@@ -200,7 +204,7 @@ export function AdminConsole({
                   <details className="mt-3 cursor-pointer">
                     <summary className="text-xs font-semibold text-teal-700 hover:text-teal-800">Edit product</summary>
                     <div className="mt-3 space-y-3 rounded-xl bg-zinc-50 p-3">
-                      <form action={editProductAction} className="grid gap-2">
+                      <SubmitGuardForm action={editProductAction} className="grid gap-2">
                         <input type="hidden" name="productId" value={product.id} />
                         <Input name="name" label="Product name" defaultValue={product.name} />
                         <label className="grid gap-1 text-sm font-medium text-zinc-700">
@@ -222,11 +226,11 @@ export function AdminConsole({
                           Touch favorite
                         </label>
                         <button className="touch-button rounded-2xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white">Save product</button>
-                      </form>
-                      <form action={deleteProductAction}>
+                      </SubmitGuardForm>
+                      <SubmitGuardForm action={deleteProductAction}>
                         <input type="hidden" name="productId" value={product.id} />
                         <button className="touch-button w-full rounded-2xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700">Delete product</button>
-                      </form>
+                      </SubmitGuardForm>
                     </div>
                   </details>
                 )}
@@ -239,7 +243,7 @@ export function AdminConsole({
                           <details className="cursor-pointer">
                             <summary className="text-xs font-semibold text-teal-700 hover:text-teal-800">Edit {variant.sku}</summary>
                             <div className="mt-2 space-y-2 rounded-xl bg-zinc-50 p-3">
-                              <form action={editVariantAction} className="grid gap-2">
+                              <SubmitGuardForm action={editVariantAction} className="grid gap-2">
                                 <input type="hidden" name="variantId" value={variant.id} />
                                 <Input name="name" label="Variant name" defaultValue={variant.name} />
                                 <Input name="sku" label="SKU" defaultValue={variant.sku} />
@@ -253,11 +257,11 @@ export function AdminConsole({
                                   Active
                                 </label>
                                 <button className="touch-button rounded-2xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white">Save variant</button>
-                              </form>
-                              <form action={deleteVariantAction}>
+                              </SubmitGuardForm>
+                              <SubmitGuardForm action={deleteVariantAction}>
                                 <input type="hidden" name="variantId" value={variant.id} />
                                 <button className="touch-button w-full rounded-2xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700">Delete variant</button>
-                              </form>
+                              </SubmitGuardForm>
                             </div>
                           </details>
                         )}
@@ -279,16 +283,16 @@ export function AdminConsole({
                     <details className="cursor-pointer">
                       <summary className="text-xs font-semibold text-teal-700 hover:text-teal-800">Edit</summary>
                       <div className="mt-2 space-y-2 rounded-xl bg-zinc-50 p-3">
-                        <form action={editCategoryAction} className="grid gap-2">
+                        <SubmitGuardForm action={editCategoryAction} className="grid gap-2">
                           <input type="hidden" name="categoryId" value={cat.id} />
                           <Input name="name" label="Category name" defaultValue={cat.name} />
                           <Input name="imageUrl" label="Image URL" defaultValue={cat.imageUrl ?? ""} />
                           <button className="touch-button rounded-2xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white">Save category</button>
-                        </form>
-                        <form action={deleteCategoryAction}>
+                        </SubmitGuardForm>
+                        <SubmitGuardForm action={deleteCategoryAction}>
                           <input type="hidden" name="categoryId" value={cat.id} />
                           <button className="touch-button w-full rounded-2xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700">Delete category</button>
-                        </form>
+                        </SubmitGuardForm>
                       </div>
                     </details>
                   </div>
@@ -301,11 +305,11 @@ export function AdminConsole({
         <div className="grid gap-6 xl:grid-cols-2">
           <SectionCard title="Create category" description="Minimal starter form for category structure.">
             {canManageCatalog ? (
-              <form action={createCategoryAction} className="grid gap-3">
+              <SubmitGuardForm action={createCategoryAction} className="grid gap-3">
                 <Input name="name" label="Category name" placeholder="Outerwear" />
                 <Input name="imageUrl" label="Image URL" placeholder="https://..." />
                 <button className="touch-button rounded-2xl bg-teal-700 px-5 text-sm font-semibold text-white">Add category</button>
-              </form>
+              </SubmitGuardForm>
             ) : (
               <LockedMessage message="This role can view catalog structure but cannot change it." />
             )}
@@ -313,7 +317,7 @@ export function AdminConsole({
 
           <SectionCard title="Create product + starter variant" description="Adds a product, its default variant, and an initial inventory row.">
             {canManageCatalog ? (
-              <form action={createProductAction} className="grid gap-3 md:grid-cols-2">
+              <SubmitGuardForm action={createProductAction} className="grid gap-3 md:grid-cols-2">
                 <Input name="name" label="Product name" placeholder="Classic Zip Hoodie" />
                 <label className="grid gap-1 text-sm font-medium text-zinc-700">
                   <span>Category</span>
@@ -342,7 +346,7 @@ export function AdminConsole({
                   Mark as touch favorite
                 </label>
                 <button className="touch-button rounded-2xl bg-zinc-900 px-5 text-sm font-semibold text-white md:col-span-2">Create product</button>
-              </form>
+              </SubmitGuardForm>
             ) : (
               <LockedMessage message="This role cannot create or edit products." />
             )}
@@ -547,12 +551,12 @@ export function AdminConsole({
                         <p className="text-sm text-zinc-600">{employee.roleKey} · {employee.email ?? "PIN-only register user"}</p>
                       </div>
                       {canManageThisEmployee ? (
-                        <form action={toggleEmployeeAction}>
+                        <SubmitGuardForm action={toggleEmployeeAction}>
                           <input type="hidden" name="employeeId" value={employee.id} />
                           <button className={`rounded-full px-3 py-1 text-xs font-semibold text-white ${employee.isActive ? "bg-zinc-800" : "bg-red-700"}`}>
                             {employee.isActive ? "Active" : "Inactive"}
                           </button>
-                        </form>
+                        </SubmitGuardForm>
                       ) : (
                         <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-semibold text-zinc-600">Locked</span>
                       )}
@@ -565,7 +569,7 @@ export function AdminConsole({
 
           <SectionCard title="Create employee" description="Provision new register and admin roles.">
             {canManageEmployees && manageableRoles.length > 0 ? (
-              <form action={createEmployeeAction} className="grid gap-3 md:grid-cols-2">
+              <SubmitGuardForm action={createEmployeeAction} className="grid gap-3 md:grid-cols-2">
                 <Input name="firstName" label="First name" placeholder="Jordan" />
                 <Input name="lastName" label="Last name" placeholder="Lee" />
                 <label className="grid gap-1 text-sm font-medium text-zinc-700">
@@ -580,7 +584,7 @@ export function AdminConsole({
                 <Input name="email" label="Email (optional for cashier)" placeholder="jordan@basicuniformpos.local" />
                 <Input name="password" label="Password (needed for admin login roles)" type="password" placeholder="Temporary password" />
                 <button className="touch-button rounded-2xl bg-teal-700 px-5 text-sm font-semibold text-white md:col-span-2">Create employee</button>
-              </form>
+              </SubmitGuardForm>
             ) : (
               <LockedMessage message="This role cannot provision employees." />
             )}
@@ -784,7 +788,7 @@ export function AdminConsole({
       {/* ━━ Settings ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
       <SectionPanel sectionKey="settings">
         <SectionCard title="Store information" description="Business name, legal details, and contact info.">
-          <form action={updateOrganizationAction} className="grid gap-3 md:grid-cols-2">
+          <SubmitGuardForm action={updateOrganizationAction} className="grid gap-3 md:grid-cols-2">
             <Input name="name" label="Store name" defaultValue={store.organization.name} />
             <Input name="legalName" label="Legal name" defaultValue={store.organization.legalName} />
             <Input name="phone" label="Phone" type="tel" defaultValue={store.organization.phone ?? ""} />
@@ -793,12 +797,12 @@ export function AdminConsole({
             <div className="md:col-span-2">
               <button className="touch-button rounded-2xl bg-teal-700 px-5 text-sm font-semibold text-white">Save store info</button>
             </div>
-          </form>
+          </SubmitGuardForm>
         </SectionCard>
 
         {store.locations.map((loc) => (
           <SectionCard key={loc.id} title={`Location: ${loc.name}`} description="Address, phone, and sales tax rate.">
-            <form action={updateLocationAction} className="grid gap-3 md:grid-cols-2">
+            <SubmitGuardForm action={updateLocationAction} className="grid gap-3 md:grid-cols-2">
               <input type="hidden" name="locationId" value={loc.id} />
               <Input name="locationName" label="Location name" defaultValue={loc.name} />
               <Input name="address1" label="Address" defaultValue={loc.address1} />
@@ -810,12 +814,12 @@ export function AdminConsole({
               <div className="md:col-span-2">
                 <button className="touch-button rounded-2xl bg-teal-700 px-5 text-sm font-semibold text-white">Save location</button>
               </div>
-            </form>
+            </SubmitGuardForm>
           </SectionCard>
         ))}
 
         <SectionCard title="Receipt customization" description="Header and footer text shown on printed receipts.">
-          <form action={updateOrganizationAction} className="grid gap-3">
+          <SubmitGuardForm action={updateOrganizationAction} className="grid gap-3">
             <input type="hidden" name="name" value={store.organization.name} />
             <input type="hidden" name="legalName" value={store.organization.legalName} />
             <label className="grid gap-1 text-sm font-medium text-zinc-700">
@@ -827,7 +831,7 @@ export function AdminConsole({
               <textarea name="receiptFooter" rows={2} className="rounded-2xl border border-zinc-300 bg-white px-4 py-3" defaultValue={store.organization.receiptFooter ?? "Thank you for shopping with us!"} />
             </label>
             <button className="touch-button w-fit rounded-2xl bg-teal-700 px-5 text-sm font-semibold text-white">Save receipt text</button>
-          </form>
+          </SubmitGuardForm>
         </SectionCard>
       </SectionPanel>
     </AdminLayout>

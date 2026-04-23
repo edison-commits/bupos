@@ -26,6 +26,11 @@ const VOID_REASONS = [
 export function VoidReasonModal({ target, itemName, onConfirm, onCancel }: VoidReasonModalProps) {
   const [reasonCode, setReasonCode] = useState("customer_changed_mind");
   const [note, setNote] = useState("");
+  // R48: double-submit guard. Double-tap on Confirm fires onConfirm
+  // twice, producing duplicate audit rows and two server-action
+  // invocations. `submitting` flips synchronously on first click;
+  // second click sees disabled=true + early-returns.
+  const [submitting, setSubmitting] = useState(false);
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
@@ -71,10 +76,15 @@ export function VoidReasonModal({ target, itemName, onConfirm, onCancel }: VoidR
           </button>
           <button
             type="button"
-            onClick={() => onConfirm(reasonCode, note)}
-            className="touch-button flex-1 rounded-2xl bg-red-700 px-4 text-sm font-bold text-white hover:bg-red-800"
+            disabled={submitting}
+            onClick={() => {
+              if (submitting) return;
+              setSubmitting(true);
+              onConfirm(reasonCode, note);
+            }}
+            className="touch-button flex-1 rounded-2xl bg-red-700 px-4 text-sm font-bold text-white hover:bg-red-800 disabled:opacity-50"
           >
-            {target === "cart" ? "Void cart" : "Remove"}
+            {submitting ? "…" : target === "cart" ? "Void cart" : "Remove"}
           </button>
         </div>
       </div>

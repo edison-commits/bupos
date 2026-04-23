@@ -88,39 +88,54 @@ export const PUT = withAdminAuth('employee.manage', async (req, ctx) => {
       return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
     }
 
-    // R27: explicit org filter on UPDATE — without it any tenant's
-    // owner could change any other tenant's tax rate.
-    // R39-A1-2: capture the OLD rate so the audit event records the
-    // full transition.
-    const { rows: priorRows } = await orgQuery(
-      orgId,
-      `SELECT tax_rate FROM locations WHERE id = $1 AND organization_id = $2`,
-      [locationId, orgId],
-    );
-    const priorTaxRate = priorRows[0]?.tax_rate ?? null;
-    const result = await orgQuery(
-      orgId,
-      `UPDATE locations SET tax_rate = $1, updated_at = now() WHERE id = $2 AND organization_id = $3 RETURNING id, name, tax_rate`,
-      [taxRate, locationId, orgId],
-    );
-
-    if (result.rows.length === 0) {
-      return NextResponse.json({ error: "Location not found" }, { status: 404 });
+    // R48: wrap SELECT + UPDATE + audit in a single orgTx so the audit
+    // row is atomic with the tax-rate change. Tax rate is the highest-
+    // fraud-risk admin mutation (R39-A1-2); a post-commit audit that
+    // fails silently is exactly the evidence-destruction vector the
+    // audit is supposed to prevent.
+    const { orgTx } = await import("@/lib/supabase-rest");
+    const { randomUUID } = await import("@/lib/uuid");
+    const client = await orgTx(orgId);
+    let finalTaxRate: number;
+    let finalLocName: string;
+    try {
+      const priorRes = await client.query(
+        `SELECT tax_rate FROM locations WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
+        [locationId, orgId],
+      );
+      const priorTaxRate = priorRes.rows[0]?.tax_rate ?? null;
+      const updRes = await client.query(
+        `UPDATE locations SET tax_rate = $1, updated_at = now() WHERE id = $2 AND organization_id = $3 RETURNING id, name, tax_rate`,
+        [taxRate, locationId, orgId],
+      );
+      if (updRes.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return NextResponse.json({ error: "Location not found" }, { status: 404 });
+      }
+      finalTaxRate = Number(updRes.rows[0].tax_rate);
+      finalLocName = updRes.rows[0].name as string;
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'location', $5, 'tax_rate_changed', $6, now())`,
+        [
+          randomUUID(), orgId, locationId, employee.id, locationId,
+          JSON.stringify({
+            prior_tax_rate: priorTaxRate !== null ? String(priorTaxRate) : null,
+            new_tax_rate: String(taxRate),
+          }),
+        ],
+      );
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
     }
 
-    // R39-A1-2: audit the change.
-    await waitUntilOrAwait(pgInsertAuditEvent(
-      orgId, locationId, employee.id,
-      "location", locationId, "tax_rate_changed",
-      {
-        prior_tax_rate: priorTaxRate !== null ? String(priorTaxRate) : null,
-        new_tax_rate: String(taxRate),
-      },
-    ).catch((err) => console.error("[audit] tax_rate_changed failed:", safeErr(err))));
-
     return NextResponse.json({
-      location: result.rows[0],
-      taxRatePercent: Number((Number(result.rows[0].tax_rate) * 100).toFixed(4)),
+      location: { id: locationId, name: finalLocName, tax_rate: finalTaxRate },
+      taxRatePercent: Number((finalTaxRate * 100).toFixed(4)),
     });
   } catch (err) {
     console.error("PUT /api/tax-config error:", safeErr(err));

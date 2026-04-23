@@ -186,12 +186,21 @@ export const POST = withDualAuth("register.open", async (req, ctx) => {
     // Build HTML receipt
     const itemHtmlRows = items.map((item) => {
       const name = item.name || item.productName || "Item";
-      const qty = item.qty ?? item.quantity ?? 1;
+      // R48: coerce qty through Number() before rendering. Prior shape
+      // interpolated `item.qty ?? item.quantity ?? 1` verbatim. If the
+      // value is a string containing HTML (e.g., a maliciously crafted
+      // cart_snapshot written via offline sync or direct DB write),
+      // the raw HTML renders in the customer email — stored-XSS via
+      // image-onerror phishing. Coerce via Number + fallback to 1 on
+      // NaN; arithmetic with (price * qty) below depended on numeric
+      // coercion anyway.
+      const qty = Number(item.qty ?? item.quantity ?? 1);
+      const safeQty = Number.isFinite(qty) ? qty : 1;
       const price = item.overridePrice ?? item.unitPrice ?? item.price ?? 0;
       return `<tr>
         <td style="padding:6px 0;border-bottom:1px solid #f0f0f0;">${esc(String(name))}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid #f0f0f0;text-align:center;">${qty}</td>
-        <td style="padding:6px 0;border-bottom:1px solid #f0f0f0;text-align:right;">$${(price * qty).toFixed(2)}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #f0f0f0;text-align:center;">${safeQty}</td>
+        <td style="padding:6px 0;border-bottom:1px solid #f0f0f0;text-align:right;">$${(price * safeQty).toFixed(2)}</td>
       </tr>`;
     }).join("");
 

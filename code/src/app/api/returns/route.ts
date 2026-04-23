@@ -457,6 +457,27 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
     const v = validateBody(returnUpdateSchema, body);
     if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
     const { id, status } = v.data;
+
+    // R48: step-up re-auth on status transitions that dispense money.
+    // The PUT branch for `status='completed'` writes negative tenders +
+    // store-credit ledger + loyalty reversal + inventory restock; a
+    // stolen cookie without the actor's password was previously able
+    // to complete any pending return. Gating `completed` (the only
+    // transition that moves money) keeps the approve/reject review
+    // workflow accessible without re-auth for rejections.
+    if (status === 'completed') {
+      const { requireStepUp } = await import('@/lib/auth/step-up');
+      const stepUp = await requireStepUp({
+        actorId: ctx.employee.id,
+        orgId,
+        actorPassword: (body as { actorPassword?: string }).actorPassword,
+        bucketKey: 'returns-complete-stepup',
+      });
+      if (!stepUp.ok) {
+        return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
+      }
+    }
+
     // processed_by is always the authenticated admin — never from the body.
     // Otherwise an admin could blame a return on a coworker in the audit trail.
     const processed_by = ctx.employee.id;
