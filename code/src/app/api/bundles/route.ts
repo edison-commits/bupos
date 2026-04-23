@@ -150,6 +150,24 @@ export const POST = withAdminAuth("pricing.manage", async (req, ctx) => {
       );
     }
 
+    // R52-B: step-up re-auth on bundle creation. `bundlePrice` is
+    // the same fraud-relevant surface as variant price — a compromised
+    // owner/manager cookie could POST /api/bundles with
+    // bundle_price:0.01 and a dozen high-value items and self-
+    // checkout. Gate unconditionally on POST (creation always sets
+    // a price). Bucket shares the step-up aggregate cap with PATCH
+    // so an attacker can't spam repeated bundle creations.
+    const { requireStepUp } = await import('@/lib/auth/step-up');
+    const stepUp = await requireStepUp({
+      actorId: employee.id,
+      orgId,
+      actorPassword: (body as { actorPassword?: string })?.actorPassword,
+      bucketKey: 'bundle-price-stepup',
+    });
+    if (!stepUp.ok) {
+      return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
+    }
+
     const slug = rawSlug ? slugify(rawSlug) : slugify(name);
 
     const client = await orgTx(orgId);
@@ -289,6 +307,23 @@ export const PATCH = withAdminAuth("pricing.manage", async (req, ctx) => {
     // there's nothing to do.
     if (sets.length === 0 && !items) {
       return NextResponse.json({ error: "No fields to update" }, { status: 400 });
+    }
+
+    // R52-B: step-up re-auth on bundle repricing. Fires only when
+    // bundlePrice is explicitly in the patch body (parity with
+    // /api/products variant-reprice path). Non-price PATCH fields
+    // (name, image, isActive toggle) stay cookie-authenticated.
+    if (bundlePrice !== undefined) {
+      const { requireStepUp } = await import('@/lib/auth/step-up');
+      const stepUp = await requireStepUp({
+        actorId: employee.id,
+        orgId,
+        actorPassword: (body as { actorPassword?: string })?.actorPassword,
+        bucketKey: 'bundle-price-stepup',
+      });
+      if (!stepUp.ok) {
+        return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
+      }
     }
 
     // Run metadata UPDATE + optional items replace inside ONE transaction

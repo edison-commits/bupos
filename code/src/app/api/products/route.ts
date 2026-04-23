@@ -482,6 +482,53 @@ export const PUT = withAdminAuth("catalog.manage", async (request, ctx) => {
         await client.query('ROLLBACK');
         return NextResponse.json({ error: 'Cost cannot be negative' }, { status: 400 });
       }
+      // R52-A: step-up re-auth on variant reprice. The Server Action
+      // `editVariantAction` (/src/app/admin/actions.ts) added
+      // `bucketKey:'variant-price-stepup'` in R49 with a snapshot-
+      // compare (fire only on actual change). The REST parity
+      // (claimed at editVariantAction:773-775) was missing — a
+      // compromised owner/manager cookie could `fetch('/api/products',
+      // {method:'PUT', body:{...variant_id, price:0.01}})` and
+      // reprice without the password challenge. Close that bypass
+      // here with the same bucketKey so the step-up aggregate-per-
+      // actor cap applies across both surfaces.
+      //
+      // Snapshot-compare against the SELECT … FOR UPDATE prior row
+      // so `tsc --noEmit` remains typesafe and the price lock
+      // closes a TOCTOU race where two rapid PUTs would each see
+      // the pre-existing value.
+      const { rows: priorRows } = await client.query(
+        `SELECT price, cost FROM product_variants WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
+        [updates.variant_id, orgId],
+      );
+      if (priorRows.length === 0) {
+        await client.query('ROLLBACK');
+        return NextResponse.json({ error: 'Variant not found' }, { status: 404 });
+      }
+      const prior = priorRows[0] as { price: string; cost: string | null };
+      const priorPrice = Number(prior.price);
+      const priorCost = prior.cost != null ? Number(prior.cost) : null;
+      const newPrice = typeof updates.price === 'number' ? updates.price : priorPrice;
+      const newCost = typeof updates.cost === 'number' ? updates.cost : priorCost;
+      const priceChanged = typeof updates.price === 'number' && Math.abs(priorPrice - newPrice) > 0.005;
+      const costChanged =
+        typeof updates.cost === 'number' &&
+        priorCost !== null &&
+        newCost !== null &&
+        Math.abs(priorCost - newCost) > 0.005;
+      if (priceChanged || costChanged) {
+        const { requireStepUp } = await import('@/lib/auth/step-up');
+        const stepUp = await requireStepUp({
+          actorId: employee.id,
+          orgId,
+          actorPassword: (body as { actorPassword?: string })?.actorPassword,
+          bucketKey: 'variant-price-stepup',
+        });
+        if (!stepUp.ok) {
+          await client.query('ROLLBACK');
+          return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
+        }
+      }
       const fields = [];
       const values = [];
       let paramIndex = 1;

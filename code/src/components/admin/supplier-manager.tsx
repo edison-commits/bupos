@@ -1,6 +1,11 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+// R52-M: step-up re-auth on supplier PUT (both edits and active
+// toggle). Server /api/suppliers PUT unconditionally requires
+// step-up — prior UI didn't prompt so every edit and every toggle
+// threw. Mirror the gift-card-manager pattern.
+import { usePasswordGate } from "@/components/shared/password-gate";
 
 interface Supplier {
   id: string;
@@ -23,6 +28,7 @@ export function SupplierManager() {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const [form, setForm] = useState({ name: '', contact_name: '', email: '', phone: '', address: '', notes: '' });
+  const [promptPassword, passwordGate] = usePasswordGate();
 
   const fetchSuppliers = useCallback(async () => {
     try {
@@ -65,11 +71,27 @@ export function SupplierManager() {
       setMessage({ type: 'error', text: 'Supplier name is required.' });
       return;
     }
+    // R52-M: on edit (PUT), prompt for step-up password. On create
+    // (POST), server skips step-up so skip the prompt.
+    let actorPassword: string | undefined;
+    if (editing) {
+      const pwd = await promptPassword({
+        title: `Update supplier "${editing.name}"?`,
+        description:
+          "Supplier edits affect purchase orders and vendor payables. Confirm with your password.",
+        confirmLabel: "Save supplier",
+        confirmVariant: "default",
+      });
+      if (!pwd) return;
+      actorPassword = pwd;
+    }
     setSaving(true);
     setMessage(null);
     try {
       const method = editing ? 'PUT' : 'POST';
-      const body = editing ? { id: editing.id, ...form } : form;
+      const body = editing
+        ? { id: editing.id, ...form, ...(actorPassword ? { actorPassword } : {}) }
+        : form;
       const res = await fetch('/api/suppliers', {
         method,
         headers: { 'Content-Type': 'application/json' },
@@ -91,14 +113,30 @@ export function SupplierManager() {
   };
 
   const toggleActive = async (s: Supplier) => {
+    // R52-M: activate/deactivate is a PUT → server gates on step-up.
+    const pwd = await promptPassword({
+      title: s.is_active ? `Deactivate "${s.name}"?` : `Reactivate "${s.name}"?`,
+      description:
+        "Toggling supplier status affects PO eligibility. Confirm with your password.",
+      confirmLabel: s.is_active ? "Deactivate" : "Reactivate",
+      confirmVariant: s.is_active ? "destructive" : "default",
+    });
+    if (!pwd) return;
     try {
-      await fetch('/api/suppliers', {
+      const res = await fetch('/api/suppliers', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: s.id, name: s.name, is_active: !s.is_active }),
+        body: JSON.stringify({ id: s.id, name: s.name, is_active: !s.is_active, actorPassword: pwd }),
       });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Failed to toggle' }));
+        setMessage({ type: 'error', text: err.error || 'Failed to toggle supplier' });
+        return;
+      }
       fetchSuppliers();
-    } catch { /* ignore */ }
+    } catch {
+      setMessage({ type: 'error', text: 'Failed to toggle supplier.' });
+    }
   };
 
   const update = (field: string, value: string) => setForm((prev) => ({ ...prev, [field]: value }));
@@ -198,6 +236,8 @@ export function SupplierManager() {
           ))}
         </div>
       )}
+      {/* R52-M: <PasswordGate> renders nothing when inactive. */}
+      {passwordGate}
     </div>
   );
 }

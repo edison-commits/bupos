@@ -4,6 +4,12 @@ import { useState, useTransition } from "react";
 import { cancelLayawayAction, collectLayawayAction, makeLayawayPaymentAction, type LayawayCancelDisposition } from "@/app/admin/layaway-actions";
 import type { Layaway, LayawayPayment, Customer, Employee } from "@/lib/domain/types";
 import { formatCurrency } from "@/lib/format";
+// R52-J: step-up <PasswordGate> prompts for makeLayawayPayment
+// (server bucketKey:'layaway-payment-stepup') and cancelLayaway on
+// refund dispositions (bucketKey:'layaway-cancel-stepup'). Prior
+// UI didn't thread actorPassword so every payment and every refund
+// cancel threw "password required".
+import { usePasswordGate } from "@/components/shared/password-gate";
 
 const STATUS_COLORS: Record<string, string> = {
   active: "bg-blue-100 text-blue-800",
@@ -30,6 +36,7 @@ export function LayawayManager({
   const [cancelId, setCancelId] = useState<string | null>(null);
   const [cancelReason, setCancelReason] = useState("");
   const [cancelDisposition, setCancelDisposition] = useState<LayawayCancelDisposition>("refund_cash");
+  const [promptPassword, passwordGate] = usePasswordGate();
 
   const custMap = new Map(customers.map((c) => [c.id, c]));
   const empMap = new Map(employees.map((e) => [e.id, e]));
@@ -123,7 +130,33 @@ export function LayawayManager({
                     <div className="flex flex-wrap gap-2">
                       {(lay.status === "active" || lay.status === "partially_paid") && (
                         <form
-                          action={(fd) => { startTransition(() => makeLayawayPaymentAction(fd)); }}
+                          onSubmit={async (e) => {
+                            // R52-J: prompt for step-up password
+                            // before recording layaway payment. Server
+                            // gates unconditionally on
+                            // bucketKey:'layaway-payment-stepup'.
+                            e.preventDefault();
+                            const form = e.currentTarget;
+                            const fd = new FormData(form);
+                            const amount = Number(fd.get("amount"));
+                            if (!Number.isFinite(amount) || amount <= 0) return;
+                            const pwd = await promptPassword({
+                              title: `Record ${formatCurrency(amount)} layaway payment?`,
+                              description:
+                                "Confirm with your password — layaway payments move money and require step-up.",
+                              confirmLabel: "Record payment",
+                              confirmVariant: "default",
+                            });
+                            if (!pwd) return;
+                            fd.set("actorPassword", pwd);
+                            startTransition(async () => {
+                              try {
+                                await makeLayawayPaymentAction(fd);
+                              } catch (err) {
+                                window.alert(err instanceof Error ? err.message : "Failed to record payment");
+                              }
+                            });
+                          }}
                           className="flex items-center gap-2"
                         >
                           <input type="hidden" name="layawayId" value={lay.id} />
@@ -172,7 +205,41 @@ export function LayawayManager({
                               className="w-32 rounded-lg border border-zinc-300 px-2 py-1 text-xs"
                             />
                             <button
-                              onClick={() => { startTransition(async () => { await cancelLayawayAction(lay.id, cancelReason, cancelDisposition); setCancelId(null); setCancelReason(""); setCancelDisposition("refund_cash"); }); }}
+                              onClick={async () => {
+                                // R52-J: server gates
+                                // `refund_cash` and
+                                // `refund_store_credit` on
+                                // bucketKey:'layaway-cancel-stepup'
+                                // (cancelLayawayAction takes
+                                // actorPassword as 4th arg). The
+                                // `forfeit_with_approval` branch
+                                // skips step-up server-side (owner-
+                                // only), so skip the prompt there.
+                                let pwd: string | undefined;
+                                if (cancelDisposition === "refund_cash" || cancelDisposition === "refund_store_credit") {
+                                  const p = await promptPassword({
+                                    title: "Cancel layaway with refund?",
+                                    description:
+                                      "This refunds the customer's deposit " +
+                                      (cancelDisposition === "refund_cash" ? "in cash" : "as store credit") +
+                                      " and cannot be undone. Confirm with your password.",
+                                    confirmLabel: "Confirm cancel",
+                                    confirmVariant: "destructive",
+                                  });
+                                  if (!p) return;
+                                  pwd = p;
+                                }
+                                startTransition(async () => {
+                                  try {
+                                    await cancelLayawayAction(lay.id, cancelReason, cancelDisposition, pwd);
+                                    setCancelId(null);
+                                    setCancelReason("");
+                                    setCancelDisposition("refund_cash");
+                                  } catch (err) {
+                                    window.alert(err instanceof Error ? err.message : "Failed to cancel layaway");
+                                  }
+                                });
+                              }}
                               disabled={isPending}
                               className="rounded-lg bg-red-600 px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
                             >
@@ -199,6 +266,8 @@ export function LayawayManager({
           })}
         </div>
       )}
+      {/* R52-J: <PasswordGate> renders nothing when inactive. */}
+      {passwordGate}
     </div>
   );
 }

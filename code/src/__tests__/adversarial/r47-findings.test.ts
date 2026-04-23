@@ -68,9 +68,19 @@ describe("R47 audit fixes", () => {
 
   describe("R47-H5: adjustInventoryAction form has double-submit guard", () => {
     const src = read("src/components/admin/admin-console.tsx");
-    it("form has onSubmit handler disabling the submit button", () => {
+    it("form has a double-submit guard (via PasswordGatedForm wrapper)", () => {
+      // R52-H: the adjustInventoryAction form was migrated from a
+      // raw <form> with an inline onSubmit guard to
+      // <PasswordGatedForm>, which composes the R48 synchronous
+      // DOM-mutation guard (see src/components/shared/password-
+      // gated-form.tsx — `initialBtn.disabled = true`). Both shapes
+      // satisfy the R47-H5 intent: "a fast double-tap can't fire
+      // two concurrent adjustInventoryAction invocations."
       const adjustBlock = src.slice(src.indexOf("action={adjustInventoryAction}"));
-      expect(adjustBlock).toMatch(/btn\.disabled = true/);
+      expect(adjustBlock).toMatch(/<PasswordGatedForm[\s\S]{0,0}|action=\{adjustInventoryAction\}/);
+      // And the wrapper itself carries the DOM-mutation guard.
+      const wrapperSrc = read("src/components/shared/password-gated-form.tsx");
+      expect(wrapperSrc).toMatch(/initialBtn\.disabled = true/);
     });
   });
 

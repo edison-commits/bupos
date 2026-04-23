@@ -2,6 +2,10 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { formatCurrency } from "@/lib/format";
+// R52-K: step-up prompt for expenses ≥$500 (server-side gate in
+// /api/expenses POST). Prior UI didn't thread actorPassword so
+// every $500+ expense failed with a generic 500 error.
+import { usePasswordGate } from "@/components/shared/password-gate";
 
 interface Expense {
   id: string; category: string; description: string; amount: string; expense_date: string;
@@ -46,6 +50,7 @@ export function ExpenseTracker() {
     category: 'supplies', description: '', amount: '', expense_date: '',
     is_recurring: false, recurrence_period: '', notes: '',
   });
+  const [promptPassword, passwordGate] = usePasswordGate();
 
   // R49: set the current month + default expense_date after mount so the
   // server-rendered HTML and the first client render agree. Without
@@ -76,11 +81,33 @@ export function ExpenseTracker() {
 
   const handleSave = async () => {
     if (!form.description.trim() || !form.amount) { setMessage({ type: 'error', text: 'Description and amount required.' }); return; }
+    const amount = parseFloat(form.amount);
+    if (!Number.isFinite(amount) || amount <= 0) { setMessage({ type: 'error', text: 'Amount must be a positive number.' }); return; }
+    // R52-K: step-up for expenses ≥ $500 (matches server gate in
+    // /api/expenses POST). Prompt client-side so the ≥$500 save
+    // actually goes through; smaller expenses skip the prompt.
+    let actorPassword: string | undefined;
+    if (amount >= 500) {
+      const pwd = await promptPassword({
+        title: `Record ${formatCurrency(amount)} expense?`,
+        description:
+          "Expenses of $500 or more require step-up re-auth. Confirm with your password.",
+        confirmLabel: "Record expense",
+        confirmVariant: "default",
+      });
+      if (!pwd) return;
+      actorPassword = pwd;
+    }
     setSaving(true); setMessage(null);
     try {
       const res = await fetch('/api/expenses', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, amount: parseFloat(form.amount), recurrence_period: form.is_recurring ? form.recurrence_period : null }),
+        body: JSON.stringify({
+          ...form,
+          amount,
+          recurrence_period: form.is_recurring ? form.recurrence_period : null,
+          ...(actorPassword ? { actorPassword } : {}),
+        }),
       });
       if (!res.ok) { const err = await res.json(); setMessage({ type: 'error', text: err.error }); return; }
       setMessage({ type: 'success', text: 'Expense added.' });
@@ -198,6 +225,8 @@ export function ExpenseTracker() {
           </table>
         </div>
       )}
+      {/* R52-K: <PasswordGate> renders nothing when inactive. */}
+      {passwordGate}
     </div>
   );
 }

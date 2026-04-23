@@ -124,7 +124,19 @@ export function usePasswordGate(): [
   const promptPassword = useCallback(
     (opts: PasswordPromptOptions) => {
       return new Promise<string | null>((resolve) => {
-        setState({ opts, resolve });
+        // R52-O: if a prior prompt is still pending (e.g. two rows
+        // calling the same shared gate in quick succession — as
+        // happens in stocktake-manager.tsx where the hook is called
+        // once at the root and every row's Accept button shares it),
+        // resolve the prior caller with `null` before taking over.
+        // The alternative (overwriting state without resolving) left
+        // the prior Promise permanently unresolved, leaking
+        // `isPending` from a `startTransition` that wrapped the
+        // await, and locking up the UI.
+        setState((prev) => {
+          if (prev) prev.resolve(null);
+          return { opts, resolve };
+        });
       });
     },
     [],

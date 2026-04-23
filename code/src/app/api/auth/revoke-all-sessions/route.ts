@@ -19,10 +19,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminSession } from "@/lib/auth/session";
 import { verifySecret, runDecoyVerify } from "@/lib/auth/crypto";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
-import { getPool } from "@/lib/supabase-rest";
-import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
+import { getPool, orgTx } from "@/lib/supabase-rest";
+import { randomUUID } from "@/lib/uuid";
 import { safeErr } from "@/lib/logging/safe-err";
-import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
 import { checkOrigin } from "@/lib/api/with-auth";
 import { z } from "zod";
 
@@ -137,33 +136,46 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const pool = await getPool();
-    // R36-H6: scope the DELETE by the employee's org too so a
-    // pathological cross-tenant id collision can't wipe another
-    // tenant's admin sessions. Redundant under correct ctx but cheap
-    // defense in depth.
-    // R39-A1-5: drop the `scope = 'admin'` filter so register (PIN)
-    // sessions also get revoked. "Sign out everywhere" was misleading
-    // — a compromised admin who also had a register PIN could keep
-    // using the register session indefinitely. Revoke both scopes.
-    await pool.query(
-      `DELETE FROM sessions
-        WHERE employee_id = $1
-          AND employee_id IN (SELECT id FROM employees WHERE organization_id = $2)`,
-      [ctx.employee.id, ctx.employee.organizationId],
-    );
+    // R52-E: wrap DELETE sessions + audit INSERT in one orgTx. Prior
+    // shape ran the DELETE via pool.query() auto-commit and then a
+    // fire-and-forget `waitUntilOrAwait(pgInsertAuditEvent)` — on
+    // Workers isolate freeze the audit was drop-prone. `sessions_revoked`
+    // is the forensic anchor for "when did the admin nuke all
+    // sessions after discovering the compromise"; atomic now.
+    const orgId = ctx.employee.organizationId;
+    const client = await orgTx(orgId);
+    try {
+      // R36-H6: scope the DELETE by the employee's org too so a
+      // pathological cross-tenant id collision can't wipe another
+      // tenant's admin sessions. Redundant under correct ctx but cheap
+      // defense in depth.
+      // R39-A1-5: drop the `scope = 'admin'` filter so register (PIN)
+      // sessions also get revoked. "Sign out everywhere" was misleading
+      // — a compromised admin who also had a register PIN could keep
+      // using the register session indefinitely. Revoke both scopes.
+      await client.query(
+        `DELETE FROM sessions
+          WHERE employee_id = $1
+            AND employee_id IN (SELECT id FROM employees WHERE organization_id = $2)`,
+        [ctx.employee.id, orgId],
+      );
 
-    await waitUntilOrAwait(
-      pgInsertAuditEvent(
-        ctx.employee.organizationId,
-        null,
-        ctx.employee.id,
-        "employee",
-        ctx.employee.id,
-        "sessions_revoked",
-        { scope: "admin", all: true },
-      ).catch((err) => console.error("[revoke-all-sessions] audit:", safeErr(err))),
-    );
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'employee', $5, 'sessions_revoked', $6, now())`,
+        [
+          randomUUID(), orgId, null, ctx.employee.id, ctx.employee.id,
+          JSON.stringify({ scope: "admin", all: true }),
+        ],
+      );
+
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
 
     // Clear the admin cookie in the response so the browser also
     // drops its copy.

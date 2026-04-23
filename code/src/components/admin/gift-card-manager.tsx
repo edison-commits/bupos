@@ -71,10 +71,34 @@ export function GiftCardManager({
       {/* Activate form */}
       {showActivateForm && (
         <form
-          action={(fd) => {
+          onSubmit={async (e) => {
+            // R52-I: step-up re-auth before activation. Server
+            // (`activateGiftCardAction`) gates on
+            // bucketKey:'gift-card-activate-stepup' (R45-H); prior UI
+            // submitted without actorPassword so every activation
+            // threw. Prompt for password, then submit with pwd
+            // included in FormData.
+            e.preventDefault();
+            const form = e.currentTarget;
+            const fd = new FormData(form);
+            const amount = Number(fd.get("amount"));
+            if (!Number.isFinite(amount) || amount <= 0) return;
+            const pwd = await promptPassword({
+              title: `Activate gift card for ${formatCurrency(amount)}?`,
+              description:
+                "Gift cards are cash-equivalent. Confirm with your password — activation can't be reversed (only disabled, which zeroes the balance).",
+              confirmLabel: "Activate card",
+              confirmVariant: "default",
+            });
+            if (!pwd) return;
+            fd.set("actorPassword", pwd);
             startTransition(async () => {
-              await activateGiftCardAction(fd);
-              setShowActivateForm(false);
+              try {
+                await activateGiftCardAction(fd);
+                setShowActivateForm(false);
+              } catch (err) {
+                window.alert(err instanceof Error ? err.message : "Failed to activate gift card");
+              }
             });
           }}
           className="rounded-xl border border-zinc-200 bg-white p-4 space-y-3"
@@ -163,7 +187,34 @@ export function GiftCardManager({
                       {gc.status === "active" && (
                         <>
                           <form
-                            action={(fd) => { startTransition(() => reloadGiftCardAction(fd)); }}
+                            onSubmit={async (e) => {
+                              // R52-I: step-up re-auth before
+                              // reload. Server gates on
+                              // bucketKey:'gift-card-reload-stepup';
+                              // prior UI didn't prompt so every
+                              // reload threw with a generic error.
+                              e.preventDefault();
+                              const form = e.currentTarget;
+                              const fd = new FormData(form);
+                              const amount = Number(fd.get("amount"));
+                              if (!Number.isFinite(amount) || amount <= 0) return;
+                              const pwd = await promptPassword({
+                                title: `Reload ${gc.code} with ${formatCurrency(amount)}?`,
+                                description:
+                                  "Gift-card reloads are cash-equivalent. Confirm with your password.",
+                                confirmLabel: "Reload",
+                                confirmVariant: "default",
+                              });
+                              if (!pwd) return;
+                              fd.set("actorPassword", pwd);
+                              startTransition(async () => {
+                                try {
+                                  await reloadGiftCardAction(fd);
+                                } catch (err) {
+                                  window.alert(err instanceof Error ? err.message : "Failed to reload gift card");
+                                }
+                              });
+                            }}
                             className="flex items-center gap-2"
                           >
                             <input type="hidden" name="giftCardId" value={gc.id} />

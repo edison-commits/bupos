@@ -28,9 +28,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { hashSecret } from "@/lib/auth/crypto";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { getPool } from "@/lib/supabase-rest";
-import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
+import { randomUUID } from "@/lib/uuid";
 import { safeErr } from "@/lib/logging/safe-err";
-import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
 import {
   parseHistory,
   assertNotReused,
@@ -157,45 +156,40 @@ export async function POST(req: NextRequest) {
         );
       }
 
+      // R52-D: session wipe + audit INSIDE the tx. Prior shape ran
+      // the DELETE via pool.query() post-COMMIT (leaving a window
+      // where the password was rotated but stolen sessions still
+      // worked), and the audit was a fire-and-forget
+      // `waitUntilOrAwait(pgInsertAuditEvent)` AFTER commit —
+      // drop-prone on Workers isolate freeze. Both now land atomic
+      // with the password rotation.
+      //
+      // R27-M3 + R39-A1-5: invalidate ALL sessions (both admin AND
+      // register/PIN scope) for this employee so any attacker
+      // holding a stolen cookie — in either scope — is locked out.
+      await client.query(
+        `DELETE FROM sessions WHERE employee_id = $1`,
+        [employeeId],
+      );
+
+      // password_reset_completed audit — the ground truth a post-
+      // breach investigation uses to trace "which resets went
+      // through this phishing token batch."
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'employee', $5, 'password_reset_completed', $6, now())`,
+        [
+          randomUUID(), organizationId, null, employeeId, employeeId,
+          JSON.stringify({ via: "email_token" }),
+        ],
+      );
+
       await client.query("COMMIT");
     } catch (err) {
       await client.query("ROLLBACK").catch(() => {});
       throw err;
     } finally {
       client.release();
-    }
-
-    // R27-M3 + R39-A1-5: invalidate ALL sessions (both admin AND
-    // register/PIN scope) for this employee so any attacker holding
-    // a stolen cookie — in either scope — is locked out. Prior
-    // `scope = 'admin'` filter left the register PIN session alive,
-    // meaning a password reset after a phishing incident didn't
-    // actually close the compromised surface if the attacker had
-    // also picked up a register device.
-    if (employeeId) {
-      try {
-        await pool.query(
-          `DELETE FROM sessions WHERE employee_id = $1`,
-          [employeeId],
-        );
-      } catch (err) {
-        console.error("[password-reset-confirm] session wipe:", safeErr(err));
-      }
-    }
-
-    // Audit row.
-    if (organizationId && employeeId) {
-      await waitUntilOrAwait(
-        pgInsertAuditEvent(
-          organizationId,
-          null,
-          employeeId,
-          "employee",
-          employeeId,
-          "password_reset_completed",
-          { via: "email_token" },
-        ).catch((err) => console.error("[password-reset-confirm] audit:", safeErr(err))),
-      );
     }
 
     return NextResponse.json({ success: true });

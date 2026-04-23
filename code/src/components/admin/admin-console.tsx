@@ -430,21 +430,29 @@ export function AdminConsole({
             ))}
           </div>
           {canAdjustInventory ? (
-            <form
+            <PasswordGatedForm
               action={adjustInventoryAction}
-              className="mt-5 grid gap-3 md:grid-cols-3"
-              onSubmit={(e) => {
-                // R47-H5: synchronous double-submit guard.
-                // `pgAdjustInventory` ADDS delta — two concurrent
-                // submits with +50 both land, total +100. No
-                // idempotency key server-side. Mirror the login-form /
-                // register-logout button-disable pattern.
-                const btn = e.currentTarget.querySelector<HTMLButtonElement>('button[type="submit"]');
-                if (btn) {
-                  if (btn.disabled) { e.preventDefault(); return; }
-                  btn.disabled = true;
-                }
+              prompt={{
+                title: "Confirm large inventory adjustment?",
+                description:
+                  "Large deltas can mint or destroy inventory value. Confirm with your password — small corrections don't require step-up.",
+                confirmLabel: "Record adjustment",
+                confirmVariant: "default",
               }}
+              gateCondition={(fd) => {
+                // R52-H: mirror server-side thresholds in
+                // adjustInventoryAction (actions.ts:347-362).
+                // |delta| > 5000 for owner/manager, > 500 for clerk.
+                // Use the permissive manager threshold client-side so
+                // the UI never prompts under it; the server re-
+                // evaluates with the actor's real role. Submissions
+                // that SHOULD gate (above threshold) get the prompt;
+                // ones under it skip it and submit straight through.
+                const delta = Number(fd.get("delta"));
+                if (!Number.isFinite(delta)) return false;
+                return Math.abs(delta) > 500;
+              }}
+              className="mt-5 grid gap-3 md:grid-cols-3"
             >
               <label className="grid gap-1 text-sm font-medium text-zinc-700 md:col-span-2">
                 <span>Inventory row</span>
@@ -468,8 +476,8 @@ export function AdminConsole({
                   <option value="Other">Other</option>
                 </select>
               </label>
-              <button className="touch-button rounded-2xl bg-amber-600 px-5 text-sm font-semibold text-white md:col-span-3">Record adjustment</button>
-            </form>
+              <button type="submit" className="touch-button rounded-2xl bg-amber-600 px-5 text-sm font-semibold text-white md:col-span-3">Record adjustment</button>
+            </PasswordGatedForm>
           ) : (
             <div className="mt-5"><LockedMessage message="This role can review inventory but cannot post adjustments." /></div>
           )}
@@ -853,7 +861,30 @@ export function AdminConsole({
 
         {store.locations.map((loc) => (
           <SectionCard key={loc.id} title={`Location: ${loc.name}`} description="Address, phone, and sales tax rate.">
-            <SubmitGuardForm action={updateLocationAction} className="grid gap-3 md:grid-cols-2">
+            <PasswordGatedForm
+              action={updateLocationAction}
+              prompt={{
+                title: "Confirm tax rate change?",
+                description:
+                  "Tax-rate mutation is the highest-fraud-risk admin change — skimming tax to external account is the classic vector. Confirm with your password.",
+                confirmLabel: "Save location",
+                confirmVariant: "default",
+              }}
+              gateCondition={(_fd, form) => {
+                // R52-G: step-up fires ONLY when the taxRate input was
+                // edited. Name/address/phone saves stay cookie-only.
+                // The server-side gate in updateLocationAction
+                // (actions.ts:934) ONLY checks `taxRate !== undefined`
+                // — the field is always posted (defaultValue), so
+                // every save used to trigger "password required" and
+                // leave users stuck. Mirror the R51 editVariant
+                // pattern: only prompt when the value actually
+                // changed from defaultValue.
+                const taxInp = form.querySelector<HTMLInputElement>('input[name="taxRate"]');
+                return !!taxInp && taxInp.value !== taxInp.defaultValue;
+              }}
+              className="grid gap-3 md:grid-cols-2"
+            >
               <input type="hidden" name="locationId" value={loc.id} />
               <Input name="locationName" label="Location name" defaultValue={loc.name} />
               <Input name="address1" label="Address" defaultValue={loc.address1} />
@@ -863,9 +894,9 @@ export function AdminConsole({
               <Input name="locationPhone" label="Phone" type="tel" defaultValue={loc.phone ?? ""} />
               <Input name="taxRate" label="Tax rate (%)" type="number" step="0.01" defaultValue={String((loc.taxRate * 100).toFixed(2))} />
               <div className="md:col-span-2">
-                <button className="touch-button rounded-2xl bg-teal-700 px-5 text-sm font-semibold text-white">Save location</button>
+                <button type="submit" className="touch-button rounded-2xl bg-teal-700 px-5 text-sm font-semibold text-white">Save location</button>
               </div>
-            </SubmitGuardForm>
+            </PasswordGatedForm>
           </SectionCard>
         ))}
 

@@ -112,6 +112,23 @@ export async function GET(req: NextRequest) {
            VALUES ($1, $2, $3, $4, $4)`,
           [employeeId, email, pending.password_hash, now],
         );
+        // R52-F: `store_signup_verified` audit INSIDE the tx so sign-
+        // up provenance (the name/email of the brand-new admin, the
+        // org+location pair, timestamp) is atomic with the account
+        // creation itself. Prior shape used a post-commit fire-and-
+        // forget `pool.query("INSERT audit_events")` at the end of
+        // the handler — drop-prone on Workers isolate freeze,
+        // leaving an account with no sign-up audit trail (the
+        // anchor for abuse-reporting / compliance investigations).
+        await client.query(
+          `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+           VALUES ($1, $2, $3, $4, 'organization', $5, 'store_signup_verified', $6, $7)`,
+          [
+            randomUUID(), orgId, locationId, employeeId, orgId,
+            JSON.stringify({ store_name: storeName, owner_email: email, plan: "free" }),
+            now,
+          ],
+        );
         await client.query("COMMIT");
       } catch (credErr) {
         const code = (credErr as { code?: string }).code;
@@ -218,15 +235,10 @@ export async function GET(req: NextRequest) {
       return NextResponse.redirect(new URL("/?notice=Account+activated+please+sign+in", req.url));
     }
 
-    // Audit event — also routed through waitUntil so the insert
-    // survives isolate freeze on Workers (R22-M-3).
-    const auditPromise = pool.query(
-      `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
-       VALUES ($1, $2, $3, $4, 'organization', $5, 'store_signup_verified', $6, $7)`,
-      [randomUUID(), orgId, locationId, employeeId, orgId, JSON.stringify({ store_name: storeName, owner_email: email, plan: "free" }), now],
-    ).catch((auditErr) => console.error("[verify] audit failed:", safeErr(auditErr)));
-    await waitUntilOrAwait(auditPromise);
-
+    // R52-F: `store_signup_verified` audit was moved INSIDE the
+    // org-creation tx above, so the row lands atomic with the
+    // organizations/locations/employees/auth_credentials INSERTs
+    // (no post-commit fire-and-forget drop vector).
     return NextResponse.redirect(new URL("/admin?notice=Account+activated", req.url));
   } catch (err) {
     console.error("[/api/auth/verify] Error:", safeErr(err));

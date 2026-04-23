@@ -31,8 +31,14 @@ describe("R51 audit fixes: admin-console PasswordGate wiring", () => {
       expect(src).toMatch(/export function PasswordGatedForm/);
     });
     it("uses synchronous DOM mutation to disable submit button (R48 pattern)", () => {
-      expect(src).toMatch(/btn\.disabled = true/);
-      expect(src).toMatch(/if \(btn\.disabled\) return/);
+      // R52-P: the wrapper now re-queries the button via findBtn()
+      // after each await (the initial Node reference can go stale if
+      // React reconciles the tree during the await). The initial
+      // disable call still mutates `.disabled = true` synchronously
+      // on submit — that's the R48-style close-the-window behavior
+      // the test is pinning.
+      expect(src).toMatch(/initialBtn\.disabled = true/);
+      expect(src).toMatch(/if \(initialBtn\.disabled\) return/);
     });
     it("appends actorPassword to FormData via `fd.set(\"actorPassword\", pwd)`", () => {
       expect(src).toMatch(/fd\.set\(["']actorPassword["'], pwd\)/);

@@ -35,10 +35,9 @@ import {
   PasswordReuseError,
 } from "@/lib/auth/password-history";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
-import { getPool } from "@/lib/supabase-rest";
-import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
+import { orgTx } from "@/lib/supabase-rest";
+import { randomUUID } from "@/lib/uuid";
 import { safeErr } from "@/lib/logging/safe-err";
-import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
 import { z } from "zod";
 
 // Minimum password strength. 12 chars is today's baseline for human-
@@ -108,100 +107,109 @@ export async function POST(req: NextRequest) {
     // Fail-open on KV error.
   }
 
-  const pool = await getPool();
-
   try {
-    // Look up the current password hash + history (R40-1).
-    const { rows: credRows } = await pool.query(
-      `SELECT password_hash, prior_password_hashes FROM auth_credentials WHERE employee_id = $1`,
-      [ctx.employee.id],
-    );
-    const currentHash = credRows[0]?.password_hash as string | undefined;
-    const historyRaw = credRows[0]?.prior_password_hashes;
-    if (!currentHash) {
-      // No password set for this account (shouldn't happen for admin-scope
-      // sessions — the signup flow always sets one). Equalize timing and
-      // deny.
-      await runDecoyVerify(currentPassword);
-      return NextResponse.json({ error: "Not signed in." }, { status: 401 });
-    }
-
-    // Re-auth gate. Run verifySecret regardless so the timing of this
-    // path is indistinguishable from the "employee not found" path.
-    if (!(await verifySecret(currentPassword, currentHash))) {
-      return NextResponse.json(
-        { error: "Current password is incorrect." },
-        { status: 401 },
-      );
-    }
-
-    // Defense against password-reuse:
-    //   (a) fast equality check against the CURRENT password
-    //   (b) R40-1: verify against the last-N hash history so a
-    //       `old → new → old` rotation can't cycle to bypass breach-
-    //       list-driven mandatory rotations.
-    if (newPassword === currentPassword) {
-      return NextResponse.json(
-        { error: "New password must differ from the current password." },
-        { status: 400 },
-      );
-    }
-    const history = parseHistory(historyRaw);
+    // R52-C: move the password rotation + session revocation + audit
+    // INTO a single orgTx. Prior shape used pool.query() (auto-
+    // commit) for each of UPDATE auth_credentials, DELETE sessions,
+    // and then a post-commit fire-and-forget audit insert. On
+    // Workers isolate freeze the audit could be lost — and password
+    // rotation is precisely the event that forensic review depends
+    // on. Everything atomic now.
+    const orgId = ctx.employee.organizationId;
+    const client = await orgTx(orgId);
     try {
-      await assertNotReused(newPassword, history);
-    } catch (err) {
-      if (err instanceof PasswordReuseError) {
-        return NextResponse.json({ error: err.message }, { status: err.status });
+      // Look up the current password hash + history (R40-1).
+      // SELECT FOR UPDATE so a second concurrent rotation on the
+      // same employee can't race past the reuse-history check.
+      const { rows: credRows } = await client.query(
+        `SELECT password_hash, prior_password_hashes FROM auth_credentials WHERE employee_id = $1 FOR UPDATE`,
+        [ctx.employee.id],
+      );
+      const currentHash = credRows[0]?.password_hash as string | undefined;
+      const historyRaw = credRows[0]?.prior_password_hashes;
+      if (!currentHash) {
+        // No password set for this account (shouldn't happen for admin-
+        // scope sessions — the signup flow always sets one). Equalize
+        // timing and deny.
+        await client.query("ROLLBACK");
+        await runDecoyVerify(currentPassword);
+        return NextResponse.json({ error: "Not signed in." }, { status: 401 });
       }
-      throw err;
-    }
 
-    // Derive the new hash and UPDATE auth_credentials. Append the OLD
-    // hash to the history at the same time so a future rotation
-    // sees it.
-    const newHash = await hashSecret(newPassword);
-    const nextHistory = appendHistory(currentHash, history);
-    await pool.query(
-      `UPDATE auth_credentials
-          SET password_hash = $1,
-              prior_password_hashes = $2::jsonb,
-              updated_at = NOW()
-        WHERE employee_id = $3`,
-      [newHash, JSON.stringify(nextHistory), ctx.employee.id],
-    );
+      // Re-auth gate. Run verifySecret regardless so the timing of
+      // this path is indistinguishable from the "employee not found"
+      // path.
+      if (!(await verifySecret(currentPassword, currentHash))) {
+        await client.query("ROLLBACK");
+        return NextResponse.json(
+          { error: "Current password is incorrect." },
+          { status: 401 },
+        );
+      }
 
-    // R27-M3: invalidate ALL admin sessions for this employee. The
-    // session cookie the client used for this request is now dead.
-    // The client must log in again with the new password — which is
-    // the correct UX for "I just rotated my password".
-    try {
-      // R39-A1-5: revoke BOTH admin and register sessions on
-      // password change. Prior `scope = 'admin'` filter left the
-      // PIN-scoped register session alive — a stolen device still
-      // worked until the PIN-session's natural expiry.
-      await pool.query(
+      // Defense against password-reuse:
+      //   (a) fast equality check against the CURRENT password
+      //   (b) R40-1: verify against the last-N hash history so a
+      //       `old → new → old` rotation can't cycle to bypass
+      //       breach-list-driven mandatory rotations.
+      if (newPassword === currentPassword) {
+        await client.query("ROLLBACK");
+        return NextResponse.json(
+          { error: "New password must differ from the current password." },
+          { status: 400 },
+        );
+      }
+      const history = parseHistory(historyRaw);
+      try {
+        await assertNotReused(newPassword, history);
+      } catch (err) {
+        if (err instanceof PasswordReuseError) {
+          await client.query("ROLLBACK");
+          return NextResponse.json({ error: err.message }, { status: err.status });
+        }
+        throw err;
+      }
+
+      // Derive the new hash and UPDATE auth_credentials. Append the
+      // OLD hash to the history at the same time so a future rotation
+      // sees it.
+      const newHash = await hashSecret(newPassword);
+      const nextHistory = appendHistory(currentHash, history);
+      await client.query(
+        `UPDATE auth_credentials
+            SET password_hash = $1,
+                prior_password_hashes = $2::jsonb,
+                updated_at = NOW()
+          WHERE employee_id = $3`,
+        [newHash, JSON.stringify(nextHistory), ctx.employee.id],
+      );
+
+      // R27-M3 / R39-A1-5: invalidate ALL sessions for this employee
+      // (both admin and register scopes).
+      await client.query(
         `DELETE FROM sessions WHERE employee_id = $1`,
         [ctx.employee.id],
       );
-    } catch (err) {
-      // Log but don't fail the request — the password IS rotated,
-      // sessions just outlive it briefly.
-      console.error("[password-change] session invalidation:", safeErr(err));
-    }
 
-    // Audit row — who rotated whose password (the actor is the
-    // employee themself in the self-rotation flow).
-    await waitUntilOrAwait(
-      pgInsertAuditEvent(
-        ctx.employee.organizationId,
-        null,
-        ctx.employee.id,
-        "employee",
-        ctx.employee.id,
-        "password_changed",
-        { self_rotation: true },
-      ).catch((err) => console.error("[password-change] audit:", safeErr(err))),
-    );
+      // R52-C: audit INSIDE the tx. password_changed is the exact
+      // event forensics depends on ("who rotated whose password, and
+      // when"); post-commit fire-and-forget is a drop vector.
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'employee', $5, 'password_changed', $6, now())`,
+        [
+          randomUUID(), orgId, null, ctx.employee.id, ctx.employee.id,
+          JSON.stringify({ self_rotation: true }),
+        ],
+      );
+
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
 
     return NextResponse.json({ success: true });
   } catch (err) {

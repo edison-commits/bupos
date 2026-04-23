@@ -2,6 +2,11 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { formatCurrency } from "@/lib/format";
+// R52-N: step-up re-auth on `status='completed'` transition (the
+// money-dispensing edge). Server /api/returns PUT gates on
+// bucketKey:'returns-complete-stepup' (R48-2); prior UI didn't
+// thread actorPassword so every completion attempt failed.
+import { usePasswordGate } from "@/components/shared/password-gate";
 
 interface ReturnRecord {
   id: string;
@@ -58,6 +63,7 @@ export function ReturnsManager() {
   const [searching, setSearching] = useState(false);
   const [loadedTxnId, setLoadedTxnId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [promptPassword, passwordGate] = usePasswordGate();
 
   const fetchReturns = useCallback(async () => {
     try {
@@ -136,14 +142,35 @@ export function ReturnsManager() {
   };
 
   const handleStatus = async (id: string, status: string) => {
-    try {
-      await fetch('/api/returns', {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, status }),
+    // R52-N: prompt for step-up password on completion. Approvals /
+    // rejections don't move money so they skip the prompt.
+    let actorPassword: string | undefined;
+    if (status === 'completed') {
+      const pwd = await promptPassword({
+        title: "Complete return and dispense refund?",
+        description:
+          "Completing a return releases the refund (cash / card / store credit) and restocks eligible inventory. This step-up re-auth is the money-dispensing edge. Confirm with your password.",
+        confirmLabel: "Complete return",
+        confirmVariant: "default",
       });
+      if (!pwd) return;
+      actorPassword = pwd;
+    }
+    try {
+      const res = await fetch('/api/returns', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, status, ...(actorPassword ? { actorPassword } : {}) }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Failed to update return' }));
+        setMessage({ type: 'error', text: err.error || 'Failed to update return' });
+        return;
+      }
       fetchReturns();
       if (status === 'completed') setMessage({ type: 'success', text: 'Return completed. Inventory restocked for eligible items.' });
-    } catch { /* */ }
+    } catch {
+      setMessage({ type: 'error', text: 'Failed to update return.' });
+    }
   };
 
   const statusBadge = (s: string) => {
@@ -317,6 +344,8 @@ export function ReturnsManager() {
           </table>
         </div>
       )}
+      {/* R52-N: <PasswordGate> renders nothing when inactive. */}
+      {passwordGate}
     </div>
   );
 }

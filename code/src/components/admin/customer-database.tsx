@@ -2,6 +2,13 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { formatCurrency } from "@/lib/format";
+// R52-L: step-up re-auth prompt when editing sensitive customer
+// fields (phone, email, address, notes). Server /api/customers PUT
+// gates on bucketKey:'customer-pii-edit-stepup' when any of these
+// fields change; prior UI didn't thread actorPassword so every
+// sensitive-field edit threw. Low-blast-radius fields (name) stay
+// cookie-only.
+import { usePasswordGate } from "@/components/shared/password-gate";
 
 interface Customer {
   id: string; first_name: string; last_name: string; email: string | null; phone: string | null;
@@ -21,6 +28,7 @@ export function CustomerDatabase() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [form, setForm] = useState({ first_name: '', last_name: '', email: '', phone: '', address: '', notes: '' });
+  const [promptPassword, passwordGate] = usePasswordGate();
 
   const timeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -68,10 +76,40 @@ export function CustomerDatabase() {
 
   const handleSave = async () => {
     if (!form.first_name.trim() || !form.last_name.trim()) { setMessage({ type: 'error', text: 'First and last name required.' }); return; }
+    // R52-L: on edit, detect sensitive-field change and prompt for
+    // step-up password. On create (editing === null), no step-up
+    // needed — server only gates on PUT. Compare against the cached
+    // `editing` snapshot (the DB value at load-time); any drift in
+    // phone/email/address/notes triggers the prompt.
+    let actorPassword: string | undefined;
+    if (editing) {
+      const priorEmail = editing.email ?? '';
+      const priorPhone = editing.phone ?? '';
+      const priorAddress = editing.address ?? '';
+      const priorNotes = editing.notes ?? '';
+      const sensitiveChanged =
+        priorEmail !== form.email ||
+        priorPhone !== form.phone ||
+        priorAddress !== form.address ||
+        priorNotes !== form.notes;
+      if (sensitiveChanged) {
+        const pwd = await promptPassword({
+          title: `Update ${editing.first_name} ${editing.last_name}'s contact details?`,
+          description:
+            "Changing phone, email, address, or notes is PII-sensitive and requires step-up re-auth. Confirm with your password.",
+          confirmLabel: "Save changes",
+          confirmVariant: "default",
+        });
+        if (!pwd) return;
+        actorPassword = pwd;
+      }
+    }
     setSaving(true); setMessage(null);
     try {
       const method = editing ? 'PUT' : 'POST';
-      const body = editing ? { id: editing.id, ...form } : form;
+      const body = editing
+        ? { id: editing.id, ...form, ...(actorPassword ? { actorPassword } : {}) }
+        : form;
       const res = await fetch('/api/customers', { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       if (!res.ok) { const err = await res.json(); setMessage({ type: 'error', text: err.error }); return; }
       setMessage({ type: 'success', text: editing ? 'Customer updated.' : 'Customer added.' });
@@ -167,6 +205,8 @@ export function CustomerDatabase() {
             className="touch-button px-3 py-1.5 rounded-lg border border-zinc-200 bg-white text-sm text-zinc-700 disabled:opacity-40">Next &rarr;</button>
         </div>
       )}
+      {/* R52-L: <PasswordGate> renders nothing when inactive. */}
+      {passwordGate}
     </div>
   );
 }

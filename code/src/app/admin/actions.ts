@@ -931,17 +931,36 @@ export async function updateLocationAction(formData: FormData) {
   // submissions carry `actorPassword` in the FormData when the UI
   // prompts via <PasswordGate>. Other fields (name/address/phone) are
   // low-blast-radius and don't need the gate.
-  if (taxRate !== undefined) {
-    const actorPassword = String(formData.get("actorPassword") ?? "");
-    const { requireStepUp } = await import("@/lib/auth/step-up");
-    const stepUp = await requireStepUp({
-      actorId: employee.id,
-      orgId: employee.organizationId,
-      actorPassword,
-      bucketKey: "tax-rate-stepup",
-    });
-    if (!stepUp.ok) {
-      redirect(`/admin?error=${encodeURIComponent(stepUp.error)}`);
+  //
+  // R52-G: snapshot-compare against prior taxRate so the gate fires
+  // ONLY when the value actually changed. Prior shape gated on
+  // `taxRate !== undefined` — but the form posts taxRate on every
+  // save (defaultValue is set), so every single save triggered the
+  // step-up. Legitimate name/address/phone edits errored with
+  // "password required" on every attempt. Mirror the editVariant
+  // pattern: compare new tax vs prior with a small epsilon to
+  // absorb floating-point noise, gate only on real change.
+  if (taxRate !== undefined && isPg()) {
+    const { orgQuery } = await import("@/lib/supabase-rest");
+    const { rows: priorRows } = await orgQuery(
+      employee.organizationId,
+      `SELECT tax_rate FROM locations WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [locationId, employee.organizationId],
+    );
+    const priorTax = priorRows[0]?.tax_rate != null ? Number(priorRows[0].tax_rate) : null;
+    const taxChanged = priorTax === null || Math.abs(priorTax - taxRate) > 0.00005;
+    if (taxChanged) {
+      const actorPassword = String(formData.get("actorPassword") ?? "");
+      const { requireStepUp } = await import("@/lib/auth/step-up");
+      const stepUp = await requireStepUp({
+        actorId: employee.id,
+        orgId: employee.organizationId,
+        actorPassword,
+        bucketKey: "tax-rate-stepup",
+      });
+      if (!stepUp.ok) {
+        redirect(`/admin?error=${encodeURIComponent(stepUp.error)}`);
+      }
     }
   }
 

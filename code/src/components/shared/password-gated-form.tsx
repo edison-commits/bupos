@@ -100,13 +100,22 @@ export function PasswordGatedForm({
         onSubmit={(e) => {
           e.preventDefault();
           const form = e.currentTarget;
-          const btn = form.querySelector<HTMLButtonElement>(
-            'button[type="submit"]',
-          );
+          // R52-P: re-query the submit button from the form element
+          // after each await, not once at submit-time. The initial
+          // query captures a Node reference; if React reconciles the
+          // tree during the await (parent state change, router
+          // transition), that Node may be detached — re-enabling
+          // `.disabled = false` on a detached Node is a no-op and
+          // leaves the actual current button stuck. Re-querying via
+          // `form.querySelector(...)` at each state-change point
+          // always hits the live DOM.
+          const findBtn = () =>
+            form.querySelector<HTMLButtonElement>('button[type="submit"]');
+          const initialBtn = findBtn();
           // R48: close fast-double-tap window.
-          if (btn) {
-            if (btn.disabled) return;
-            btn.disabled = true;
+          if (initialBtn) {
+            if (initialBtn.disabled) return;
+            initialBtn.disabled = true;
           }
 
           const run = async () => {
@@ -116,7 +125,8 @@ export function PasswordGatedForm({
               const pwd = await promptPassword(prompt);
               if (!pwd) {
                 // Cancelled — re-enable so a second attempt works.
-                if (btn) btn.disabled = false;
+                const btnNow = findBtn();
+                if (btnNow) btnNow.disabled = false;
                 return;
               }
               fd.set("actorPassword", pwd);
@@ -127,9 +137,11 @@ export function PasswordGatedForm({
               // button lives in a new tree on re-render. If we land
               // here (e.g. action returns without redirect), re-
               // enable so a second submit is possible.
-              if (btn) btn.disabled = false;
+              const btnNow = findBtn();
+              if (btnNow) btnNow.disabled = false;
             } catch (err) {
-              if (btn) btn.disabled = false;
+              const btnNow = findBtn();
+              if (btnNow) btnNow.disabled = false;
               throw err;
             }
           };
