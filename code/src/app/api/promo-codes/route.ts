@@ -5,8 +5,6 @@ import { randomUUID } from "@/lib/uuid";
 import { validateBody, promoCodeSchema } from "@/lib/validation/schemas";
 import { formatCurrency } from "@/lib/format";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
-import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
-import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
 
 
 import { safeErr } from "@/lib/logging/safe-err";
@@ -192,6 +190,28 @@ export const POST = withAdminAuth("pricing.manage", async (req, ctx) => {
       if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
       const { code, description, type, value, minimumPurchase, maxRedemptions, maxRedemptionsPerCustomer, startsAt, expiresAt, freeVariantId } = v.data;
 
+      // R49: step-up re-auth on high-risk promo creations. A 50%+
+      // percent-off promo with no redemption cap is cash-equivalent
+      // minting — an attacker with a stolen manager cookie could
+      // issue "FREEFORALL 100% off, unlimited" then redeem against
+      // accomplice carts. Gate only the high-risk shapes so routine
+      // 10%-off codes stay frictionless.
+      const isHighRiskPromo =
+        (type === 'percent' && Number(value) >= 50) ||
+        (maxRedemptions === null || maxRedemptions === undefined);
+      if (isHighRiskPromo) {
+        const { requireStepUp } = await import('@/lib/auth/step-up');
+        const stepUp = await requireStepUp({
+          actorId: employee.id,
+          orgId,
+          actorPassword: (body as { actorPassword?: string }).actorPassword,
+          bucketKey: 'promo-code-create-stepup',
+        });
+        if (!stepUp.ok) {
+          return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
+        }
+      }
+
       // R27-C11: explicit organization_id filter on the variant
       // existence check. Without it, freeVariantId could reference
       // another tenant's variant — either a pricing-intel leak or
@@ -221,34 +241,46 @@ export const POST = withAdminAuth("pricing.manage", async (req, ctx) => {
       }
 
       const promoId = randomUUID();
-      // R28-M6: new max_redemptions_per_customer column (NULL = unlimited).
-      await orgQuery(
-        orgId,
-        `INSERT INTO promo_codes (id, organization_id, code, description, type, value, minimum_purchase, max_redemptions, max_redemptions_per_customer, current_redemptions, status, starts_at, expires_at, free_variant_id, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, 'active', $10, $11, $12, now(), now())`,
-        [
-          promoId, orgId, code.toUpperCase(), description || null, type, value,
-          minimumPurchase || 0, maxRedemptions ?? null, maxRedemptionsPerCustomer ?? null,
-          startsAt, expiresAt || null,
-          type === "free_item" ? freeVariantId : null,
-        ],
-      );
-
-      // R39-A1-2: audit promo-code creation. Promos create a
-      // direct fraud vector (100%-off code issued to accomplice),
-      // so every create/disable/update needs an audit trail.
-      await waitUntilOrAwait(pgInsertAuditEvent(
-        orgId, null, employee.id,
-        "promo_code", promoId, "promo_code_created",
-        {
-          code: code.toUpperCase(),
-          type,
-          value: String(value),
-          minimum_purchase: String(minimumPurchase || 0),
-          max_redemptions: maxRedemptions ?? null,
-          max_redemptions_per_customer: maxRedemptionsPerCustomer ?? null,
-        },
-      ).catch((err) => console.error("[audit] promo_code_created failed:", safeErr(err))));
+      // R49: wrap INSERT + audit in one orgTx. Prior shape used orgQuery
+      // for the INSERT then post-commit pgInsertAuditEvent via
+      // waitUntilOrAwait — if the audit-write failed, the promo
+      // existed with no audit trail. 100%-off promos are cash-
+      // equivalent minting; audit drop is a direct fraud-evidence gap.
+      const client = await orgTx(orgId);
+      try {
+        // R28-M6: new max_redemptions_per_customer column (NULL = unlimited).
+        await client.query(
+          `INSERT INTO promo_codes (id, organization_id, code, description, type, value, minimum_purchase, max_redemptions, max_redemptions_per_customer, current_redemptions, status, starts_at, expires_at, free_variant_id, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, 'active', $10, $11, $12, now(), now())`,
+          [
+            promoId, orgId, code.toUpperCase(), description || null, type, value,
+            minimumPurchase || 0, maxRedemptions ?? null, maxRedemptionsPerCustomer ?? null,
+            startsAt, expiresAt || null,
+            type === "free_item" ? freeVariantId : null,
+          ],
+        );
+        await client.query(
+          `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+           VALUES ($1, $2, $3, $4, 'promo_code', $5, 'promo_code_created', $6, now())`,
+          [
+            randomUUID(), orgId, null, employee.id, promoId,
+            JSON.stringify({
+              code: code.toUpperCase(),
+              type,
+              value: String(value),
+              minimum_purchase: String(minimumPurchase || 0),
+              max_redemptions: maxRedemptions ?? null,
+              max_redemptions_per_customer: maxRedemptionsPerCustomer ?? null,
+            }),
+          ],
+        );
+        await client.query("COMMIT");
+      } catch (e) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw e;
+      } finally {
+        client.release();
+      }
 
       return NextResponse.json({ id: promoId, code: code.toUpperCase(), status: "active" }, { status: 201 });
     }
@@ -473,21 +505,32 @@ export const POST = withAdminAuth("pricing.manage", async (req, ctx) => {
         return NextResponse.json({ error: "promoCodeId required" }, { status: 400 });
       }
 
-      // R27-C11: explicit org filter on disable. Without it, any
-      // pricing.manage-holder at any tenant could disable any other
-      // tenant's promos — availability / revenue disruption.
-      await orgQuery(
-        orgId,
-        `UPDATE promo_codes SET status = 'disabled', updated_at = now() WHERE id = $1 AND organization_id = $2`,
-        [promoCodeId, orgId],
-      );
-      // R39-A1-2: audit promo disable (e.g., owner pulls their own
-      // honeypot promo before investigation).
-      await waitUntilOrAwait(pgInsertAuditEvent(
-        orgId, null, employee.id,
-        "promo_code", promoCodeId, "promo_code_disabled",
-        {},
-      ).catch((err) => console.error("[audit] promo_code_disabled failed:", safeErr(err))));
+      // R49: wrap UPDATE + audit in one orgTx. Prior shape used orgQuery
+      // for the UPDATE then post-commit pgInsertAuditEvent — a disable
+      // action (e.g., owner pulls a honeypot promo before investigation)
+      // with a missing audit row undermines the exact investigation it
+      // would enable.
+      const client = await orgTx(orgId);
+      try {
+        // R27-C11: explicit org filter on disable. Without it, any
+        // pricing.manage-holder at any tenant could disable any other
+        // tenant's promos — availability / revenue disruption.
+        await client.query(
+          `UPDATE promo_codes SET status = 'disabled', updated_at = now() WHERE id = $1 AND organization_id = $2`,
+          [promoCodeId, orgId],
+        );
+        await client.query(
+          `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+           VALUES ($1, $2, $3, $4, 'promo_code', $5, 'promo_code_disabled', $6, now())`,
+          [randomUUID(), orgId, null, employee.id, promoCodeId, JSON.stringify({})],
+        );
+        await client.query("COMMIT");
+      } catch (e) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw e;
+      } finally {
+        client.release();
+      }
       return NextResponse.json({ id: promoCodeId, status: "disabled" });
     }
 

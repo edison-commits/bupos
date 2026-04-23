@@ -796,22 +796,26 @@ export async function processReturnAction(input: ReturnInput): Promise<ReturnRes
         }
       }
 
-      await client.query("COMMIT");
-
-      // Audit event — use pgInsertAuditEvent (routed through orgTx so
-      // `app.current_org_id` is set and RLS WITH CHECK is evaluated). R9-L-1.
-      // Runs AFTER commit so the tx boundary is a clean return point.
-      const { pgInsertAuditEvent } = await import("@/lib/persistence/postgres-store");
-      await pgInsertAuditEvent(
-        context.employee.organizationId, context.location.id, context.employee.id,
-        "transaction", returnTransactionId, "return_processed",
-        {
-          original_transaction_id: input.originalTransactionId,
-          item_count: input.items.length,
-          refund_grand_total: refundGrandTotal.toFixed(2),
-          refund_method: input.refundMethod,
-        },
+      // R49: audit INSIDE the tx. Returns dispense money (cash / store
+      // credit / gift-card reversal) AND restock inventory; a post-
+      // commit audit that fails is exactly the evidence-destruction
+      // scenario a compromised cashier session would want. Matches the
+      // canonical R44+ shape.
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'transaction', $5, 'return_processed', $6, now())`,
+        [
+          randomUUID(), context.employee.organizationId, context.location.id, context.employee.id, returnTransactionId,
+          JSON.stringify({
+            original_transaction_id: input.originalTransactionId,
+            item_count: input.items.length,
+            refund_grand_total: refundGrandTotal.toFixed(2),
+            refund_method: input.refundMethod,
+          }),
+        ],
       );
+
+      await client.query("COMMIT");
 
       revalidatePath("/register");
       return { returnTransactionId, refundTotal: refundGrandTotal, refundMethod: input.refundMethod };

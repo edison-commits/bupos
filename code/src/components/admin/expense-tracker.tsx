@@ -29,16 +29,33 @@ export function ExpenseTracker() {
   const [summary, setSummary] = useState<CategorySummary[]>([]);
   const [grandTotal, setGrandTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [month, setMonth] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; });
+  // R49: hydration fix — lazy initializers that read `new Date()` run
+  // at render time on both the server and the client, but with
+  // different wall-clocks if the user's machine drifts past a minute/
+  // day boundary while the SSR payload is in flight. The resulting
+  // hydration mismatch is logged as a client-side error. Mirror R47-M's
+  // product-grid fix: initialize to empty, then set the real value in
+  // a useEffect so both passes match.
+  const [month, setMonth] = useState('');
   const [catFilter, setCatFilter] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const [form, setForm] = useState({
-    category: 'supplies', description: '', amount: '', expense_date: new Date().toISOString().slice(0, 10),
+    category: 'supplies', description: '', amount: '', expense_date: '',
     is_recurring: false, recurrence_period: '', notes: '',
   });
+
+  // R49: set the current month + default expense_date after mount so the
+  // server-rendered HTML and the first client render agree. Without
+  // this, a user loading the page near a day boundary sees a React
+  // hydration warning (different ISO strings on server vs. client).
+  useEffect(() => {
+    const d = new Date();
+    setMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+    setForm((p) => p.expense_date ? p : { ...p, expense_date: d.toISOString().slice(0, 10) });
+  }, []);
 
   const fetchExpenses = useCallback(async () => {
     setLoading(true);
@@ -106,6 +123,8 @@ export function ExpenseTracker() {
           {CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
         </select>
         <button onClick={() => { setShowForm(true); setMessage(null); setForm({ category: 'supplies', description: '', amount: '', expense_date: new Date().toISOString().slice(0, 10), is_recurring: false, recurrence_period: '', notes: '' }); }}
+          /* R49: this onClick fires on user interaction (not during
+             render), so `new Date()` here is safe — no hydration gap. */
           className="touch-button px-4 py-2 rounded-lg bg-teal-700 text-white font-semibold text-sm hover:bg-teal-800 ml-auto">+ Add Expense</button>
       </div>
 

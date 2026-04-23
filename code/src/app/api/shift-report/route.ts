@@ -365,27 +365,32 @@ export const POST = withAdminAuth("register.open", async (req, ctx) => {
           employee_id: employee.id,
         };
 
+        // R49: audit INSIDE the tx, matching the R47-M fix on
+        // /api/shift-close. Prior shape did the audit post-commit
+        // via orgQuery wrapped in a try/catch — on audit failure the
+        // shift close committed with no audit row, leaving a fabricated-
+        // variance vector with no trail. This sibling endpoint now
+        // shares the same in-tx audit shape as /api/shift-close.
+        await client.query(
+          `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+           VALUES ($1, $2, $3, $4, 'shift', $5, 'shift_closed', $6, now())`,
+          [
+            randomUUID(), orgId, auditPayload.location_id, auditPayload.employee_id, shiftId,
+            JSON.stringify({
+              expected: auditPayload.expected,
+              declared: auditPayload.declared,
+              variance: auditPayload.variance,
+              blind: auditPayload.blind,
+            }),
+          ],
+        );
+
         await client.query("COMMIT");
       } catch (e) {
         await client.query("ROLLBACK");
         throw e;
       } finally {
         client.release();
-      }
-
-      // Audit event — outside transaction so audit failure doesn't rollback the shift close
-      try {
-        await orgQuery(
-          orgId,
-          `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
-           VALUES ($1, $2, $3, $4, 'shift', $5, 'shift_closed', $6, now())`,
-          [
-            randomUUID(), orgId, auditPayload.location_id, auditPayload.employee_id, shiftId,
-            JSON.stringify({ expected: auditPayload.expected, declared: auditPayload.declared, variance: auditPayload.variance, blind: auditPayload.blind }),
-          ],
-        );
-      } catch (err) {
-        console.error("[shift-report] audit event failed:", safeErr(err));
       }
 
       return NextResponse.json({

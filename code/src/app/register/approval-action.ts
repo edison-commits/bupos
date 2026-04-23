@@ -225,6 +225,30 @@ export async function verifyManagerApproval(pin: string, request: ApprovalReques
          VALUES ($1, $2, $3, 'pending', $4, $5, $6, $7)`,
         [exceptionId, registerSessionId, exceptionCode, approverEmployee.id, approvedAmount, expiresAt, timestamp],
       );
+
+      // R49: audit INSIDE the tx. manager_override is the primary
+      // audit trail for every discount / void / price-override / cash-
+      // payout approval. Post-commit audit via pgInsertAuditEvent was
+      // lossy on Worker eviction — manager_override drops are the
+      // worst audit drops because they're the evidence the exception
+      // was authorized at all.
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'register_session_exception', $5, 'manager_override', $6, now())`,
+        [
+          randomUUID(), organizationId, locationId, approverEmployee.id, exceptionId,
+          JSON.stringify({
+            action_type: request.actionType,
+            exception_code: exceptionCode,
+            register_session_id: registerSessionId,
+            cashier_employee_id: cashierEmployeeId,
+            approver_employee_id: approverEmployee.id,
+            trigger_amount: request.triggerAmount.toFixed(2),
+            threshold_amount: request.thresholdAmount.toFixed(2),
+            reason_code: request.reasonCode ?? "none",
+          }),
+        ],
+      );
       await client.query("COMMIT");
     } catch (e) {
       await client.query("ROLLBACK").catch(() => {});
@@ -232,26 +256,6 @@ export async function verifyManagerApproval(pin: string, request: ApprovalReques
     } finally {
       client.release();
     }
-
-    // Audit event — outside tx, best-effort. Route through pgInsertAuditEvent
-    // so `app.current_org_id` is set (R8-H-2 / R9-L-1); raw pool.query relied
-    // on BYPASSRLS and would silently stop inserting if that privilege is
-    // ever dropped.
-    const { pgInsertAuditEvent } = await import("@/lib/persistence/postgres-store");
-    await pgInsertAuditEvent(
-      organizationId, locationId, approverEmployee.id,
-      "register_session_exception", exceptionId, "manager_override",
-      {
-        action_type: request.actionType,
-        exception_code: exceptionCode,
-        register_session_id: registerSessionId,
-        cashier_employee_id: cashierEmployeeId,
-        approver_employee_id: approverEmployee.id,
-        trigger_amount: request.triggerAmount.toFixed(2),
-        threshold_amount: request.thresholdAmount.toFixed(2),
-        reason_code: request.reasonCode ?? "none",
-      },
-    );
   } else {
     await mutateStore((s) => {
       s.transactionEventPlaceholders.unshift({

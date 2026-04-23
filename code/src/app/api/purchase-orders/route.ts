@@ -1,12 +1,11 @@
 import { NextResponse } from 'next/server';
 import { orgQuery, getPool } from '@/lib/supabase-rest';
 import { withDualAuth, withAdminAuth } from '@/lib/api/with-auth';
-import { pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
+import { randomUUID } from '@/lib/uuid';
 import { validateBody, purchaseOrderCreateSchema, purchaseOrderUpdateSchema, purchaseOrderReceiveSchema } from '@/lib/validation/schemas';
 import { invalidateInventoryCache } from "@/lib/cache/inventory-cache";
 
 import { safeErr } from "@/lib/logging/safe-err";
-import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
 /**
  * Purchase Orders API
  *
@@ -228,13 +227,24 @@ export const POST = withAdminAuth("inventory.adjust", async (request, ctx) => {
         );
       }
 
-      await client.query('COMMIT');
       const newOrder = poResult.rows[0];
-      await waitUntilOrAwait(pgInsertAuditEvent(
-        orgId, null, employee.id,
-        "purchase_order", String(newOrder.id), "purchase_order_created",
-        { id: newOrder.id, po_number: poNumber, supplier_id, line_count: lines.length },
-      ).catch((err) => console.error("[audit] Failed to insert audit event:", safeErr(err))));
+      // R49: audit INSIDE the tx. PO creation commits spend intent and
+      // routes supplier-invoice reconciliation; audit must land with
+      // the write.
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'purchase_order', $5, 'purchase_order_created', $6, now())`,
+        [
+          randomUUID(), orgId, null, employee.id, String(newOrder.id),
+          JSON.stringify({
+            id: newOrder.id,
+            po_number: poNumber,
+            supplier_id,
+            line_count: lines.length,
+          }),
+        ],
+      );
+      await client.query('COMMIT');
       return NextResponse.json({ order: newOrder, po_number: poNumber });
     } catch (e) {
       await client.query('ROLLBACK');

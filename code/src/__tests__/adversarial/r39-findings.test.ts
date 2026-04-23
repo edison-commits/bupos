@@ -49,8 +49,11 @@ describe("R39 findings", () => {
     });
     it("settings PUT writes settings_updated for store/location/receipt sections", () => {
       const src = read("src/app/api/settings/route.ts");
-      expect(src).toMatch(/pgInsertAuditEvent/);
-      const matches = src.match(/"settings_updated"/g) ?? [];
+      // R49: settings now audits INSIDE the tx via a raw INSERT INTO
+      // audit_events statement (canonical R44-MED shape), not via
+      // pgInsertAuditEvent. Assert on the event_kind string which is
+      // present in every in-tx shape.
+      const matches = src.match(/'settings_updated'/g) ?? [];
       expect(matches.length).toBeGreaterThanOrEqual(3);
     });
     it("promo-codes POST writes audit events on create + disable", () => {

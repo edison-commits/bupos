@@ -459,6 +459,7 @@ export async function createEmployeeAction(formData: FormData) {
   const lastName = String(formData.get("lastName") ?? "").trim();
   const roleKey = String(formData.get("roleKey") ?? "cashier") as RoleKey;
   const pin = String(formData.get("pin") ?? "").trim();
+  const actorPassword = String(formData.get("actorPassword") ?? "");
 
   if (!firstName || !lastName || !/^\d{4}$/.test(pin)) {
     redirect("/admin?error=Employee+needs+name+and+4-digit+PIN");
@@ -466,6 +467,22 @@ export async function createEmployeeAction(formData: FormData) {
 
   if (!canManageEmployeeRole(employee.roleKey, roleKey)) {
     redirect("/admin?error=You+cannot+provision+that+role");
+  }
+
+  // R49: step-up re-auth on employee provisioning. Creating an employee
+  // — especially an owner/manager with admin-capable password — is a
+  // privilege-elevation action. A stolen cookie shouldn't be able to
+  // mint shadow admin accounts. Matches the REST /api/employees POST
+  // gate once actorPassword is wired through the admin UI.
+  const { requireStepUp } = await import('@/lib/auth/step-up');
+  const stepUp = await requireStepUp({
+    actorId: employee.id,
+    orgId: employee.organizationId,
+    actorPassword,
+    bucketKey: 'employees-create-stepup',
+  });
+  if (!stepUp.ok) {
+    redirect(`/admin?error=${encodeURIComponent(stepUp.error)}`);
   }
 
   const email = String(formData.get("email") ?? "").trim().toLowerCase() || undefined;
@@ -517,6 +534,23 @@ export async function createEmployeeAction(formData: FormData) {
 export async function toggleEmployeeAction(formData: FormData) {
   const { employee: actor } = await requireAdminPermission("employee.manage");
   const employeeId = String(formData.get("employeeId") ?? "");
+  const actorPassword = String(formData.get("actorPassword") ?? "");
+
+  // R49: step-up re-auth. Mirrors the REST /api/employees PATCH gate
+  // (bucketKey 'employees-patch-stepup') so both surfaces share the
+  // same step-up bucket aggregate. Toggling active status can lock
+  // out peers or reactivate terminated employees — never a low-
+  // privilege action.
+  const { requireStepUp } = await import('@/lib/auth/step-up');
+  const stepUp = await requireStepUp({
+    actorId: actor.id,
+    orgId: actor.organizationId,
+    actorPassword,
+    bucketKey: 'employees-patch-stepup',
+  });
+  if (!stepUp.ok) {
+    redirect(`/admin?error=${encodeURIComponent(stepUp.error)}`);
+  }
 
   let newStatus: boolean | null = null;
   if (isPg()) {
@@ -726,6 +760,7 @@ export async function editVariantAction(formData: FormData) {
   const sizeLabel = String(formData.get("sizeLabel") ?? "").trim() || undefined;
   const colorLabel = String(formData.get("colorLabel") ?? "").trim() || undefined;
   const isActive = formData.get("isActive") === "on";
+  const actorPassword = String(formData.get("actorPassword") ?? "");
 
   if (!variantId || !name || !sku || !Number.isFinite(price) || price <= 0) {
     redirect("/admin?error=Variant+ID,+name,+SKU,+and+valid+price+are+required");
@@ -742,6 +777,36 @@ export async function editVariantAction(formData: FormData) {
 
   if (isPg()) {
     const orgId = employee.organizationId;
+
+    // R49: step-up re-auth when price OR cost actually CHANGES. Snapshot
+    // the pre-value and compare — the form posts the same fields every
+    // time (including unchanged price), so gating on field presence
+    // would friction every edit. Comparing real before/after bounds
+    // the step-up ask to genuine price moves — the fraud-relevant edit.
+    const { orgQuery } = await import("@/lib/supabase-rest");
+    const { rows: priorRows } = await orgQuery(
+      orgId,
+      `SELECT price, cost FROM product_variants WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [variantId, orgId],
+    );
+    const prior = priorRows[0] as { price: string; cost: string | null } | undefined;
+    const priorPrice = prior ? Number(prior.price) : null;
+    const priorCost = prior?.cost != null ? Number(prior.cost) : null;
+    const priceChanged = priorPrice !== null && Math.abs(priorPrice - price) > 0.005;
+    const costChanged = cost !== undefined && priorCost !== null && Math.abs(priorCost - cost) > 0.005;
+    if (priceChanged || costChanged) {
+      const { requireStepUp } = await import('@/lib/auth/step-up');
+      const stepUp = await requireStepUp({
+        actorId: employee.id,
+        orgId,
+        actorPassword,
+        bucketKey: 'variant-price-stepup',
+      });
+      if (!stepUp.ok) {
+        redirect(`/admin?error=${encodeURIComponent(stepUp.error)}`);
+      }
+    }
+
     try {
       await pgUpdateVariant(variantId, { name, sku, barcode, price, cost, sizeLabel, colorLabel, isActive }, employee.organizationId);
     } catch (err) {

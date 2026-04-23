@@ -10,11 +10,11 @@ import { canManageEmployeeRole } from '@/lib/authz';
 import { checkRateLimit } from '@/lib/auth/rate-limit';
 import type { RoleKey } from '@/lib/domain/types';
 import { withAdminAuth } from '@/lib/api/with-auth';
-import { invalidateEmployeesCache, pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
+import { invalidateEmployeesCache } from '@/lib/persistence/postgres-store';
 import { validateBody, employeeCreateSchema, employeeUpdateSchema, employeePatchSchema } from '@/lib/validation/schemas';
+import { waitUntilOrAwait } from '@/lib/runtime/wait-until';
 
 import { safeErr } from "@/lib/logging/safe-err";
-import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
 /**
  * Invalidate all active sessions for an employee — both admin and register scopes.
  * Call this when the employee's role changes or they are deactivated so that
@@ -237,6 +237,23 @@ export const POST = withAdminAuth('employee.manage', async (request, ctx) => {
         [employeeId, email?.trim() || null, null, pinHash, now],
       );
 
+      // R49: audit INSIDE the tx. employee_created is a privilege-
+      // provisioning action — post-commit audit failures here hide
+      // whoever added the shadow account. Moved from post-commit
+      // pgInsertAuditEvent into the existing orgTx block.
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'employee', $5, 'employee_created', $6, now())`,
+        [
+          randomUUID(), orgId, null, actor.id, employeeId,
+          JSON.stringify({
+            id: employeeId,
+            display_name: rows[0].display_name,
+            role_key: rows[0].role_key,
+          }),
+        ],
+      );
+
       await client.query('COMMIT');
     } catch (e) {
       await client.query('ROLLBACK').catch(() => {});
@@ -260,11 +277,6 @@ export const POST = withAdminAuth('employee.manage', async (request, ctx) => {
     };
 
     invalidateEmployeesCache(orgId);
-    await waitUntilOrAwait(pgInsertAuditEvent(
-      orgId, null, actor.id,
-      "employee", employee.id, "employee_created",
-      { id: employee.id, display_name: employee.displayName, role_key: employee.roleKey },
-    ).catch((err) => console.error("[audit] Failed to insert audit event:", safeErr(err))));
     return NextResponse.json({ employee }, { status: 201 });
   } catch (error) {
     console.error('Employees POST error:', safeErr(error));
@@ -444,62 +456,87 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
     vals.push(id);
     vals.push(orgId);
 
-    // Route through orgQuery so `app.current_org_id` is set and RLS WITH
-    // CHECK on employees is evaluated. Using pool.query directly relied on
-    // BYPASSRLS on the postgres role; dropping that privilege silently
-    // broke employee updates in earlier rounds.
-    const { rows } = await orgQuery(
-      orgId,
-      `UPDATE employees SET ${sets.join(', ')}
-       WHERE id = $${idx} AND organization_id = $${idx + 1}
-       RETURNING id, first_name, last_name, display_name, email, role_key, is_active, location_ids, pin_hint, created_at, updated_at`,
-      vals,
-    );
-
-    if (rows.length === 0) {
-      return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
-    }
-
-    // R27-M4: keep auth_credentials.email in sync with employees.email.
-    // Before this, updating an employee's email only changed
-    // employees.email — `auth_credentials.email` (the login-email read
-    // by admin_login_lookup) remained frozen at signup, so the owner
-    // couldn't ever change their login email. Also mirrors the
-    // "change email → user actually changes their login" intent.
-    //
-    // Collision handling: the unique index on lower(auth_credentials.
-    // email) can raise 23505 if the new email is already taken. Surface
-    // a 409 and roll back the employees.email UPDATE by undoing it —
-    // since orgQuery per call doesn't share a transaction, we use a
-    // best-effort revert. Long-term this belongs inside a single tx.
-    if (email !== undefined) {
-      try {
-        await orgQuery(
-          orgId,
-          `UPDATE auth_credentials
-              SET email = $1, updated_at = NOW()
-            WHERE employee_id = $2
-              AND employee_id IN (SELECT id FROM employees WHERE organization_id = $3)`,
-          [email || null, id, orgId],
-        );
-      } catch (err) {
-        const e = err as { code?: string };
-        // Revert the employees.email change on collision so we don't
-        // leave the two tables permanently out of sync.
-        if (e.code === '23505') {
-          await orgQuery(
-            orgId,
-            `UPDATE employees SET email = (SELECT email FROM auth_credentials WHERE employee_id = $1)
-              WHERE id = $1 AND organization_id = $2`,
-            [id, orgId],
-          ).catch(() => {});
-          return NextResponse.json(
-            { error: 'That email is already registered to another account.' },
-            { status: 409 },
-          );
-        }
-        throw err;
+    // R49: wrap the employees UPDATE + auth_credentials email sync +
+    // audit row into one orgTx. Prior shape ran each piece via orgQuery
+    // and attempted a best-effort revert on the 23505 collision — the
+    // comment explicitly flagged "Long-term this belongs inside a
+    // single tx". Post-commit audit was also dropped on failure. Now
+    // the whole thing is atomic: if either step fails, nothing lands.
+    const { orgTx } = await import("@/lib/supabase-rest");
+    const client = await orgTx(orgId);
+    type EmployeeReturnRow = {
+      id: string;
+      first_name: string;
+      last_name: string;
+      display_name: string;
+      email: string | null;
+      role_key: string;
+      is_active: boolean;
+      location_ids: string[] | null;
+      pin_hint: string;
+      created_at: string;
+      updated_at: string;
+    };
+    let rows: EmployeeReturnRow[] = [];
+    try {
+      const updRes = await client.query<EmployeeReturnRow>(
+        `UPDATE employees SET ${sets.join(', ')}
+         WHERE id = $${idx} AND organization_id = $${idx + 1}
+         RETURNING id, first_name, last_name, display_name, email, role_key, is_active, location_ids, pin_hint, created_at, updated_at`,
+        vals,
+      );
+      rows = updRes.rows;
+      if (rows.length === 0) {
+        await client.query("ROLLBACK");
+        return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
       }
+
+      // R27-M4: keep auth_credentials.email in sync with employees.email.
+      // Running inside the same tx means a 23505 collision rolls back
+      // the employees.email change cleanly.
+      if (email !== undefined) {
+        try {
+          await client.query(
+            `UPDATE auth_credentials
+                SET email = $1, updated_at = NOW()
+              WHERE employee_id = $2
+                AND employee_id IN (SELECT id FROM employees WHERE organization_id = $3)`,
+            [email || null, id, orgId],
+          );
+        } catch (err) {
+          const e = err as { code?: string };
+          if (e.code === '23505') {
+            await client.query("ROLLBACK");
+            return NextResponse.json(
+              { error: 'That email is already registered to another account.' },
+              { status: 409 },
+            );
+          }
+          throw err;
+        }
+      }
+
+      // R49: audit INSIDE the tx. Employee role / email / location
+      // changes are privilege-escalation vectors (per the step-up
+      // gate rationale above) — audit must not be lossy on failure.
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'employee', $5, 'employee_updated', $6, now())`,
+        [
+          randomUUID(), orgId, null, actor.id, id,
+          JSON.stringify({
+            id,
+            display_name: rows[0].display_name,
+            role_key: rows[0].role_key,
+          }),
+        ],
+      );
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
     }
 
     const employee = {
@@ -529,11 +566,6 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
     }
 
     invalidateEmployeesCache(orgId);
-    await waitUntilOrAwait(pgInsertAuditEvent(
-      orgId, null, actor.id,
-      "employee", id, "employee_updated",
-      { id, display_name: employee.displayName, role_key: employee.roleKey },
-    ).catch((err) => console.error("[audit] Failed to insert audit event:", safeErr(err))));
     return NextResponse.json({ employee });
   } catch (error) {
     console.error('Employees PUT error:', safeErr(error));
@@ -636,29 +668,74 @@ export const PATCH = withAdminAuth('employee.manage', async (request, ctx) => {
       // toggle to disguise a deactivate-then-reactivate chain (which
       // would bypass the detected-DoS-was-reverted audit pattern).
       const targetActive = action === 'activate';
-      const { rows } = await orgQuery(
-        orgId,
-        `UPDATE employees SET is_active = $1, updated_at = NOW()
-         WHERE id = $2 AND organization_id = $3 AND is_active != $1
-         RETURNING id, first_name, last_name, display_name, email, role_key, is_active, location_ids, pin_hint, created_at, updated_at`,
-        [targetActive, id, orgId]
-      );
 
-      if (rows.length === 0) {
-        // Either employee missing OR already in the target state. Pull
-        // current state to disambiguate for the client.
-        const { rows: currentRows } = await orgQuery(
-          orgId,
-          `SELECT is_active FROM employees WHERE id = $1 AND organization_id = $2`,
-          [id, orgId],
+      // R49: wrap UPDATE + audit in one orgTx. Activation/deactivation
+      // toggles privilege state — post-commit audit failures hide the
+      // actor on deactivation attacks (locking out legitimate owners).
+      const { orgTx } = await import("@/lib/supabase-rest");
+      const client = await orgTx(orgId);
+      type EmpRow = {
+        id: string;
+        first_name: string;
+        last_name: string;
+        display_name: string;
+        email: string | null;
+        role_key: string;
+        is_active: boolean;
+        location_ids: string[] | null;
+        pin_hint: string;
+        created_at: string;
+        updated_at: string;
+      };
+      let rows: EmpRow[] = [];
+      try {
+        const upd = await client.query<EmpRow>(
+          `UPDATE employees SET is_active = $1, updated_at = NOW()
+           WHERE id = $2 AND organization_id = $3 AND is_active != $1
+           RETURNING id, first_name, last_name, display_name, email, role_key, is_active, location_ids, pin_hint, created_at, updated_at`,
+          [targetActive, id, orgId]
         );
-        if (currentRows.length === 0) {
-          return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
+        rows = upd.rows;
+
+        if (rows.length === 0) {
+          await client.query("ROLLBACK");
+          // Either employee missing OR already in the target state. Pull
+          // current state to disambiguate for the client.
+          const { rows: currentRows } = await orgQuery(
+            orgId,
+            `SELECT is_active FROM employees WHERE id = $1 AND organization_id = $2`,
+            [id, orgId],
+          );
+          if (currentRows.length === 0) {
+            return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
+          }
+          return NextResponse.json(
+            { error: `Employee is already ${targetActive ? 'active' : 'inactive'}` },
+            { status: 409 }
+          );
         }
-        return NextResponse.json(
-          { error: `Employee is already ${targetActive ? 'active' : 'inactive'}` },
-          { status: 409 }
+
+        // Audit the status change INSIDE the tx. Previously this branch
+        // was silent on post-commit audit failures — if a compromised
+        // manager session was used to disable cashiers (DoS) or reactivate
+        // a previously-fired employee, investigators had no reliable
+        // record. The field update bumps updated_at but says nothing
+        // about the actor or the prior state.
+        await client.query(
+          `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+           VALUES ($1, $2, $3, $4, 'employee', $5, $6, $7, now())`,
+          [
+            randomUUID(), orgId, null, actor.id, id,
+            rows[0].is_active ? "employee_activated" : "employee_deactivated",
+            JSON.stringify({ target_role: targetRole, actor_email: actor.email ?? null }),
+          ],
         );
+        await client.query("COMMIT");
+      } catch (e) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw e;
+      } finally {
+        client.release();
       }
 
       const employee = {
@@ -680,18 +757,6 @@ export const PATCH = withAdminAuth('employee.manage', async (request, ctx) => {
       if (!rows[0].is_active) {
         await invalidateEmployeeSessions(id, orgId);
       }
-
-      // Audit the status change. Previously this branch was silent — if a
-      // compromised manager session was used to disable cashiers (DoS) or
-      // reactivate a previously-fired employee, investigators had no record
-      // of who did it. The field update bumps updated_at but says nothing
-      // about the actor or the prior state.
-      await waitUntilOrAwait(pgInsertAuditEvent(
-        orgId, null, actor.id,
-        "employee", id,
-        rows[0].is_active ? "employee_activated" : "employee_deactivated",
-        { target_role: targetRole, actor_email: actor.email ?? null },
-      ).catch((err) => console.error("[employees PATCH activate/deactivate] audit failed:", safeErr(err))));
 
       invalidateEmployeesCache(orgId);
       return NextResponse.json({ employee });
@@ -745,36 +810,54 @@ export const PATCH = withAdminAuth('employee.manage', async (request, ctx) => {
         );
       }
 
-      // Scope to current org — prevent cross-tenant PIN reset.
-      // R27-H1: also reset failed_pin_attempts so an admin-driven PIN
-      // rotation clears any prior brute-force lockout on that
-      // credential. Semantically the credential is new.
-      const { rows } = await orgQuery(
-        orgId,
-        `UPDATE auth_credentials
-            SET pin_hash = $1,
-                pin_last_rotated_at = $2,
-                updated_at = $2,
-                failed_pin_attempts = 0,
-                last_failed_pin_at = NULL
-         WHERE employee_id = $3
-           AND employee_id IN (SELECT id FROM employees WHERE organization_id = $4)
-         RETURNING employee_id`,
-        [pinHash, now, id, ctx.orgId]
-      );
+      // R49: wrap UPDATE + audit in one orgTx. pin_reset is the most
+      // common impersonation-attack vector in a retail POS (reset
+      // peer's PIN, log in as them, take the heat); audit must land
+      // with the PIN change.
+      const { orgTx } = await import("@/lib/supabase-rest");
+      const pinClient = await orgTx(orgId);
+      try {
+        // Scope to current org — prevent cross-tenant PIN reset.
+        // R27-H1: also reset failed_pin_attempts so an admin-driven PIN
+        // rotation clears any prior brute-force lockout on that
+        // credential. Semantically the credential is new.
+        const { rows: pinRows } = await pinClient.query(
+          `UPDATE auth_credentials
+              SET pin_hash = $1,
+                  pin_last_rotated_at = $2,
+                  updated_at = $2,
+                  failed_pin_attempts = 0,
+                  last_failed_pin_at = NULL
+           WHERE employee_id = $3
+             AND employee_id IN (SELECT id FROM employees WHERE organization_id = $4)
+           RETURNING employee_id`,
+          [pinHash, now, id, ctx.orgId]
+        );
 
-      if (rows.length === 0) {
-        return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
+        if (pinRows.length === 0) {
+          await pinClient.query("ROLLBACK");
+          return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
+        }
+
+        // Audit the PIN reset INSIDE the tx. pin_last_rotated_at shows
+        // the timestamp but not who changed it — the audit row carries
+        // the actor. Post-commit audit drop was a critical gap for
+        // impersonation-after-PIN-change investigations.
+        await pinClient.query(
+          `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+           VALUES ($1, $2, $3, $4, 'employee', $5, 'pin_reset', $6, now())`,
+          [
+            randomUUID(), orgId, null, actor.id, id,
+            JSON.stringify({ target_role: targetRole, actor_email: actor.email ?? null }),
+          ],
+        );
+        await pinClient.query("COMMIT");
+      } catch (e) {
+        await pinClient.query("ROLLBACK").catch(() => {});
+        throw e;
+      } finally {
+        pinClient.release();
       }
-
-      // Audit the PIN reset. pin_last_rotated_at shows the timestamp but
-      // not who changed it — critical gap when investigating a session
-      // that impersonates another employee after an unexpected PIN change.
-      await waitUntilOrAwait(pgInsertAuditEvent(
-        orgId, null, actor.id,
-        "employee", id, "pin_reset",
-        { target_role: targetRole, actor_email: actor.email ?? null },
-      ).catch((err) => console.error("[employees PATCH reset_pin] audit failed:", safeErr(err))));
 
       // R27-M7: notify the employee whose PIN was reset. Best-effort
       // email via Resend — the target's `email` may be missing or

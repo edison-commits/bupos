@@ -32,6 +32,10 @@ export function LineDiscountModal({
   const [reason, setReason] = useState(currentDiscount?.reason ?? "");
   const [showNumpad, setShowNumpad] = useState(true);
   const [showReasonKbd, setShowReasonKbd] = useState(false);
+  // R49: double-submit guard — onConfirm can trigger an approval path
+  // that burns an exception slot per call. Mirror the R48-5
+  // VoidReasonModal pattern.
+  const [submitting, setSubmitting] = useState(false);
 
   const numValue = Number(value) || 0;
   const discountAmount = mode === "percent"
@@ -143,10 +147,14 @@ export function LineDiscountModal({
           </button>
           <button
             type="button"
-            disabled={numValue <= 0}
-            onClick={() => onConfirm(lineItemId, { mode, value: numValue, reason: reason.trim() || undefined })}
+            disabled={submitting || numValue <= 0}
+            onClick={() => {
+              if (submitting) return;
+              setSubmitting(true);
+              onConfirm(lineItemId, { mode, value: numValue, reason: reason.trim() || undefined });
+            }}
             className={`touch-button flex-1 rounded-xl text-sm font-semibold ${
-              numValue <= 0
+              submitting || numValue <= 0
                 ? "cursor-not-allowed bg-zinc-200 text-zinc-400"
                 : "bg-teal-700 text-white hover:bg-teal-800"
             }`}

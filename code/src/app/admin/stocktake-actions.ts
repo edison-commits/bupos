@@ -6,10 +6,7 @@ import type { Stocktake, StocktakeLine } from "@/lib/domain/types";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "@/lib/uuid";
 import { orgTx } from "@/lib/supabase-rest";
-import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 
-import { safeErr } from "@/lib/logging/safe-err";
-import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
 const isPg = () => !!process.env.USE_POSTGRES;
 
 /**
@@ -126,13 +123,23 @@ export async function createStocktakeAction(formData: FormData) {
         ? [stocktakeId, locationId, orgId, categoryFilter]
         : [stocktakeId, locationId, orgId];
       await client.query(lineInsertSql, lineParams);
+      // R49: audit INSIDE the tx. Prior shape wrote the audit row
+      // post-commit via waitUntilOrAwait — on failure the stocktake
+      // existed with no audit. stocktakes are ABSOLUTE-mode inventory
+      // rewrites; audit drop on create is a fraud-evidence gap.
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'stocktake', $5, 'stocktake_created', $6, now())`,
+        [
+          randomUUID(), orgId, locationId, ctx.employee.id, stocktakeId,
+          JSON.stringify({
+            count_type: countType,
+            category_filter: categoryFilter || null,
+            notes: notes || null,
+          }),
+        ],
+      );
       await client.query("COMMIT");
-
-      await waitUntilOrAwait(pgInsertAuditEvent(
-        orgId, locationId, ctx.employee.id,
-        "stocktake", stocktakeId, "stocktake_created",
-        { count_type: countType, category_filter: categoryFilter || null, notes: notes || null },
-      ).catch((err) => console.error("[createStocktakeAction] audit failed:", safeErr(err))));
     } catch (e) {
       await client.query("ROLLBACK").catch(() => {});
       throw e;
@@ -261,11 +268,29 @@ export async function recordCountAction(formData: FormData) {
   revalidatePath("/admin");
 }
 
-export async function acceptStocktakeAction(stocktakeId: string) {
+export async function acceptStocktakeAction(stocktakeId: string, actorPassword?: string) {
   const ctx = await requireAdminPermission("inventory.adjust");
 
   if (isPg()) {
     const orgId = ctx.employee.organizationId;
+
+    // R49: step-up re-auth on stocktake accept. Accept applies every
+    // counted_qty to inventory_levels in ABSOLUTE mode (the per-line
+    // cap at adjustInventoryAction is bypassed here — only the
+    // stocktake-internal 5k/500 cap applies). A compromised manager
+    // cookie could doctor counted_qty on every high-value SKU before
+    // accept. Step-up bounds the attack to the step-up bucket cap.
+    const { requireStepUp } = await import('@/lib/auth/step-up');
+    const stepUp = await requireStepUp({
+      actorId: ctx.employee.id,
+      orgId,
+      actorPassword,
+      bucketKey: 'stocktake-accept-stepup',
+    });
+    if (!stepUp.ok) {
+      throw new Error(stepUp.error);
+    }
+
     const client = await orgTx(orgId);
     try {
       const { rows: st } = await client.query(
@@ -410,13 +435,19 @@ export async function acceptStocktakeAction(stocktakeId: string) {
          WHERE id = $2 AND organization_id = $3`,
         [ctx.employee.id, stocktakeId, orgId],
       );
+      // R49: audit INSIDE the tx. stocktake_accepted wipes/adds stock
+      // via ABSOLUTE-mode counted_qty — the highest-blast-radius inv
+      // write in the system. Post-commit audit fails silently; in-tx
+      // audit rolls back with the write if either fails.
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'stocktake', $5, 'stocktake_accepted', $6, now())`,
+        [
+          randomUUID(), orgId, locationId, ctx.employee.id, stocktakeId,
+          JSON.stringify({ variance_lines: lines.length }),
+        ],
+      );
       await client.query("COMMIT");
-
-      await waitUntilOrAwait(pgInsertAuditEvent(
-        orgId, locationId, ctx.employee.id,
-        "stocktake", stocktakeId, "stocktake_accepted",
-        { variance_lines: lines.length },
-      ).catch((err) => console.error("[acceptStocktakeAction] audit failed:", safeErr(err))));
     } catch (e) {
       await client.query("ROLLBACK").catch(() => {});
       throw e;

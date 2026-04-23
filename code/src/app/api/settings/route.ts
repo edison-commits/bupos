@@ -1,10 +1,9 @@
 import { NextResponse } from 'next/server';
-import { orgQuery } from '@/lib/supabase-rest';
+import { orgQuery, orgTx } from '@/lib/supabase-rest';
 import { withDualAuth, withAdminAuth } from '@/lib/api/with-auth';
 import { validateBody, settingsUpdateSchema } from '@/lib/validation/schemas';
 import { checkRateLimit } from '@/lib/auth/rate-limit';
-import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
-import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
+import { randomUUID } from '@/lib/uuid';
 
 import { safeErr } from "@/lib/logging/safe-err";
 export const GET = withDualAuth("catalog.manage", async (req, ctx) => {
@@ -143,15 +142,29 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
           data as Record<string, unknown>,
           (offset) => ({ sql: `id = $${offset}`, params: [orgId] }),
         );
-        if (upd) await orgQuery(orgId, upd.sql, upd.params);
-        // R39-A1-2: audit store-identity changes (name, legal name,
-        // phone, timezone, currency code all shift what customers
-        // see and how receipts render).
-        await waitUntilOrAwait(pgInsertAuditEvent(
-          orgId, null, ctx.employee.id,
-          "organization", orgId, "settings_updated",
-          { section: 'store', keys: Object.keys(data as Record<string, unknown>) },
-        ).catch((err) => console.error("[audit] settings_updated failed:", safeErr(err))));
+        // R49: wrap UPDATE + audit in one orgTx. Prior shape ran the
+        // UPDATE via orgQuery then post-commit audit; on failure the
+        // store-identity change persisted without a trail, covering
+        // attacks that rewrite receipt headers to impersonate the
+        // merchant to customers.
+        const client = await orgTx(orgId);
+        try {
+          if (upd) await client.query(upd.sql, upd.params);
+          await client.query(
+            `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+             VALUES ($1, $2, $3, $4, 'organization', $5, 'settings_updated', $6, now())`,
+            [
+              randomUUID(), orgId, null, ctx.employee.id, orgId,
+              JSON.stringify({ section: 'store', keys: Object.keys(data as Record<string, unknown>) }),
+            ],
+          );
+          await client.query("COMMIT");
+        } catch (e) {
+          await client.query("ROLLBACK").catch(() => {});
+          throw e;
+        } finally {
+          client.release();
+        }
         return NextResponse.json({ success: true });
       }
 
@@ -179,17 +192,27 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
           data as Record<string, unknown>,
           (offset) => ({ sql: `id = $${offset} AND organization_id = $${offset + 1}`, params: [locationId, orgId] }),
         );
-        if (upd) await orgQuery(orgId, upd.sql, upd.params);
-        // R39-A1-2: audit location settings changes, especially
-        // `taxRate` — this sibling path to /api/tax-config PUT was
-        // similarly un-audited. Tax-rate change via the settings
-        // section is the exact flank /api/tax-config's new audit
-        // event covers.
-        await waitUntilOrAwait(pgInsertAuditEvent(
-          orgId, locationId ?? null, ctx.employee.id,
-          "location", locationId ?? orgId, "settings_updated",
-          { section: 'location', keys: Object.keys(data as Record<string, unknown>) },
-        ).catch((err) => console.error("[audit] settings_updated failed:", safeErr(err))));
+        // R49: wrap UPDATE + audit in one orgTx. taxRate is the highest-
+        // fraud-risk admin mutation (R39-A1-2 rationale); audit must
+        // not be lossy on post-commit failure.
+        const client = await orgTx(orgId);
+        try {
+          if (upd) await client.query(upd.sql, upd.params);
+          await client.query(
+            `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+             VALUES ($1, $2, $3, $4, 'location', $5, 'settings_updated', $6, now())`,
+            [
+              randomUUID(), orgId, locationId ?? null, ctx.employee.id, locationId ?? orgId,
+              JSON.stringify({ section: 'location', keys: Object.keys(data as Record<string, unknown>) }),
+            ],
+          );
+          await client.query("COMMIT");
+        } catch (e) {
+          await client.query("ROLLBACK").catch(() => {});
+          throw e;
+        } finally {
+          client.release();
+        }
         // Return full settings after update so client state stays valid
         const [updatedOrg, updatedLocation] = await Promise.all([
           // check-pool-org-filter: scoped-by-organizations-id-is-orgId
@@ -243,18 +266,25 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
           data as Record<string, unknown>,
           (offset) => ({ sql: `id = $${offset}`, params: [orgId] }),
         );
-        if (upd) await orgQuery(orgId, upd.sql, upd.params);
-        // R39-A1-2: audit settings mutations. Receipt identity
-        // (name/address/phone) is a customer-facing brand signal —
-        // changes matter for disputes ("receipt said XYZ Co, charge
-        // was from ABC Inc"). Don't serialize the full payload into
-        // the audit row (could include a very long header/footer
-        // string); just record the keys that changed.
-        await waitUntilOrAwait(pgInsertAuditEvent(
-          orgId, locationId ?? null, ctx.employee.id,
-          "organization", orgId, "settings_updated",
-          { section: 'receipt', keys: Object.keys(data as Record<string, unknown>) },
-        ).catch((err) => console.error("[audit] settings_updated failed:", safeErr(err))));
+        // R49: wrap UPDATE + audit in one orgTx.
+        const client = await orgTx(orgId);
+        try {
+          if (upd) await client.query(upd.sql, upd.params);
+          await client.query(
+            `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+             VALUES ($1, $2, $3, $4, 'organization', $5, 'settings_updated', $6, now())`,
+            [
+              randomUUID(), orgId, locationId ?? null, ctx.employee.id, orgId,
+              JSON.stringify({ section: 'receipt', keys: Object.keys(data as Record<string, unknown>) }),
+            ],
+          );
+          await client.query("COMMIT");
+        } catch (e) {
+          await client.query("ROLLBACK").catch(() => {});
+          throw e;
+        } finally {
+          client.release();
+        }
         return NextResponse.json({ success: true });
       }
 

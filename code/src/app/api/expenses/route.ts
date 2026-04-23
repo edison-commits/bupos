@@ -99,23 +99,58 @@ export const POST = withAdminAuth("employee.manage", async (request, ctx) => {
       );
     }
 
-    const { rows } = await orgQuery(
-      orgId,
-      `INSERT INTO expenses (organization_id, location_id, category, description, amount, expense_date, is_recurring, recurrence_period, notes)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, category, description, amount, expense_date, is_recurring, recurrence_period, notes, location_id, created_at, updated_at`,
-      [orgId, locationId, category, description, amount, expense_date || new Date().toISOString().slice(0, 10), is_recurring || false, recurrence_period || null, notes || null],
-    );
-    // R32-M-audit-expense-POST: audit CREATE too, matching the R31-M6
-    // DELETE audit. Fake-expense entry is a cash-theft cover-up
-    // vector; CREATE without audit lets the attacker pair it with a
-    // pay_out to hide a cash short.
-    const created = rows[0] as { id: string; category: string; amount: number; expense_date: string; location_id: string };
-    const { pgInsertAuditEvent } = await import("@/lib/persistence/postgres-store");
-    await pgInsertAuditEvent(
-      orgId, created.location_id ?? null, ctx.employee.id,
-      "expense", created.id, "expense_created",
-      { id: created.id, category: created.category, amount: created.amount, expense_date: created.expense_date },
-    ).catch((err) => console.error("[expenses POST] audit failed:", safeErr(err)));
+    // R49: step-up re-auth on expenses >= $500. Fake-expense entries
+    // are the classic pairing with a drawer pay_out to launder a cash
+    // short. $500 threshold keeps low-friction entry for small receipts
+    // (coffee, supplies) while gating anything meaningful.
+    if (amount >= 500) {
+      const { requireStepUp } = await import('@/lib/auth/step-up');
+      const stepUp = await requireStepUp({
+        actorId: ctx.employee.id,
+        orgId,
+        actorPassword: (body as { actorPassword?: string }).actorPassword,
+        bucketKey: 'expense-create-stepup',
+      });
+      if (!stepUp.ok) {
+        return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
+      }
+    }
+
+    // R49: wrap INSERT + audit in one orgTx. Prior shape ran INSERT via
+    // orgQuery then audited post-commit via pgInsertAuditEvent — if the
+    // post-commit audit failed, the expense existed with no audit row
+    // (the cash-theft cover-up scenario the comment warns about).
+    const { orgTx } = await import("@/lib/supabase-rest");
+    const { randomUUID } = await import("@/lib/uuid");
+    const client = await orgTx(orgId);
+    let created: { id: string; category: string; description: string; amount: number; expense_date: string; is_recurring: boolean; recurrence_period: string | null; notes: string | null; location_id: string; created_at: string; updated_at: string };
+    try {
+      const { rows } = await client.query(
+        `INSERT INTO expenses (organization_id, location_id, category, description, amount, expense_date, is_recurring, recurrence_period, notes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, category, description, amount, expense_date, is_recurring, recurrence_period, notes, location_id, created_at, updated_at`,
+        [orgId, locationId, category, description, amount, expense_date || new Date().toISOString().slice(0, 10), is_recurring || false, recurrence_period || null, notes || null],
+      );
+      created = rows[0] as typeof created;
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'expense', $5, 'expense_created', $6, now())`,
+        [
+          randomUUID(), orgId, created.location_id ?? null, ctx.employee.id, created.id,
+          JSON.stringify({
+            id: created.id,
+            category: created.category,
+            amount: created.amount,
+            expense_date: created.expense_date,
+          }),
+        ],
+      );
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
     return NextResponse.json({ expense: created });
   } catch (error) {
     console.error('Expenses POST error:', safeErr(error));
@@ -136,34 +171,61 @@ export const DELETE = withAdminAuth("employee.manage", async (request, ctx) => {
     if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
     const { id } = v.data;
 
-    // Look up the expense's location + amount BEFORE delete so the
-    // audit event captures what was removed and the location-gate
-    // can compare against the actor's assignments.
-    const { rows: rowBefore } = await orgQuery(
-      orgId,
-      'SELECT id, location_id, category, amount, expense_date FROM expenses WHERE id = $1 AND organization_id = $2 LIMIT 1',
-      [id, orgId],
-    );
-    if (rowBefore.length === 0) {
-      return NextResponse.json({ error: 'Expense not found' }, { status: 404 });
-    }
-    const target = rowBefore[0] as { id: string; location_id: string; category: string; amount: number; expense_date: string };
+    // R49: wrap SELECT + DELETE + audit in one orgTx so the audit row
+    // is atomic with the destructive mutation. An attacker-induced
+    // post-commit audit failure would otherwise destroy the evidence
+    // that the attacker wanted to destroy (the expense row) along
+    // with the trail.
+    const { orgTx } = await import("@/lib/supabase-rest");
+    const { randomUUID } = await import("@/lib/uuid");
+    const client = await orgTx(orgId);
+    let target: { id: string; location_id: string; category: string; amount: number; expense_date: string };
+    try {
+      // Look up the expense's location + amount BEFORE delete so the
+      // audit event captures what was removed and the location-gate
+      // can compare against the actor's assignments. FOR UPDATE so a
+      // concurrent DELETE doesn't race in between this SELECT and our
+      // delete.
+      const { rows: rowBefore } = await client.query(
+        'SELECT id, location_id, category, amount, expense_date FROM expenses WHERE id = $1 AND organization_id = $2 LIMIT 1 FOR UPDATE',
+        [id, orgId],
+      );
+      if (rowBefore.length === 0) {
+        await client.query("ROLLBACK");
+        return NextResponse.json({ error: 'Expense not found' }, { status: 404 });
+      }
+      target = rowBefore[0] as typeof target;
 
-    const isManagerOrOwner = ctx.employee.roleKey === "owner" || ctx.employee.roleKey === "manager";
-    const callerLocs = ctx.employee.locationIds ?? [];
-    if (!isManagerOrOwner && !callerLocs.includes(target.location_id)) {
-      // Generic 404 — don't disclose that the expense exists at a
-      // location the caller can't see.
-      return NextResponse.json({ error: 'Expense not found' }, { status: 404 });
-    }
+      const isManagerOrOwner = ctx.employee.roleKey === "owner" || ctx.employee.roleKey === "manager";
+      const callerLocs = ctx.employee.locationIds ?? [];
+      if (!isManagerOrOwner && !callerLocs.includes(target.location_id)) {
+        await client.query("ROLLBACK");
+        // Generic 404 — don't disclose that the expense exists at a
+        // location the caller can't see.
+        return NextResponse.json({ error: 'Expense not found' }, { status: 404 });
+      }
 
-    await orgQuery(orgId, 'DELETE FROM expenses WHERE id = $1 AND organization_id = $2', [id, orgId]);
-    const { pgInsertAuditEvent } = await import("@/lib/persistence/postgres-store");
-    await pgInsertAuditEvent(
-      orgId, target.location_id, ctx.employee.id,
-      "expense", id, "expense_deleted",
-      { id, category: target.category, amount: target.amount, expense_date: target.expense_date },
-    ).catch((err) => console.error("[expenses DELETE] audit failed:", safeErr(err)));
+      await client.query('DELETE FROM expenses WHERE id = $1 AND organization_id = $2', [id, orgId]);
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'expense', $5, 'expense_deleted', $6, now())`,
+        [
+          randomUUID(), orgId, target.location_id, ctx.employee.id, id,
+          JSON.stringify({
+            id,
+            category: target.category,
+            amount: target.amount,
+            expense_date: target.expense_date,
+          }),
+        ],
+      );
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Expenses DELETE error:', safeErr(error));

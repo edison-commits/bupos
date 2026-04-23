@@ -4,11 +4,9 @@ import { validateBody, cashDrawerSchema } from '@/lib/validation/schemas';
 import { withDualAuth } from '@/lib/api/with-auth';
 import { checkRateLimit } from '@/lib/auth/rate-limit';
 import { getRegisterConfig } from '@/lib/config/register-config';
-import { pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
 import { hasPermission } from '@/lib/domain/permissions';
 
 import { safeErr } from "@/lib/logging/safe-err";
-import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
 /**
  * GET /api/cash-drawer?action=status|history
  *
@@ -679,34 +677,62 @@ async function handlePayOut(orgId: string, locationId: string, actorEmployeeId: 
           }
         }
       } else {
-        const insertRes = await payoutClient.query(
-          `INSERT INTO pay_in_outs (shift_id, location_id, employee_id, direction, amount, reason, note, organization_id)
-           VALUES ($1, $2, $3, 'pay_out', $4, $5, $6, $7)
-           RETURNING id, created_at`,
-          [shift_id, locationId, actorEmployeeId, numericAmount, reason, note || null, orgId],
-        );
-        // R46-H3: audit INSIDE the tx. Prior shape waited until after
-        // COMMIT via waitUntilOrAwait. On audit-write failure the
-        // cash removal committed without a standalone audit row.
-        await payoutClient.query(
-          `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
-           VALUES (gen_random_uuid(), $1, $2, $3, 'shift', $4, 'pay_out', $5, now())`,
-          [
+        // R49: step-up on the manager-direct pay_out branch. This `else`
+        // covers isManager OR sub-threshold cashier pay_outs; the
+        // isManager slice is the target — a stolen manager cookie can
+        // drain the drawer via repeated pay_outs with no approval
+        // exception since managers bypass the approval gate. Gate
+        // requires password re-entry so a stolen cookie alone can't
+        // empty the till.
+        // Sub-threshold cashier pay_outs (under $50 default) skip step-
+        // up: they're small, non-privileged, and gating them would
+        // friction every legitimate micro-payout like a soda run.
+        let stepUpFailed: { status: number; error: string } | null = null;
+        if (isManager) {
+          const { requireStepUp } = await import('@/lib/auth/step-up');
+          const stepUp = await requireStepUp({
+            actorId: actorEmployeeId,
             orgId,
-            locationId,
-            actorEmployeeId,
-            String(shift_id),
-            JSON.stringify({
-              pay_in_out_id: insertRes.rows[0].id,
-              amount: numericAmount.toFixed(2),
-              reason: String(reason),
-              note: note ? String(note) : null,
-              approval_id: approval_id ? String(approval_id) : null,
-            }),
-          ],
-        );
-        await payoutClient.query("COMMIT");
-        payoutResult = { kind: "ok", id: insertRes.rows[0].id, created_at: insertRes.rows[0].created_at };
+            actorPassword: (body as { actorPassword?: string }).actorPassword,
+            bucketKey: 'cash-payout-stepup',
+          });
+          if (!stepUp.ok) {
+            stepUpFailed = { status: stepUp.status, error: stepUp.error };
+          }
+        }
+        if (stepUpFailed) {
+          await payoutClient.query("ROLLBACK");
+          payoutResult = { kind: "error", status: stepUpFailed.status, error: stepUpFailed.error };
+        } else {
+          const insertRes = await payoutClient.query(
+            `INSERT INTO pay_in_outs (shift_id, location_id, employee_id, direction, amount, reason, note, organization_id)
+             VALUES ($1, $2, $3, 'pay_out', $4, $5, $6, $7)
+             RETURNING id, created_at`,
+            [shift_id, locationId, actorEmployeeId, numericAmount, reason, note || null, orgId],
+          );
+          // R46-H3: audit INSIDE the tx. Prior shape waited until after
+          // COMMIT via waitUntilOrAwait. On audit-write failure the
+          // cash removal committed without a standalone audit row.
+          await payoutClient.query(
+            `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+             VALUES (gen_random_uuid(), $1, $2, $3, 'shift', $4, 'pay_out', $5, now())`,
+            [
+              orgId,
+              locationId,
+              actorEmployeeId,
+              String(shift_id),
+              JSON.stringify({
+                pay_in_out_id: insertRes.rows[0].id,
+                amount: numericAmount.toFixed(2),
+                reason: String(reason),
+                note: note ? String(note) : null,
+                approval_id: approval_id ? String(approval_id) : null,
+              }),
+            ],
+          );
+          await payoutClient.query("COMMIT");
+          payoutResult = { kind: "ok", id: insertRes.rows[0].id, created_at: insertRes.rows[0].created_at };
+        }
       }
     }
   } catch (e) {

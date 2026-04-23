@@ -5,11 +5,10 @@ import { randomUUID } from '@/lib/uuid';
 import { z } from 'zod';
 import { validateBody } from '@/lib/validation/schemas';
 import { checkRateLimit } from '@/lib/auth/rate-limit';
-import { pgInsertAuditEvent, invalidateProductsCache, invalidateVariantsCache, invalidateInventoryCache as invalidateInvCachePg } from '@/lib/persistence/postgres-store';
+import { invalidateProductsCache, invalidateVariantsCache, invalidateInventoryCache as invalidateInvCachePg } from '@/lib/persistence/postgres-store';
 import { invalidateInventoryCache } from '@/lib/cache/inventory-cache';
 
 import { safeErr } from "@/lib/logging/safe-err";
-import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
 export const GET = withDualAuth("catalog.manage", async (request, ctx) => {
   const { orgId, locationId } = ctx;
   if (!locationId) {
@@ -229,6 +228,24 @@ export const POST = withAdminAuth("catalog.manage", async (request, ctx) => {
         [orgId, variantId, locationId, initial_stock, reorder_point, now],
       );
 
+      // R49: audit INSIDE the tx. barcode-lookup POST is the primary
+      // scan-to-save catalog-onboarding path; the audit row for the
+      // new product should land with the product creation, not in a
+      // post-commit best-effort write.
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'product', $5, 'product_created', $6, now())`,
+        [
+          randomUUID(), orgId, locationId, employee.id, productId,
+          JSON.stringify({
+            via: 'barcode-lookup',
+            sku,
+            barcode: barcode.slice(0, 20),
+            initial_stock,
+          }),
+        ],
+      );
+
       await client.query('COMMIT');
     } catch (e) {
       await client.query('ROLLBACK').catch(() => {});
@@ -242,12 +259,6 @@ export const POST = withAdminAuth("catalog.manage", async (request, ctx) => {
     invalidateVariantsCache(orgId);
     invalidateInvCachePg(orgId);
     invalidateInventoryCache(orgId);
-
-    await waitUntilOrAwait(pgInsertAuditEvent(
-      orgId, locationId, employee.id,
-      'product', productId, 'product_created',
-      { via: 'barcode-lookup', sku, barcode: barcode.slice(0, 20), initial_stock },
-    ).catch((err) => console.error('[barcode-lookup POST] audit failed:', safeErr(err))));
 
     return NextResponse.json({
       message: 'Product saved',

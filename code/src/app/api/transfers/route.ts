@@ -7,7 +7,6 @@ import { invalidateInventoryCache } from "@/lib/cache/inventory-cache";
 
 
 import { safeErr } from "@/lib/logging/safe-err";
-import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
 /**
  * GET /api/transfers
  *
@@ -202,6 +201,22 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
         }
       }
 
+      // R49: step-up re-auth on transfer create. A transfer drains
+      // inventory at the source location and credits it at the
+      // destination; a stolen manager cookie can move high-value stock
+      // to an off-books location before an accomplice pulls it. Step-up
+      // forces password re-entry, bounded by the step-up bucket cap.
+      const { requireStepUp } = await import('@/lib/auth/step-up');
+      const stepUp = await requireStepUp({
+        actorId: employeeId,
+        orgId,
+        actorPassword: (body as { actorPassword?: string }).actorPassword,
+        bucketKey: 'transfer-create-stepup',
+      });
+      if (!stepUp.ok) {
+        return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
+      }
+
       // R30-L1: destructure from validated `v.data`, not raw `body`.
       // Prior shape ignored the Zod schema and reached straight into
       // the request payload — any future schema tightening (.default,
@@ -308,7 +323,10 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
         }
 
         if (idempotentWinnerId) {
-          client.release();
+          // R49: `finally { client.release() }` below covers the release
+          // here — remove the duplicate. The idempotent-winner branch
+          // returned without committing, so finally runs on the
+          // already-rolled-back client; release is called exactly once.
           return NextResponse.json({ id: idempotentWinnerId, status: 'requested', _idempotent: true });
         }
 
@@ -320,6 +338,23 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
           );
         }
 
+        // R49: audit INSIDE the tx. Prior shape wrote the audit row
+        // post-commit via waitUntilOrAwait — if that failed the transfer
+        // existed with no audit event. Matches the canonical R44+
+        // audit-in-tx shape.
+        await client.query(
+          `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+           VALUES ($1, $2, $3, $4, 'transfer', $5, 'transfer_created', $6, now())`,
+          [
+            randomUUID(), orgId, sourceLocationId, employeeId, transferId,
+            JSON.stringify({
+              source: sourceLocationId,
+              destination: destinationLocationId,
+              line_count: lines.length,
+            }),
+          ],
+        );
+
         await client.query("COMMIT");
       } catch (e) {
         await client.query("ROLLBACK");
@@ -327,17 +362,6 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
       } finally {
         client.release();
       }
-
-      // Route through pgInsertAuditEvent for consistency with the rest of
-      // the codebase. orgQuery here also sets `app.current_org_id` so this
-      // wasn't a security bug, but every other audit-writing path now goes
-      // through the helper — single source of truth.
-      const { pgInsertAuditEvent } = await import("@/lib/persistence/postgres-store");
-      await waitUntilOrAwait(pgInsertAuditEvent(
-        orgId, sourceLocationId, employeeId,
-        "transfer", transferId, "transfer_created",
-        { source: sourceLocationId, destination: destinationLocationId, line_count: lines.length },
-      ).catch((err) => console.error("[transfers] audit event failed:", safeErr(err))));
 
       return NextResponse.json({ id: transferId, status: "requested" }, { status: 201 });
     }

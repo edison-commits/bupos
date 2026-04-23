@@ -1,12 +1,10 @@
 import { NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/supabase-rest';
 import { withDualAuth, withAdminAuth } from '@/lib/api/with-auth';
-import { pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
 import { validateBody, supplierCreateSchema, supplierUpdateSchema } from '@/lib/validation/schemas';
 
 
 import { safeErr } from "@/lib/logging/safe-err";
-import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
 /**
  * GET /api/suppliers - List all suppliers
  * POST /api/suppliers - Create a new supplier
@@ -59,20 +57,37 @@ export const POST = withAdminAuth('catalog.manage', async (request, ctx) => {
     if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
     const { name, contact_name, email, phone, address, notes } = v.data;
 
-    const { rows } = await orgQuery(
-      orgId,
-      `INSERT INTO suppliers (organization_id, name, contact_name, email, phone, address, notes)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING id, name, contact_name, email, phone, address, notes, is_active, created_at, updated_at`,
-      [orgId, name.trim(), contact_name || null, email || null, phone || null, address || null, notes || null],
-    );
-
-    const supplier = rows[0];
-    await waitUntilOrAwait(pgInsertAuditEvent(
-      orgId, null, ctx.employee.id,
-      "supplier", supplier.id, "supplier_created",
-      { id: supplier.id, name: supplier.name },
-    ).catch((err) => console.error("[audit] Failed to insert audit event:", safeErr(err))));
+    // R49: wrap INSERT + audit in one orgTx. Supplier records feed
+    // every purchase-order reconciliation + invoice-payment path;
+    // a missing audit row on supplier creation hides the provenance
+    // of a fraudulent-invoice vector.
+    const { orgTx } = await import("@/lib/supabase-rest");
+    const { randomUUID } = await import("@/lib/uuid");
+    const client = await orgTx(orgId);
+    let supplier: Record<string, unknown>;
+    try {
+      const { rows } = await client.query(
+        `INSERT INTO suppliers (organization_id, name, contact_name, email, phone, address, notes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, name, contact_name, email, phone, address, notes, is_active, created_at, updated_at`,
+        [orgId, name.trim(), contact_name || null, email || null, phone || null, address || null, notes || null],
+      );
+      supplier = rows[0];
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'supplier', $5, 'supplier_created', $6, now())`,
+        [
+          randomUUID(), orgId, null, ctx.employee.id, supplier.id,
+          JSON.stringify({ id: supplier.id, name: supplier.name }),
+        ],
+      );
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
 
     return NextResponse.json({ supplier }, { status: 201 });
   } catch (error) {
@@ -88,6 +103,23 @@ export const PUT = withAdminAuth('catalog.manage', async (request, ctx) => {
     const v = validateBody(supplierUpdateSchema, body);
     if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
     const { id, name, contact_name, email, phone, address, notes, is_active } = v.data;
+
+    // R49: step-up re-auth on supplier update. The supplier-contact-
+    // email swap is the classic fraudulent-invoice setup: attacker
+    // rewrites supplier.email to a look-alike address, then submits
+    // a forged invoice that the AP clerk pays against the "trusted"
+    // supplier record. Step-up forces password re-entry so a stolen
+    // cookie alone can't redirect invoice flow.
+    const { requireStepUp } = await import('@/lib/auth/step-up');
+    const stepUp = await requireStepUp({
+      actorId: ctx.employee.id,
+      orgId,
+      actorPassword: (body as { actorPassword?: string }).actorPassword,
+      bucketKey: 'supplier-update-stepup',
+    });
+    if (!stepUp.ok) {
+      return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
+    }
 
     // Dynamic SET: only update columns that were actually sent. Previously, a
     // client sending just `{ id, phone }` would wipe every other column to null
@@ -116,34 +148,55 @@ export const PUT = withAdminAuth('catalog.manage', async (request, ctx) => {
     sets.push(`updated_at = NOW()`);
     params.push(id, orgId);
 
-    const { rows } = await orgQuery(
-      orgId,
-      `UPDATE suppliers
-       SET ${sets.join(', ')}
-       WHERE id = $${idx} AND organization_id = $${idx + 1}
-       RETURNING id, name, contact_name, email, phone, address, notes, is_active, created_at, updated_at`,
-      params,
-    );
+    // R49: wrap UPDATE + audit in one orgTx. Supplier contact-email
+    // swaps are too important to leave in the post-commit audit path
+    // where a failure silently drops the evidence.
+    const { orgTx } = await import("@/lib/supabase-rest");
+    const { randomUUID } = await import("@/lib/uuid");
+    const client = await orgTx(orgId);
+    let updated: Record<string, unknown>;
+    try {
+      const { rows } = await client.query(
+        `UPDATE suppliers
+         SET ${sets.join(', ')}
+         WHERE id = $${idx} AND organization_id = $${idx + 1}
+         RETURNING id, name, contact_name, email, phone, address, notes, is_active, created_at, updated_at`,
+        params,
+      );
 
-    if (rows.length === 0) return NextResponse.json({ error: 'Supplier not found' }, { status: 404 });
+      if (rows.length === 0) {
+        await client.query("ROLLBACK");
+        return NextResponse.json({ error: 'Supplier not found' }, { status: 404 });
+      }
+      updated = rows[0];
 
-    // Audit every supplier change. POs join to suppliers for reporting and
-    // payment info; a manager silently swapping a supplier's contact email
-    // or name to point at fraudulent payment instructions could otherwise
-    // redirect invoices with no trail. Record which fields changed so
-    // investigators can reconstruct the before/after via the PG journal.
-    await waitUntilOrAwait(pgInsertAuditEvent(
-      orgId, null, ctx.employee.id,
-      "supplier", rows[0].id, "supplier_updated",
-      {
-        id: rows[0].id,
-        changed_fields: Object.entries(fieldMap)
-          .filter(([, val]) => val !== undefined)
-          .map(([col]) => col),
-      },
-    ).catch((err) => console.error("[supplier PUT] audit failed:", safeErr(err))));
+      // Audit every supplier change. POs join to suppliers for reporting and
+      // payment info; a manager silently swapping a supplier's contact email
+      // or name to point at fraudulent payment instructions could otherwise
+      // redirect invoices with no trail. Record which fields changed so
+      // investigators can reconstruct the before/after via the PG journal.
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'supplier', $5, 'supplier_updated', $6, now())`,
+        [
+          randomUUID(), orgId, null, ctx.employee.id, updated.id,
+          JSON.stringify({
+            id: updated.id,
+            changed_fields: Object.entries(fieldMap)
+              .filter(([, val]) => val !== undefined)
+              .map(([col]) => col),
+          }),
+        ],
+      );
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
 
-    return NextResponse.json({ supplier: rows[0] });
+    return NextResponse.json({ supplier: updated });
   } catch (error) {
     console.error('Suppliers PUT error:', safeErr(error));
     return NextResponse.json({ error: 'Failed to update supplier' }, { status: 500 });

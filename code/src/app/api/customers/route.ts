@@ -5,12 +5,10 @@
 import { NextResponse } from 'next/server';
 import { orgQuery } from '@/lib/supabase-rest';
 import { withAdminAuth } from '@/lib/api/with-auth';
-import { pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
 import { validateBody, customerCreateSchema, customerUpdateSchema } from '@/lib/validation/schemas';
 import { checkRateLimit } from '@/lib/auth/rate-limit';
 
 import { safeErr } from "@/lib/logging/safe-err";
-import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
 export const GET = withAdminAuth('employee.manage', async (request, ctx) => {
   const { orgId } = ctx;
 
@@ -286,20 +284,46 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
     }
     sets.push(`updated_at = NOW()`);
     vals.push(id, orgId);
-    // Explicit column list (see POST) — keeps `notes` server-side.
-    const { rows } = await orgQuery(
-      orgId,
-      `UPDATE customers SET ${sets.join(', ')} WHERE id = $${i} AND organization_id = $${i + 1}
-       RETURNING id, first_name, last_name, email, phone, address, loyalty_points, total_spend, visit_count, store_credit_balance, is_active, created_at, updated_at`,
-      vals,
-    );
-    if (rows.length === 0) return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
-    const customer = rows[0];
-    await waitUntilOrAwait(pgInsertAuditEvent(
-      orgId, null, employee.id,
-      "customer", id, "customer_updated",
-      { id, first_name: customer.first_name, last_name: customer.last_name },
-    ).catch((err) => console.error("[audit] Failed to insert audit event:", safeErr(err))));
+    // R49: wrap UPDATE + audit in one orgTx so the audit row is atomic
+    // with the mutation. Prior shape used orgQuery for the UPDATE then
+    // post-commit pgInsertAuditEvent — customer PII mutations (notes
+    // flags, is_active) ARE the kind of action that needs airtight
+    // audit evidence.
+    const { orgTx } = await import("@/lib/supabase-rest");
+    const { randomUUID } = await import("@/lib/uuid");
+    const client = await orgTx(orgId);
+    let customer: Record<string, unknown>;
+    try {
+      // Explicit column list (see POST) — keeps `notes` server-side.
+      const { rows } = await client.query(
+        `UPDATE customers SET ${sets.join(', ')} WHERE id = $${i} AND organization_id = $${i + 1}
+         RETURNING id, first_name, last_name, email, phone, address, loyalty_points, total_spend, visit_count, store_credit_balance, is_active, created_at, updated_at`,
+        vals,
+      );
+      if (rows.length === 0) {
+        await client.query("ROLLBACK");
+        return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
+      }
+      customer = rows[0];
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'customer', $5, 'customer_updated', $6, now())`,
+        [
+          randomUUID(), orgId, null, employee.id, id,
+          JSON.stringify({
+            id,
+            first_name: customer.first_name,
+            last_name: customer.last_name,
+          }),
+        ],
+      );
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
     return NextResponse.json({ customer }, { status: 200 });
   } catch (error) {
     console.error('Customers PUT error:', safeErr(error));
@@ -386,31 +410,51 @@ export const DELETE = withAdminAuth('employee.manage', async (request, ctx) => {
       }, { status: 409 });
     }
 
-    const { rows: updated } = await orgQuery(
-      orgId,
-      `UPDATE customers
-          SET first_name = '[deleted]',
-              last_name  = '',
-              email      = NULL,
-              phone      = NULL,
-              address    = NULL,
-              notes      = NULL,
-              is_active  = false,
-              loyalty_points = 0,
-              store_credit_balance = 0,
-              updated_at = NOW()
-        WHERE id = $1 AND organization_id = $2
-        RETURNING id`,
-      [id, orgId],
-    );
-    if (updated.length === 0) {
-      return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
+    // R49: wrap anonymize + audit in one orgTx. GDPR right-to-be-
+    // forgotten is the exact regulatory surface where a missing audit
+    // row is worst — investigations ("why is this customer's PII
+    // blank?") must turn up a discrete audit event pinning the actor.
+    // Prior shape ran the UPDATE via orgQuery then post-commit audit,
+    // which could lose the audit row on Worker eviction.
+    const { orgTx } = await import("@/lib/supabase-rest");
+    const { randomUUID } = await import("@/lib/uuid");
+    const client = await orgTx(orgId);
+    try {
+      const { rows: updated } = await client.query(
+        `UPDATE customers
+            SET first_name = '[deleted]',
+                last_name  = '',
+                email      = NULL,
+                phone      = NULL,
+                address    = NULL,
+                notes      = NULL,
+                is_active  = false,
+                loyalty_points = 0,
+                store_credit_balance = 0,
+                updated_at = NOW()
+          WHERE id = $1 AND organization_id = $2
+          RETURNING id`,
+        [id, orgId],
+      );
+      if (updated.length === 0) {
+        await client.query("ROLLBACK");
+        return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
+      }
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'customer', $5, 'customer_anonymized', $6, now())`,
+        [
+          randomUUID(), orgId, null, employee.id, id,
+          JSON.stringify({ id, right_to_be_forgotten: true }),
+        ],
+      );
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
     }
-    await waitUntilOrAwait(pgInsertAuditEvent(
-      orgId, null, employee.id,
-      "customer", id, "customer_anonymized",
-      { id, right_to_be_forgotten: true },
-    ).catch((err) => console.error("[audit] customer_anonymized failed:", safeErr(err))));
     return NextResponse.json({ success: true, anonymized: true });
   } catch (error) {
     console.error('Customers DELETE error:', safeErr(error));

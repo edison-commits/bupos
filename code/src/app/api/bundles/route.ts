@@ -21,10 +21,8 @@ import {
   bundleDeleteSchema,
 } from "@/lib/validation/schemas";
 import { invalidateStoreCache } from "@/lib/persistence/postgres-read-store";
-import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
 
 import { safeErr } from "@/lib/logging/safe-err";
-import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
 function slugify(s: string): string {
   return s
     .toLowerCase()
@@ -220,22 +218,27 @@ export const POST = withAdminAuth("pricing.manage", async (req, ctx) => {
         [itemIds, bundleId, itemVariantIds, itemQuantities, orgId],
       );
 
-      await client.query("COMMIT");
+      // R49: audit INSIDE the tx. Prior shape committed then called
+      // pgInsertAuditEvent with a swallow-all catch — on failure the
+      // bundle existed with no audit row for the initial price, which
+      // is the anchor later "who dropped the price?" investigations
+      // depend on.
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'bundle', $5, 'bundle_created', $6, now())`,
+        [
+          randomUUID(), orgId, null, employee.id, bundleId,
+          JSON.stringify({
+            name,
+            slug,
+            bundle_price: bundlePrice.toFixed(2),
+            compare_at_price: compareAtPrice?.toFixed(2) ?? null,
+            item_count: items.length,
+          }),
+        ],
+      );
 
-      // Audit AFTER commit — pgInsertAuditEvent swallows its own errors so
-      // it can never roll back the bundle write. Records the initial price
-      // so later audits can reason about price drift.
-      await waitUntilOrAwait(pgInsertAuditEvent(
-        orgId, null, employee.id,
-        "bundle", bundleId, "bundle_created",
-        {
-          name,
-          slug,
-          bundle_price: bundlePrice.toFixed(2),
-          compare_at_price: compareAtPrice?.toFixed(2) ?? null,
-          item_count: items.length,
-        },
-      ).catch(() => {}));
+      await client.query("COMMIT");
 
       invalidateStoreCache(orgId);
       return NextResponse.json(
@@ -364,6 +367,24 @@ export const PATCH = withAdminAuth("pricing.manage", async (req, ctx) => {
         );
       }
 
+      // R49: audit INSIDE the tx. Bundle price mutations are a common
+      // fraud vector ("who dropped the 5-piece bundle from $120 to
+      // $12?"); the audit row is the ground truth that investigations
+      // depend on. Post-commit audit drops hide the actor.
+      const changed: Record<string, unknown> = {};
+      if (name !== undefined)           changed.name = name;
+      if (description !== undefined)    changed.description = description ?? null;
+      if (imageUrl !== undefined)       changed.image_url = imageUrl ?? null;
+      if (bundlePrice !== undefined)    changed.bundle_price = bundlePrice.toFixed(2);
+      if (compareAtPrice !== undefined) changed.compare_at_price = compareAtPrice.toFixed(2);
+      if (isActive !== undefined)       changed.is_active = isActive;
+      if (items !== undefined)          changed.items_replaced = items.length;
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'bundle', $5, 'bundle_updated', $6, now())`,
+        [randomUUID(), orgId, null, employee.id, id, JSON.stringify({ changes: changed })],
+      );
+
       await client.query("COMMIT");
     } catch (e) {
       await client.query("ROLLBACK").catch(() => {});
@@ -383,22 +404,6 @@ export const PATCH = withAdminAuth("pricing.manage", async (req, ctx) => {
        WHERE bi.bundle_id = $1 ORDER BY bi.created_at ASC`,
       [id, orgId],
     );
-
-    // Audit diff — only record fields that actually changed so the audit
-    // row is self-documenting when someone asks "who dropped the price?".
-    const changed: Record<string, unknown> = {};
-    if (name !== undefined)           changed.name = name;
-    if (description !== undefined)    changed.description = description ?? null;
-    if (imageUrl !== undefined)       changed.image_url = imageUrl ?? null;
-    if (bundlePrice !== undefined)    changed.bundle_price = bundlePrice.toFixed(2);
-    if (compareAtPrice !== undefined) changed.compare_at_price = compareAtPrice.toFixed(2);
-    if (isActive !== undefined)       changed.is_active = isActive;
-    if (items !== undefined)          changed.items_replaced = items.length;
-    await waitUntilOrAwait(pgInsertAuditEvent(
-      orgId, null, employee.id,
-      "bundle", id, "bundle_updated",
-      { changes: changed },
-    ).catch(() => {}));
 
     invalidateStoreCache(orgId);
     return NextResponse.json({
@@ -420,32 +425,46 @@ export const DELETE = withAdminAuth("pricing.manage", async (req, ctx) => {
       return NextResponse.json({ error: v.error }, { status: 400 });
     }
 
-    // R27-C12: explicit organization_id filter on SELECT + DELETE.
-    // Without it, a DELETE with any foreign bundle id wiped that
-    // tenant's bundle (+ cascaded bundle_items).
-    const { rows: priorRows } = await orgQuery(
-      orgId,
-      `SELECT name, slug, bundle_price FROM product_bundles WHERE id = $1 AND organization_id = $2 LIMIT 1`,
-      [v.data.id, orgId],
-    );
-    const prior = priorRows[0] as { name: string; slug: string; bundle_price: string } | undefined;
+    // R49: wrap prior-snapshot SELECT + DELETE + audit in one orgTx.
+    // Bundle deletion cascades to bundle_items — a destructive action
+    // whose audit trail must not be lossy.
+    const client = await orgTx(orgId);
+    try {
+      // R27-C12: explicit organization_id filter on SELECT + DELETE.
+      const { rows: priorRows } = await client.query(
+        `SELECT name, slug, bundle_price FROM product_bundles WHERE id = $1 AND organization_id = $2 LIMIT 1 FOR UPDATE`,
+        [v.data.id, orgId],
+      );
+      const prior = priorRows[0] as { name: string; slug: string; bundle_price: string } | undefined;
 
-    const { rowCount } = await orgQuery(
-      orgId,
-      `DELETE FROM product_bundles WHERE id = $1 AND organization_id = $2`,
-      [v.data.id, orgId],
-    );
-    if (!rowCount) {
-      return NextResponse.json({ error: "Bundle not found" }, { status: 404 });
+      const delRes = await client.query(
+        `DELETE FROM product_bundles WHERE id = $1 AND organization_id = $2`,
+        [v.data.id, orgId],
+      );
+      if (!delRes.rowCount) {
+        await client.query("ROLLBACK");
+        return NextResponse.json({ error: "Bundle not found" }, { status: 404 });
+      }
+
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'bundle', $5, 'bundle_deleted', $6, now())`,
+        [
+          randomUUID(), orgId, null, employee.id, v.data.id,
+          JSON.stringify(
+            prior
+              ? { name: prior.name, slug: prior.slug, bundle_price: String(prior.bundle_price) }
+              : {},
+          ),
+        ],
+      );
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
     }
-
-    await waitUntilOrAwait(pgInsertAuditEvent(
-      orgId, null, employee.id,
-      "bundle", v.data.id, "bundle_deleted",
-      prior
-        ? { name: prior.name, slug: prior.slug, bundle_price: String(prior.bundle_price) }
-        : {},
-    ).catch(() => {}));
 
     invalidateStoreCache(orgId);
     return NextResponse.json({ id: v.data.id, deleted: true });

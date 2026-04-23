@@ -450,7 +450,14 @@ export const POST = withAdminAuth('employee.manage', async (request, ctx) => {
   }
 });
 
-export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
+// R49: permission realignment — `employee.manage` was a role-permission
+// mismatch. Completing a refund (the `status='completed'` transition
+// dispenses money + restocks inventory) is a refund-approval action,
+// not employee-management. The register-side return-action maps
+// returns → `approval.void_transaction` (per approvalPermissionMap in
+// approval-action.ts). The admin refund complete path should use the
+// same permission so both surfaces share one gate.
+export const PUT = withAdminAuth('approval.void_transaction', async (request, ctx) => {
   const { orgId } = ctx;
   try {
     const body = await request.json();

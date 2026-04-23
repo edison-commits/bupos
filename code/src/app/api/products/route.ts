@@ -5,13 +5,13 @@
  */
 import { orgQuery, orgTx, getPool } from '@/lib/supabase-rest';
 import { NextResponse } from 'next/server';
-import { invalidateProductsCache, invalidateVariantsCache, pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
+import { invalidateProductsCache, invalidateVariantsCache } from '@/lib/persistence/postgres-store';
 import { withDualAuth, withAdminAuth } from '@/lib/api/with-auth';
+import { randomUUID } from '@/lib/uuid';
 import { validateBody, productCreateSchema, productUpdateSchema, productDeleteSchema, productImportSchema } from '@/lib/validation/schemas';
 import { checkRateLimit } from '@/lib/auth/rate-limit';
 
 import { safeErr } from "@/lib/logging/safe-err";
-import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
 // R14-L-2: the route-level 30s in-memory response cache was removed.
 // Cross-route mutations (inventory adjust, transfer receive, PO receive,
 // bundle admin actions) never invalidated it, so admin UIs saw stale
@@ -317,13 +317,20 @@ export const POST = withAdminAuth("catalog.manage", async (request, ctx) => {
        RETURNING id, name, slug, category_id, description, image_url, is_active, is_touch_favorite`,
       [orgId, category_id || null, name, slug, description || null, image_url || null, is_active, is_touch_favorite]
     );
-    await client.query('COMMIT');
     const newProduct = result.rows[0];
-    await waitUntilOrAwait(pgInsertAuditEvent(
-      orgId, null, employee.id,
-      "product", newProduct.id, "product_created",
-      { id: newProduct.id, name: newProduct.name, slug: newProduct.slug },
-    ).catch((err) => console.error("[audit] Failed to insert audit event:", safeErr(err))));
+    // R49: audit INSIDE the tx. Prior shape committed then called
+    // pgInsertAuditEvent via waitUntilOrAwait — on failure the product
+    // existed with no audit row. Catalog mutations are the foundation
+    // of pricing-evidence chain; audit drop is unacceptable.
+    await client.query(
+      `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+       VALUES ($1, $2, $3, $4, 'product', $5, 'product_created', $6, now())`,
+      [
+        randomUUID(), orgId, null, employee.id, newProduct.id,
+        JSON.stringify({ id: newProduct.id, name: newProduct.name, slug: newProduct.slug }),
+      ],
+    );
+    await client.query('COMMIT');
     invalidateProductsCache(orgId);
     return NextResponse.json(newProduct, { status: 201 });
   } catch (error) {
@@ -434,13 +441,17 @@ export const PUT = withAdminAuth("catalog.manage", async (request, ctx) => {
         );
       }
 
-      await client.query('COMMIT');
       const updatedProduct = result.rows[0];
-      await waitUntilOrAwait(pgInsertAuditEvent(
-        orgId, null, employee.id,
-        "product", id, "product_updated",
-        { id, name: updatedProduct.name, slug: updatedProduct.slug },
-      ).catch((err) => console.error("[audit] Failed to insert audit event:", safeErr(err))));
+      // R49: audit INSIDE the tx.
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'product', $5, 'product_updated', $6, now())`,
+        [
+          randomUUID(), orgId, null, employee.id, id,
+          JSON.stringify({ id, name: updatedProduct.name, slug: updatedProduct.slug }),
+        ],
+      );
+      await client.query('COMMIT');
       invalidateProductsCache(orgId);
       return NextResponse.json(updatedProduct);
     }
@@ -516,13 +527,19 @@ export const PUT = withAdminAuth("catalog.manage", async (request, ctx) => {
         );
       }
 
-      await client.query('COMMIT');
       const updatedVariant = result.rows[0];
-      await waitUntilOrAwait(pgInsertAuditEvent(
-        orgId, null, employee.id,
-        "product_variant", updates.variant_id, "variant_updated",
-        { id: updates.variant_id, sku: updatedVariant.sku },
-      ).catch((err) => console.error("[audit] Failed to insert audit event:", safeErr(err))));
+      // R49: audit INSIDE the tx. variant_updated includes price + cost
+      // mutations (pricing.manage gate above); audit must land with the
+      // price change to support fraud-investigation price drift.
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'product_variant', $5, 'variant_updated', $6, now())`,
+        [
+          randomUUID(), orgId, null, employee.id, updates.variant_id,
+          JSON.stringify({ id: updates.variant_id, sku: updatedVariant.sku }),
+        ],
+      );
+      await client.query('COMMIT');
       invalidateProductsCache(orgId);
       invalidateVariantsCache(orgId);
       return NextResponse.json(updatedVariant);

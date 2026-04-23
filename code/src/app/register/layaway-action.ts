@@ -261,6 +261,24 @@ export async function createLayawayAction(
         );
       }
 
+      // R49: audit INSIDE the tx. Layaway creates hold inventory
+      // (decrements on_hand) AND records a deposit payment —
+      // money-moving action that should not lose its audit row on
+      // post-commit failure. Matches the canonical R44+ shape.
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'layaway', $5, 'layaway_created', $6, now())`,
+        [
+          randomUUID(), context.employee.organizationId, context.location.id, context.employee.id, layawayId,
+          JSON.stringify({
+            customer_id: cart.customerId!,
+            grand_total: totals.grandTotal.toFixed(2),
+            deposit: depositAmount.toFixed(2),
+            item_count: String(cart.items.length),
+          }),
+        ],
+      );
+
       await client.query("COMMIT");
     } catch (e) {
       // R36-DI-2: guard the ROLLBACK — an already-aborted tx or dropped
@@ -271,22 +289,6 @@ export async function createLayawayAction(
     } finally {
       client.release();
     }
-
-    // Audit event — outside transaction so audit failure doesn't rollback the layaway.
-    // Use pgInsertAuditEvent (routed through orgTx so `app.current_org_id`
-    // is set and the WITH CHECK policy on audit_events is evaluated), not a
-    // raw pool.query that bypasses RLS via BYPASSRLS. See R8-H-2 / R9-L-1.
-    const { pgInsertAuditEvent } = await import("@/lib/persistence/postgres-store");
-    await pgInsertAuditEvent(
-      context.employee.organizationId, context.location.id, context.employee.id,
-      "layaway", layawayId, "layaway_created",
-      {
-        customer_id: cart.customerId!,
-        grand_total: totals.grandTotal.toFixed(2),
-        deposit: depositAmount.toFixed(2),
-        item_count: String(cart.items.length),
-      },
-    );
 
     revalidatePath("/register");
     return { layawayId };

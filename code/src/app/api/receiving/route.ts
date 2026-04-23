@@ -1,12 +1,11 @@
 import { NextResponse } from 'next/server';
 import { orgQuery, getPool } from '@/lib/supabase-rest';
 import { withDualAuth, withAdminAuth } from '@/lib/api/with-auth';
-import { pgInsertAuditEvent } from '@/lib/persistence/postgres-store';
+import { randomUUID } from '@/lib/uuid';
 import { validateBody, receivingCreateSchema } from '@/lib/validation/schemas';
 import { invalidateInventoryCache } from "@/lib/cache/inventory-cache";
 
 import { safeErr } from "@/lib/logging/safe-err";
-import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
 /**
  * Receiving API
  *
@@ -323,13 +322,28 @@ export const POST = withAdminAuth("inventory.adjust", async (request, ctx) => {
         );
       }
 
+      // R49: audit INSIDE the receiving tx. Prior shape wrote the audit
+      // row post-commit via waitUntilOrAwait — if the post-commit write
+      // failed (Neon WebSocket blip, Worker eviction), the inventory mint
+      // committed with NO audit trail. inventory_received is how minted
+      // stock turns into sellable units; audit drop here is a fraud-
+      // evidence gap on every receiving batch.
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'inventory', $5, 'inventory_received', $6, now())`,
+        [
+          randomUUID(), orgId, locationId, employeeId, null,
+          JSON.stringify({
+            items_count: items.length,
+            mode,
+            po_id: po_id || null,
+            description: `Received ${items.length} item(s)`,
+          }),
+        ],
+      );
+
       await client.query('COMMIT');
       invalidateInventoryCache(orgId);
-      await waitUntilOrAwait(pgInsertAuditEvent(
-        orgId, null, employeeId,
-        "inventory", null, "inventory_received",
-        { items_count: items.length, mode, po_id: po_id || null, description: `Received ${items.length} item(s)` },
-      ).catch((err) => console.error("[audit] Failed to insert audit event:", safeErr(err))));
       return NextResponse.json({
         success: true,
         message: `Successfully received ${items.length} item(s)`,

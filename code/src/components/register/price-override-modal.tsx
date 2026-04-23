@@ -27,6 +27,12 @@ export function PriceOverrideModal({
 }: PriceOverrideModalProps) {
   const [price, setPrice] = useState<string>(overridePrice?.toFixed(2) ?? "");
   const [showNumpad, setShowNumpad] = useState(true);
+  // R49: double-submit guard. onConfirm triggers an approval pathway
+  // that can take several hundred ms to resolve; without this guard a
+  // rapid double-tap fires onConfirm twice, which on the server side
+  // burns two approval exception slots for one intent. Mirrors the
+  // R48-5 VoidReasonModal pattern.
+  const [submitting, setSubmitting] = useState(false);
   const priceNum = Number(price) || 0;
   const valid = priceNum > 0 && priceNum !== currentPrice;
   const isDiscount = priceNum < currentPrice;
@@ -89,10 +95,14 @@ export function PriceOverrideModal({
           </button>
           <button
             type="button"
-            disabled={!valid}
-            onClick={() => onConfirm(lineItemId, priceNum)}
+            disabled={submitting || !valid}
+            onClick={() => {
+              if (submitting) return;
+              setSubmitting(true);
+              onConfirm(lineItemId, priceNum);
+            }}
             className={`touch-button flex-1 rounded-2xl px-4 text-sm font-bold transition-colors ${
-              !valid
+              submitting || !valid
                 ? "cursor-not-allowed bg-zinc-200 text-zinc-400"
                 : "bg-zinc-900 text-white hover:bg-zinc-800"
             }`}
@@ -109,7 +119,10 @@ export function PriceOverrideModal({
         onChange={setPrice}
         onEnter={() => {
           setShowNumpad(false);
-          if (valid) onConfirm(lineItemId, priceNum);
+          if (valid && !submitting) {
+            setSubmitting(true);
+            onConfirm(lineItemId, priceNum);
+          }
         }}
         onClose={() => setShowNumpad(false)}
         label="New price"
