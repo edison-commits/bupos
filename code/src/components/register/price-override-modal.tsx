@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { VirtualNumpad } from "@/components/ui/virtual-numpad";
 import { formatCurrency } from "@/lib/format";
 
@@ -38,8 +38,17 @@ export function PriceOverrideModal({
   const isDiscount = priceNum < currentPrice;
   const diffAmount = Math.abs(priceNum - currentPrice);
 
+  // R80-FE-H2: Esc closes when not mid-submit.
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !submitting) onCancel();
+    };
+    document.addEventListener("keydown", h);
+    return () => document.removeEventListener("keydown", h);
+  }, [onCancel, submitting]);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div role="dialog" aria-modal="true" aria-label="Price override" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="w-full max-w-sm rounded-2xl bg-white shadow-2xl">
         <div className="border-b border-zinc-100 px-5 py-4">
           <h2 className="text-lg font-bold">Price Override</h2>

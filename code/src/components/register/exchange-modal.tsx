@@ -90,6 +90,18 @@ export function ExchangeModal({
   const [note, setNote] = useState("");
   const [loadingSnapshot, setLoadingSnapshot] = useState(false);
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
+  // R80-FE-M: double-submit guard on Continue button. onConfirm
+  // commits the credit stage; rapid double-tap fires twice.
+  const [continuing, setContinuing] = useState(false);
+
+  // R80-FE-H2: Esc closes when not mid-submit.
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !continuing) onCancel();
+    };
+    document.addEventListener("keydown", h);
+    return () => document.removeEventListener("keydown", h);
+  }, [onCancel, continuing]);
 
   // Use ORIGINAL transaction's effective tax rate + discount factor so
   // the exchange credit equals what the customer paid pre-tax + tax at
@@ -218,7 +230,7 @@ export function ExchangeModal({
 
   if (step === "search") {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div role="dialog" aria-modal="true" aria-label="Exchange" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
         <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl">
           <div className="border-b border-zinc-100 px-5 py-4">
             <div className="flex items-center justify-between">
@@ -286,7 +298,7 @@ export function ExchangeModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div role="dialog" aria-modal="true" aria-label="Exchange" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="flex max-h-[90vh] w-full max-w-lg flex-col rounded-2xl bg-white shadow-2xl">
         <div className="border-b border-zinc-100 px-5 py-4">
           <h2 className="text-lg font-bold">Exchange — return value</h2>
@@ -401,15 +413,18 @@ export function ExchangeModal({
           </button>
           <button
             type="button"
-            disabled={loadingSnapshot || selectedCount === 0 || returnTotal < 0 || !selectedTxn}
+            disabled={loadingSnapshot || selectedCount === 0 || returnTotal < 0 || !selectedTxn || continuing}
             onClick={() => {
               if (!selectedTxn) return;
+              // R80-FE-M: double-submit guard — flip sync + fire once.
+              if (continuing) return;
+              setContinuing(true);
               const items = returnItems.filter((i) => i.returnQuantity > 0);
               onConfirm(selectedTxn.transactionId, items, returnTotal, reason, note);
             }}
             className="touch-button flex-1 rounded-xl bg-teal-700 text-sm font-semibold text-white hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            Continue to new items
+            {continuing ? "Continuing…" : "Continue to new items"}
           </button>
         </div>
       </div>

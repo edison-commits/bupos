@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import type { PromoCode, ProductVariant, Product } from "@/lib/domain/types";
 import { formatCurrency } from "@/lib/format";
 
@@ -20,6 +20,15 @@ interface PromoCodeModalProps {
 export function PromoCodeModal({ promoCodes, variants, products, cartSubtotal, appliedPromoIds, onApply, onCancel }: PromoCodeModalProps) {
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  // R80-FE-H2: Esc closes the modal.
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+    };
+    document.addEventListener("keydown", h);
+    return () => document.removeEventListener("keydown", h);
+  }, [onCancel]);
 
   const matchedPromo = useMemo(() => {
     if (!code.trim()) return null;
@@ -118,7 +127,7 @@ export function PromoCodeModal({ promoCodes, variants, products, cartSubtotal, a
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+    <div role="dialog" aria-modal="true" aria-label="Promo code" className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl">
         <h3 className="text-lg font-bold">Apply promo code</h3>
         <p className="mt-1 text-sm text-zinc-500">Enter a coupon or promotional code.</p>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { DiscountMode, LineDiscount } from "@/lib/cart/types";
 import { VirtualNumpad } from "@/components/ui/virtual-numpad";
 import { VirtualKeyboard } from "@/components/ui/virtual-keyboard";
@@ -43,8 +43,17 @@ export function LineDiscountModal({
     : Math.min(numValue, lineSubtotal);
   const afterDiscount = Math.max(0, lineSubtotal - discountAmount);
 
+  // R80-FE-H2: Esc closes the modal when not mid-submit.
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !submitting) onCancel();
+    };
+    document.addEventListener("keydown", h);
+    return () => document.removeEventListener("keydown", h);
+  }, [onCancel, submitting]);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+    <div role="dialog" aria-modal="true" aria-label="Line discount" className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl">
         <h3 className="text-lg font-bold">Line discount</h3>
         <p className="mt-1 text-sm text-zinc-500">{productName} — {variantName}</p>

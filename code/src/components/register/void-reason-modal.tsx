@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 export type VoidTarget = "cart" | "item";
 
@@ -32,8 +32,17 @@ export function VoidReasonModal({ target, itemName, onConfirm, onCancel }: VoidR
   // second click sees disabled=true + early-returns.
   const [submitting, setSubmitting] = useState(false);
 
+  // R80-FE-H2: Esc closes when not mid-submit.
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !submitting) onCancel();
+    };
+    document.addEventListener("keydown", h);
+    return () => document.removeEventListener("keydown", h);
+  }, [onCancel, submitting]);
+
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
+    <div role="dialog" aria-modal="true" aria-label="Void reason" className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
       <div className="w-full max-w-sm rounded-2xl bg-white shadow-2xl">
         <div className="rounded-t-2xl bg-red-700 px-5 py-4 text-white">
           <h2 className="text-lg font-bold">

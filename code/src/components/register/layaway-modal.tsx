@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { CartTotals } from "@/lib/cart/types";
 import { NumpadInput } from "./numpad-input";
 import { formatCurrency } from "@/lib/format";
@@ -21,14 +21,29 @@ export function LayawayModal({ totals, customerName, onConfirm, onCancel, proces
 
   const depositNum = Number(deposit) || 0;
   const valid = depositNum >= minimumDeposit - 0.005 && depositNum <= totals.grandTotal;
+  // R80-FE-M: local submitting flag so a rapid double-tap can't
+  // slip between the parent's `processing` prop updates (the
+  // processing state round-trips via the parent handler; any
+  // rendered state gap lets a second click through).
+  const [submitting, setSubmitting] = useState(false);
 
   function handleConfirm() {
-    if (!valid) return;
+    if (!valid || submitting || processing) return;
+    setSubmitting(true);
     onConfirm(depositNum, dueDate || undefined, notes || undefined);
   }
 
+  // R80-FE-H2: Esc closes when idle.
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !processing && !submitting) onCancel();
+    };
+    document.addEventListener("keydown", h);
+    return () => document.removeEventListener("keydown", h);
+  }, [onCancel, processing, submitting]);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div role="dialog" aria-modal="true" aria-label="Create layaway" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-4">
           <div>

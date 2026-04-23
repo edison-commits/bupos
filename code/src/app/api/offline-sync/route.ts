@@ -791,6 +791,42 @@ export const POST = withDualAuth("register.open", async (request, ctx) => {
 
       // 2. Transaction record and follow-on effects only run once per synced transaction
       if (!isAlreadySynced) {
+        // R80-DB-H1 / R80-SEC-H1 (HIGH): FOR UPDATE SKIP LOCKED the
+        // open shift before writing transactions + transaction_tenders.
+        // Mirror of register/checkout-action.ts R79-DB-H1. This was
+        // the final shift-lock holdout — every other money-moving
+        // writer (checkout, return-action, /api/returns,
+        // /api/returns/process, admin/layaway-actions,
+        // register/layaway-action, payInOutAction, closeShift) now
+        // serializes with the close. Offline-sync was particularly
+        // risky because sales can be held offline and replayed in a
+        // burst around shift-close time.
+        const { rows: shiftLockRows } = await syncClient.query(
+          `SELECT id FROM shifts
+             WHERE organization_id = $1 AND location_id = $2 AND status = 'open'
+             ORDER BY opened_at DESC LIMIT 1
+             FOR UPDATE SKIP LOCKED`,
+          [orgId, locationId],
+        );
+        if (shiftLockRows.length === 0) {
+          await syncClient.query("ROLLBACK");
+          return NextResponse.json(
+            {
+              error: "No open shift at this location; ask a manager to open the next shift before syncing.",
+              retriable: true,
+            },
+            { status: 409 },
+          );
+        }
+        // Also lock the register_session (mirror checkout-action)
+        // so a session-swap can't race the tender write.
+        if (sessionId) {
+          await syncClient.query(
+            `SELECT id FROM register_sessions WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
+            [sessionId, orgId],
+          );
+        }
+
         // Deferred consume of manager approvals — now INSIDE the syncClient
         // transaction, so a rollback on any later reject path un-burns them
         // atomically. Previously the consume happened before the tx started,

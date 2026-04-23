@@ -184,7 +184,10 @@ export default function EmployeeManagement() {
       });
 
       if (!response.ok) {
-        const err = await response.json();
+        // R80-FE-M: .catch fallback so non-JSON gateway responses
+        // (CF 502 HTML) don't throw from res.json() and mask the
+        // actual HTTP status.
+        const err = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
         throw new Error(err.error || 'Failed to create employee');
       }
 
@@ -262,7 +265,8 @@ export default function EmployeeManagement() {
       });
 
       if (!response.ok) {
-        const err = await response.json();
+        // R80-FE-M: .catch fallback for non-JSON gateway responses.
+        const err = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
         throw new Error(err.error || 'Failed to update employee');
       }
 
@@ -318,7 +322,8 @@ export default function EmployeeManagement() {
       });
 
       if (!response.ok) {
-        const err = await response.json();
+        // R80-FE-M: .catch fallback for non-JSON gateway responses.
+        const err = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
         throw new Error(err.error || 'Failed to reset PIN');
       }
 

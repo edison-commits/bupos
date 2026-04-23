@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import type { Customer, TransactionEventPlaceholder, TransactionTenderPlaceholder } from "@/lib/domain/types";
 import { formatCurrency } from "@/lib/format";
 
@@ -48,6 +48,15 @@ export function CustomerSearchModal({
     setCreateError(null);
   };
 
+  // R80-FE-H2: Esc closes modal when not mid-create.
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !creating) onCancel();
+    };
+    document.addEventListener("keydown", h);
+    return () => document.removeEventListener("keydown", h);
+  }, [onCancel, creating]);
+
   // Build purchase history per customer from transaction events that mention customer_id
   const purchaseHistory = useMemo(() => {
     if (!transactionEvents || !transactionTenders) return new Map<string, { transactionId: string; date: string; total: number; tenderType: string }[]>();
@@ -87,7 +96,7 @@ export function CustomerSearchModal({
   }, [customers, query]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div role="dialog" aria-modal="true" aria-label="Customer search" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl">
         <div className="border-b border-zinc-100 px-5 py-4">
           <div className="flex items-center justify-between">

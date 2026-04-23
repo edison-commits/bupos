@@ -61,7 +61,19 @@ export function useKeyboardShortcuts(config: KeyboardShortcutActions) {
       }
 
       // Handle Escape for void cart
+      // R80-FE-H1 (regression of R79): if a modal dialog is open, its
+      // own Esc handler has already been registered (R79 added them
+      // to shift-close-modal, pay-in-out-modal, return-modal; R80
+      // sweeps the rest). Both listeners fire on the same keydown
+      // event — without this guard, a cashier pressing Esc to
+      // dismiss e.g. pay-in-out would ALSO void the cart. Check
+      // for any open [role="dialog"][aria-modal="true"] first and
+      // let the modal's own handler take priority.
       if (e.key === 'Escape') {
+        if (typeof document !== 'undefined' &&
+            document.querySelector('[role="dialog"][aria-modal="true"]')) {
+          return;
+        }
         e.preventDefault();
         onVoidCart?.();
         return;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { CheckCircle2 } from "lucide-react";
 import { NumpadInput } from "./numpad-input";
 import { formatCurrency } from "@/lib/format";
@@ -73,6 +73,9 @@ export function EODWizard({
   };
 
   const handleCloseShiftClick = async () => {
+    // R80-FE-M: sync re-entry guard so a double-tap between
+    // disabled={loading||processing} re-renders can't fire twice.
+    if (loading) return;
     setLoading(true);
     setError(null);
     try {
@@ -84,6 +87,17 @@ export function EODWizard({
       setLoading(false);
     }
   };
+
+  // R80-SEC-M: Esc closes the wizard when neither local loading nor
+  // parent processing is in flight. Matches shift-close-modal +
+  // pay-in-out-modal + return-modal R79 pattern.
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !loading && !processing) onCancel();
+    };
+    document.addEventListener("keydown", h);
+    return () => document.removeEventListener("keydown", h);
+  }, [onCancel, loading, processing]);
 
   const handleSendDailyReport = async () => {
     if (!dailyReportUrl) return;
@@ -107,7 +121,7 @@ export function EODWizard({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div role="dialog" aria-modal="true" aria-label="End of day" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl">
         {/* Header with progress bar */}
         <div className="border-b border-zinc-200 bg-gradient-to-r from-teal-600 to-teal-700 px-6 py-6 text-white">
@@ -339,7 +353,8 @@ export function EODWizard({
               <button
                 type="button"
                 onClick={onCancel}
-                className="touch-button flex-1 rounded-2xl bg-zinc-200 px-4 py-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-300"
+                disabled={loading || processing}
+                className="touch-button flex-1 rounded-2xl bg-zinc-200 px-4 py-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-300 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Cancel
               </button>
