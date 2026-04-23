@@ -75,6 +75,11 @@ export function InventoryBrowser({ categories }: { categories: Category[] }) {
 
   const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  // R76-FE-M: AbortController ref so rapid filter/sort/pageSize
+  // changes don't race — older fetches resolve after newer ones
+  // and overwrite the visible result. Mirror customer-database.tsx
+  // R34-D11 pattern.
+  const fetchAbortRef = useRef<AbortController | null>(null);
 
   // Debounce search
   useEffect(() => {
@@ -86,6 +91,10 @@ export function InventoryBrowser({ categories }: { categories: Category[] }) {
   }, [search]);
 
   const fetchInventory = useCallback(async (page: number) => {
+    // R76-FE-M: abort any prior in-flight fetch so newer queries win.
+    fetchAbortRef.current?.abort();
+    const controller = new AbortController();
+    fetchAbortRef.current = controller;
     setLoading(true);
     setError(null);
     try {
@@ -95,9 +104,11 @@ export function InventoryBrowser({ categories }: { categories: Category[] }) {
       // API uses 'stock' param, component uses 'stockStatus' — translate
       if (stockStatus !== 'all') params.set('stock', stockStatus);
 
-      const res = await fetch(`/api/inventory?${params}`);
+      const res = await fetch(`/api/inventory?${params}`, { signal: controller.signal });
+      if (controller.signal.aborted) return;
       if (!res.ok) throw new Error('Failed to fetch');
       const data = await res.json();
+      if (controller.signal.aborted) return;
 
       // API returns { products: [{ variants: [{ variant_id, quantity, ... }] }] }.
       // There is no `variant.inventory` nested object — the on-hand value is
@@ -146,10 +157,14 @@ export function InventoryBrowser({ categories }: { categories: Category[] }) {
 
       setItems(pageItems);
       setPagination({ page, pageSize, total, totalPages });
-    } catch {
+    } catch (e) {
+      // Ignore AbortError — a newer fetch superseded us.
+      if ((e as { name?: string })?.name === 'AbortError') return;
       setError('Failed to load inventory');
     } finally {
-      setLoading(false);
+      // Only the winning request clears the spinner — aborted
+      // requests leave setLoading alone (the newer one owns it).
+      if (!controller.signal.aborted) setLoading(false);
     }
   }, [debouncedSearch, categoryFilter, stockStatus, sortField, sortOrder, pageSize]);
 

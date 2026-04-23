@@ -119,15 +119,23 @@ function computeDailyStats(store: LocalStoreData, date: Date): DailyStats {
   const dayReturns = dayTransactions.filter((t) => t.payload?.is_return === 'true');
   const daySales = dayTransactions.filter((t) => t.payload?.is_return !== 'true');
 
-  const salesTotal = daySales.reduce((sum, t) => sum + parseFloat(t.payload?.grand_total || '0'), 0);
-  const salesSubtotal = daySales.reduce((sum, t) => sum + parseFloat(t.payload?.subtotal || '0'), 0);
-  const taxTotal = daySales.reduce((sum, t) => sum + parseFloat(t.payload?.tax_total || '0'), 0);
-  const returnTotal = dayReturns.reduce((sum, t) => sum + parseFloat(t.payload?.grand_total || '0'), 0);
+  // R76-FE-M: guard NaN contamination. `parseFloat(payload?.x || '0')`
+  // falls back to '0' only on null/empty-string — a corrupted payload
+  // like "$12.00" or "N/A" yields NaN, and one NaN poisons every sum
+  // via reduce. Make the parsed value safe.
+  const safeNum = (v: unknown) => {
+    const n = parseFloat(String(v ?? "0"));
+    return Number.isFinite(n) ? n : 0;
+  };
+  const salesTotal = daySales.reduce((sum, t) => sum + safeNum(t.payload?.grand_total), 0);
+  const salesSubtotal = daySales.reduce((sum, t) => sum + safeNum(t.payload?.subtotal), 0);
+  const taxTotal = daySales.reduce((sum, t) => sum + safeNum(t.payload?.tax_total), 0);
+  const returnTotal = dayReturns.reduce((sum, t) => sum + safeNum(t.payload?.grand_total), 0);
 
   const hourlyBreakdown: Record<number, number> = {};
   daySales.forEach((transaction) => {
     const hour = new Date(transaction.createdAt).getHours();
-    hourlyBreakdown[hour] = (hourlyBreakdown[hour] || 0) + parseFloat(transaction.payload?.grand_total || '0');
+    hourlyBreakdown[hour] = (hourlyBreakdown[hour] || 0) + safeNum(transaction.payload?.grand_total);
   });
 
   const tenderBreakdown: Record<string, { amount: number; count: number }> = {};
@@ -336,7 +344,7 @@ function computeDailyStats(store: LocalStoreData, date: Date): DailyStats {
 
       const spend = daySales
         .filter((t) => t.payload?.customer_id === cust.id)
-        .reduce((sum, t) => sum + parseFloat(t.payload?.grand_total || '0'), 0);
+        .reduce((sum, t) => sum + safeNum(t.payload?.grand_total), 0);
 
       if (spend > topCustomerSpend) {
         topCustomerSpend = spend;

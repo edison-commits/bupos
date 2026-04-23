@@ -54,11 +54,18 @@ export function SalesReports({ store }: { store: LocalStoreData }) {
     return grouped;
   }, [store.transactionTenderPlaceholders, transactionIds]);
 
+  // R76-FE-M: guard NaN — one corrupted payload string ("$12.00",
+  // "N/A", "null") poisons every sum via reduce/forEach-accumulate.
+  const safeNum = (v: unknown) => {
+    const n = parseFloat(String(v ?? "0"));
+    return Number.isFinite(n) ? n : 0;
+  };
+
   const salesByEmployee = useMemo(() => {
     const grouped: Record<string, { total: number; count: number }> = {};
     filteredTransactions.forEach((event) => {
       const employeeId = event.actorEmployeeId;
-      const grand_total = parseFloat(event.payload?.grand_total || "0");
+      const grand_total = safeNum(event.payload?.grand_total);
       if (!grouped[employeeId]) {
         grouped[employeeId] = { total: 0, count: 0 };
       }
@@ -73,7 +80,7 @@ export function SalesReports({ store }: { store: LocalStoreData }) {
     filteredTransactions.forEach((event) => {
       const date = new Date(event.createdAt);
       const hour = date.getHours();
-      const grand_total = parseFloat(event.payload?.grand_total || "0");
+      const grand_total = safeNum(event.payload?.grand_total);
       hourly[hour] += grand_total;
     });
     return hourly;
@@ -86,9 +93,9 @@ export function SalesReports({ store }: { store: LocalStoreData }) {
     let transactionCount = 0;
 
     filteredTransactions.forEach((event) => {
-      const grand_total = parseFloat(event.payload?.grand_total || "0");
+      const grand_total = safeNum(event.payload?.grand_total);
       const is_return = event.payload?.is_return === "true";
-      const tax_total = parseFloat(event.payload?.tax_total || "0");
+      const tax_total = safeNum(event.payload?.tax_total);
 
       if (is_return) {
         totalReturns += grand_total;

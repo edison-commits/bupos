@@ -494,6 +494,21 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
           [transferId, orgId],
         );
 
+        // R76-SEC-H1 (HIGH): aggregate per-variant BEFORE the stock
+        // check + inventory UPDATE. transfer_lines has no UNIQUE on
+        // (transfer_id, product_variant_id) and transferLineSchema
+        // does not de-dupe, so a caller can create a transfer with
+        // two lines targeting the same variant (e.g. [{A,3},{A,3}]).
+        // Prior shape:
+        //   1. SELECTed on_hand once → onHandByVariant = {A: 5}
+        //   2. Stock-check loop walked lines.rows independently —
+        //      each of [{A,3},{A,3}] compared 3 <= 5 → passed.
+        //   3. Serial UPDATE loop decremented twice: 5 - 3 = 2,
+        //      then 2 - 3 = -1. Source location went negative.
+        // Same shape as R36-H1 (checkout cart lines) and R75-H3
+        // (cancelLayawayAction restore). Fix: aggregate once before
+        // the stock check and issue a single UPDATE … FROM unnest
+        // delta-join, with GREATEST(0, ...) clamp as belt-and-braces.
         const variantIds = lines.rows.map((line) => line.product_variant_id as string);
         const { rows: lockedInventory } = await client.query(
           `SELECT product_variant_id, on_hand
@@ -509,27 +524,42 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
           lockedInventory.map((row) => [row.product_variant_id as string, Number(row.on_hand)]),
         );
 
+        const requestedByVariant = new Map<string, number>();
         for (const line of lines.rows) {
-          const available = onHandByVariant.get(line.product_variant_id as string) ?? 0;
-          const requested = Number(line.quantity_requested);
-          if (available < requested) {
+          const vid = line.product_variant_id as string;
+          const qty = Number(line.quantity_requested) || 0;
+          requestedByVariant.set(vid, (requestedByVariant.get(vid) ?? 0) + qty);
+        }
+
+        for (const [vid, totalRequested] of requestedByVariant) {
+          const available = onHandByVariant.get(vid) ?? 0;
+          if (available < totalRequested) {
             await client.query("ROLLBACK");
             return NextResponse.json(
-              { error: `Insufficient stock for variant ${line.product_variant_id}` },
+              { error: `Insufficient stock for variant ${vid} (need ${totalRequested}, have ${available})` },
               { status: 409 },
             );
           }
         }
 
-        for (const line of lines.rows) {
+        // Single UPDATE across all variants — the unnest delta-join
+        // emits one row per (variant,qty) pair and the `requestedByVariant`
+        // Map guarantees there's exactly one per variant, so the
+        // join is deterministic.
+        const aggVariantIds = [...requestedByVariant.keys()];
+        const aggQuantities = aggVariantIds.map((v) => requestedByVariant.get(v) as number);
+        await client.query(
           // R27-C9: explicit org filter so a crafted destination row
           // at a foreign tenant can never be decremented.
-          await client.query(
-            `UPDATE inventory_levels SET on_hand = on_hand - $1, updated_at = now()
-             WHERE organization_id = $4 AND product_variant_id = $2 AND location_id = $3`,
-            [line.quantity_requested, line.product_variant_id, transfer.source_location_id, orgId],
-          );
-        }
+          `UPDATE inventory_levels il
+              SET on_hand = GREATEST(0, il.on_hand - delta.qty),
+                  updated_at = now()
+             FROM (SELECT unnest($1::uuid[]) AS variant_id, unnest($2::int[]) AS qty) AS delta
+            WHERE il.organization_id = $4
+              AND il.location_id = $3
+              AND il.product_variant_id = delta.variant_id`,
+          [aggVariantIds, aggQuantities, transfer.source_location_id, orgId],
+        );
 
         // R70-L1: audit the ship inside the tx. Ship is the money-
         // moving step (source inventory drained) — prior shape
@@ -657,8 +687,15 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
         );
         for (const line of lines.rows) {
           await client.query(
+            // R76-DB-M: default reorder_point=5 (parity with
+            // /api/purchase-orders receive path). Prior shape defaulted
+            // to 0 on first-time receive at a new location, hiding the
+            // variant from reorder-suggestions / low-stock alerts until
+            // someone manually set a threshold. Note: the DO UPDATE
+            // branch below does NOT touch reorder_point, so existing
+            // rows keep their configured value.
             `INSERT INTO inventory_levels (id, organization_id, product_variant_id, location_id, on_hand, reserved, reorder_point, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, 0, 0, now(), now())
+             VALUES ($1, $2, $3, $4, $5, 0, 5, now(), now())
              ON CONFLICT (product_variant_id, location_id)
              DO UPDATE SET on_hand = inventory_levels.on_hand + $5, updated_at = now()`,
             [randomUUID(), orgId, line.product_variant_id, transfer.destination_location_id, line.qty],

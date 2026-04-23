@@ -74,7 +74,10 @@ export function MultiLocationDashboard({ store }: { store: LocalStoreData }) {
           (t) => t.transactionId === event.transactionId
         );
         if (transaction?.eventKind === 'transaction_placeholder' && transaction.payload?.grand_total) {
-          const amount = parseFloat(transaction.payload.grand_total);
+          // R76-FE-M: guard NaN. One corrupted grand_total payload
+          // poisons every location's totals via the outer sum.
+          const parsed = parseFloat(transaction.payload.grand_total);
+          const amount = Number.isFinite(parsed) ? parsed : 0;
           if (transaction.payload.is_return === 'true') {
             returnAmount += amount;
             returnCount++;

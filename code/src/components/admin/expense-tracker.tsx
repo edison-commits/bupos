@@ -74,7 +74,16 @@ export function ExpenseTracker() {
       setExpenses(data.expenses || []);
       setSummary(data.summary || []);
       setGrandTotal(data.grandTotal || 0);
-    } catch { /* */ } finally { setLoading(false); }
+    } catch (e) {
+      // R76-FE-M: surface the failure instead of swallowing. Prior
+      // shape left the user staring at an empty list with no
+      // indication anything went wrong — a 500 / network fault /
+      // auth expiry all looked the same as "no data".
+      setMessage({
+        type: 'error',
+        text: e instanceof Error ? e.message : 'Failed to load expenses.',
+      });
+    } finally { setLoading(false); }
   }, [month, catFilter]);
 
   useEffect(() => { fetchExpenses(); }, [fetchExpenses]);

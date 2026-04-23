@@ -570,6 +570,42 @@ export const PUT = withAdminAuth('approval.void_transaction', async (request, ct
         // logic in /api/returns/process:676-753.
         const refundAmount = Number(retRow.refund_amount) || 0;
         const refundMethod = retRow.refund_method || 'store_credit';
+
+        // R76-DB-H1 (HIGH): resolve `original_tender` to the dominant
+        // tender on the original sale, same as /api/returns/process
+        // R47-M4. Prior shape:
+        //   • original_tender always landed as tender_type='card'
+        //     (cash-origin sales had their refund labeled 'card' →
+        //     shift-close's `cashSales` filter on tender_type='cash'
+        //     didn't see the refund → cash left the drawer, cashier
+        //     closes over expected).
+        //   • The cross-shift pay_out block at line 610 was gated on
+        //     `refundMethod === 'cash'` (the raw value), not the
+        //     resolved value — so even if we had correctly labeled
+        //     the tender, no pay_out would fire for an original_tender
+        //     refund on a cash-origin sale.
+        let effectiveTenderType: string = refundMethod === 'cash' ? 'cash' : 'card';
+        let effectiveMethod: string = refundMethod;
+        if (refundMethod === 'original_tender') {
+          const { rows: origTenderRows } = await client.query(
+            `SELECT tt.tender_type, SUM(tt.amount)::numeric AS total
+               FROM transaction_tenders tt
+               JOIN transactions t ON t.id = tt.transaction_id AND t.organization_id = $2
+              WHERE tt.transaction_id = $1 AND tt.amount > 0
+                AND tt.tender_type NOT IN ('gift_card', 'store_credit', 'loyalty')
+              GROUP BY tt.tender_type
+              ORDER BY total DESC
+              LIMIT 1`,
+            [retRow.transaction_id, orgId],
+          );
+          const dominantTender = origTenderRows[0]?.tender_type as string | undefined;
+          if (dominantTender === 'cash') {
+            effectiveTenderType = 'cash';
+            effectiveMethod = 'cash';
+          } else {
+            effectiveTenderType = dominantTender ?? 'card';
+          }
+        }
         if (refundAmount > 0) {
           if (refundMethod === 'cash' || refundMethod === 'card' || refundMethod === 'original_tender') {
             // Negative-amount convention marks the row as a refund.
@@ -578,9 +614,9 @@ export const PUT = withAdminAuth('approval.void_transaction', async (request, ct
                VALUES (gen_random_uuid(), $1, $2, $3, $4)`,
               [
                 retRow.transaction_id,
-                refundMethod === 'cash' ? 'cash' : 'card',
+                effectiveTenderType,
                 -refundAmount,
-                JSON.stringify({ is_return: 'true', return_id: id, reason: retRow.reason || 'other' }),
+                JSON.stringify({ is_return: 'true', return_id: id, reason: retRow.reason || 'other', resolved_from: refundMethod }),
               ],
             );
             // R44-C1: conditional pay_out for cross-shift cash refunds.
@@ -607,7 +643,12 @@ export const PUT = withAdminAuth('approval.void_transaction', async (request, ct
             // original transaction is NOT on the current open shift's
             // session. In that case, shift-close counts the pay_out
             // only (no tender overlap), so no double-count.
-            if (refundMethod === 'cash') {
+            // R76-DB-H1: use `effectiveMethod` (resolved from
+            // original_tender via the dominant-tender query above),
+            // not the raw `refundMethod`. Without this, a cash-origin
+            // sale refunded via original_tender skipped the pay_out
+            // → shift-close couldn't see the outflow.
+            if (effectiveMethod === 'cash') {
               const { rows: shiftRows } = await client.query(
                 `SELECT id, register_session_id, opened_at FROM shifts
                   WHERE organization_id = $1 AND location_id = $2 AND status = 'open'
@@ -720,6 +761,20 @@ export const PUT = withAdminAuth('approval.void_transaction', async (request, ct
               `INSERT INTO store_credit_ledger (id, organization_id, customer_id, transaction_type, amount, balance_after, employee_id, transaction_id, reason, created_at)
                VALUES ($1, $2, $3, 'refund', $4, $5, $6, $7, $8, now())`,
               [randomUUID(), orgId, customer.id, refundAmount, newBalance, processed_by, retRow.transaction_id, `Return: ${retRow.reason || 'other'}`],
+            );
+          } else {
+            // R76-DB-H1: prior shape silently fell through to the
+            // inventory-restock + status='completed' UPDATE below for
+            // any refund_method that wasn't cash/card/original_tender/
+            // store_credit — gift_card / credit_card / debit_card /
+            // exchange / anything. The return row flipped to
+            // 'completed' with merchandise restocked but ZERO
+            // financial rows. Reject explicitly. Matches
+            // /api/returns/process:670 guard.
+            await client.query('ROLLBACK');
+            return NextResponse.json(
+              { error: `Unsupported refund_method: ${refundMethod}. Expected cash, card, original_tender, or store_credit.` },
+              { status: 400 },
             );
           }
 

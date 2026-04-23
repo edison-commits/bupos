@@ -153,6 +153,31 @@ export function BarcodeLookup({ categories }: { categories: Category[] }) {
       return;
     }
 
+    // R76-FE-L: validate numeric inputs BEFORE coercion fallbacks
+    // silently convert garbage to 0. A trailing dot ("$12.") or
+    // stray character yields NaN from parseFloat → `|| 0` in the
+    // POST body makes it a $0 product. Server Zod accepts 0 as
+    // valid price → free-item SKU with no visible error.
+    const parsedPrice = parseFloat(formData.price);
+    if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) {
+      setSaveMessage({ type: 'error', text: 'Price must be a positive number.' });
+      return;
+    }
+    if (formData.cost) {
+      const parsedCost = parseFloat(formData.cost);
+      if (!Number.isFinite(parsedCost) || parsedCost < 0) {
+        setSaveMessage({ type: 'error', text: 'Cost must be a non-negative number.' });
+        return;
+      }
+    }
+    if (formData.initial_stock) {
+      const parsedStock = parseInt(formData.initial_stock);
+      if (!Number.isFinite(parsedStock) || parsedStock < 0) {
+        setSaveMessage({ type: 'error', text: 'Initial stock must be a non-negative integer.' });
+        return;
+      }
+    }
+
     // R68-H4: server now requires step-up (bucketKey:'variant-
     // price-stepup') + pricing.manage. Prompt for password, bail
     // on cancel.

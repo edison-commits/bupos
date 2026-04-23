@@ -896,6 +896,18 @@ export const PATCH = withAdminAuth('employee.manage', async (request, ctx) => {
         pinClient.release();
       }
 
+      // R76-SEC-H2 (HIGH): invalidate existing sessions for the target
+      // employee. Prior shape committed the new pin_hash + audit +
+      // notification email but left every live `sessions` row
+      // untouched — the #1 reason a victim asks for a PIN reset
+      // (suspected cookie compromise) was defeated silently because
+      // the attacker's stolen cookie remained valid until natural
+      // expiry. Matches the PUT email-change / role-change path
+      // (line 596, 602) and deactivate path (line 795). Mirrors
+      // password-change / password-reset-confirm session DELETE on
+      // credential rotation.
+      await invalidateEmployeeSessions(id, orgId);
+
       // R27-M7: notify the employee whose PIN was reset. Best-effort
       // email via Resend — the target's `email` may be missing or
       // unverified in some installations; in that case we skip silently

@@ -61,6 +61,23 @@ export async function payInOutAction(input: PayInOutInput): Promise<{ success: b
   if (isPg()) {
     const client = await orgTx(context.employee.organizationId);
     try {
+      // R76-DB-H2: FOR UPDATE the shift with status='open' predicate
+      // BEFORE the INSERT so a concurrent closeShiftEnhancedAction
+      // serializes — either this pay_in/out lands before the close
+      // sees it (aggregated into expectedCash) or the close's lock
+      // makes this SELECT wait + then return 0 rows (shift already
+      // closed, reject). Prior shape let pay_in_outs land AFTER the
+      // close's aggregation but BEFORE the close's UPDATE committed,
+      // producing an invisible cash inflow / outflow.
+      const { rows: shiftLock } = await client.query(
+        `SELECT id FROM shifts WHERE id = $1 AND status = 'open' AND organization_id = $2 FOR UPDATE`,
+        [context.activeShift!.id, context.employee.organizationId],
+      );
+      if (shiftLock.length === 0) {
+        await client.query("ROLLBACK");
+        return { success: false, error: "Shift is closed or not found" };
+      }
+
       // 1. Insert pay-in/out record
       await client.query(
         `INSERT INTO pay_in_outs (id, organization_id, shift_id, location_id, employee_id, direction, amount, reason, note)
@@ -161,14 +178,38 @@ export async function closeShiftEnhancedAction(
       //    expected = opening_float + SUM(cash tenders on this shift) + SUM(pay_in) - SUM(pay_out)
       const shiftId = context.activeShift!.id;
       const orgId = context.employee.organizationId;
+
+      // R76-DB-H2 (HIGH): serialize this close against concurrent
+      // pay_in_outs writers (cash layaway deposits, cross-shift cash
+      // refunds, payInOutAction). Prior shape:
+      //   1. SELECT opening_float (no lock)
+      //   2. Aggregate transaction_tenders + pay_in_outs
+      //   3. UPDATE shifts WHERE status='open'
+      // Between (2) and (3), a concurrent pay_in commit adds to
+      // pay_in_outs that (2) never saw → expectedCash under-counts
+      // by that amount → variance looks -N → cashier appears short.
+      // Mirror /api/shift-close/route.ts:158-187: advisory lock +
+      // FOR UPDATE on both shifts and register_sessions rows
+      // BEFORE the aggregation.
+      await client.query(
+        `SELECT pg_advisory_xact_lock((('x' || substr(md5($1), 1, 16))::bit(64)::bigint))`,
+        [`shift-close:${shiftId}`],
+      );
       const { rows: sRows } = await client.query(
-        `SELECT opening_float FROM shifts WHERE id = $1 AND status = 'open' AND organization_id = $2`,
+        `SELECT opening_float FROM shifts WHERE id = $1 AND status = 'open' AND organization_id = $2 FOR UPDATE`,
         [shiftId, orgId],
       );
       if (sRows.length === 0) {
         await client.query("ROLLBACK");
         return { success: false, error: "Shift not found or already closed" };
       }
+      // Also lock the register_session so a concurrent session swap
+      // or a payInOutAction (which doesn't currently lock) serializes
+      // behind this close.
+      await client.query(
+        `SELECT id FROM register_sessions WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
+        [context.registerSession.id, orgId],
+      );
       const openingFloat = Number(sRows[0].opening_float) || 0;
 
       // Cash sales AND cash change given in one roundtrip, scoped to the

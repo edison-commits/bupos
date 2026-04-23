@@ -53,8 +53,25 @@ function openDB(): Promise<IDBDatabase> {
       _dbInstance = request.result;
       // Reset cached instance if the connection is closed externally
       _dbInstance.onclose = () => { _dbInstance = null; };
+      // R76-FE-M: if another tab opens with a bumped DB_VERSION, this
+      // `versionchange` event fires on the existing connection. Without
+      // a handler, IndexedDB's upgrade transaction in the other tab
+      // blocks indefinitely — the second POS tab hangs on boot with
+      // no signal to the user. Close our connection and null the
+      // cache so the next operation in THIS tab reopens at the new
+      // version cleanly.
+      _dbInstance.onversionchange = () => {
+        _dbInstance?.close();
+        _dbInstance = null;
+      };
       resolve(_dbInstance);
     };
+    // R76-FE-M: explicit handler for the case where our OWN upgrade is
+    // blocked by another tab holding an older connection. Without this
+    // the promise just hangs; with it we surface a recoverable error
+    // so the caller can show a "close other tabs" message.
+    request.onblocked = () =>
+      reject(new Error("IndexedDB upgrade blocked by another open tab — close other POS tabs and retry."));
     request.onerror = () => reject(request.error);
   });
 }

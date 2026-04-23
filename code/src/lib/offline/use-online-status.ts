@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 /**
  * React hook that tracks online/offline status with active server ping.
@@ -15,19 +15,41 @@ export function useOnlineStatus() {
   // real status is picked up in the useEffect below on first paint.
   const [isOnline, setIsOnline] = useState(true);
   const [lastChecked, setLastChecked] = useState<string | null>(null);
+  // R76-FE-M: AbortController ref so we can cancel an in-flight
+  // /api/health ping when the hook unmounts or a newer ping starts.
+  // Prior shape had two race vectors:
+  //   (a) component unmounted with fetch still pending → setState
+  //       on torn-down context (React 18 silently drops, but the
+  //       fetch still hits the network).
+  //   (b) `isOnline` in the effect deps list retriggered a fresh
+  //       checkConnectivity() on every flip — two pings in flight
+  //       competed, older resolved last, state flipped back.
+  const abortRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
 
   // Check actual server reachability (not just browser online flag)
   const checkConnectivity = useCallback(async () => {
+    // Abort any prior in-flight check — guarantees serial ordering
+    // so the newest result wins the state flip.
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     try {
       const res = await fetch(`/api/health?_t=${Date.now()}`, {
         method: "HEAD",
         cache: "no-store",
+        signal: controller.signal,
       });
+      if (controller.signal.aborted || !mountedRef.current) return false;
       const online = res.ok;
       setIsOnline(online);
       setLastChecked(new Date().toISOString());
       return online;
-    } catch {
+    } catch (e) {
+      // R76-FE-M: an AbortError here means a newer check superseded
+      // us — do NOT flip state to offline based on a stale abort.
+      if ((e as { name?: string })?.name === "AbortError") return false;
+      if (!mountedRef.current) return false;
       setIsOnline(false);
       setLastChecked(new Date().toISOString());
       return false;
@@ -89,6 +111,10 @@ export function useOnlineStatus() {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
       clearInterval(interval);
+      // R76-FE-M: abort any in-flight health ping so it doesn't
+      // land stale setState after unmount.
+      abortRef.current?.abort();
+      mountedRef.current = false;
     };
     // isOnline is intentionally in deps so the interval recycles
     // on state flip.

@@ -69,6 +69,13 @@ export function OfflineStatusBar() {
     setSyncing(true);
     setSyncResult(null);
 
+    // R76-FE-H1: hoist `hasDeadLetters` OUTSIDE the try block so the
+    // finally branch can honor it. R75's shape declared it inside the
+    // try and relied on `return` to skip the auto-clear — but
+    // `try { return; } finally { ... }` still runs the finally in JS,
+    // so dead-letter messages disappeared after 5s despite the fix's
+    // stated intent. This is a self-regression of R75-F.
+    let hasDeadLetters = false;
     try {
       const result = await syncPendingTransactions();
       // R43-M: guard every setState behind the mount ref. A sync can
@@ -84,15 +91,6 @@ export function OfflineStatusBar() {
       // → "A manager must re-enter this sale") into "X failed — will
       // retry", burning silent retry cycles and hiding the real signal
       // from the cashier/manager standing at the register.
-      // R75-F: track whether this sync produced dead letters so the
-      // finally block can skip the 5s auto-clear. Dead-letter messages
-      // are actionable ("A manager must re-enter this sale") — if they
-      // vanish after 5s and pendingCount still counts the dead-letter
-      // rows, the cashier sees "N queued sale(s)" with no clue why
-      // they aren't clearing. Sticky until the user explicitly acts
-      // (or until the next successful sync, which sets syncResult to
-      // null at the top of handleSync).
-      let hasDeadLetters = false;
       if (result.deadLetters.length > 0) {
         hasDeadLetters = true;
         const first = result.deadLetters[0]?.lastError;
@@ -109,26 +107,21 @@ export function OfflineStatusBar() {
         );
       }
       setPendingCount(result.remaining);
+    } catch {
+      if (mountedRef.current) setSyncResult("Sync error — will retry");
+    } finally {
       if (mountedRef.current) setSyncing(false);
       // Clear result message after 5s (R34-D16: canceled on unmount).
-      // R75-F: SKIP the auto-clear when dead letters exist — the user
-      // needs to see the actionable message until they act on it.
+      // R75-F / R76-FE-H1: SKIP the auto-clear when dead letters exist
+      // — the user needs to see the actionable message until they
+      // act on it. `hasDeadLetters` is hoisted above the try for
+      // this branch to read.
       if (!hasDeadLetters) {
         if (clearResultTimeoutRef.current) clearTimeout(clearResultTimeoutRef.current);
         clearResultTimeoutRef.current = setTimeout(() => {
           if (mountedRef.current) setSyncResult(null);
         }, 5_000);
       }
-      return;
-    } catch {
-      if (mountedRef.current) setSyncResult("Sync error — will retry");
-    } finally {
-      if (mountedRef.current) setSyncing(false);
-      // Non-dead-letter path only — dead-letter path returns early above.
-      if (clearResultTimeoutRef.current) clearTimeout(clearResultTimeoutRef.current);
-      clearResultTimeoutRef.current = setTimeout(() => {
-        if (mountedRef.current) setSyncResult(null);
-      }, 5_000);
     }
   }, [syncing]);
 

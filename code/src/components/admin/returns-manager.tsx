@@ -71,7 +71,14 @@ export function ReturnsManager() {
       if (!res.ok) throw new Error('Failed to load returns');
       const data = await res.json();
       setReturns(data.returns || []);
-    } catch { /* */ } finally { setLoading(false); }
+    } catch (e) {
+      // R76-FE-M: surface the failure instead of swallowing into
+      // an empty list.
+      setMessage({
+        type: 'error',
+        text: e instanceof Error ? e.message : 'Failed to load returns.',
+      });
+    } finally { setLoading(false); }
   }, []);
 
   useEffect(() => { fetchReturns(); }, [fetchReturns]);

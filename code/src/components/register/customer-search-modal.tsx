@@ -32,7 +32,21 @@ export function CustomerSearchModal({
   const [newEmail, setNewEmail] = useState("");
   const [newPhone, setNewPhone] = useState("");
   const [creating, setCreating] = useState(false);
+  // R76-FE-M: surface onCreateCustomer errors instead of swallowing
+  // them. Prior shape had no error state + setCreating(false) ran
+  // only on happy path, so a RBAC / step-up / duplicate-phone
+  // rejection left the button frozen at "Creating..." with no
+  // explanation for the cashier.
+  const [createError, setCreateError] = useState<string | null>(null);
   const [expandedCustomerId, setExpandedCustomerId] = useState<string | null>(null);
+  const resetNewForm = () => {
+    setShowNewForm(false);
+    setNewFirst("");
+    setNewLast("");
+    setNewEmail("");
+    setNewPhone("");
+    setCreateError(null);
+  };
 
   // Build purchase history per customer from transaction events that mention customer_id
   const purchaseHistory = useMemo(() => {
@@ -116,28 +130,47 @@ export function CustomerSearchModal({
                 <input value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="Email" type="email" className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm" />
                 <input value={newPhone} onChange={(e) => setNewPhone(e.target.value)} placeholder="Phone" type="tel" className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm" />
               </div>
+              {createError && (
+                <div role="alert" className="mt-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
+                  {createError}
+                </div>
+              )}
               <div className="mt-2 flex gap-2">
                 <button
                   type="button"
                   disabled={!newFirst.trim() || !newLast.trim() || creating}
                   onClick={async () => {
+                    // R76-FE-M: try/finally so a thrown Server
+                    // Action always clears the creating state, and
+                    // route the error into visible createError.
+                    setCreateError(null);
                     setCreating(true);
-                    const customer = await onCreateCustomer({
-                      firstName: newFirst.trim(), lastName: newLast.trim(),
-                      email: newEmail.trim() || undefined, phone: newPhone.trim() || undefined,
-                    });
-                    setCreating(false);
-                    if (customer) {
-                      setShowNewForm(false);
-                      setNewFirst(""); setNewLast(""); setNewEmail(""); setNewPhone("");
-                      onSelect(customer);
+                    try {
+                      const customer = await onCreateCustomer({
+                        firstName: newFirst.trim(), lastName: newLast.trim(),
+                        email: newEmail.trim() || undefined, phone: newPhone.trim() || undefined,
+                      });
+                      if (customer) {
+                        resetNewForm();
+                        onSelect(customer);
+                      }
+                    } catch (err) {
+                      setCreateError(
+                        err instanceof Error ? err.message : "Could not create customer",
+                      );
+                    } finally {
+                      setCreating(false);
                     }
                   }}
                   className="rounded-lg bg-teal-700 px-4 py-2 text-xs font-semibold text-white hover:bg-teal-800 disabled:opacity-50"
                 >
                   {creating ? "Creating..." : "Create & attach"}
                 </button>
-                <button type="button" onClick={() => setShowNewForm(false)} className="rounded-lg bg-zinc-200 px-4 py-2 text-xs font-semibold text-zinc-700 hover:bg-zinc-300">
+                <button
+                  type="button"
+                  onClick={resetNewForm}
+                  className="rounded-lg bg-zinc-200 px-4 py-2 text-xs font-semibold text-zinc-700 hover:bg-zinc-300"
+                >
                   Cancel
                 </button>
               </div>
