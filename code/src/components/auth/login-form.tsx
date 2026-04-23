@@ -8,10 +8,21 @@ export function LoginForm() {
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    // R44-LOW: synchronously disable the submit button to block
+    // double-submit. `setIsPending(true)` goes through React's
+    // scheduler and doesn't commit the `disabled` attribute until
+    // the next render (~16ms window), so a fast double-click can
+    // fire two concurrent POSTs, each burning a rate-limit attempt.
+    // Mutating the DOM attribute directly closes that window.
+    const form = e.currentTarget;
+    const submitBtn = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+    if (submitBtn) {
+      if (submitBtn.disabled) return;
+      submitBtn.disabled = true;
+    }
     setError(null);
     setIsPending(true);
 
-    const form = e.currentTarget;
     const formData = new FormData(form);
 
     try {
@@ -35,6 +46,8 @@ export function LoginForm() {
       setError("Network error. Please try again.");
     } finally {
       setIsPending(false);
+      // Re-enable the button for retry after error.
+      if (submitBtn) submitBtn.disabled = false;
     }
   }
 

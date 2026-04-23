@@ -156,33 +156,38 @@ describe("R28 fixes", () => {
     });
   });
 
-  describe("C6 — PIN-reset step-up rate limit is GATED", () => {
+  describe("C6 — PIN-reset step-up rate limit is GATED (now via shared requireStepUp helper)", () => {
     const src = read("src/app/api/employees/route.ts");
+    const stepUpSrc = read("src/lib/auth/step-up.ts");
 
-    it("evaluates the rate-limit result before PBKDF2", () => {
-      // Pre-fix: `rl(...)` was called inside the verify-failed branch
-      // and its return value discarded. Post-fix: the check happens
-      // BEFORE verifySecret and branches on `stepupRl.allowed`.
-      expect(src).toMatch(/const stepupRl = rl\(`pin-reset-stepup:/);
-      expect(src).toMatch(/if \(!stepupRl\.allowed\)/);
+    // R44-MED: PATCH migrated from inline rate-limit + verifySecret
+    // to the shared `requireStepUp` helper, which carries the rate-
+    // limit + KV + aggregate-cap + decoy-verify + audit emit. The
+    // original inline shape is gone; we assert the shared helper
+    // provides the same (or stronger) guarantees.
+
+    it("PATCH calls requireStepUp with employees-patch-stepup bucket (not inline)", () => {
+      expect(src).toMatch(/requireStepUp[\s\S]*?bucketKey:\s*['"]employees-patch-stepup['"]/);
+      expect(src).not.toMatch(/const stepupRl = rl\(`pin-reset-stepup:/);
     });
 
-    it("layers KV rate-limit for cross-isolate coherence", () => {
-      expect(src).toMatch(/checkKvRateLimit\([^)]*pin-reset-stepup:/);
-    });
-
-    it("does NOT discard the rate-limit result inside a verify-failed branch", () => {
-      // Find the verifySecret call for the actor password. The block
-      // handling !verifySecret must NOT contain the earlier buggy
-      // pattern `rl(\`pin-reset-stepup:...\`)` without a gate.
-      // Easier assertion: the fix moved the rate-limit BEFORE the
-      // orgQuery that fetches the actor's hash — so verify the rl
-      // call appears before the actor SELECT in the source.
-      const rlIdx = src.indexOf("const stepupRl = rl(`pin-reset-stepup:");
-      const actorSelectIdx = src.indexOf("SELECT password_hash FROM auth_credentials WHERE employee_id = $1");
+    it("shared requireStepUp evaluates rate-limit BEFORE PBKDF2", () => {
+      // In step-up.ts the mem + KV + aggregate checks all happen
+      // before orgQuery pulls the password_hash + verifySecret runs.
+      const rlIdx = stepUpSrc.indexOf("checkRateLimit");
+      const pwdQueryIdx = stepUpSrc.indexOf("SELECT password_hash FROM auth_credentials");
       expect(rlIdx).toBeGreaterThan(-1);
-      expect(actorSelectIdx).toBeGreaterThan(-1);
-      expect(rlIdx).toBeLessThan(actorSelectIdx);
+      expect(pwdQueryIdx).toBeGreaterThan(-1);
+      expect(rlIdx).toBeLessThan(pwdQueryIdx);
+    });
+
+    it("shared helper layers KV rate-limit for cross-isolate coherence", () => {
+      expect(stepUpSrc).toMatch(/checkKvRateLimit/);
+    });
+
+    it("shared helper fails closed on rate-limit exhaustion", () => {
+      // Helper must return {ok: false, status: 429} on mem or KV exhaustion.
+      expect(stepUpSrc).toMatch(/status:\s*429/);
     });
   });
 

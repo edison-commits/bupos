@@ -10,6 +10,7 @@ import { readStore } from "@/lib/persistence/store";
 import type { LocalStoreData } from "@/lib/persistence/types";
 
 import { safeErr } from "@/lib/logging/safe-err";
+import { sanitizeNotice } from "@/lib/utils/sanitize-notice";
 export const metadata: Metadata = { title: "Register | BasicUniformPOS" };
 
 /**
@@ -131,8 +132,9 @@ export default async function RegisterPage({
       }
     : undefined;
 
-  const notice = typeof params.notice === "string" ? params.notice.replaceAll("+", " ") : undefined;
-  const error = typeof params.error === "string" ? params.error.replaceAll("+", " ") : undefined;
+  // R44-FE2: sanitize URL-param content — see lib/utils/sanitize-notice.
+  const notice = sanitizeNotice(params.notice) ?? undefined;
+  const error = sanitizeNotice(params.error) ?? undefined;
 
   const orgTz = store?.organization?.timezone || "UTC";
   const { runWithTimeZone } = await import("@/lib/format");

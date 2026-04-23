@@ -609,54 +609,27 @@ export const PATCH = withAdminAuth('employee.manage', async (request, ctx) => {
     // manager cookie could otherwise silently deactivate every cashier
     // (store-wide DoS) or re-activate fired hostile employees without
     // re-presenting the actor's password.
-    if (!actorPassword) {
-      return NextResponse.json(
-        { error: 'Your password is required to manage other employees.' },
-        { status: 400 }
-      );
-    }
-    // Rate-limit the step-up check — identical shape to R28-C6's fix.
-    const { checkRateLimit: rl } = await import("@/lib/auth/rate-limit");
-    // R30-H9: tighten to match /api/auth/password-change (R28-L1) so
-    // this endpoint isn't a softer brute-force path against the same
-    // password. Prior 5/5min in-mem + 8/5min KV allowed ~13 guesses
-    // per 5 min vs password-change's 7 (3+4). Aligned now.
-    const stepupRl = rl(`pin-reset-stepup:${actor.id}`, { maxAttempts: 3, windowMs: 300_000 });
-    if (!stepupRl.allowed) {
-      return NextResponse.json(
-        { error: 'Too many step-up attempts. Try again in a few minutes.' },
-        { status: 429 }
-      );
-    }
-    try {
-      const { checkKvRateLimit } = await import("@/lib/auth/kv-rate-limit");
-      const kvRl = await checkKvRateLimit(`pin-reset-stepup:${actor.id}`, { maxAttempts: 4, windowMs: 300_000 });
-      if (!kvRl.allowed) {
-        return NextResponse.json(
-          { error: 'Too many step-up attempts. Try again in a few minutes.' },
-          { status: 429 }
-        );
-      }
-    } catch {
-      // Fail-open on KV error; in-memory bucket still caps.
-    }
-    try {
-      const { rows: actorCreds } = await orgQuery(
-        orgId,
-        `SELECT password_hash FROM auth_credentials WHERE employee_id = $1
-           AND employee_id IN (SELECT id FROM employees WHERE organization_id = $2)`,
-        [actor.id, orgId],
-      );
-      const actorHash = actorCreds[0]?.password_hash as string | undefined;
-      if (!actorHash || !(await verifySecret(actorPassword, actorHash))) {
-        return NextResponse.json(
-          { error: 'Your password is incorrect.' },
-          { status: 401 }
-        );
-      }
-    } catch (err) {
-      console.error("[employees PATCH step-up]", safeErr(err));
-      return NextResponse.json({ error: 'Step-up check failed.' }, { status: 500 });
+    //
+    // R44-MED: switch to the shared `requireStepUp` helper. Prior
+    // inline implementation drifted from the canonical shape on 3
+    // dimensions: (1) missing the aggregate `stepup-aggregate:${actorId}`
+    // KV bucket that bounds a compromised cookie's total guesses
+    // across every step-up endpoint, (2) missing the `step_up_verified`
+    // audit event that incident response uses to distinguish legit
+    // re-auth from compromised-cookie-with-phished-password, (3)
+    // missing `runDecoyVerify` on the `!actorHash` miss branch (the
+    // shared helper equalizes timing). Separate bucketKeys
+    // `employees-patch-stepup` vs the PUT's `employees-put-stepup`
+    // prevent cross-route approval reuse.
+    const { requireStepUp } = await import('@/lib/auth/step-up');
+    const stepUp = await requireStepUp({
+      actorId: actor.id,
+      orgId,
+      actorPassword,
+      bucketKey: 'employees-patch-stepup',
+    });
+    if (!stepUp.ok) {
+      return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
     }
 
     if (action === 'activate' || action === 'deactivate') {

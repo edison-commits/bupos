@@ -71,12 +71,27 @@ export const PUT = withAdminAuth('employee.manage', async (req, ctx) => {
     if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
     const { locationId, taxRate } = v.data;
 
+    // R44-H: require step-up re-auth. Tax rate is the single highest-
+    // fraud-risk admin mutation (R39-A1-2 rationale: "owner flips rate
+    // mid-day, pockets delta"). Prior shape only added AUDIT (R39)
+    // without the STEP-UP gate, so a stolen owner cookie can silently
+    // flip the rate. Gating via `tax-rate-stepup` bucket bounds an
+    // attacker to the aggregate step-up cap.
+    const { requireStepUp } = await import('@/lib/auth/step-up');
+    const stepUp = await requireStepUp({
+      actorId: employee.id,
+      orgId,
+      actorPassword: (body as { actorPassword?: string }).actorPassword,
+      bucketKey: 'tax-rate-stepup',
+    });
+    if (!stepUp.ok) {
+      return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
+    }
+
     // R27: explicit org filter on UPDATE — without it any tenant's
     // owner could change any other tenant's tax rate.
     // R39-A1-2: capture the OLD rate so the audit event records the
-    // full transition. Tax-rate change is the single highest-fraud-
-    // risk admin mutation (owner flips rate mid-day, pockets delta),
-    // and prior shape wrote NO audit event for this at all.
+    // full transition.
     const { rows: priorRows } = await orgQuery(
       orgId,
       `SELECT tax_rate FROM locations WHERE id = $1 AND organization_id = $2`,

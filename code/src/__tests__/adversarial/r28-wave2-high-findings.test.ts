@@ -49,19 +49,20 @@ describe("R28 wave-2 HIGH fixes", () => {
     });
 
     it("step-up auth is required at the top of the handler for all actions", () => {
-      // The actorPassword check + rate-limit + verifySecret used to
-      // live INSIDE the `reset_pin` branch. Post-H4 it's hoisted above
-      // the action switch so activate/deactivate get the same gate.
+      // R44-MED: migrated to shared `requireStepUp` helper (which
+      // encapsulates the rate-limit + verifySecret + audit emit).
+      // The helper call must happen BEFORE the action switch so
+      // activate/deactivate/reset_pin all share the gate.
       const actionSwitchIdx = src.indexOf("if (action === 'activate' || action === 'deactivate')");
-      const stepupRlIdx = src.indexOf("const stepupRl = rl(`pin-reset-stepup:");
+      const stepupIdx = src.indexOf("const stepUp = await requireStepUp");
       expect(actionSwitchIdx).toBeGreaterThan(-1);
-      expect(stepupRlIdx).toBeGreaterThan(-1);
-      // Rate-limit gate MUST come BEFORE the action branch.
-      expect(stepupRlIdx).toBeLessThan(actionSwitchIdx);
+      expect(stepupIdx).toBeGreaterThan(-1);
+      expect(stepupIdx).toBeLessThan(actionSwitchIdx);
     });
 
-    it("step-up rate-limit result is gated (fail-closed, mirrors R28-C6 fix)", () => {
-      expect(src).toMatch(/if \(!stepupRl\.allowed\)/);
+    it("step-up result is gated (fail-closed via shared requireStepUp)", () => {
+      expect(src).toMatch(/if \(!stepUp\.ok\)/);
+      expect(src).toMatch(/status:\s*stepUp\.status/);
     });
   });
 

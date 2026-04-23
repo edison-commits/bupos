@@ -261,11 +261,17 @@ async function resolveSession(scope: SessionRecord["scope"], cookieName: string,
       // session.employeeId came from the cookie-validated sessions row.
       // The org is RESOLVED from the employee row, not input — no
       // tenant-enumeration surface.
+      // R44-LOW: added `AND organization_id = $2` as defense-in-depth.
+      // session.organizationId is already known from the sessions row;
+      // if a future refactor admits a crafted employeeId pointing to
+      // a different tenant's employee (e.g., pg_dump-and-reload
+      // aliasing UUIDs), this filter prevents the request from
+      // executing as that tenant.
       const { rows: empRows } = await pgClient.query(
         `SELECT id, organization_id, role_key, first_name, last_name, display_name, email,
                 pin_hint, is_active, location_ids, created_at, updated_at
-         FROM employees WHERE id = $1 AND is_active = true LIMIT 1`,
-        [session.employeeId],
+         FROM employees WHERE id = $1 AND organization_id = $2 AND is_active = true LIMIT 1`,
+        [session.employeeId, session.organizationId],
       );
       const e = empRows[0] as Record<string, unknown> | undefined;
       if (!e) return null;
@@ -287,11 +293,12 @@ async function resolveSession(scope: SessionRecord["scope"], cookieName: string,
       if (scope === "register" && session.locationId) {
         // check-pool-org-filter: scoped-by-session-cookie-location-id
         // session.locationId came from the register session row.
+        // R44-LOW: `AND organization_id = $2` defense-in-depth.
         const { rows: locRows } = await pgClient.query(
           `SELECT id, organization_id, name, code, address1, city, region, postal_code, phone,
                   tax_rate, is_active, created_at, updated_at
-           FROM locations WHERE id = $1 AND is_active = true LIMIT 1`,
-          [session.locationId],
+           FROM locations WHERE id = $1 AND organization_id = $2 AND is_active = true LIMIT 1`,
+          [session.locationId, session.organizationId],
         );
         const l = locRows[0] as Record<string, unknown> | undefined;
         if (!l) return null;
@@ -1070,12 +1077,16 @@ export async function signOutRegister() {
 
   if (sessionId) {
     if (isPg()) {
-      // Single RPC on the direct DB pool (no service-role-key dependency).
-      try {
-        const pool = await pgGetPool();
-        await pool.query(`SELECT register_sign_out($1::text)`, [sessionId]);
-      } catch {
-        // RPC not provisioned locally → column-level fallback below.
+      // R44-FE1: always use the column-level path (was: try RPC first,
+      // fall back on error). The `register_sign_out` RPC from
+      // migration 040 auto-closes the open shift but emits NO
+      // `audit_events` row, so the R43-H7 audit INSERT below only ever
+      // fired on the fallback branch — which in prod (RPC provisioned)
+      // never runs. Result: every real cashier register-logout with an
+      // open shift silently auto-closed the shift with no audit
+      // trail. The column-level path is well-exercised, carries the
+      // audit emit, and costs one extra round-trip vs the RPC.
+      {
         const pool = await pgGetPool();
         const timestamp = new Date().toISOString();
 

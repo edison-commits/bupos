@@ -67,6 +67,15 @@ export function ThemeToggle() {
 
   const current = themes.find((t) => t.value === theme)!;
 
+  // R44-FE7: `suppressHydrationWarning` on the two text nodes whose
+  // values are derived from lazy-init state that reads the DOM. SSR
+  // returns 'light' unconditionally; the client's first render reads
+  // the <html> element set pre-hydration by the R35-P7 head script
+  // and may return 'dark' / 'high-contrast'. Without the suppress
+  // flag, React fires #418 hydration mismatch on every register page
+  // load for any theme other than light. The semantic effect (user
+  // sees their chosen theme label) is preserved; React just stops
+  // warning about the intentional mismatch.
   return (
     <button
       onClick={cycleTheme}
@@ -74,8 +83,8 @@ export function ThemeToggle() {
       title={`${current.label} mode — tap to switch`}
       aria-label={`Current: ${current.label} mode. Switch theme.`}
     >
-      <span className="text-xl">{current.icon}</span>
-      <span className="hidden sm:inline">{current.label}</span>
+      <span className="text-xl" suppressHydrationWarning>{current.icon}</span>
+      <span className="hidden sm:inline" suppressHydrationWarning>{current.label}</span>
     </button>
   );
 }

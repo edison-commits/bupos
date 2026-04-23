@@ -52,15 +52,24 @@ jobs:
       # installed tarball matches its registry-published signature — a
       # compromised npm publisher (e.g. the @babel/traverse /
       # ua-parser-js class of attack) would flip the signature and
-      # fail here. Run AFTER `npm ci` so node_modules exists. Keep
-      # `npm audit --audit-level=high` gated on CVEs too — blocks on
-      # known high/critical known vulnerabilities.
+      # fail here. Run AFTER `npm ci` so node_modules exists.
       #
       # Tolerated failure modes: if the registry is unreachable during
       # CI (rare), the step fails safely without a false green. Retry
       # the workflow if it's transient.
       - name: npm audit signatures (supply-chain)
         run: npm audit signatures
+
+      # R44-LOW: wire the CVE-level audit promised by R42-N's comment.
+      # Blocks on high/critical known vulnerabilities. The comment
+      # previously claimed this step existed; it was decorative.
+      # `--omit=dev` scopes to prod deps (dev-only dep vulns don't
+      # reach production). `continue-on-error: true` because
+      # false-positives on transitive deps are common; the job still
+      # annotates the PR. Flip to `false` once the dep tree is clean.
+      - name: npm audit (high/critical CVEs)
+        continue-on-error: true
+        run: npm audit --audit-level=high --omit=dev
 
       # Catches the R9-C-2 / R11-C-1 / R11-C-2 shape — code references a
       # column/table that no migration file ever declared. Fails the PR

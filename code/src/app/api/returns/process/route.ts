@@ -688,6 +688,43 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
           JSON.stringify({ is_return: 'true', reason: reason || 'other' }),
         ]
       );
+      // R44-C1: conditional pay_out for cross-shift cash refunds.
+      // See /api/returns/route.ts PUT for the full rationale. Summary:
+      // shift-close's cashSales SUM only sees transaction_tenders
+      // attached to transactions in the CURRENT shift's session. If
+      // the original sale was on a different session, the negative
+      // tender is invisible to expectedCash and the cashier closes
+      // silently over. Record a pay_out in that case.
+      if (refund_method === 'cash') {
+        const { rows: origSessRows } = await client.query(
+          `SELECT register_session_id FROM transactions
+            WHERE id = $1 AND organization_id = $2`,
+          [transaction_id, orgId],
+        );
+        const origSessionId = (origSessRows[0]?.register_session_id ?? null) as string | null;
+        const { rows: openShiftRows } = await client.query(
+          `SELECT id, register_session_id FROM shifts
+            WHERE organization_id = $1 AND location_id = $2 AND status = 'open'
+            ORDER BY opened_at DESC LIMIT 1`,
+          [orgId, restockLocationId],
+        );
+        const openShift = openShiftRows[0] as { id: string; register_session_id: string } | undefined;
+        if (openShift && (!origSessionId || origSessionId !== openShift.register_session_id)) {
+          await client.query(
+            `INSERT INTO pay_in_outs (id, organization_id, shift_id, location_id, employee_id, direction, amount, reason, note, created_at)
+             VALUES (gen_random_uuid(), $1, $2, $3, $4, 'pay_out', $5, $6, $7, now())`,
+            [
+              orgId,
+              openShift.id,
+              restockLocationId,
+              employeeId,
+              refund_amount,
+              'refund',
+              `Return ${returnNumber} (cross-shift cash refund)`,
+            ],
+          );
+        }
+      }
     } else if (refund_method === 'store_credit') {
       // Look up customer — prefer the customer_id on the original transaction
       // (set at checkout), otherwise fall back to first_name+last_name match.
@@ -848,6 +885,28 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
       await client.query('ROLLBACK TO SAVEPOINT sp_loyalty').catch(() => {});
       console.error("[returns/process] loyalty reversal failed:", safeErr(err));
     }
+
+    // R44-MED: audit the money-movement transition INSIDE the tx so
+    // the audit row lives or dies with the refund. Prior shape had no
+    // audit_events at all for this path — R43-H5 added it to the
+    // sibling `/api/returns` PUT but missed this route.
+    await client.query(
+      `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+       VALUES ($1, $2, $3, $4, 'return', $5, 'return_completed', $6, now())`,
+      [
+        randomUUID(),
+        orgId,
+        restockLocationId,
+        employeeId,
+        returnId,
+        JSON.stringify({
+          transaction_id,
+          refund_method,
+          refund_amount,
+          return_number: returnNumber,
+        }),
+      ],
+    );
 
     await client.query('COMMIT');
     return NextResponse.json({

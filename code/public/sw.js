@@ -8,7 +8,10 @@
 // SHELL_URLS list entirely and install as a pure bookkeeping step.
 // R40-7: bumped to v4 so the prior auto-skipWaiting SW is evicted
 // on the next fetch; see below.
-const CACHE_NAME = "basicuniformpos-v4";
+// R44-FE4: bumped to v5 so the activate cleanup evicts v4 caches
+// that may hold formerly-cached authenticated HTML (/settings,
+// /sales, /products — routes that slipped past the old blocklist).
+const CACHE_NAME = "basicuniformpos-v5";
 
 // R40-7: do NOT call `self.skipWaiting()` unconditionally on install.
 // A compromised-CI malicious SW update would otherwise take over the
@@ -84,21 +87,22 @@ self.addEventListener("fetch", (event) => {
   }
 
   // Navigation requests — network-first, fallback to cache.
-  // R31-M3: DO NOT cache authenticated pages. /admin/* and /register/*
-  // RSC payloads embed per-user / per-org data inline (customer lists,
-  // transaction totals, employee info). Caching them means a shared
-  // POS tablet can serve user A's rendered HTML to user B after A
-  // logs out + B logs in + network drops. Cache ONLY the public shell
-  // (/, /login, /signup) so the PWA still has offline-first UX for
-  // the entry surfaces.
+  // R31-M3 + R44-FE4: DO NOT cache authenticated pages.
+  //
+  // R44-FE4 switched from a blocklist to an ALLOWLIST. Prior shape
+  // tried to enumerate every authenticated route, but new routes like
+  // `/settings`, `/sales`, `/products` were added without updating
+  // the list — their 200 HTML ended up in the SW cache and could be
+  // served to a different user on network drop. An allowlist is
+  // inherently safe for new routes: the default is "don't cache".
+  // Public routes (the PWA shell surfaces): `/`, `/login`, `/signup`,
+  // `/forgot-password`. Everything else (known authenticated routes
+  // + any future route) is treated as authenticated.
   if (request.mode === "navigate") {
     const url = new URL(request.url);
-    const isAuthenticatedPage =
-      url.pathname.startsWith("/admin") ||
-      url.pathname.startsWith("/register") ||
-      url.pathname.startsWith("/pos") ||
-      url.pathname.startsWith("/dashboard") ||
-      url.pathname.startsWith("/customer-display");
+    const publicPaths = ["/", "/login", "/signup", "/forgot-password"];
+    const isPublicPage = publicPaths.includes(url.pathname);
+    const isAuthenticatedPage = !isPublicPage;
     event.respondWith(
       fetch(request)
         .then((response) => {

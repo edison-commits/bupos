@@ -232,7 +232,11 @@ export async function POST(req: NextRequest) {
           level: "error",
           event: "resend_api_key_missing",
           at: new Date().toISOString(),
-          token_prefix: token.slice(0, 8),
+          // R44-LOW: dropped `token_prefix` field — logging 8 chars
+          // of a secret-bearing reset token narrowed the brute-force
+          // search space for anyone with log access. The operator-
+          // useful fact (token minted without email) is captured by
+          // the event name + impact.
           impact: "password reset token minted but email NOT sent",
         }),
       );

@@ -13,9 +13,11 @@ import { safeErr } from "@/lib/logging/safe-err";
 import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
 const isPg = () => !!process.env.USE_POSTGRES;
 
-// Mirrors /api/store-credit schema caps — no single issuance > $10k to bound
-// abuse via a compromised manager. Also rate-limited per employee.
-const MAX_STORE_CREDIT_ISSUANCE = 10_000;
+// R44-FE3: cap aligned with REST mirror /api/store-credit (5k not 10k)
+// so a compromised manager cookie can't mint larger amounts via the
+// server-action path than via the REST path. Prior $10k was a loose
+// upper bound that pre-dated the REST cap tightening.
+const MAX_STORE_CREDIT_ISSUANCE = 5_000;
 
 export async function issueStoreCreditAction(formData: FormData) {
   const customerId = formData.get("customerId") as string;
@@ -30,6 +32,26 @@ export async function issueStoreCreditAction(formData: FormData) {
   }
 
   const ctx = await requireAdminPermission("approval.store_credit");
+
+  // R44-FE3: require step-up re-auth. The REST mirror
+  // `/api/store-credit/route.ts` requires `actorPassword` via
+  // `requireStepUp` — the server action was the looser path. A
+  // compromised manager cookie could previously mint up to $5k per
+  // rate-limit tick on any admin UI form that action={issueStoreCreditAction}
+  // without any password re-entry. The gate bucket matches the REST
+  // path so both share the same aggregate cap.
+  const actorPassword = String(formData.get("actorPassword") ?? "");
+  const { requireStepUp } = await import("@/lib/auth/step-up");
+  const stepUp = await requireStepUp({
+    actorId: ctx.employee.id,
+    orgId: ctx.employee.organizationId,
+    actorPassword,
+    bucketKey: "store-credit-stepup",
+  });
+  if (!stepUp.ok) {
+    throw new Error(stepUp.error);
+  }
+
   const rl = checkRateLimit(`store-credit-action:${ctx.employee.id}`);
   if (!rl.allowed) {
     throw new Error("Too many requests");

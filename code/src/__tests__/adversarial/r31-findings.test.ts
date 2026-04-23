@@ -178,13 +178,14 @@ describe("R31 findings", () => {
     });
   });
 
-  describe("R31-M3: service worker skips authenticated pages", () => {
+  describe("R31-M3: service worker skips authenticated pages (R44-FE4 shifted to allowlist)", () => {
     const src = read("public/sw.js");
-    it("isAuthenticatedPage gate excludes /admin, /register, /pos, /dashboard, /customer-display", () => {
-      expect(src).toMatch(/isAuthenticatedPage/);
-      expect(src).toMatch(/\/admin/);
-      expect(src).toMatch(/\/register/);
-      expect(src).toMatch(/\/customer-display/);
+    it("allowlist-based: only public pages (/, /login, /signup, /forgot-password) are cached", () => {
+      // R44-FE4 migrated from a blocklist (enumerate auth routes) to
+      // an allowlist (only known public routes). Safer for new routes
+      // that get added without a matching SW update.
+      expect(src).toMatch(/const publicPaths = \["\/", "\/login", "\/signup", "\/forgot-password"\]/);
+      expect(src).toMatch(/isAuthenticatedPage = !isPublicPage/);
     });
     it("offline fallback for auth pages returns bare Offline page, not cached", () => {
       expect(src).toMatch(/<h1>Offline<\/h1>/);

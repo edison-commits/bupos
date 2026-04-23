@@ -24,10 +24,22 @@
  *      fetch sidestep works in modern browsers; we call it as a
  *      best-effort so CDN-cached authenticated responses don't persist.
  *
+ * R44-FE6: idb-store is now STATICALLY imported so the loop below
+ * doesn't race a server-action redirect. Prior shape dynamically
+ * imported the module inside the helper, which required a chunk
+ * fetch; the logout form submission in parallel would cancel pending
+ * fetches when the browser navigated, aborting cleanup. Static import
+ * puts the module in the hydrated bundle so the IDB ops can start
+ * immediately, though async completion still races — the caller's
+ * fire-and-forget pattern accepts that risk for the dead-letter rows
+ * (a subsequent login re-runs this helper and mops up).
+ *
  * Best-effort: swallows every error. Logout MUST complete even if
  * localStorage is disabled, IDB is blocked, or clear-site-data isn't
  * supported.
  */
+
+import { getPendingTransactions, removePendingTransaction } from "./idb-store";
 
 export async function clearLocalRegisterState(): Promise<void> {
   try {
@@ -37,10 +49,9 @@ export async function clearLocalRegisterState(): Promise<void> {
   }
 
   // Wipe only SYNCED pending transactions — unsynced ones are money
-  // we'd lose. The idb-store module is dynamically imported because
-  // this helper runs in contexts where IndexedDB isn't guaranteed.
+  // we'd lose. R44-FE6: idb-store is now statically imported (see
+  // module-top docblock).
   try {
-    const { getPendingTransactions, removePendingTransaction } = await import("./idb-store");
     const pending = await getPendingTransactions();
     for (const txn of pending) {
       // A sync-completed entry is marked via the attempts counter being

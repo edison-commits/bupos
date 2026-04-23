@@ -156,6 +156,22 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
       }
 
       case 'location': {
+        // R44-H: require step-up re-auth when `taxRate` is in the
+        // field set. Tax rate mutation is the highest-fraud-risk
+        // admin change (R39-A1-2). Gate bucket `tax-rate-stepup`
+        // matches the sibling /api/tax-config path.
+        if ((data as { taxRate?: unknown }).taxRate !== undefined) {
+          const { requireStepUp } = await import('@/lib/auth/step-up');
+          const stepUp = await requireStepUp({
+            actorId: ctx.employee.id,
+            orgId,
+            actorPassword: (raw as { actorPassword?: string })?.actorPassword,
+            bucketKey: 'tax-rate-stepup',
+          });
+          if (!stepUp.ok) {
+            return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
+          }
+        }
         const upd = buildDynamicUpdate(
           'locations',
           { name: 'name', code: 'code', address1: 'address1', city: 'city',

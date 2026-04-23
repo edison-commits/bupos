@@ -862,6 +862,24 @@ export async function updateLocationAction(formData: FormData) {
   const taxRatePercent = Number.parseFloat(taxRateRaw);
   const taxRate = Number.isFinite(taxRatePercent) ? taxRatePercent / 100 : undefined;
 
+  // R44-H: step-up when tax rate is being changed. Server-action form
+  // submissions carry `actorPassword` in the FormData when the UI
+  // prompts via <PasswordGate>. Other fields (name/address/phone) are
+  // low-blast-radius and don't need the gate.
+  if (taxRate !== undefined) {
+    const actorPassword = String(formData.get("actorPassword") ?? "");
+    const { requireStepUp } = await import("@/lib/auth/step-up");
+    const stepUp = await requireStepUp({
+      actorId: employee.id,
+      orgId: employee.organizationId,
+      actorPassword,
+      bucketKey: "tax-rate-stepup",
+    });
+    if (!stepUp.ok) {
+      redirect(`/admin?error=${encodeURIComponent(stepUp.error)}`);
+    }
+  }
+
   if (isPg()) {
     await pgUpdateLocation(locationId, {
       name: String(formData.get("locationName") ?? "").trim() || undefined,

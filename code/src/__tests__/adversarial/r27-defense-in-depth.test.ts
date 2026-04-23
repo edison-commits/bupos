@@ -75,7 +75,11 @@ describe("R27 defense-in-depth regressions", () => {
     });
 
     it("reset_pin requires actor to re-enter their own password", () => {
-      expect(src).toMatch(/verifySecret\(actorPassword, actorHash\)/);
+      // R44-MED: inline verifySecret(actorPassword, actorHash) replaced
+      // with the shared `requireStepUp` helper (which does the same
+      // verify + decoy + audit). Assert on the shared-helper call site
+      // instead of the inline pattern.
+      expect(src).toMatch(/requireStepUp[\s\S]*?actorPassword,\s*bucketKey:\s*['"]employees-patch-stepup['"]/);
     });
 
     it("reset_pin sends notification email to the target employee", () => {

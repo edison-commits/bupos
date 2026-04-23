@@ -38,8 +38,10 @@ export async function makeLayawayPaymentAction(formData: FormData) {
     const orgId = ctx.employee.organizationId;
     const client = await orgTx(orgId);
     try {
+      // R44-MED: also select location_id here so the cash-path +
+      // audit INSERT below can reuse it without a second SELECT.
       const { rows: lay } = await client.query(
-        `SELECT id, status, balance_due FROM layaways WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
+        `SELECT id, status, balance_due, location_id FROM layaways WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
         [layawayId, orgId],
       );
       if (lay.length === 0) {
@@ -73,11 +75,16 @@ export async function makeLayawayPaymentAction(formData: FormData) {
       // can't legitimately be in a drawer; reject the payment (mirrors
       // the cash-refund pattern in return-action).
       if (tenderType === "cash") {
-        const { rows: layRows } = await client.query(
-          `SELECT location_id FROM layaways WHERE id = $1 AND organization_id = $2`,
-          [layawayId, orgId],
-        );
-        const loc = layRows[0]?.location_id as string | undefined;
+        // R44-MED (NEW-M2): `FOR UPDATE SKIP LOCKED` on the shift row
+        // so a concurrent shift-close can't flip status='closed'
+        // between the SELECT and the pay_in_outs INSERT below. Mirrors
+        // cancelLayawayAction + cash-drawer handlePayIn patterns. Also
+        // inline the `AND status = 'open'` check into the SELECT so a
+        // racing shift-close loses the row entirely (empty result
+        // rather than a post-close pay_in landing on a just-closed
+        // shift). The `layaways` FOR UPDATE earlier in the tx already
+        // pulled location_id; reuse that instead of re-SELECTing.
+        const loc = (layaway as { location_id?: string }).location_id as string | undefined;
         if (!loc) {
           await client.query("ROLLBACK");
           throw new Error("Layaway missing location");
@@ -85,7 +92,8 @@ export async function makeLayawayPaymentAction(formData: FormData) {
         const { rows: shiftRows } = await client.query(
           `SELECT id FROM shifts
             WHERE organization_id = $1 AND location_id = $2 AND status = 'open'
-            ORDER BY opened_at DESC LIMIT 1`,
+            ORDER BY opened_at DESC LIMIT 1
+            FOR UPDATE SKIP LOCKED`,
           [orgId, loc],
         );
         if (shiftRows.length === 0) {
@@ -94,10 +102,7 @@ export async function makeLayawayPaymentAction(formData: FormData) {
         }
         // R43-C2: literal must be `'pay_in'` (the CHECK constraint on
         // pay_in_outs.direction at migration 001:351 is `IN ('pay_in',
-        // 'pay_out')`). The shorter `'in'` form R42-P shipped with
-        // violated SQLSTATE 23514 and bricked every cash layaway
-        // payment. Regression test at r42-findings.test.ts encoded the
-        // broken literal too — updated alongside this fix.
+        // 'pay_out')`).
         await client.query(
           `INSERT INTO pay_in_outs (id, organization_id, shift_id, location_id, employee_id, direction, amount, reason, note, created_at)
            VALUES (gen_random_uuid(), $1, $2, $3, $4, 'pay_in', $5, $6, $7, now())`,
@@ -116,13 +121,29 @@ export async function makeLayawayPaymentAction(formData: FormData) {
          WHERE id = $4 AND organization_id = $5`,
         [amount, newBalance, newStatus, layawayId, orgId],
       );
+
+      // R44-MED (NEW-M3): audit INSIDE the tx. Prior shape wrote the
+      // audit via `waitUntilOrAwait(pgInsertAuditEvent(...))` AFTER
+      // COMMIT; if the audit write failed (DB hiccup, RLS regression,
+      // isolate freeze), money moved without an audit row. Mirror the
+      // cancelLayawayAction pattern which audits in-tx.
+      const loc = (layaway as { location_id?: string }).location_id as string | null | undefined;
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'layaway', $5, 'layaway_payment', $6, now())`,
+        [
+          randomUUID(),
+          orgId,
+          loc ?? null,
+          ctx.employee.id,
+          layawayId,
+          JSON.stringify({ payment_id: paymentId, amount, new_balance: newBalance, tender_type: tenderType }),
+        ],
+      );
       await client.query("COMMIT");
 
-      await waitUntilOrAwait(pgInsertAuditEvent(
-        orgId, null, ctx.employee.id,
-        "layaway", layawayId, "layaway_payment",
-        { payment_id: paymentId, amount, new_balance: newBalance, tender_type: tenderType },
-      ).catch((err) => console.error("[makeLayawayPaymentAction] audit failed:", safeErr(err))));
+      // R44-MED: in-tx audit above is authoritative. Post-commit
+      // mirror removed — it created a duplicate row on every call.
     } catch (e) {
       await client.query("ROLLBACK").catch(() => {});
       throw e;

@@ -31,7 +31,23 @@ export function PinLoginForm({ locationId }: { locationId: string }) {
   return (
     <div className="grid gap-4">
       <input type="hidden" name="locationId" value={locationId} />
-      {deviceId ? <input type="hidden" name="deviceId" value={deviceId} /> : null}
+      {/*
+        R44-FE5: render the hidden input UNCONDITIONALLY. Prior shape
+        (`{deviceId ? <input /> : null}`) meant the first render on
+        both SSR and the pre-effect hydration cycle omitted the input
+        entirely. A fast submission in the ~50-300ms window before
+        useEffect committed the UUID sent the form with NO deviceId
+        field, server-side session was created with device_id=NULL,
+        and subsequent requests skipped R28-H5's device-cookie
+        verification entirely — stolen REGISTER_COOKIE replay from
+        any browser. Always-render keeps the field present; value is
+        empty during the brief pre-effect window, populated by the
+        effect before any form submit the user can meaningfully
+        trigger. If somehow an empty-string submission still slips
+        through, the register-login route's client-ip rate-limit
+        contains the blast radius.
+      */}
+      <input type="hidden" name="deviceId" value={deviceId} />
       <label className="grid gap-1 text-sm font-medium text-zinc-700">
         <span>4-6 digit PIN</span>
         <input

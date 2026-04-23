@@ -356,12 +356,17 @@ export const DELETE = withAdminAuth('employee.manage', async (request, ctx) => {
     // manager to unwind first (the FK RESTRICT would fail anyway on
     // a real hard-delete attempt; we enforce at the app layer too so
     // the error message is actionable).
+    // R44-LOW: added `AND organization_id = $2` to the layaways + gift_cards
+    // subqueries so all three blocker checks share the double-filter
+    // convention. The customer_id is a globally unique UUID so cross-
+    // tenant collision is practically infeasible, but consistency is
+    // cheaper than one-off exceptions for future reviewers.
     const { rows: blockerRows } = await orgQuery(
       orgId,
       `SELECT
-         COALESCE((SELECT COUNT(*) FROM layaways WHERE customer_id = $1 AND status IN ('active', 'partially_paid')), 0)::int AS open_layaways,
+         COALESCE((SELECT COUNT(*) FROM layaways WHERE customer_id = $1 AND organization_id = $2 AND status IN ('active', 'partially_paid')), 0)::int AS open_layaways,
          COALESCE((SELECT store_credit_balance FROM customers WHERE id = $1 AND organization_id = $2), 0)::numeric AS store_credit,
-         COALESCE((SELECT SUM(balance) FROM gift_cards WHERE customer_id = $1 AND status = 'active'), 0)::numeric AS gift_cards`,
+         COALESCE((SELECT SUM(balance) FROM gift_cards WHERE customer_id = $1 AND organization_id = $2 AND status = 'active'), 0)::numeric AS gift_cards`,
       [id, orgId],
     );
     const blocker = (blockerRows[0] ?? {}) as { open_layaways: number; store_credit: string; gift_cards: string };

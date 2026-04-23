@@ -5,6 +5,7 @@ import { getAdminSession } from "@/lib/auth/session";
 import { readStore } from "@/lib/persistence/store";
 import { redirect } from "next/navigation";
 import type { Metadata } from "next";
+import { sanitizeNotice } from "@/lib/utils/sanitize-notice";
 
 export const metadata: Metadata = {
   title: "Admin Overview",
@@ -38,8 +39,9 @@ export default async function AdminPage({
   // The <TimezoneBootstrap> client component covers the client-side
   // hydration path for the remaining interactive re-renders.
   const orgTz = store?.organization?.timezone || "UTC";
-  const notice = typeof params.notice === "string" ? params.notice.replaceAll("+", " ") : undefined;
-  const error = typeof params.error === "string" ? params.error.replaceAll("+", " ") : undefined;
+  // R44-FE2: sanitize URL-param content — see lib/utils/sanitize-notice.
+  const notice = sanitizeNotice(params.notice) ?? undefined;
+  const error = sanitizeNotice(params.error) ?? undefined;
 
   // Ensure all arrays exist — RPC may omit empty collections or connection drops
   // can produce partial store data. Guard every array field.

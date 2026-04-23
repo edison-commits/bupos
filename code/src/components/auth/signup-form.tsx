@@ -60,9 +60,9 @@ export function SignupForm() {
           name="password"
           type="password"
           required
-          minLength={8}
+          minLength={12}
           autoComplete="new-password"
-          placeholder="At least 8 characters"
+          placeholder="At least 12 characters"
           className="rounded-xl border border-zinc-300 bg-white px-4 py-3 text-zinc-900 placeholder:text-zinc-400 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
         />
       </label>

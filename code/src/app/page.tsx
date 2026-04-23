@@ -2,6 +2,10 @@ import Link from "next/link";
 import { getAdminSession } from "@/lib/auth/session";
 import { redirect } from "next/navigation";
 import { LoginForm } from "@/components/auth/login-form";
+// R44-FE2: sanitize `?error=` / `?notice=` URL-param content before
+// rendering to block phishing-style content injection in app-branded
+// banners on the auth-surface home page.
+import { sanitizeNotice } from "@/lib/utils/sanitize-notice";
 
 export default async function HomePage({
   searchParams,
@@ -16,8 +20,8 @@ export default async function HomePage({
     redirect("/admin");
   }
 
-  const error = typeof params.error === "string" ? params.error.replaceAll("+", " ") : undefined;
-  const notice = typeof params.notice === "string" ? params.notice.replaceAll("+", " ") : undefined;
+  const error = sanitizeNotice(params.error) ?? undefined;
+  const notice = sanitizeNotice(params.notice) ?? undefined;
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center px-4" style={{ background: "var(--surface-app)" }}>

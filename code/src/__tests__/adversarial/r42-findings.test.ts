@@ -35,16 +35,19 @@ describe("R42 audit fixes", () => {
       // Lock acquired inside PUT before the dispensation logic runs.
       expect(src).toMatch(/pg_advisory_xact_lock[\s\S]*?return:\$\{[\s\S]*?transaction_id/);
     });
-    it("PUT dispenses cash via negative tender (no pay_out — shift-close aggregates negative cash tenders already)", () => {
+    it("PUT dispenses cash via negative tender (+ conditional pay_out for cross-shift)", () => {
       // R43-C1: the pay_out INSERT was wrong (literal 'out' violated
       // CHECK constraint, AND double-counted with shift-close's
       // cashSales SUM which already includes negative tender rows).
-      // Only the negative tender row is written; shift-close correctly
-      // sees the outflow via `SUM(amount) WHERE tender_type='cash'`.
+      // Only the negative tender row is written for SAME-shift refunds.
+      // R44-C1: re-added a CONDITIONAL pay_out when the original sale
+      // is in a different register session (cross-shift refund) —
+      // shift-close's cashSales aggregate doesn't see those negative
+      // tenders, so a pay_out row is required to reflect the outflow.
       expect(src).toMatch(/transaction_tenders[\s\S]*?-refundAmount/);
-      // Must NOT write a pay_in_outs row from the refund path.
-      const putSection = src.slice(src.indexOf("export const PUT"));
-      expect(putSection).not.toMatch(/INSERT INTO pay_in_outs/);
+      // The PUT section DOES have an INSERT INTO pay_in_outs now,
+      // gated by the cross-shift check.
+      expect(src).toMatch(/isCrossShift[\s\S]*?INSERT INTO pay_in_outs/);
     });
     it("PUT dispenses store_credit via ledger + balance UPDATE", () => {
       expect(src).toMatch(/store_credit_ledger[\s\S]*?'refund'/);

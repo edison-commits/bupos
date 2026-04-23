@@ -555,22 +555,33 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
                 JSON.stringify({ is_return: 'true', return_id: id, reason: retRow.reason || 'other' }),
               ],
             );
-            // R43-C1: NO pay_in_outs row for cash refunds. shift-close's
-            // `cashSales` SUMs transaction_tenders.amount WHERE
-            // tender_type='cash' (positive + negative rows together), so
-            // the negative tender row INSERTed above already reduces
-            // expectedCash by `refundAmount`. Adding a `pay_out` record
-            // would double-count (both the tender sum AND payOuts would
-            // subtract). Matches /api/returns/process:676-687 which also
-            // uses only the negative tender row.
+            // R44-C1: conditional pay_out for cross-shift cash refunds.
             //
-            // However, we still require an open shift at the return's
-            // location for cash refunds: physical cash can't leave a
-            // closed drawer. Previously this check gated the pay_out
-            // INSERT; now it gates the refund itself.
+            // R43-C1 removed the pay_out row on the rationale that
+            // shift-close's `cashSales = SUM(amount) WHERE tender_type
+            // ='cash'` already includes negative tender rows. That's
+            // true — but ONLY when the negative tender's transaction
+            // is in the CURRENT shift's txn set. shift-close scopes
+            // `allShiftTxnIds` via `JOIN shifts s ON t.register_session_id
+            // = s.register_session_id WHERE s.id = $shiftId`. Our
+            // negative tender is attached to `retRow.transaction_id`
+            // — the ORIGINAL sale, whose `register_session_id` is the
+            // SALE's session (potentially a different / older session).
+            //
+            // If the original sale and the refund happen in the SAME
+            // shift session: negative tender aggregates into cashSales
+            // → expectedCash reduces correctly → no pay_out needed.
+            // If DIFFERENT sessions (yesterday's sale refunded today,
+            // or on a different register): shift-close filters the
+            // negative tender out → expectedCash is unaware of the
+            // outflow → cashier closes $N over → silent reconciliation
+            // gap. The fix is a conditional pay_out row: only when the
+            // original transaction is NOT on the current open shift's
+            // session. In that case, shift-close counts the pay_out
+            // only (no tender overlap), so no double-count.
             if (refundMethod === 'cash') {
               const { rows: shiftRows } = await client.query(
-                `SELECT id FROM shifts
+                `SELECT id, register_session_id FROM shifts
                   WHERE organization_id = $1 AND location_id = $2 AND status = 'open'
                   ORDER BY opened_at DESC LIMIT 1`,
                 [orgId, retRow.location_id],
@@ -580,6 +591,35 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
                 return NextResponse.json(
                   { error: 'Cash refund requires an open shift at the return location.' },
                   { status: 409 },
+                );
+              }
+              const openShift = shiftRows[0] as { id: string; register_session_id: string };
+              // Look up the ORIGINAL sale's register_session_id to
+              // determine same-shift vs cross-shift.
+              const { rows: origTxnRows } = await client.query(
+                `SELECT register_session_id FROM transactions
+                  WHERE id = $1 AND organization_id = $2`,
+                [retRow.transaction_id, orgId],
+              );
+              const origSessionId = (origTxnRows[0]?.register_session_id ?? null) as string | null;
+              const isCrossShift = !origSessionId || origSessionId !== openShift.register_session_id;
+              if (isCrossShift) {
+                // Cross-shift: shift-close's cashSales aggregate won't
+                // see the negative tender; record the outflow via
+                // pay_in_outs so expectedCash reflects the physical
+                // cash leaving the drawer.
+                await client.query(
+                  `INSERT INTO pay_in_outs (id, organization_id, shift_id, location_id, employee_id, direction, amount, reason, note, created_at)
+                   VALUES (gen_random_uuid(), $1, $2, $3, $4, 'pay_out', $5, $6, $7, now())`,
+                  [
+                    orgId,
+                    openShift.id,
+                    retRow.location_id,
+                    processed_by,
+                    refundAmount,
+                    'refund',
+                    `Return ${id} (cross-shift cash refund)`,
+                  ],
                 );
               }
             }

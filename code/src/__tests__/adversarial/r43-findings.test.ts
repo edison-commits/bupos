@@ -42,11 +42,15 @@ const read = (rel: string) => fs.readFileSync(path.join(REPO, rel), "utf8");
 const readRoot = (rel: string) => fs.readFileSync(path.resolve(REPO, "..", rel), "utf8");
 
 describe("R43 audit fixes", () => {
-  describe("R43-C1: /api/returns PUT cash refund doesn't write pay_in_outs", () => {
+  describe("R43-C1: /api/returns PUT cash refund uses negative tender (R44-C1 adds conditional cross-shift pay_out)", () => {
     const src = read("src/app/api/returns/route.ts");
-    it("PUT section does NOT contain an INSERT INTO pay_in_outs", () => {
-      const putSection = src.slice(src.indexOf("export const PUT"));
-      expect(putSection).not.toMatch(/INSERT INTO pay_in_outs/);
+    // R44-C1 re-added a CONDITIONAL pay_out row when the original sale
+    // is in a different register session (cross-shift refund). So the
+    // invariant R43-C1 asserted ("no pay_in_outs ever") doesn't hold
+    // anymore — but the SPIRIT (no pay_in_outs for SAME-shift refunds)
+    // does: the INSERT is gated by the isCrossShift predicate.
+    it("PUT has a CONDITIONAL INSERT INTO pay_in_outs gated by cross-shift check", () => {
+      expect(src).toMatch(/isCrossShift[\s\S]*?INSERT INTO pay_in_outs/);
     });
     it("PUT still writes a negative tender on cash refund", () => {
       const putSection = src.slice(src.indexOf("export const PUT"));

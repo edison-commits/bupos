@@ -203,13 +203,18 @@ describe("R30 findings", () => {
     });
   });
 
-  describe("H9 employees step-up RL alignment", () => {
-    const src = read("src/app/api/employees/route.ts");
-    it("in-mem cap 3/5min", () => {
-      expect(src).toMatch(/pin-reset-stepup.*maxAttempts: 3, windowMs: 300_000/);
+  describe("H9 employees step-up RL alignment (now via shared requireStepUp)", () => {
+    // R44-MED: the inline `pin-reset-stepup` rate-limit was replaced
+    // by the shared `requireStepUp` helper (src/lib/auth/step-up.ts),
+    // which carries its own 3/5min mem + 4/5min KV caps plus an
+    // aggregate per-actor cap. H9's alignment goal (match password-
+    // change) is preserved by the shared helper's caps.
+    const stepUpSrc = read("src/lib/auth/step-up.ts");
+    it("shared requireStepUp helper enforces 3/5min in-mem cap", () => {
+      expect(stepUpSrc).toMatch(/maxAttempts:\s*3,\s*windowMs:\s*300_000/);
     });
-    it("KV cap 4/5min", () => {
-      expect(src).toMatch(/pin-reset-stepup.*maxAttempts: 4, windowMs: 300_000/);
+    it("shared requireStepUp helper enforces 4/5min KV cap", () => {
+      expect(stepUpSrc).toMatch(/maxAttempts:\s*4,\s*windowMs:\s*300_000/);
     });
   });
 
