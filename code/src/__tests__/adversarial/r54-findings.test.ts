@@ -126,22 +126,26 @@ describe("R54 audit fixes — round 10", () => {
   describe("R54-AdminActions: mutation + audit collapsed into one orgTx", () => {
     const src = read("src/app/admin/actions.ts");
     it("editVariantAction runs SELECT FOR UPDATE + step-up + UPDATE + audit in one orgTx", () => {
-      // Find editVariantAction block.
+      // R56-B1: refactored so the snapshot + step-up run OUTSIDE the
+      // tx, and the tx re-locks with SELECT FOR UPDATE + TOCTOU
+      // guard + UPDATE + audit. The block grew so the regex windows
+      // had to grow. The INSERT-before-COMMIT pattern still holds.
       const idx = src.indexOf("export async function editVariantAction");
       expect(idx).toBeGreaterThan(-1);
-      const block = src.slice(idx, idx + 6000);
+      const block = src.slice(idx, idx + 10000);
       expect(block).toMatch(/await orgTx\(orgId\)/);
       expect(block).toMatch(/SELECT price, cost FROM product_variants[\s\S]{0,300}FOR UPDATE/);
       expect(block).toMatch(/bucketKey:\s*['"]variant-price-stepup['"]/);
-      expect(block).toMatch(/INSERT INTO audit_events[\s\S]{0,500}COMMIT/);
+      expect(block).toMatch(/INSERT INTO audit_events[\s\S]{0,800}COMMIT/);
     });
     it("updateLocationAction runs prior-SELECT + tax-stepup + UPDATE + audit in one orgTx", () => {
+      // R56-B2: same snapshot-then-tx refactor as editVariantAction.
       const idx = src.indexOf("export async function updateLocationAction");
       expect(idx).toBeGreaterThan(-1);
-      const block = src.slice(idx, idx + 6000);
+      const block = src.slice(idx, idx + 10000);
       expect(block).toMatch(/await orgTx\(/);
       expect(block).toMatch(/bucketKey:\s*['"]tax-rate-stepup['"]/);
-      expect(block).toMatch(/INSERT INTO audit_events[\s\S]{0,500}COMMIT/);
+      expect(block).toMatch(/INSERT INTO audit_events[\s\S]{0,800}COMMIT/);
     });
     it("several other server actions drop the two-tx drift pattern", () => {
       // Spot-check: createCategoryAction should call orgTx (not pgCreateCategory).

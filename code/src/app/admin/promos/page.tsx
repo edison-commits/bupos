@@ -179,17 +179,21 @@ export default function AdminPromosPage() {
     const startsAt = form.startsAt ? new Date(form.startsAt).toISOString() : new Date().toISOString();
     const expiresAt = form.expiresAt ? new Date(form.expiresAt).toISOString() : undefined;
 
-    // R53: step-up re-auth for high-risk promos. Server gates create on
-    // bucketKey:'promo-code-create-stepup' for promos that either
-    //   (a) carry a >= $50 fixed discount (big one-shot liability), or
-    //   (b) are unbounded in redemptions (maxRedemptions = 0 / blank
-    //       / the 10_000_000 sentinel) — one stolen code could be
-    //       redeemed indefinitely.
-    // Low-risk promos (percent-off, BOGO, capped small fixed) skip
-    // the prompt so legitimate promo authoring stays quick.
-    const isUnbounded = maxRedemptions === 0;
+    // R53 / R56-C: step-up re-auth for high-risk promos. Mirrors
+    // the server's isHighRiskPromo predicate exactly so the client
+    // prompts on every shape the server will gate.
+    //   (a) percent-off >= 50% (high one-shot liability)
+    //   (b) fixed-off >= $50 (R56-C: this was missing before)
+    //   (c) unbounded redemptions (maxRedemptions = 0 / blank /
+    //       sentinel >= 1_000_000)
+    const maxAfterTransform = maxRedemptions === 0 ? 10_000_000 : maxRedemptions;
+    const isUnbounded =
+      maxAfterTransform === undefined ||
+      maxAfterTransform === null ||
+      maxAfterTransform >= 1_000_000;
     const isHighValueFixed = form.type === "fixed" && value >= 50;
-    const isHighRisk = isUnbounded || isHighValueFixed;
+    const isHighPercent = form.type === "percent" && value >= 50;
+    const isHighRisk = isUnbounded || isHighValueFixed || isHighPercent;
     let actorPassword: string | undefined;
     if (isHighRisk) {
       const reason = isUnbounded

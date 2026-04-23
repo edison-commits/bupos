@@ -146,7 +146,12 @@ describe("R28 MEDIUM+LOW cleanup", () => {
       expect(src).toMatch(/revokeSchema = z\.object\(\{\s*currentPassword/);
     });
     it("verifies via verifySecret + decoy on miss", () => {
-      expect(src).toMatch(/verifySecret\(currentPassword, currentHash\)/);
+      // R56-B4 renamed the local hash variable when the verify call
+      // was moved outside the tx (so the credential check doesn't
+      // hold a row lock during PBKDF2). The mechanism — verifySecret
+      // with timing-parity decoy on miss — is unchanged; accept the
+      // snapshot-named variant.
+      expect(src).toMatch(/verifySecret\(currentPassword,\s*(?:currentHash|snapHash)\)/);
       expect(src).toMatch(/runDecoyVerify\(currentPassword\)/);
     });
   });

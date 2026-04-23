@@ -117,7 +117,10 @@ describe("R52 audit fixes", () => {
   describe("R52-G: updateLocationAction server snapshot-compares prior taxRate", () => {
     const src = read("src/app/admin/actions.ts");
     it("gate fires only when the new taxRate differs from DB prior with epsilon", () => {
-      expect(src).toMatch(/Math\.abs\(priorTax - taxRate\) > 0\.00005/);
+      // R56-B2 renamed the prior-tax variable to `priorTaxSnap` when
+      // the snapshot SELECT moved outside the tx (lock-duration
+      // reduction). The 0.00005 epsilon threshold is preserved.
+      expect(src).toMatch(/Math\.abs\(priorTax(?:Snap)? - (?:taxRate|lockedTax)\) > 0\.00005/);
     });
     it("admin-console wraps updateLocationAction form in <PasswordGatedForm>", () => {
       const ui = read("src/components/admin/admin-console.tsx");

@@ -106,41 +106,68 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // R52-E: wrap re-auth lookup + DELETE sessions + audit INSERT in
-    // ONE orgTx. Prior shape ran the credential SELECT and DELETE
-    // via pool.query() auto-commit (plus a fire-and-forget audit),
-    // leaving a ~1-50ms TOCTOU window where a concurrent
-    // /api/auth/password-change could rotate credentials between the
-    // verify step and the DELETE — the attacker's cookie verifying
-    // against the prior password but wiping new-password-era
-    // sessions. Unifying under one orgTx with `SELECT FOR UPDATE`
-    // on auth_credentials (mirrors R52-C password-change) closes
-    // the window and makes the audit row atomic.
+    // R52-E / R54-L1 / R56-B4: credential verify OUTSIDE the tx; tx
+    // re-reads with FOR UPDATE + TOCTOU-guards via password_hash
+    // equality.
     //
-    // R54-L1: collapsed the 2-try-block shape into one.
+    // Prior shape (R54-L1) correctly made the whole flow atomic in
+    // one orgTx, but held `auth_credentials FOR UPDATE` across
+    // verifySecret (~100ms PBKDF2). A bad-password brute-force at
+    // the rate-limit ceiling therefore starved legitimate
+    // /password-change flows for the same employee.
+    //
+    // New shape:
+    //   1. Non-locking SELECT snapshot of password_hash.
+    //   2. verifySecret OUTSIDE any tx.
+    //   3. Enter orgTx → SELECT FOR UPDATE → compare password_hash
+    //      to snapshot. If it drifted, credential rotated while we
+    //      were verifying — reject (attacker with old cookie shouldn't
+    //      blow away new-password-era sessions).
+    //   4. DELETE sessions + audit + COMMIT.
     const orgId = ctx.employee.organizationId;
+    const { orgQuery } = await import("@/lib/supabase-rest");
+
+    // (1) Non-locking snapshot.
+    const { rows: snapRows } = await orgQuery(
+      orgId,
+      `SELECT password_hash FROM auth_credentials
+        WHERE employee_id = $1
+          AND employee_id IN (SELECT id FROM employees WHERE organization_id = $2)
+        LIMIT 1`,
+      [ctx.employee.id, orgId],
+    );
+    const snapHash = snapRows[0]?.password_hash as string | undefined;
+    if (!snapHash) {
+      // No credential — equalize timing and reject.
+      await runDecoyVerify(currentPassword);
+      return NextResponse.json({ error: "Password incorrect." }, { status: 401 });
+    }
+    // (2) Verify OUTSIDE tx.
+    if (!(await verifySecret(currentPassword, snapHash))) {
+      return NextResponse.json({ error: "Password incorrect." }, { status: 401 });
+    }
+
+    // (3/4) Tx: re-read with FOR UPDATE, compare hash, revoke, audit.
     const client = await orgTx(orgId);
     try {
-      // R36-H6: org-scope the credential lookup as defense-in-depth.
-      // Mirror the employees PATCH pattern (require the employee row
-      // to exist in this org).
-      const { rows: credRows } = await client.query(
+      const { rows: lockedRows } = await client.query(
         `SELECT password_hash FROM auth_credentials
           WHERE employee_id = $1
             AND employee_id IN (SELECT id FROM employees WHERE organization_id = $2)
           FOR UPDATE`,
         [ctx.employee.id, orgId],
       );
-      const currentHash = credRows[0]?.password_hash as string | undefined;
-      if (!currentHash) {
-        // No credential for this session — equalize timing and reject.
+      const lockedHash = lockedRows[0]?.password_hash as string | undefined;
+      if (!lockedHash || lockedHash !== snapHash) {
+        // Credential rotated between snapshot and lock. Attacker
+        // with an OLD cookie + old-password shouldn't be able to
+        // wipe sessions for an account whose password was just
+        // rotated.
         await client.query("ROLLBACK");
-        await runDecoyVerify(currentPassword);
-        return NextResponse.json({ error: "Password incorrect." }, { status: 401 });
-      }
-      if (!(await verifySecret(currentPassword, currentHash))) {
-        await client.query("ROLLBACK");
-        return NextResponse.json({ error: "Password incorrect." }, { status: 401 });
+        return NextResponse.json(
+          { error: "Credential changed. Please sign in again and retry." },
+          { status: 409 },
+        );
       }
 
       // R36-H6: scope the DELETE by the employee's org too so a

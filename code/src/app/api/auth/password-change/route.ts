@@ -108,82 +108,107 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // R52-C: move the password rotation + session revocation + audit
-    // INTO a single orgTx. Prior shape used pool.query() (auto-
-    // commit) for each of UPDATE auth_credentials, DELETE sessions,
-    // and then a post-commit fire-and-forget audit insert. On
-    // Workers isolate freeze the audit could be lost — and password
-    // rotation is precisely the event that forensic review depends
-    // on. Everything atomic now.
+    // R52-C / R54-Framework-1 / R56-B3: password rotation + session
+    // wipe + audit all atomic, but with NO CPU-heavy work held under
+    // a row lock.
     //
-    // R54-Framework-1: derive `newHash` (PBKDF2 100k iters, ~100ms
-    // of blocking CPU) OUTSIDE the tx so the `FOR UPDATE` row lock
-    // on auth_credentials isn't held during hashing. Matches the
-    // sibling pattern in /api/auth/password-reset-confirm (R28-L6
-    // comment). Under two concurrent rotations against the same
-    // employee, the second rotation would otherwise wait ~100ms+
-    // on the lock while also holding a pool connection; Workers'
-    // per-call `makePool(1)` makes this a contention cliff.
-    const newHash = await hashSecret(newPassword);
-
+    // R56-B3 moves BOTH the re-auth verifySecret AND the reuse-
+    // history assertNotReused OUT of the orgTx. Prior shape held
+    // `auth_credentials FOR UPDATE` across:
+    //   • verifySecret (PBKDF2 ~100ms)
+    //   • assertNotReused (iterates up to HISTORY_CAP=10 PBKDF2
+    //     verifications, worst case ~1s)
+    // That serialized every other cred-read on the same employee
+    // (including revoke-all-sessions / employees PATCH step-up)
+    // for up to ~1.1s per rotation.
+    //
+    // New shape:
+    //   1. Non-locking SELECT snapshot of (password_hash, history,
+    //      updated_at).
+    //   2. verifySecret + reuse-history check outside any tx.
+    //   3. hashSecret(newPassword) outside tx (R54-Framework-1).
+    //   4. orgTx → SELECT FOR UPDATE → compare updated_at vs
+    //      snapshot; if it drifted, another rotation landed while
+    //      we were verifying — reject with 409 (caller retries).
+    //   5. UPDATE + DELETE sessions + audit + COMMIT.
+    //
+    // TOCTOU guard (step 4) keeps the reuse-history semantics safe
+    // even though we let go of the lock.
     const orgId = ctx.employee.organizationId;
+    const { orgQuery } = await import("@/lib/supabase-rest");
+
+    // (1) Non-locking snapshot.
+    const { rows: snapRows } = await orgQuery(
+      orgId,
+      `SELECT password_hash, prior_password_hashes, updated_at
+         FROM auth_credentials
+        WHERE employee_id = $1 LIMIT 1`,
+      [ctx.employee.id],
+    );
+    const snap = snapRows[0] as
+      | { password_hash: string | null; prior_password_hashes: unknown; updated_at: string | Date }
+      | undefined;
+    const currentHash = snap?.password_hash ?? undefined;
+    if (!currentHash) {
+      // No password set for this account.
+      await runDecoyVerify(currentPassword);
+      return NextResponse.json({ error: "Not signed in." }, { status: 401 });
+    }
+
+    // (2) Re-auth gate OUTSIDE the tx.
+    if (!(await verifySecret(currentPassword, currentHash))) {
+      return NextResponse.json(
+        { error: "Current password is incorrect." },
+        { status: 401 },
+      );
+    }
+    if (newPassword === currentPassword) {
+      return NextResponse.json(
+        { error: "New password must differ from the current password." },
+        { status: 400 },
+      );
+    }
+    const history = parseHistory(snap?.prior_password_hashes);
+    try {
+      await assertNotReused(newPassword, history);
+    } catch (err) {
+      if (err instanceof PasswordReuseError) {
+        return NextResponse.json({ error: err.message }, { status: err.status });
+      }
+      throw err;
+    }
+
+    // (3) Hash new password OUTSIDE the tx.
+    const newHash = await hashSecret(newPassword);
+    const nextHistory = appendHistory(currentHash, history);
+    const snapUpdatedAt = new Date(snap!.updated_at).getTime();
+
+    // (4/5) Tx: re-read with FOR UPDATE, compare updated_at, UPDATE,
+    // revoke sessions, audit, COMMIT.
     const client = await orgTx(orgId);
     try {
-      // Look up the current password hash + history (R40-1).
-      // SELECT FOR UPDATE so a second concurrent rotation on the
-      // same employee can't race past the reuse-history check.
-      const { rows: credRows } = await client.query(
-        `SELECT password_hash, prior_password_hashes FROM auth_credentials WHERE employee_id = $1 FOR UPDATE`,
+      const { rows: lockedRows } = await client.query(
+        `SELECT password_hash, updated_at FROM auth_credentials
+          WHERE employee_id = $1 FOR UPDATE`,
         [ctx.employee.id],
       );
-      const currentHash = credRows[0]?.password_hash as string | undefined;
-      const historyRaw = credRows[0]?.prior_password_hashes;
-      if (!currentHash) {
-        // No password set for this account (shouldn't happen for admin-
-        // scope sessions — the signup flow always sets one). Equalize
-        // timing and deny.
+      const locked = lockedRows[0] as { password_hash: string | null; updated_at: string | Date } | undefined;
+      if (!locked?.password_hash) {
         await client.query("ROLLBACK");
-        await runDecoyVerify(currentPassword);
         return NextResponse.json({ error: "Not signed in." }, { status: 401 });
       }
-
-      // Re-auth gate. Run verifySecret regardless so the timing of
-      // this path is indistinguishable from the "employee not found"
-      // path.
-      if (!(await verifySecret(currentPassword, currentHash))) {
+      const lockedUpdatedAt = new Date(locked.updated_at).getTime();
+      if (Math.abs(lockedUpdatedAt - snapUpdatedAt) > 0) {
+        // Credential rotated between snapshot and lock — another
+        // /password-change or /password-reset-confirm landed in
+        // parallel. Reject; caller retries with the fresh state.
         await client.query("ROLLBACK");
         return NextResponse.json(
-          { error: "Current password is incorrect." },
-          { status: 401 },
+          { error: "Password was changed in another session. Please sign in again." },
+          { status: 409 },
         );
       }
 
-      // Defense against password-reuse:
-      //   (a) fast equality check against the CURRENT password
-      //   (b) R40-1: verify against the last-N hash history so a
-      //       `old → new → old` rotation can't cycle to bypass
-      //       breach-list-driven mandatory rotations.
-      if (newPassword === currentPassword) {
-        await client.query("ROLLBACK");
-        return NextResponse.json(
-          { error: "New password must differ from the current password." },
-          { status: 400 },
-        );
-      }
-      const history = parseHistory(historyRaw);
-      try {
-        await assertNotReused(newPassword, history);
-      } catch (err) {
-        if (err instanceof PasswordReuseError) {
-          await client.query("ROLLBACK");
-          return NextResponse.json({ error: err.message }, { status: err.status });
-        }
-        throw err;
-      }
-
-      // Append the OLD hash to the history at the same time so a
-      // future rotation sees it. (newHash was derived pre-tx above.)
-      const nextHistory = appendHistory(currentHash, history);
       await client.query(
         `UPDATE auth_credentials
             SET password_hash = $1,
@@ -200,9 +225,7 @@ export async function POST(req: NextRequest) {
         [ctx.employee.id],
       );
 
-      // R52-C: audit INSIDE the tx. password_changed is the exact
-      // event forensics depends on ("who rotated whose password, and
-      // when"); post-commit fire-and-forget is a drop vector.
+      // R52-C: audit INSIDE the tx.
       await client.query(
         `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
          VALUES ($1, $2, $3, $4, 'employee', $5, 'password_changed', $6, now())`,

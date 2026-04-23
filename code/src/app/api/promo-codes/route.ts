@@ -190,15 +190,27 @@ export const POST = withAdminAuth("pricing.manage", async (req, ctx) => {
       if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
       const { code, description, type, value, minimumPurchase, maxRedemptions, maxRedemptionsPerCustomer, startsAt, expiresAt, freeVariantId } = v.data;
 
-      // R49: step-up re-auth on high-risk promo creations. A 50%+
-      // percent-off promo with no redemption cap is cash-equivalent
-      // minting — an attacker with a stolen manager cookie could
-      // issue "FREEFORALL 100% off, unlimited" then redeem against
-      // accomplice carts. Gate only the high-risk shapes so routine
-      // 10%-off codes stay frictionless.
-      const isHighRiskPromo =
-        (type === 'percent' && Number(value) >= 50) ||
-        (maxRedemptions === null || maxRedemptions === undefined);
+      // R49 / R56-C: step-up re-auth on high-risk promo creations.
+      // A 50%+ percent-off promo with no redemption cap is cash-
+      // equivalent minting — an attacker with a stolen manager
+      // cookie could issue "FREEFORALL 100% off, unlimited" then
+      // redeem against accomplice carts. Gate only the high-risk
+      // shapes so routine 10%-off codes stay frictionless.
+      //
+      // R56-C fixes two R55 bypasses:
+      //   1. Fixed-discount liability $50+ was NOT previously gated —
+      //      an attacker could POST {type:'fixed', value:1000, ...}
+      //      without step-up. Add the fixed-≥50 arm.
+      //   2. "Unlimited redemptions" was gated on null/undefined
+      //      only, but the admin UI transforms `maxRedemptions=0`
+      //      to `10_000_000` sentinel before sending (the Zod schema
+      //      requires positive, so 0 isn't representable). The
+      //      sentinel slid past the gate entirely. Treat any value
+      //      ≥ 1_000_000 as effectively unbounded.
+      const isUnbounded = maxRedemptions === null || maxRedemptions === undefined || Number(maxRedemptions) >= 1_000_000;
+      const isHighValueFixed = type === 'fixed' && Number(value) >= 50;
+      const isHighPercent = type === 'percent' && Number(value) >= 50;
+      const isHighRiskPromo = isHighPercent || isHighValueFixed || isUnbounded;
       if (isHighRiskPromo) {
         const { requireStepUp } = await import('@/lib/auth/step-up');
         const stepUp = await requireStepUp({

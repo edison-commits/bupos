@@ -200,7 +200,7 @@ export default function CustomerManagement() {
     // R53: step-up re-auth when editing PII-sensitive fields. Mirror
     // the R52-L pattern from src/components/admin/customer-database.
     // Create (POST) has no step-up; PUT gates on
-    // bucketKey:'customer-pii-edit-stepup' when any of email, phone,
+    // bucketKey:'customer-update-stepup' when any of email, phone,
     // address, or notes changes relative to the loaded customer.
     let actorPassword: string | undefined;
     if (modalMode === 'edit' && selectedCustomer) {

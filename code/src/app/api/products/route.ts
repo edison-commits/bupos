@@ -268,6 +268,36 @@ export const POST = withAdminAuth("catalog.manage", async (request, ctx) => {
         await client.query('ROLLBACK');
         return NextResponse.json({ error: 'Price cannot be negative' }, { status: 400 });
       }
+      // R56-A2: variant creation carries a `price` (and optional
+      // `cost`) — same fraud-relevant surface as a reprice. The PUT
+      // reprice branch at line ~470 gates `pricing.manage`; POST
+      // variant-create was asymmetric (only the route-level
+      // `catalog.manage` applied), letting an inventory_clerk mint a
+      // brand-new $0.01 variant via POST to bypass R33-H4's self-
+      // checkout defense. Close the gap with the same role check
+      // AND require step-up whenever a non-default price is being
+      // set (matches the PUT/variant-reprice bucket aggregate).
+      const { hasPermission } = await import("@/lib/domain/permissions");
+      if (!hasPermission(employee.roleKey, "pricing.manage")) {
+        await client.query('ROLLBACK');
+        return NextResponse.json(
+          { error: 'Variant creation requires pricing.manage (owner / manager) because it sets a price.' },
+          { status: 403 },
+        );
+      }
+      if (typeof price === 'number' && price > 0) {
+        const { requireStepUp } = await import('@/lib/auth/step-up');
+        const stepUp = await requireStepUp({
+          actorId: employee.id,
+          orgId,
+          actorPassword: (body as { actorPassword?: string })?.actorPassword,
+          bucketKey: 'variant-price-stepup',
+        });
+        if (!stepUp.ok) {
+          await client.query('ROLLBACK');
+          return NextResponse.json({ error: stepUp.error }, { status: stepUp.status });
+        }
+      }
       // Verify the parent product belongs to THIS org. Without this, an
       // attacker with catalog.manage on org X who knows (or guesses) a
       // product UUID from org Y could attach a variant to that foreign
@@ -296,6 +326,22 @@ export const POST = withAdminAuth("catalog.manage", async (request, ctx) => {
          VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, NOW(), NOW())
          RETURNING id, sku, barcode, name, size_label, color_label, price, compare_at_price, cost, is_active`,
         [orgId, body.product_id, sku, barcode, name, size_label, color_label, price, compare_at_price, cost]
+      );
+      // R56-A2: audit the variant creation — prior shape had no
+      // audit row, making the variant unattributable post-creation.
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'product_variant', $5, 'variant_created', $6, now())`,
+        [
+          randomUUID(), orgId, null, employee.id, result.rows[0].id,
+          JSON.stringify({
+            id: result.rows[0].id,
+            sku: result.rows[0].sku,
+            price: result.rows[0].price,
+            cost: result.rows[0].cost,
+            product_id: body.product_id,
+          }),
+        ],
       );
       await client.query('COMMIT');
       invalidateProductsCache(orgId);
@@ -625,8 +671,27 @@ export const DELETE = withAdminAuth("catalog.manage", async (request, ctx) => {
     // Soft delete: set is_active to false
     const result = await client.query(
       `UPDATE products SET is_active = false, updated_at = NOW()
-       WHERE id = $1 AND organization_id = $2 RETURNING id`,
+       WHERE id = $1 AND organization_id = $2 RETURNING id, name`,
       [id, orgId]
+    );
+    if (result.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return NextResponse.json({ error: 'Product not found' }, { status: 404 });
+    }
+
+    // R56-A3: audit INSIDE the tx. The REST DELETE was the lossier
+    // surface — the parallel Server Action `deleteProductAction`
+    // already audits (admin/actions.ts). A stolen catalog.manage
+    // cookie could `fetch('/api/products', {method:'DELETE'})` to
+    // soft-delete any product with no attribution. Mirror the
+    // Server Action by emitting `product_deleted` inside the tx.
+    await client.query(
+      `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+       VALUES ($1, $2, $3, $4, 'product', $5, 'product_deleted', $6, now())`,
+      [
+        randomUUID(), orgId, null, ctx.employee.id, result.rows[0].id,
+        JSON.stringify({ id: result.rows[0].id, name: result.rows[0].name, soft_delete: true }),
+      ],
     );
 
     await client.query('COMMIT');
@@ -663,6 +728,21 @@ export const PATCH = withAdminAuth("catalog.manage", async (request, ctx) => {
       // per-actor cap covers both surfaces. CSV imports are low-
       // frequency (setup / batch onboarding) so unconditional gating
       // is acceptable UX.
+      //
+      // R56-A1: ALSO require `pricing.manage` — every imported row
+      // carries a price. The route-level gate is `catalog.manage`
+      // so an inventory_clerk (has CSV import access via the
+      // catalog permission) could otherwise bulk-mint variants at
+      // $0.01. The single-variant PUT path (line 470) gates
+      // pricing.manage; CSV was asymmetric.
+      const { hasPermission } = await import("@/lib/domain/permissions");
+      if (!hasPermission(employee.roleKey, "pricing.manage")) {
+        return NextResponse.json(
+          { error: 'CSV import requires pricing.manage (owner / manager) since each row sets a price.' },
+          { status: 403 },
+        );
+      }
+
       const { requireStepUp } = await import('@/lib/auth/step-up');
       const stepUp = await requireStepUp({
         actorId: employee.id,
@@ -898,6 +978,29 @@ export const PATCH = withAdminAuth("catalog.manage", async (request, ctx) => {
           [orgId, ...varParams]
         );
       }
+
+      // R56-A1: audit INSIDE the orgTx. Bulk CSV import lands N
+      // categories/products/variants with per-row prices — the exact
+      // fraud-relevant anchor a post-incident investigation needs to
+      // answer "who imported these zero-price SKUs, and when." Single
+      // catalog_import event summarizes the batch (actor + counts)
+      // rather than one row per SKU so audit_events doesn't explode
+      // on a 10k-row import.
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'product_catalog', $5, 'catalog_import', $6, now())`,
+        [
+          randomUUID(), orgId, null, employee.id, orgId,
+          JSON.stringify({
+            total: rows.length,
+            created,
+            skipped,
+            variants_inserted: variantsToInsert.length,
+            products_inserted: newProducts.length,
+            categories_inserted: newCategories.length,
+          }),
+        ],
+      );
 
       await client.query('COMMIT');
       invalidateProductsCache(orgId);

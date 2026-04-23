@@ -495,8 +495,23 @@ export async function createEmployeeAction(formData: FormData) {
   const pin = String(formData.get("pin") ?? "").trim();
   const actorPassword = String(formData.get("actorPassword") ?? "");
 
-  if (!firstName || !lastName || !/^\d{4}$/.test(pin)) {
-    redirect("/admin?error=Employee+needs+name+and+4-digit+PIN");
+  if (!firstName || !lastName) {
+    redirect("/admin?error=Employee+needs+first+and+last+name");
+  }
+
+  // R56-D (R55 finding): PIN length parity with REST /api/employees
+  // POST. R27-H1 requires ≥ 6 digits for admin-capable roles
+  // (owner/manager) — their PIN unlocks admin-level endpoints via
+  // withDualAuth's role check, so the brute-force space matters.
+  // Cashier-class roles can keep 4-digit PINs.
+  const isPrivilegedRole = roleKey === "owner" || roleKey === "manager";
+  const minPinLen = isPrivilegedRole ? 6 : 4;
+  if (!/^\d+$/.test(pin) || pin.length < minPinLen) {
+    redirect(`/admin?error=${encodeURIComponent(
+      isPrivilegedRole
+        ? "Owner and manager PINs must be at least 6 digits."
+        : "Cashier PINs must be at least 4 digits.",
+    )}`);
   }
 
   if (!canManageEmployeeRole(employee.roleKey, roleKey)) {
@@ -507,7 +522,7 @@ export async function createEmployeeAction(formData: FormData) {
   // — especially an owner/manager with admin-capable password — is a
   // privilege-elevation action. A stolen cookie shouldn't be able to
   // mint shadow admin accounts. Matches the REST /api/employees POST
-  // gate once actorPassword is wired through the admin UI.
+  // gate.
   const { requireStepUp } = await import('@/lib/auth/step-up');
   const stepUp = await requireStepUp({
     actorId: employee.id,
@@ -529,15 +544,31 @@ export async function createEmployeeAction(formData: FormData) {
   if (isPg()) {
     const employeeId = randomUUID();
     const orgId = employee.organizationId;
-    // R54-M: INSERT employees + auth_credentials + audit ALL in one
-    // orgTx. Prior shape: pgCreateEmployee (own tx wrapping the two
-    // INSERTs) → pgInsertAuditEvent (separate tx). Auth-capable
-    // employee creation is a privilege-elevation action; the audit
-    // row must land with the mint or not at all.
+
+    // R56-D: PIN-collision check, org-scoped (REST parity). Prior
+    // shape had no duplicate-PIN check — two employees could share
+    // a PIN, so PIN-based register login could ambiguously resolve.
+    // Pulled hashes are salted so the compare is per-row.
+    const { orgQuery } = await import("@/lib/supabase-rest");
+    const { verifySecret: verify } = await import("@/lib/auth/crypto");
     const pinHash = await hashSecret(pin);
+    const { rows: existingCreds } = await orgQuery(
+      orgId,
+      `SELECT ac.pin_hash FROM auth_credentials ac
+         JOIN employees e ON e.id = ac.employee_id
+        WHERE e.organization_id = $1 AND ac.pin_hash IS NOT NULL`,
+      [orgId],
+    );
+    for (const row of existingCreds) {
+      const existingHash = row.pin_hash as string | undefined;
+      if (existingHash && await verify(pin, existingHash)) {
+        redirect("/admin?error=That+PIN+is+already+in+use.+Pick+another.");
+      }
+    }
+
     const passwordHash = password ? await hashSecret(password) : undefined;
     const displayName = `${firstName} ${lastName[0] ?? ""}.`.trim();
-    const pinHint = `4-digit ${roleKey.replace("_", " ")} PIN`;
+    const pinHint = `${pin.length}-digit ${roleKey.replace("_", " ")} PIN`;
     const ts = new Date().toISOString();
     const { orgTx } = await import("@/lib/db");
     const client = await orgTx(orgId);
@@ -555,10 +586,14 @@ export async function createEmployeeAction(formData: FormData) {
          VALUES ($1, $2, $3, $4, $5, 0, NULL, $5, $5)`,
         [employeeId, email ?? null, passwordHash ?? null, pinHash, ts],
       );
+      // R56-D: event_kind 'employee_created' (was 'catalog_update' —
+      // misclassified; breaks audit-filter parity with the REST
+      // surface and makes forensic search for "who provisioned this
+      // account" harder than it should be).
       await client.query(
         `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
-         VALUES ($1, $2, $3, $4, 'employee', $5, 'catalog_update', $6, now())`,
-        [randomUUID(), orgId, null, employee.id, employeeId, JSON.stringify({ action: "created_employee", name: `${firstName} ${lastName}` })],
+         VALUES ($1, $2, $3, $4, 'employee', $5, 'employee_created', $6, now())`,
+        [randomUUID(), orgId, null, employee.id, employeeId, JSON.stringify({ action: "created_employee", name: `${firstName} ${lastName}`, role_key: roleKey })],
       );
       await client.query("COMMIT");
     } catch (e) {
@@ -985,59 +1020,99 @@ export async function editVariantAction(formData: FormData) {
   if (isPg()) {
     const orgId = employee.organizationId;
 
-    // R54-M (R53-M2 fix): prior → step-up → UPDATE → audit all in ONE
-    // orgTx with SELECT … FOR UPDATE on the prior row.
+    // R56-B1: step-up OUTSIDE the tx; tx re-reads prior + TOCTOU-
+    // guards. Prior shape (R54-M / R53-M2) correctly closed the
+    // audit drift and the snapshot-compare TOCTOU by running
+    // SELECT FOR UPDATE → step-up → UPDATE → audit inside one
+    // orgTx. But that held the product_variants row lock (and the
+    // orgTx pool client) across requireStepUp, which does ~3 KV
+    // RTTs + a separate orgQuery on auth_credentials + a PBKDF2
+    // verify (~100ms CPU) + optionally a decoy PBKDF2 (~100ms
+    // more) + an in-success aggregate-counter audit insert. Net:
+    // ~300-500ms of row-lock contention per reprice, PLUS pool
+    // multiplication from the step-up's own orgQuery. Under
+    // concurrent reprices on the same variant this serialized
+    // hard and starved other readers of the same variant.
     //
-    // The previous shape had two audit-drift AND TOCTOU problems:
-    //   1. The prior SELECT happened via orgQuery (its own tx) so a
-    //      concurrent PUT could reprice the row between our read and
-    //      our UPDATE — the step-up check gated on a stale snapshot.
-    //   2. pgUpdateVariant (own tx) + pgInsertAuditEvent (separate tx):
-    //      audit drop on post-commit audit-tx failure.
+    // New shape:
+    //   1. Non-locking prior SELECT (orgQuery).
+    //   2. Decide priceChanged/costChanged from that snapshot.
+    //   3. Run requireStepUp outside the tx (password verify +
+    //      audit happen on their own connection).
+    //   4. Enter orgTx, SELECT FOR UPDATE the row again, compare
+    //      the NEW prior to the prior we step-upped against — if
+    //      they differ, reject with a short retry error (TOCTOU
+    //      detected; the user is asked to re-save, which is
+    //      acceptable UX since the prior view is now stale).
+    //   5. UPDATE + audit + COMMIT.
     //
-    // Inline SELECT FOR UPDATE locks the row for the duration of the
-    // step-up hash + UPDATE; mirrors the /api/products PUT variant
-    // branch exactly. Any other writer waits or aborts cleanly.
+    // Matches the adjustInventoryAction / toggleEmployeeAction
+    // shapes already in this file.
     type EditVariantOutcome =
       | { kind: "ok" }
       | { kind: "not_found" }
-      | { kind: "stepup_failed"; error: string }
-      | { kind: "conflict"; message: string };
-    const { orgTx } = await import("@/lib/db");
+      | { kind: "conflict"; message: string }
+      | { kind: "toctou_retry" };
+
+    const { orgQuery, orgTx } = await import("@/lib/supabase-rest");
+
+    // (1) Non-locking prior snapshot.
+    const { rows: priorRows } = await orgQuery(
+      orgId,
+      `SELECT price, cost FROM product_variants WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [variantId, orgId],
+    );
+    const priorSnap = priorRows[0] as { price: string; cost: string | null } | undefined;
+    if (!priorSnap) {
+      redirect("/admin?error=Variant+not+found");
+    }
+    const priorPriceSnap = Number(priorSnap!.price);
+    const priorCostSnap = priorSnap!.cost != null ? Number(priorSnap!.cost) : null;
+    const priceChanged = Math.abs(priorPriceSnap - price) > 0.005;
+    const costChanged = cost !== undefined && priorCostSnap !== null && Math.abs(priorCostSnap - cost) > 0.005;
+
+    // (2/3) Step-up OUTSIDE the tx.
+    if (priceChanged || costChanged) {
+      const { requireStepUp } = await import('@/lib/auth/step-up');
+      const stepUp = await requireStepUp({
+        actorId: employee.id,
+        orgId,
+        actorPassword,
+        bucketKey: 'variant-price-stepup',
+      });
+      if (!stepUp.ok) {
+        redirect(`/admin?error=${encodeURIComponent(stepUp.error)}`);
+      }
+    }
+
+    // (4/5) Re-read + TOCTOU guard + UPDATE + audit in orgTx.
     const client = await orgTx(orgId);
     let outcome: EditVariantOutcome = { kind: "ok" };
     try {
-      const { rows: priorRows } = await client.query(
+      const { rows: lockedRows } = await client.query(
         `SELECT price, cost FROM product_variants WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
         [variantId, orgId],
       );
-      const prior = priorRows[0] as { price: string; cost: string | null } | undefined;
-      if (!prior) {
+      const locked = lockedRows[0] as { price: string; cost: string | null } | undefined;
+      if (!locked) {
         await client.query("ROLLBACK").catch(() => {});
         outcome = { kind: "not_found" };
       } else {
-        const priorPrice = Number(prior.price);
-        const priorCost = prior.cost != null ? Number(prior.cost) : null;
-        const priceChanged = Math.abs(priorPrice - price) > 0.005;
-        const costChanged = cost !== undefined && priorCost !== null && Math.abs(priorCost - cost) > 0.005;
-        let stepUpOk = true;
-        let stepUpErr = "";
-        if (priceChanged || costChanged) {
-          const { requireStepUp } = await import('@/lib/auth/step-up');
-          const stepUp = await requireStepUp({
-            actorId: employee.id,
-            orgId,
-            actorPassword,
-            bucketKey: 'variant-price-stepup',
-          });
-          if (!stepUp.ok) {
-            stepUpOk = false;
-            stepUpErr = stepUp.error;
-          }
-        }
-        if (!stepUpOk) {
+        // TOCTOU guard: if the row's price/cost drifted between the
+        // snapshot read (pre-step-up) and the locked read, reject.
+        // A concurrent writer moved the row while we were stepping
+        // up; our step-up decision was based on stale data. The
+        // user retries — at which point they see the fresh value.
+        const lockedPrice = Number(locked.price);
+        const lockedCost = locked.cost != null ? Number(locked.cost) : null;
+        const priceDrift = Math.abs(priorPriceSnap - lockedPrice) > 0.005;
+        const costDrift =
+          (priorCostSnap === null && lockedCost !== null) ||
+          (priorCostSnap !== null && lockedCost === null) ||
+          (priorCostSnap !== null && lockedCost !== null && Math.abs(priorCostSnap - lockedCost) > 0.005);
+        if (priceDrift || costDrift) {
           await client.query("ROLLBACK").catch(() => {});
-          outcome = { kind: "stepup_failed", error: stepUpErr };
+          outcome = { kind: "toctou_retry" };
         } else {
           try {
             await client.query(
@@ -1052,8 +1127,7 @@ export async function editVariantAction(formData: FormData) {
             );
           } catch (err) {
             // R22-M-1: partial-unique index collision on (org, sku) /
-            // (org, barcode) WHERE is_active. Mirror pgUpdateVariant's
-            // translation to a typed error so the UI copy stays the same.
+            // (org, barcode) WHERE is_active.
             const e = err as { code?: string; constraint?: string };
             if (e.code === "23505") {
               if (e.constraint === "uniq_product_variants_org_sku_active") {
@@ -1086,12 +1160,12 @@ export async function editVariantAction(formData: FormData) {
       client.release();
     }
     if (outcome.kind === "ok") {
-      // Mirror pgUpdateVariant's cache invalidation on the happy path.
       invalidateVariantsCache(orgId);
     }
-    // Redirects deferred past the tx so we don't leak the client.
     if (outcome.kind === "not_found") redirect("/admin?error=Variant+not+found");
-    if (outcome.kind === "stepup_failed") redirect(`/admin?error=${encodeURIComponent(outcome.error)}`);
+    if (outcome.kind === "toctou_retry") {
+      redirect("/admin?error=Variant+was+changed+by+another+user.+Please+refresh+and+try+again.");
+    }
     if (outcome.kind === "conflict") redirect(`/admin?error=${encodeURIComponent(outcome.message)}`);
   } else {
     await mutateStore((store) => {
@@ -1260,93 +1334,124 @@ export async function updateLocationAction(formData: FormData) {
   const taxRate = Number.isFinite(taxRatePercent) ? taxRatePercent / 100 : undefined;
 
   if (isPg()) {
-    // R54-M (R53-M1 fix): prior SELECT → step-up → UPDATE → audit ALL
-    // in one orgTx. Prior shape ran a separate-tx orgQuery for the
-    // prior tax snapshot, then pgUpdateLocation (own tx), then
-    // pgInsertAuditEvent (separate tx):
-    //   • Audit drift: the location change landed but audit could
-    //     drop if its tx failed (R53-M1).
-    //   • TOCTOU: a concurrent edit could retarget tax_rate between
-    //     our snapshot and our UPDATE, silently bypassing the step-up.
+    // R56-B2: same refactor as editVariantAction — step-up OUTSIDE
+    // the tx; tx re-reads prior and TOCTOU-guards. Prior shape held
+    // the locations row lock across requireStepUp (~300-500ms of
+    // KV RTTs + PBKDF2 + separate audit tx), starving concurrent
+    // readers of the same location. New shape:
+    //   1. Non-locking prior SELECT (orgQuery) on tax_rate.
+    //   2. Step-up OUTSIDE tx if tax changed (epsilon 0.00005).
+    //   3. Enter orgTx with SELECT … FOR UPDATE, re-compare prior
+    //      tax to the snapshot; reject on drift with a retry
+    //      message.
+    //   4. UPDATE + audit + COMMIT.
     //
-    // SELECT … FOR UPDATE locks the row for the duration of the
-    // step-up hash + UPDATE; mirrors the /api/settings location
-    // branch shape.
-    //
-    // R44-H: step-up when tax rate is being changed. Other fields
-    // (name/address/phone) are low-blast-radius and don't need the
-    // gate. R52-G: snapshot-compare with epsilon so legitimate
-    // name/address edits don't trigger the password challenge.
+    // Also R56-LOW: skip audit row on completely empty SET
+    // (caller submitted no mutable fields) to prevent audit-log
+    // pollution / existence oracle.
     const orgId = employee.organizationId;
-    const { orgTx } = await import("@/lib/db");
-    type UpdLocOutcome = { kind: "ok" } | { kind: "stepup_failed"; error: string };
-    const client = await orgTx(orgId);
-    let outcome: UpdLocOutcome = { kind: "ok" };
-    try {
-      let priorTax: number | null = null;
-      if (taxRate !== undefined) {
-        const { rows: priorRows } = await client.query(
-          `SELECT tax_rate FROM locations WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
-          [locationId, orgId],
-        );
-        priorTax = priorRows[0]?.tax_rate != null ? Number(priorRows[0].tax_rate) : null;
-        const taxChanged = priorTax === null || Math.abs(priorTax - taxRate) > 0.00005;
-        if (taxChanged) {
-          const actorPassword = String(formData.get("actorPassword") ?? "");
-          const { requireStepUp } = await import("@/lib/auth/step-up");
-          const stepUp = await requireStepUp({
-            actorId: employee.id,
-            orgId,
-            actorPassword,
-            bucketKey: "tax-rate-stepup",
-          });
-          if (!stepUp.ok) {
-            await client.query("ROLLBACK").catch(() => {});
-            outcome = { kind: "stepup_failed", error: stepUp.error };
-          }
-        }
-      }
+    const { orgQuery, orgTx } = await import("@/lib/supabase-rest");
+    type UpdLocOutcome =
+      | { kind: "ok"; didUpdate: boolean }
+      | { kind: "not_found" }
+      | { kind: "toctou_retry" };
 
-      if (outcome.kind === "ok") {
-        // Build dynamic SET list (mirrors pgUpdateLocation).
-        const locData: Record<string, unknown> = {
-          name: String(formData.get("locationName") ?? "").trim() || undefined,
-          address1: String(formData.get("address1") ?? "").trim() || undefined,
-          city: String(formData.get("city") ?? "").trim() || undefined,
-          region: String(formData.get("region") ?? "").trim() || undefined,
-          postalCode: String(formData.get("postalCode") ?? "").trim() || undefined,
-          phone: String(formData.get("locationPhone") ?? "").trim(),
-          taxRate,
-        };
-        const colMap: Record<string, string> = {
-          name: "name", address1: "address1", city: "city", region: "region",
-          postalCode: "postal_code", phone: "phone", taxRate: "tax_rate",
-        };
-        const sets: string[] = [];
-        const vals: unknown[] = [];
-        let i = 1;
-        for (const [key, col] of Object.entries(colMap)) {
-          const v = locData[key];
-          if (v !== undefined) { sets.push(`${col} = $${i++}`); vals.push(v); }
+    // (1) Non-locking prior tax snapshot. We also need to verify
+    // the location exists before doing any work.
+    const { rows: priorRows } = await orgQuery(
+      orgId,
+      `SELECT tax_rate FROM locations WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [locationId, orgId],
+    );
+    if (priorRows.length === 0) {
+      redirect("/admin?error=Location+not+found");
+    }
+    const priorTaxSnap = priorRows[0]?.tax_rate != null ? Number(priorRows[0].tax_rate) : null;
+    const taxChanged = taxRate !== undefined && (priorTaxSnap === null || Math.abs(priorTaxSnap - taxRate) > 0.00005);
+
+    // (2) Step-up OUTSIDE tx.
+    if (taxChanged) {
+      const actorPassword = String(formData.get("actorPassword") ?? "");
+      const { requireStepUp } = await import("@/lib/auth/step-up");
+      const stepUp = await requireStepUp({
+        actorId: employee.id,
+        orgId,
+        actorPassword,
+        bucketKey: "tax-rate-stepup",
+      });
+      if (!stepUp.ok) {
+        redirect(`/admin?error=${encodeURIComponent(stepUp.error)}`);
+      }
+    }
+
+    // (3/4) Re-read + guard + UPDATE + audit in tx.
+    const client = await orgTx(orgId);
+    let outcome: UpdLocOutcome = { kind: "ok", didUpdate: false };
+    try {
+      const { rows: lockedRows } = await client.query(
+        `SELECT tax_rate FROM locations WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
+        [locationId, orgId],
+      );
+      if (lockedRows.length === 0) {
+        await client.query("ROLLBACK").catch(() => {});
+        outcome = { kind: "not_found" };
+      } else {
+        // TOCTOU guard: if tax_rate drifted between the snapshot
+        // read and the locked read, the step-up decision was
+        // based on stale data. Reject with retry.
+        const lockedTax = lockedRows[0]?.tax_rate != null ? Number(lockedRows[0].tax_rate) : null;
+        const drifted =
+          (priorTaxSnap === null && lockedTax !== null) ||
+          (priorTaxSnap !== null && lockedTax === null) ||
+          (priorTaxSnap !== null && lockedTax !== null && Math.abs(priorTaxSnap - lockedTax) > 0.00005);
+        if (drifted && taxRate !== undefined) {
+          await client.query("ROLLBACK").catch(() => {});
+          outcome = { kind: "toctou_retry" };
+        } else {
+          // Build dynamic SET list.
+          const locData: Record<string, unknown> = {
+            name: String(formData.get("locationName") ?? "").trim() || undefined,
+            address1: String(formData.get("address1") ?? "").trim() || undefined,
+            city: String(formData.get("city") ?? "").trim() || undefined,
+            region: String(formData.get("region") ?? "").trim() || undefined,
+            postalCode: String(formData.get("postalCode") ?? "").trim() || undefined,
+            phone: String(formData.get("locationPhone") ?? "").trim(),
+            taxRate,
+          };
+          const colMap: Record<string, string> = {
+            name: "name", address1: "address1", city: "city", region: "region",
+            postalCode: "postal_code", phone: "phone", taxRate: "tax_rate",
+          };
+          const sets: string[] = [];
+          const vals: unknown[] = [];
+          let i = 1;
+          for (const [key, col] of Object.entries(colMap)) {
+            const v = locData[key];
+            if (v !== undefined) { sets.push(`${col} = $${i++}`); vals.push(v); }
+          }
+          if (sets.length > 0) {
+            sets.push(`updated_at = $${i++}`); vals.push(new Date().toISOString());
+            vals.push(locationId);
+            vals.push(orgId);
+            await client.query(
+              `UPDATE locations SET ${sets.join(", ")} WHERE id = $${i} AND organization_id = $${i + 1}`,
+              vals,
+            );
+            // R56-LOW: audit only when something actually changed.
+            await client.query(
+              `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+               VALUES ($1, $2, $3, $4, 'location', $5, 'settings_update', $6, now())`,
+              [
+                randomUUID(), orgId, locationId, employee.id, locationId,
+                JSON.stringify({ action: "updated_location", taxRate, keys: sets.slice(0, -1).map((s) => s.split(" = ")[0]) }),
+              ],
+            );
+            outcome = { kind: "ok", didUpdate: true };
+          } else {
+            outcome = { kind: "ok", didUpdate: false };
+          }
+          await client.query("COMMIT");
         }
-        if (sets.length > 0) {
-          sets.push(`updated_at = $${i++}`); vals.push(new Date().toISOString());
-          vals.push(locationId);
-          vals.push(orgId);
-          await client.query(
-            `UPDATE locations SET ${sets.join(", ")} WHERE id = $${i} AND organization_id = $${i + 1}`,
-            vals,
-          );
-        }
-        await client.query(
-          `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
-           VALUES ($1, $2, $3, $4, 'location', $5, 'settings_update', $6, now())`,
-          [
-            randomUUID(), orgId, locationId, employee.id, locationId,
-            JSON.stringify({ action: "updated_location", taxRate }),
-          ],
-        );
-        await client.query("COMMIT");
       }
     } catch (e) {
       await client.query("ROLLBACK").catch(() => {});
@@ -1354,12 +1459,12 @@ export async function updateLocationAction(formData: FormData) {
     } finally {
       client.release();
     }
-    if (outcome.kind === "ok") {
-      // Mirror pgUpdateLocation's cache invalidation on the happy path.
+    if (outcome.kind === "ok" && outcome.didUpdate) {
       invalidateLocationsCache(orgId);
     }
-    if (outcome.kind === "stepup_failed") {
-      redirect(`/admin?error=${encodeURIComponent(outcome.error)}`);
+    if (outcome.kind === "not_found") redirect("/admin?error=Location+not+found");
+    if (outcome.kind === "toctou_retry") {
+      redirect("/admin?error=Location+tax+rate+was+changed+by+another+user.+Please+refresh+and+try+again.");
     }
   }
 

@@ -271,6 +271,13 @@ export default function EmployeeManagement() {
 
   const handleResetPin = async () => {
     if (!selectedEmployee) return;
+    // R56-E: reuse the same `submitting` lock used by
+    // handleCreateEmployee + handleUpdateEmployee to prevent a
+    // fast-double-click from firing two PATCH reset-pin round-trips
+    // after the password modal completes. Without this, the server
+    // rate-limit / step-up aggregate absorbs most of the extra
+    // attempts but the UX is noisy and one of them 429s.
+    if (submitting) return;
     // R53: server PATCH reset-pin gates on employees-patch-stepup.
     // Always prompt — resetting a PIN is a credential-change action.
     const pwd = await promptPassword({
@@ -281,6 +288,7 @@ export default function EmployeeManagement() {
       confirmVariant: "default",
     });
     if (!pwd) return;
+    setSubmitting(true);
     setError(null);
 
     try {
@@ -306,10 +314,14 @@ export default function EmployeeManagement() {
       await loadEmployees();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to reset PIN');
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const handleToggleStatus = async (employee: Employee) => {
+    // R56-E: double-submit guard. See handleResetPin comment above.
+    if (submitting) return;
     // R53: server PATCH toggle-status gates on employees-patch-
     // stepup. Always prompt — flipping isActive is a privilege
     // change: deactivation locks the employee out, activation grants
@@ -323,6 +335,7 @@ export default function EmployeeManagement() {
       confirmVariant: employee.isActive ? "destructive" : "default",
     });
     if (!pwd) return;
+    setSubmitting(true);
     try {
       const response = await authFetch('/api/employees', {
         method: 'PATCH',
@@ -342,6 +355,8 @@ export default function EmployeeManagement() {
       await loadEmployees();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update status');
+    } finally {
+      setSubmitting(false);
     }
   };
 

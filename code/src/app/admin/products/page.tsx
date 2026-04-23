@@ -162,16 +162,24 @@ export default function ProductsPage() {
   };
 
   const handleEditVariant = async (variantId: string, formData: Partial<ProductVariant>) => {
-    // R53: prompt for step-up password if price or cost drifted from
-    // the variant's snapshot. `modal.data` holds the original row
-    // that opened the edit modal; treat it as the snapshot for diff.
+    // R53 / R56-LOW: prompt for step-up password if price or cost
+    // drifted from the variant's snapshot. `modal.data` holds the
+    // original row that opened the edit modal; treat it as the
+    // snapshot for diff.
+    //
+    // R56-LOW: use the same `Math.abs(a-b) > 0.005` epsilon the
+    // server uses (api/products/route.ts variant PUT branch). Exact
+    // float inequality prompted on sub-cent drift (e.g. "10" →
+    // "10.000000001") while the server silently skipped step-up;
+    // conversely it didn't prompt when the user changed by 0.003
+    // even though the server treats 0.005+ as changed.
     const snapshot = modal.data as Partial<ProductVariant> | undefined;
     const priceChanged =
       snapshot !== undefined && formData.price !== undefined &&
-      Number(snapshot.price) !== Number(formData.price);
+      Math.abs(Number(snapshot.price) - Number(formData.price)) > 0.005;
     const costChanged =
       snapshot !== undefined && formData.cost !== undefined &&
-      Number(snapshot.cost) !== Number(formData.cost);
+      Math.abs(Number(snapshot.cost) - Number(formData.cost)) > 0.005;
     let actorPassword: string | undefined;
     if (priceChanged || costChanged) {
       const bits: string[] = [];

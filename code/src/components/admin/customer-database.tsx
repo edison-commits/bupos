@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { formatCurrency } from "@/lib/format";
 // R52-L: step-up re-auth prompt when editing sensitive customer
 // fields (phone, email, address, notes). Server /api/customers PUT
-// gates on bucketKey:'customer-pii-edit-stepup' when any of these
+// gates on bucketKey:'customer-update-stepup' when any of these
 // fields change; prior UI didn't thread actorPassword so every
 // sensitive-field edit threw. Low-blast-radius fields (name) stay
 // cookie-only.

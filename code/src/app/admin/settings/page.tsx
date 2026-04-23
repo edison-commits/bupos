@@ -1016,7 +1016,12 @@ export default function SettingsPage() {
     // step-up; prompt for password and thread it through. Any other
     // location-field drift (name, address, etc.) stays cookie-only.
     let actorPassword: string | undefined;
-    if (data.taxRate !== settings.location.taxRate) {
+    // R56-LOW: epsilon-based comparison (1e-6) matches the server's
+    // `Math.abs(priorTax - taxRate) > 0.00005` rule in
+    // updateLocationAction. Exact float inequality would prompt on
+    // JSON-deserialized drift (e.g. 0.0875 round-trip) even when the
+    // user didn't touch the field.
+    if (Math.abs(data.taxRate - settings.location.taxRate) > 1e-6) {
       const pwd = await promptPassword({
         title: `Change tax rate to ${data.taxRate.toFixed(2)}%?`,
         description:
