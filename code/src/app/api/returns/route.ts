@@ -525,6 +525,32 @@ export const PUT = withAdminAuth('approval.void_transaction', async (request, ct
         `SELECT pg_advisory_xact_lock((('x' || substr(md5($1), 1, 16))::bit(64)::bigint))`,
         [`return:${retRow.transaction_id}`],
       );
+      // R78-DB-H2 (HIGH): state-machine on returns.status. Prior
+      // shape only blocked completed→completed; every other
+      // transition was unconstrained. A manager could cycle
+      // completed → pending → completed to double-dispense a
+      // refund; rejected → completed would trigger money
+      // dispensation on an explicitly-denied refund. Also
+      // completed / rejected / cancelled are terminal — any
+      // transition OUT of them must fail. Mirror PO PUT
+      // R77-DB-H2 allowed-from table.
+      const allowedByFrom: Record<string, string[]> = {
+        pending:   ['approved', 'completed', 'rejected', 'cancelled'],
+        approved:  ['completed', 'rejected', 'cancelled'],
+        completed: [],
+        rejected:  [],
+        cancelled: [],
+      };
+      if (status !== undefined && status !== retRow.status) {
+        const allowed = allowedByFrom[retRow.status] ?? [];
+        if (!allowed.includes(status)) {
+          await client.query("ROLLBACK");
+          return NextResponse.json(
+            { error: `Return cannot transition from '${retRow.status}' to '${status}'.` },
+            { status: 409 },
+          );
+        }
+      }
       if (status === 'completed' && retRow.status === 'completed') {
         await client.query("ROLLBACK");
         return NextResponse.json({ error: 'Return already completed' }, { status: 409 });
@@ -532,11 +558,23 @@ export const PUT = withAdminAuth('approval.void_transaction', async (request, ct
 
       if (status === 'completed' && retRow.status !== 'completed') {
         // R27-C10: JOIN through returns to enforce org on the lines.
+        // R78-DB-H1 (HIGH): aggregate by product_variant_id.
+        // return_lines has no UNIQUE (return_id, product_variant_id)
+        // and POST doesn't de-dupe lines[], so a return created with
+        // duplicate variant lines produces two rows. The unnest
+        // delta-join below then emits two delta rows joining the
+        // SAME inventory_levels row → SQLSTATE 21000 "cannot affect
+        // row a second time", entire completion tx ROLLBACKs, return
+        // gets stuck in 'approved' permanently. GROUP BY keeps
+        // money dispensation accurate (sum amount) and collapses
+        // the UPSERT input to one row per variant. Same class as
+        // R75-H3, R76-SEC-H1, R77-DB-M1.
         const { rows: lines } = await client.query(
-          `SELECT rl.product_variant_id, rl.quantity
+          `SELECT rl.product_variant_id, SUM(rl.quantity)::int AS quantity
            FROM return_lines rl
            JOIN returns r ON r.id = rl.return_id AND r.organization_id = $2
-           WHERE rl.return_id = $1 AND rl.restock = true`,
+           WHERE rl.return_id = $1 AND rl.restock = true
+           GROUP BY rl.product_variant_id`,
           [id, orgId],
         );
 
@@ -886,10 +924,22 @@ export const PUT = withAdminAuth('approval.void_transaction', async (request, ct
       }
 
       // R27-C10: explicit org filter on the status UPDATE.
+      // R78-DB-H2: status predicate as belt-and-braces so a
+      // future code path that acquires the FOR NO KEY UPDATE row
+      // lock in different order can't sneak past the allowedByFrom
+      // table check above. 409 if the transition races.
       const { rows } = await client.query(
-        `UPDATE returns SET status = $1, processed_by = $2, updated_at = NOW() WHERE id = $3 AND organization_id = $4 RETURNING *`,
-        [status, processed_by || null, id, orgId],
+        `UPDATE returns SET status = $1, processed_by = $2, updated_at = NOW()
+         WHERE id = $3 AND organization_id = $4 AND status = $5 RETURNING *`,
+        [status, processed_by || null, id, orgId, retRow.status],
       );
+      if (rows.length === 0) {
+        await client.query("ROLLBACK");
+        return NextResponse.json(
+          { error: 'Return status changed concurrently. Retry.' },
+          { status: 409 },
+        );
+      }
       await client.query("COMMIT");
       invalidateInventoryCache(orgId);
       return NextResponse.json({ return: rows[0] }, { status: 200 });

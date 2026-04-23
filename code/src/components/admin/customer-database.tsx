@@ -111,7 +111,14 @@ export function CustomerDatabase() {
         ? { id: editing.id, ...form, ...(actorPassword ? { actorPassword } : {}) }
         : form;
       const res = await fetch('/api/customers', { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      if (!res.ok) { const err = await res.json(); setMessage({ type: 'error', text: err.error }); return; }
+      if (!res.ok) {
+        // R78-FE-M: .catch fallback so a non-JSON body doesn't
+        // throw from res.json() and become a generic
+        // "Failed to save" instead of the actual server error.
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        setMessage({ type: 'error', text: err.error ?? 'Unknown error' });
+        return;
+      }
       setMessage({ type: 'success', text: editing ? 'Customer updated.' : 'Customer added.' });
       setShowForm(false); fetchCustomers(pagination.page);
     } catch { setMessage({ type: 'error', text: 'Failed to save.' }); }

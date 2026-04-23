@@ -33,6 +33,13 @@ interface ShiftCloseModalProps {
   tenderBreakdown: { type: string; total: number; count: number }[];
   onConfirm: (declaredCash: number, note: string, blind: boolean) => void;
   onCancel: () => void;
+  // R78-FE-H1: processing flag from parent (register-console-client
+  // closing state). Prior shape had no disabled state on the
+  // "Close shift" button — a double-tap during the closeShift
+  // server round-trip fired closeShiftEnhancedAction twice,
+  // burning audit rows + rate-limit budget. Plumb through so
+  // the button disables while the parent's mutation is in flight.
+  processing?: boolean;
 }
 
 export function ShiftCloseModal({
@@ -45,6 +52,7 @@ export function ShiftCloseModal({
   tenderBreakdown,
   onConfirm,
   onCancel,
+  processing = false,
 }: ShiftCloseModalProps) {
   const [mode, setMode] = useState<"summary" | "count" | "confirm">("summary");
   const [denominations, setDenominations] = useState<DenominationRow[]>(
@@ -334,19 +342,21 @@ export function ShiftCloseModal({
           <button
             type="button"
             onClick={() => setMode(blindClose ? "summary" : "count")}
-            className="touch-button flex-1 rounded-xl bg-zinc-100 text-sm font-semibold text-zinc-700 hover:bg-zinc-200"
+            disabled={processing}
+            className="touch-button flex-1 rounded-xl bg-zinc-100 text-sm font-semibold text-zinc-700 hover:bg-zinc-200 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Back
           </button>
           <button
             type="button"
+            disabled={processing}
             onClick={() => {
               const declared = blindClose ? expectedCash : countedTotal;
               onConfirm(declared, note.trim(), blindClose);
             }}
-            className="touch-button flex-1 rounded-xl bg-amber-600 text-sm font-semibold text-white hover:bg-amber-700"
+            className="touch-button flex-1 rounded-xl bg-amber-600 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Close shift
+            {processing ? "Closing…" : "Close shift"}
           </button>
         </div>
       </div>

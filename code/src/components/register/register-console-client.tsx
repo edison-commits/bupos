@@ -489,6 +489,7 @@ export function RegisterConsoleClient({
             tenderBreakdown={tenderBreakdown}
             onConfirm={handleCloseShift}
             onCancel={() => setShowCloseModal(false)}
+            processing={closing}
           />
         )}
 
@@ -676,6 +677,7 @@ export function RegisterConsoleClient({
                   tenderBreakdown={tenderBreakdown}
                   onConfirm={handleCloseShift}
                   onCancel={() => setShowCloseModal(false)}
+                  processing={closing}
                 />
               )}
             </div>

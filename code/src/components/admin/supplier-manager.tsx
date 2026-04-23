@@ -98,7 +98,11 @@ export function SupplierManager() {
         body: JSON.stringify(body),
       });
       if (!res.ok) {
-        const err = await res.json();
+        // R78-FE-M: .catch fallback on non-JSON response bodies
+        // so proxy timeouts / HTML error pages surface as an
+        // HTTP-status hint instead of throwing into the outer
+        // generic "Failed to save" catch.
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
         setMessage({ type: 'error', text: err.error || 'Failed to save' });
         return;
       }

@@ -118,7 +118,15 @@ export function ExpenseTracker() {
           ...(actorPassword ? { actorPassword } : {}),
         }),
       });
-      if (!res.ok) { const err = await res.json(); setMessage({ type: 'error', text: err.error }); return; }
+      if (!res.ok) {
+        // R78-FE-M: .catch fallback — non-JSON response body
+        // (CF 502 HTML / proxy timeout) would otherwise throw
+        // from res.json() and bubble to the outer catch as a
+        // generic "Failed to save".
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        setMessage({ type: 'error', text: err.error ?? 'Unknown error' });
+        return;
+      }
       setMessage({ type: 'success', text: 'Expense added.' });
       setShowForm(false); fetchExpenses();
     } catch { setMessage({ type: 'error', text: 'Failed to save.' }); }

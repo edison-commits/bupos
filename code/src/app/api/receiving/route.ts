@@ -204,10 +204,15 @@ export const POST = withAdminAuth("inventory.adjust", async (request, ctx) => {
           currentOnHand = levelRes.rows[0].on_hand;
         } else {
           // Create inventory level if it doesn't exist
+          // R78-DB-M1: default reorder_point=5 for first-time
+          // receives at a new location, parity with PO PATCH
+          // receive + transfers RECEIVE (R76-DB-M). Prior default
+          // 0 hid the variant from reorder-suggestions / low-stock
+          // alerts until someone manually set a threshold.
           const createRes = await client.query(
             `INSERT INTO inventory_levels
               (organization_id, location_id, product_variant_id, on_hand, reserved, reorder_point)
-             VALUES ($1, $2, $3, 0, 0, 0)
+             VALUES ($1, $2, $3, 0, 0, 5)
              RETURNING id`,
             [orgId, locationId, item.product_variant_id]
           );

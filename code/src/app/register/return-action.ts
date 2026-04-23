@@ -101,6 +101,40 @@ export async function processReturnAction(input: ReturnInput): Promise<ReturnRes
         );
       }
 
+      // R78-SEC-H2 (HIGH): serialize against closeShiftEnhancedAction.
+      // register-side return-action.ts never locked the shift/register
+      // session row — and closeShiftEnhancedAction (R76-DB-H2) took
+      // FOR UPDATE + advisory lock, so this path didn't wait on it.
+      // Interleaving: close takes locks + snapshots cashSales + flips
+      // status='closed' + commits; return commits a -N cash refund
+      // on the same register_session AFTER the close's snapshot;
+      // the refund is invisible to the closed shift AND any later
+      // shift (the negative tender's t.created_at falls before any
+      // later shift's opened_at). Physical cash leaves the drawer
+      // with zero reconciliation evidence. Mirror the checkout-
+      // action.ts lock pattern: FOR UPDATE the register_session
+      // row for every return, AND FOR UPDATE SKIP LOCKED the open
+      // shift when the refund is cash (matches /api/returns +
+      // /api/returns/process SKIP LOCKED pattern from R77-DB-H1).
+      await client.query(
+        `SELECT id FROM register_sessions WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
+        [context.registerSession.id, context.employee.organizationId],
+      );
+      if (cashRefund) {
+        const { rows: shiftLock } = await client.query(
+          `SELECT id FROM shifts
+             WHERE organization_id = $1 AND location_id = $2 AND status = 'open'
+             ORDER BY opened_at DESC LIMIT 1
+             FOR UPDATE SKIP LOCKED`,
+          [context.employee.organizationId, context.location.id],
+        );
+        if (shiftLock.length === 0) {
+          throw new Error(
+            "Cash refund requires an open shift at this location (or shift is being closed — retry).",
+          );
+        }
+      }
+
       // R35-P2: consolidated reads.
       const [
         regConfig,

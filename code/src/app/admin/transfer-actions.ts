@@ -236,6 +236,15 @@ export async function shipTransferAction(transferId: string, actorPassword?: str
           WHERE tl.transfer_id = $1`,
         [transferId, orgId],
       );
+      // R78-SEC-H1 (HIGH): Server Action twin of R76-SEC-H1. REST
+      // /api/transfers ship aggregates per-variant before stock
+      // check + single delta-join UPDATE; the Server Action was
+      // never updated. transfer_lines has no UNIQUE on
+      // (transfer_id, product_variant_id) so a transfer with
+      // [{A,3},{A,3}] against on_hand=5 let both lines pass the
+      // check (each reads the same base on_hand) then the serial
+      // UPDATE loop drove on_hand to -1. Aggregate + single delta-
+      // join UPDATE with GREATEST(0, ...) clamp.
       const variantIds = lines.rows.map((line: { product_variant_id: string }) => line.product_variant_id);
       const { rows: lockedInventory } = await client.query(
         `SELECT product_variant_id, on_hand
@@ -250,12 +259,18 @@ export async function shipTransferAction(transferId: string, actorPassword?: str
       const onHandByVariant = new Map<string, number>(
         lockedInventory.map((row: { product_variant_id: string; on_hand: number }) => [row.product_variant_id, Number(row.on_hand)]),
       );
+
+      const requestedByVariant = new Map<string, number>();
       for (const line of lines.rows as Array<{ product_variant_id: string; quantity_requested: number }>) {
-        const available = onHandByVariant.get(line.product_variant_id) ?? 0;
-        const requested = Number(line.quantity_requested);
-        if (available < requested) {
+        const vid = line.product_variant_id;
+        const qty = Number(line.quantity_requested) || 0;
+        requestedByVariant.set(vid, (requestedByVariant.get(vid) ?? 0) + qty);
+      }
+      for (const [vid, totalRequested] of requestedByVariant) {
+        const available = onHandByVariant.get(vid) ?? 0;
+        if (available < totalRequested) {
           await client.query("ROLLBACK");
-          throw new Error(`Insufficient stock at source for variant ${line.product_variant_id} (have ${available}, need ${requested})`);
+          throw new Error(`Insufficient stock at source for variant ${vid} (have ${available}, need ${totalRequested})`);
         }
       }
 
@@ -274,13 +289,20 @@ export async function shipTransferAction(transferId: string, actorPassword?: str
         [transferId, orgId],
       );
 
-      for (const line of lines.rows as Array<{ product_variant_id: string; quantity_requested: number }>) {
-        await client.query(
-          `UPDATE inventory_levels SET on_hand = on_hand - $1, updated_at = now()
-           WHERE organization_id = $4 AND product_variant_id = $2 AND location_id = $3`,
-          [line.quantity_requested, line.product_variant_id, transfer.source_location_id, orgId],
-        );
-      }
+      // Single UPDATE across all variants — unnest delta-join with
+      // deduped (variant, qty) pairs. Same shape as REST ship.
+      const aggVariantIds = [...requestedByVariant.keys()];
+      const aggQuantities = aggVariantIds.map((v) => requestedByVariant.get(v) as number);
+      await client.query(
+        `UPDATE inventory_levels il
+            SET on_hand = GREATEST(0, il.on_hand - delta.qty),
+                updated_at = now()
+           FROM (SELECT unnest($1::uuid[]) AS variant_id, unnest($2::int[]) AS qty) AS delta
+          WHERE il.organization_id = $4
+            AND il.location_id = $3
+            AND il.product_variant_id = delta.variant_id`,
+        [aggVariantIds, aggQuantities, transfer.source_location_id, orgId],
+      );
       // R70-L1: ship audit in-tx (parity with REST ship path).
       await client.query(
         `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
