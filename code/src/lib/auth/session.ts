@@ -1082,15 +1082,17 @@ export async function signOutRegister() {
         // check-pool-org-filter: scoped-by-auth-session-cookie
         // sessionId is the cookie-proven auth session id; the update
         // is scoped by the session row itself.
+        // R43-H7: also return organization_id + location_id so the
+        // shift auto-close audit below can attribute correctly.
         const { rows: endedRows } = await pool.query(
           `UPDATE register_sessions SET status = 'ended', ended_at = $1
            WHERE auth_session_id = $2 AND status = 'active'
-           RETURNING id, employee_id, active_shift_id`,
+           RETURNING id, employee_id, organization_id, location_id, active_shift_id`,
           [timestamp, sessionId],
         );
 
         const registerSession = endedRows[0] as
-          | { id: string; employee_id: string; active_shift_id: string | null }
+          | { id: string; employee_id: string; organization_id: string; location_id: string; active_shift_id: string | null }
           | undefined;
 
         if (registerSession?.active_shift_id) {
@@ -1112,14 +1114,36 @@ export async function signOutRegister() {
               registerSession.active_shift_id,
             ],
           );
+          // R43-H7: audit the shift auto-close via `audit_events`, not
+          // `transaction_events`. Prior shape INSERTed into
+          // transaction_events and populated `transaction_id` with
+          // the string `txn_<shift_uuid>` — but transaction_events.
+          // transaction_id is declared `UUID NOT NULL REFERENCES
+          // transactions(id) ON DELETE CASCADE` (migration 001:302).
+          // Every auto-close INSERT therefore failed with SQLSTATE
+          // 22P02 (invalid UUID syntax), aborted the transaction,
+          // and prevented the subsequent `UPDATE register_sessions
+          // SET active_shift_id = NULL` from running. Register logout
+          // with an open shift quietly left the session in an
+          // inconsistent state.
+          //
+          // audit_events is the proper shift-scoped audit table and
+          // does not constrain entity_id to a UUID type (it's TEXT),
+          // so the shift_id interpolates cleanly.
           await pool.query(
-            `INSERT INTO transaction_events (id, transaction_id, actor_employee_id, event_kind, notes, payload, created_at)
-             VALUES ($1, $2, $3, 'shift_closed', 'Shift auto-closed during register logout', $4, $5)`,
+            `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+             VALUES ($1, $2, $3, $4, 'shift', $5, 'shift_auto_closed', $6, $7)`,
             [
               randomUUID(),
-              `txn_${registerSession.active_shift_id}`,
+              registerSession.organization_id,
+              registerSession.location_id,
               registerSession.employee_id,
-              JSON.stringify({ register_session_id: registerSession.id, auto_closed: "true" }),
+              registerSession.active_shift_id,
+              JSON.stringify({
+                register_session_id: registerSession.id,
+                auto_closed: "true",
+                reason: "register_logout",
+              }),
               timestamp,
             ],
           );

@@ -22,7 +22,14 @@ import { toast } from "sonner";
  *   - Require the message to be ASCII-printable plus common punctuation
  *   - Drop silently on any rejection (no toast leaks into UX)
  */
-const PLAIN_TEXT_PATTERN = /^[\x20-\x7e]{1,200}$/; // printable ASCII, up to 200 chars
+// R43-LOW: accept full Unicode letter/number/punctuation/separator
+// classes so legitimate messages containing em-dash, non-ASCII names,
+// currency glyphs, etc. render correctly. Prior ASCII-only pattern
+// dropped any toast containing `—` (U+2014) or an accented character
+// — observed UX problem where "Shift closed — variance $0.05"
+// silently showed nothing. The blocked-pattern list below still
+// catches URLs / phones / emails / handles / angle brackets.
+const PLAIN_TEXT_PATTERN = /^[\p{L}\p{N}\p{P}\p{Z}\p{S}]{1,200}$/u;
 const BLOCKED_PATTERNS = [
   /https?:\/\//i,
   /\bwww\./i,

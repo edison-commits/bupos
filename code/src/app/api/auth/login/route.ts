@@ -33,8 +33,15 @@ export async function POST(request: Request) {
   // future consumer that also uses email as a key (e.g. customer
   // lookup, password reset). Defence against cross-feature bucket
   // exhaustion, not a functional bug today.
+  // R43-M: emit structured warn on every 429 so Logpush / Axiom can
+  // alert on credential-stuffing flare-ups. Actor is email-prefix
+  // only — never the full address (PII).
+  const { logRateLimited } = await import("@/lib/logging/rate-limit-log");
+  const actorPrefix = email.slice(0, 3) + "***";
+
   const rl = checkRateLimit(`admin-login:${email}`);
   if (!rl.allowed) {
+    logRateLimited({ bucket: "admin-login", layer: "mem", actor: actorPrefix });
     return Response.json({ error: "Too many attempts. Try again shortly." }, { status: 429 });
   }
 
@@ -44,6 +51,7 @@ export async function POST(request: Request) {
   const { checkKvRateLimit } = await import("@/lib/auth/kv-rate-limit");
   const kvRl = await checkKvRateLimit(`admin-login:${email}`, { maxAttempts: 8, windowMs: 300_000 });
   if (!kvRl.allowed) {
+    logRateLimited({ bucket: "admin-login", layer: "kv", actor: actorPrefix });
     return Response.json({ error: "Too many attempts. Try again shortly." }, { status: 429 });
   }
 
@@ -56,6 +64,7 @@ export async function POST(request: Request) {
   const { checkDbRateLimit } = await import("@/lib/auth/db-rate-limit");
   const dbRl = await checkDbRateLimit(`admin-login:${email}`, { maxAttempts: 10, windowMs: 600_000 });
   if (!dbRl.allowed) {
+    logRateLimited({ bucket: "admin-login", layer: "db", actor: actorPrefix });
     return Response.json({ error: "Too many attempts. Try again later." }, { status: 429 });
   }
 

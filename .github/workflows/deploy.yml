@@ -163,8 +163,18 @@ jobs:
             # The regex gate above constrains `$basename` to
             # ^[0-9]{3}_[a-z0-9_]+\.sql$ — no quotes, no backslashes, no
             # whitespace — so shell interpolation here is safe.
-            applied=$(psql "$DB_URL" -tAc \
+            # R43-LOW: ON_ERROR_STOP on the probe + numeric validation.
+            # Prior shape could receive a non-numeric value (notice/warning
+            # emitted by postgres client stdout on version mismatch),
+            # evaluate `[ "$applied" = "0" ]` false, skip the migration,
+            # and print "✓ All migrations applied" — silent migration
+            # skip. The numeric regex guard is belt-and-suspenders.
+            applied=$(psql "$DB_URL" -v ON_ERROR_STOP=1 -tAc \
               "SELECT COUNT(*) FROM _migrations WHERE filename = '$basename'")
+            if ! [[ "$applied" =~ ^[0-9]+$ ]]; then
+              echo "::error::Unexpected probe response for $basename: $applied"
+              exit 1
+            fi
             if [ "$applied" = "0" ]; then
               echo "→ Applying $basename"
               psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$f" >/dev/null

@@ -77,18 +77,24 @@ export async function POST(request: Request) {
         return Array.from(new Uint8Array(hash)).slice(0, 8).map((b) => b.toString(16).padStart(2, "0")).join("");
       })()
     : pin; // Fallback for environments without WebCrypto — still better than prefix+length
+  // R43-M: structured 429 log emitter for alerting on stuffing flood.
+  const { logRateLimited } = await import("@/lib/logging/rate-limit-log");
+
   const pinBucket = checkRateLimit(`register-pin:${pinFingerprint}`, { maxAttempts: 5, windowMs: 300_000 });
   if (!pinBucket.allowed) {
+    logRateLimited({ bucket: "register-pin", layer: "mem", actor: pinFingerprint.slice(0, 6) });
     return Response.json({ error: "Too many attempts for this PIN. Try again shortly." }, { status: 429 });
   }
   const locBucket = checkRateLimit(`register-loc:${locationId}`, { maxAttempts: 30, windowMs: 300_000 });
   if (!locBucket.allowed) {
+    logRateLimited({ bucket: "register-loc", layer: "mem", actor: locationId.slice(0, 8) });
     return Response.json({ error: "Too many attempts. Try again shortly." }, { status: 429 });
   }
   // R27-H1: per-IP bucket (in-memory, fast-fail path). The DB-layer
   // per-IP bucket lives below with the other DB rate-limits.
   const ipBucket = checkRateLimit(`register-ip:${clientIp}:${locationId}`, { maxAttempts: 10, windowMs: 300_000 });
   if (!ipBucket.allowed) {
+    logRateLimited({ bucket: "register-ip", layer: "mem", actor: `${clientIp}|${locationId.slice(0, 8)}` });
     return Response.json({ error: "Too many attempts from this device. Try again shortly." }, { status: 429 });
   }
 
@@ -100,12 +106,14 @@ export async function POST(request: Request) {
   const { checkKvRateLimit } = await import("@/lib/auth/kv-rate-limit");
   const kvPinBucket = await checkKvRateLimit(`register-pin:${pinFingerprint}`, { maxAttempts: 8, windowMs: 300_000 });
   if (!kvPinBucket.allowed) {
+    logRateLimited({ bucket: "register-pin", layer: "kv", actor: pinFingerprint.slice(0, 6) });
     return Response.json({ error: "Too many attempts for this PIN. Try again shortly." }, { status: 429 });
   }
 
   const { checkDbRateLimit } = await import("@/lib/auth/db-rate-limit");
   const dbPinBucket = await checkDbRateLimit(`register-pin:${pinFingerprint}`, { maxAttempts: 10, windowMs: 600_000 });
   if (!dbPinBucket.allowed) {
+    logRateLimited({ bucket: "register-pin", layer: "db", actor: pinFingerprint.slice(0, 6) });
     return Response.json({ error: "Too many attempts for this PIN. Try again later." }, { status: 429 });
   }
   // R27-H1: DB-layer per-IP bucket — cross-isolate coherent. Key on
@@ -114,6 +122,7 @@ export async function POST(request: Request) {
   // hits a single cap.
   const dbIpBucket = await checkDbRateLimit(`register-ip:${clientIp}:${locationId}`, { maxAttempts: 20, windowMs: 900_000 });
   if (!dbIpBucket.allowed) {
+    logRateLimited({ bucket: "register-ip", layer: "db", actor: `${clientIp}|${locationId.slice(0, 8)}` });
     return Response.json({ error: "Too many attempts from this device. Try again later." }, { status: 429 });
   }
 

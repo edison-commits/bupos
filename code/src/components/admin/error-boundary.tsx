@@ -1,18 +1,18 @@
 "use client";
 
-import { useEffect } from "react";
-import { safeErr } from "@/lib/logging/safe-err";
-
 /**
- * Shared error boundary UI used by every admin subroute's error.tsx.
- * Logs via `safeErr` so PG DETAIL / bound params / stack frames can't
- * leak into Worker logs, and renders a GENERIC user-facing message +
- * a digest for ops correlation. The raw `error.message` is never shown
- * to the user — server-thrown messages may carry internal IDs, SKUs,
- * or untrusted input (e.g. the R42-G audit finding where a customer
- * standing at the counter on /customer-display could see "invalid
- * input syntax for type uuid: abc…").
+ * R43-LOW: AdminErrorBoundary consolidated into a thin wrapper around
+ * the shared `<ErrorFallback>`. Prior shape was a separate near-
+ * identical component that R42-G's original leak (rendering
+ * error.message) could easily drift back into — two components with
+ * the same job, the same failure modes, maintained independently.
+ *
+ * All 24 admin/.../error.tsx files import `AdminErrorBoundary` from
+ * this module; keeping the export name means no cross-repo rename.
+ * Internally we just forward to ErrorFallback with a section prefix.
  */
+import { ErrorFallback } from "@/components/shared/error-fallback";
+
 export function AdminErrorBoundary({
   error,
   reset,
@@ -22,33 +22,5 @@ export function AdminErrorBoundary({
   reset: () => void;
   section?: string;
 }) {
-  useEffect(() => {
-    console.error(
-      JSON.stringify({
-        level: "error",
-        event: "client_error_boundary",
-        section: section ?? "admin",
-        digest: error.digest,
-        error: safeErr(error),
-      }),
-    );
-  }, [error, section]);
-
-  return (
-    <div className="flex min-h-[50vh] flex-col items-center justify-center gap-4 p-8">
-      <h2 className="text-xl font-bold text-zinc-800">Something went wrong</h2>
-      <p className="text-sm text-zinc-500">
-        An unexpected error occurred. Please try again.
-      </p>
-      {error.digest ? (
-        <p className="text-xs text-zinc-400 font-mono">Reference: {error.digest}</p>
-      ) : null}
-      <button
-        onClick={reset}
-        className="rounded-2xl bg-zinc-900 px-5 py-3 text-sm font-bold text-white hover:bg-zinc-800"
-      >
-        Try again
-      </button>
-    </div>
-  );
+  return <ErrorFallback error={error} reset={reset} section={section ?? "admin"} />;
 }

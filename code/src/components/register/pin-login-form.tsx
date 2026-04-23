@@ -15,11 +15,22 @@ function getDeviceId(): string {
 
 export function PinLoginForm({ locationId }: { locationId: string }) {
   const [pin, setPin] = useState("");
-  const [deviceId, setDeviceId] = useState<string>("");
+  // R43-LOW: lazy-initialize deviceId synchronously on the client so
+  // the hidden input is present on first render. Prior shape set it
+  // via useEffect which runs post-paint; a fast submission (paired
+  // PIN pad, autosubmit, keyboard user) could dispatch the form
+  // before the input was in the DOM, sending no deviceId. Guard with
+  // typeof window so SSR returns empty string (hidden input then
+  // renders conditionally — not submitted).
+  const [deviceId, setDeviceId] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    return getDeviceId();
+  });
 
   useEffect(() => {
-    setDeviceId(getDeviceId());
-  }, []);
+    // If SSR emitted "", hydrate with the real device id now.
+    if (!deviceId) setDeviceId(getDeviceId());
+  }, [deviceId]);
 
   return (
     <div className="grid gap-4">

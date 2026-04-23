@@ -45,11 +45,37 @@ export function ApprovalModal({ request, onApproved, onDenied }: ApprovalModalPr
   // (React warning + stale onApproved propagation).
   const mountedRef = useRef(true);
 
+  // R43-M: Tab focus trap — keyboard can't escape into the background
+  // while the modal is open. Prior shape only handled Escape.
+  const modalRef = useRef<HTMLDivElement | null>(null);
   // Escape key + backdrop click to dismiss
   useEffect(() => {
     mountedRef.current = true;
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onDenied();
+      if (e.key === "Escape") {
+        onDenied();
+        return;
+      }
+      if (e.key === "Tab" && modalRef.current) {
+        const focusables = modalRef.current.querySelectorAll<HTMLElement>(
+          'input:not([disabled]), button:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        );
+        if (focusables.length === 0) return;
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        const active = document.activeElement as HTMLElement | null;
+        if (e.shiftKey) {
+          if (active === first || !modalRef.current.contains(active)) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else {
+          if (active === last || !modalRef.current.contains(active)) {
+            e.preventDefault();
+            first.focus();
+          }
+        }
+      }
     }
     document.addEventListener("keydown", onKey);
     return () => {
@@ -112,7 +138,7 @@ export function ApprovalModal({ request, onApproved, onDenied }: ApprovalModalPr
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-label="Manager approval required" onClick={onDenied}>
-      <div className="w-full max-w-sm rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+      <div ref={modalRef} className="w-full max-w-sm rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
 
         {/* Header — amber warning style */}
         <div className="rounded-t-2xl bg-amber-600 px-5 py-4 text-white">

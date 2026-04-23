@@ -92,9 +92,15 @@ export async function makeLayawayPaymentAction(formData: FormData) {
           await client.query("ROLLBACK");
           throw new Error("Cash layaway payment requires an open shift at the layaway location");
         }
+        // R43-C2: literal must be `'pay_in'` (the CHECK constraint on
+        // pay_in_outs.direction at migration 001:351 is `IN ('pay_in',
+        // 'pay_out')`). The shorter `'in'` form R42-P shipped with
+        // violated SQLSTATE 23514 and bricked every cash layaway
+        // payment. Regression test at r42-findings.test.ts encoded the
+        // broken literal too — updated alongside this fix.
         await client.query(
           `INSERT INTO pay_in_outs (id, organization_id, shift_id, location_id, employee_id, direction, amount, reason, note, created_at)
-           VALUES (gen_random_uuid(), $1, $2, $3, $4, 'in', $5, $6, $7, now())`,
+           VALUES (gen_random_uuid(), $1, $2, $3, $4, 'pay_in', $5, $6, $7, now())`,
           [orgId, shiftRows[0].id, loc, ctx.employee.id, amount, "layaway_payment", `Layaway ${layawayId} cash payment`],
         );
       }

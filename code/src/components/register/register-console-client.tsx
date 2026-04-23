@@ -17,6 +17,12 @@ import { ShiftCloseModal } from "./shift-close-modal";
 import { PayInOutModal, type PayDirection } from "./pay-in-out-modal";
 import { EODWizard } from "./eod-wizard";
 import { formatCurrency } from "@/lib/format";
+// R43-H6: static import so the helper is in the hydrated bundle and
+// runs synchronously before the logout form submits. The prior
+// `await import(...)` inside onSubmit raced with the server action's
+// redirect: the browser navigation cancelled the chunk fetch, and
+// `clearLocalRegisterState` never ran — defeating the R42-L cleanup.
+import { clearLocalRegisterState } from "@/lib/offline/register-client-reset";
 
 // Dynamic import with ssr: false to avoid module initialization errors
 // during SSR on Cloudflare Workers (Turbopack bundling TDZ issue)
@@ -285,13 +291,21 @@ export function RegisterConsoleClient({
         <form
           key={b.id}
           action={registerLogoutAction}
-          onSubmit={() => {
-            // R42-L: wipe local state (pos_device_id, dead-letter IDB)
-            // BEFORE the server action navigates. Fire-and-forget because
-            // the server redirect fires regardless of the promise.
-            import("@/lib/offline/register-client-reset")
-              .then((m) => m.clearLocalRegisterState())
-              .catch(() => undefined);
+          onSubmit={(e) => {
+            // R43-M: double-submit guard. Disable the button in-form
+            // synchronously so a hasty double-tap can't fire two
+            // concurrent registerLogoutAction invocations (each
+            // producing a duplicate audit_events row + signOutRegister
+            // call).
+            const btn = e.currentTarget.querySelector<HTMLButtonElement>('button[type="submit"]');
+            if (btn) {
+              if (btn.disabled) { e.preventDefault(); return; }
+              btn.disabled = true;
+            }
+            // R42-L / R43-H6: wipe local state (pos_device_id,
+            // dead-letter IDB) BEFORE the server action navigates.
+            // Static import ensures the helper is already in memory.
+            clearLocalRegisterState().catch(() => undefined);
           }}
         >
           <button
@@ -503,10 +517,38 @@ export function RegisterConsoleClient({
           />
         )}
 
-        {/* Quick-switch PIN modal */}
+        {/* Quick-switch PIN modal — R43-M Tab focus trap + role/aria-modal. */}
         {showQuickSwitch && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-            <div className="w-full max-w-xs rounded-2xl bg-white shadow-2xl">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Switch employee"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                setShowQuickSwitch(false);
+                setSwitchPin("");
+                return;
+              }
+              if (e.key === "Tab") {
+                const modal = e.currentTarget.querySelector<HTMLDivElement>('[data-modal-inner]');
+                if (!modal) return;
+                const focusables = modal.querySelectorAll<HTMLElement>(
+                  'input:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+                );
+                if (focusables.length === 0) return;
+                const first = focusables[0];
+                const last = focusables[focusables.length - 1];
+                const active = document.activeElement as HTMLElement | null;
+                if (e.shiftKey) {
+                  if (active === first || !modal.contains(active)) { e.preventDefault(); last.focus(); }
+                } else {
+                  if (active === last || !modal.contains(active)) { e.preventDefault(); first.focus(); }
+                }
+              }
+            }}
+          >
+            <div data-modal-inner className="w-full max-w-xs rounded-2xl bg-white shadow-2xl">
               <div className="rounded-t-2xl bg-indigo-600 px-5 py-4 text-center text-white">
               <p className="text-base font-bold">Switch employee</p>
                 <p className="mt-1 text-sm text-indigo-200">Enter new cashier&apos;s PIN</p>
@@ -589,14 +631,18 @@ export function RegisterConsoleClient({
             </div>
             <form
               action={registerLogoutAction}
-              onSubmit={() => {
-                // R42-L: local-state wipe on close-session too.
-                import("@/lib/offline/register-client-reset")
-                  .then((m) => m.clearLocalRegisterState())
-                  .catch(() => undefined);
+              onSubmit={(e) => {
+                // R43-M: double-submit guard. Same rationale as the
+                // top-bar logout form.
+                const btn = e.currentTarget.querySelector<HTMLButtonElement>('button[type="submit"]');
+                if (btn) {
+                  if (btn.disabled) { e.preventDefault(); return; }
+                  btn.disabled = true;
+                }
+                clearLocalRegisterState().catch(() => undefined);
               }}
             >
-              <button className="touch-button rounded-2xl bg-zinc-900 px-5 text-base font-semibold text-white">Close session</button>
+              <button type="submit" className="touch-button rounded-2xl bg-zinc-900 px-5 text-base font-semibold text-white">Close session</button>
             </form>
           </div>
           {notice ? <p className="mt-4 rounded-2xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{notice}</p> : null}

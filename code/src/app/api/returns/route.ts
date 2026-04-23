@@ -346,13 +346,17 @@ export const POST = withAdminAuth('employee.manage', async (request, ctx) => {
     // /api/returns/process:444-472. store_credit is always allowed (the
     // shop is issuing credit, not cashing out).
     if (rm === 'cash' || rm === 'card' || rm === 'original_tender') {
+      // R43-M6: exclude loyalty-tendered rows too. A sale paid partly
+      // via the 'loyalty' tender_type must not inflate the cash/card
+      // refund cap — loyalty value reverses via points, not cash. The
+      // sibling /api/returns/process path has the same fix applied.
       const { rows: capRows } = await client.query(
         `SELECT COALESCE(SUM(tt.amount), 0)::numeric AS cash_tendered,
                 COALESCE(SUM(CASE WHEN tt.amount < 0 THEN ABS(tt.amount) ELSE 0 END), 0)::numeric AS prior_refunds
            FROM transaction_tenders tt
            JOIN transactions t ON t.id = tt.transaction_id AND t.organization_id = $2
           WHERE tt.transaction_id = $1
-            AND tt.tender_type NOT IN ('gift_card', 'store_credit')`,
+            AND tt.tender_type NOT IN ('gift_card', 'store_credit', 'loyalty')`,
         [transaction_id, orgId],
       );
       const cashTendered = Math.max(0, Number(capRows[0]?.cash_tendered ?? 0));
@@ -551,10 +555,19 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
                 JSON.stringify({ is_return: 'true', return_id: id, reason: retRow.reason || 'other' }),
               ],
             );
-            // For cash specifically, also record a pay_out tied to the
-            // current open shift at this return's location so shift-close
-            // expectedCash sees the outflow. If no open shift exists,
-            // refuse — physical cash can't leave a closed drawer.
+            // R43-C1: NO pay_in_outs row for cash refunds. shift-close's
+            // `cashSales` SUMs transaction_tenders.amount WHERE
+            // tender_type='cash' (positive + negative rows together), so
+            // the negative tender row INSERTed above already reduces
+            // expectedCash by `refundAmount`. Adding a `pay_out` record
+            // would double-count (both the tender sum AND payOuts would
+            // subtract). Matches /api/returns/process:676-687 which also
+            // uses only the negative tender row.
+            //
+            // However, we still require an open shift at the return's
+            // location for cash refunds: physical cash can't leave a
+            // closed drawer. Previously this check gated the pay_out
+            // INSERT; now it gates the refund itself.
             if (refundMethod === 'cash') {
               const { rows: shiftRows } = await client.query(
                 `SELECT id FROM shifts
@@ -569,19 +582,6 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
                   { status: 409 },
                 );
               }
-              await client.query(
-                `INSERT INTO pay_in_outs (id, organization_id, shift_id, location_id, employee_id, direction, amount, reason, note, created_at)
-                 VALUES (gen_random_uuid(), $1, $2, $3, $4, 'out', $5, $6, $7, now())`,
-                [
-                  orgId,
-                  shiftRows[0].id,
-                  retRow.location_id,
-                  processed_by,
-                  refundAmount,
-                  'refund',
-                  `Return ${id} (cash refund)`,
-                ],
-              );
             }
           } else if (refundMethod === 'store_credit') {
             // Resolve customer: prefer the original transaction's
@@ -635,9 +635,21 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
             );
           }
 
-          // R28-C4 / R40-2: reverse loyalty points using the cumulative-
-          // share pattern so admin + register refunds don't double-reverse.
-          // Non-fatal — logging only on error; money movement is committed.
+          // R28-C4 / R40-2 / R43-H3: reverse loyalty points using the
+          // cumulative-share pattern so admin + register refunds don't
+          // double-reverse. Wrapped in a SAVEPOINT so a query error
+          // inside the loyalty block rolls back ONLY the loyalty work
+          // — not the committed money movement above. Prior shape
+          // relied on a try/catch around `await client.query`, but in
+          // Postgres the entire transaction enters 'aborted' state on
+          // any query error (SQLSTATE 25P02); subsequent queries (the
+          // `UPDATE returns SET status = …` below) then throw "current
+          // transaction is aborted", and the outer catch ROLLBACKs the
+          // whole thing — silently undoing the refund despite the
+          // comment's claim that "money movement is committed". The
+          // SAVEPOINT/RELEASE/ROLLBACK TO SAVEPOINT dance genuinely
+          // isolates the sub-block.
+          await client.query('SAVEPOINT sp_loyalty');
           try {
             const { rows: origRows } = await client.query(
               `SELECT customer_id, points_earned, grand_total FROM transactions
@@ -684,10 +696,32 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
                 );
               }
             }
+            await client.query('RELEASE SAVEPOINT sp_loyalty');
           } catch (err) {
+            await client.query('ROLLBACK TO SAVEPOINT sp_loyalty').catch(() => {});
             console.error('[api/returns PUT] loyalty reversal failed:', safeErr(err));
           }
         }
+
+        // R43-H5: audit the state transition inside the same
+        // transaction. Prior shape wrote no audit row for the status
+        // flip, so an owner flipping pending→completed (dispensing
+        // money) left no discrete audit record beyond the returns
+        // row itself. If the owner's account is compromised, the
+        // attacker can drain store_credit or issue cash pay_outs
+        // without a standalone audit trail.
+        await client.query(
+          `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+           VALUES ($1, $2, $3, $4, 'return', $5, 'return_completed', $6, now())`,
+          [
+            randomUUID(), orgId, retRow.location_id, processed_by, id,
+            JSON.stringify({
+              transaction_id: retRow.transaction_id,
+              refund_method: retRow.refund_method,
+              refund_amount: Number(retRow.refund_amount),
+            }),
+          ],
+        );
       }
 
       // R27-C10: explicit org filter on the status UPDATE.

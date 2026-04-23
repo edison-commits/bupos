@@ -453,11 +453,14 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
     // Cap refund at what was actually tendered (cash/card) in the original transaction,
     // not the grand_total — grand_total includes gift card redemptions which reduce
     // the actual cash outlay. Refunding must not exceed actual cash/card received.
+    // R43-M6: exclude loyalty-tendered rows too. Loyalty value reverses
+    // via points, not cash. Including it inflates the cash/card refund
+    // cap by the loyalty-tender portion of the original sale.
     const tenderResult = await client.query(
       `SELECT COALESCE(SUM(tt.amount), 0)::numeric AS cash_tendered
        FROM transaction_tenders tt
        JOIN transactions t ON t.id = tt.transaction_id AND t.organization_id = $2
-       WHERE tt.transaction_id = $1 AND tt.amount > 0 AND tt.tender_type NOT IN ('gift_card', 'store_credit')`,
+       WHERE tt.transaction_id = $1 AND tt.amount > 0 AND tt.tender_type NOT IN ('gift_card', 'store_credit', 'loyalty')`,
       [transaction_id, orgId],
     );
     const cashTendered = Number(tenderResult.rows[0]?.cash_tendered) || 0;
@@ -762,6 +765,14 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
     // R29-H1: reverse prorated from persisted points_earned instead of
     // recomputing against the live earn rate — matches the register-side
     // math so admin and register refunds produce identical reversals.
+    //
+    // R43-H3: wrap in SAVEPOINT. Same rationale as /api/returns PUT —
+    // a query error inside the loyalty block aborts the whole Postgres
+    // transaction (SQLSTATE 25P02) and silently reverses the refund
+    // dispensation. SAVEPOINT/RELEASE/ROLLBACK TO SAVEPOINT isolates
+    // the sub-block so the outer try/catch genuinely keeps money
+    // movement committed.
+    await client.query('SAVEPOINT sp_loyalty');
     try {
       const { rows: origCustRows } = await client.query(
         `SELECT customer_id, points_earned, grand_total FROM transactions
@@ -779,13 +790,24 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
         // delta expected total minus what prior refunds already
         // reversed, so the sum across all refunds stays bounded by
         // `origPointsEarned`.
+        // R43-M4: exclude the just-created return row (self) so the
+        // cumulative-share math doesn't double-count. This route
+        // INSERTs the new return at line ~511 BEFORE the loyalty block
+        // runs, so a naive SUM includes self. The admin `/api/returns`
+        // PUT path already does this correctly via `AND id <> $3`.
+        // Without this fix, the N-th refund against the same sale
+        // reads priorRefundTotal = sum(including self), pushes
+        // newCumulativeShare past 1.0 (clamped), computes
+        // pointsToReverse=0, and under-reverses loyalty — enabling
+        // loyalty-farming via partial-refund cycles.
         const { rows: priorReturnRows } = await client.query(
           `SELECT COALESCE(SUM(refund_amount), 0)::numeric AS admin_prior
              FROM returns
             WHERE organization_id = $1
               AND transaction_id = $2
-              AND status IN ('pending', 'completed')`,
-          [orgId, transaction_id],
+              AND status IN ('pending', 'completed')
+              AND id <> $3`,
+          [orgId, transaction_id, returnId],
         );
         const { rows: priorRegRows } = await client.query(
           `SELECT COALESCE(SUM(grand_total), 0)::numeric AS reg_prior
@@ -817,10 +839,13 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
           );
         }
       }
+      await client.query('RELEASE SAVEPOINT sp_loyalty');
     } catch (err) {
       // Non-fatal — reversing loyalty failing shouldn't roll back the
-      // refund money movement. Surface via safeErr so the discrepancy
-      // is visible in logs for manual reconciliation.
+      // refund money movement. Roll back the SAVEPOINT so the outer
+      // transaction stays valid; log via safeErr so the discrepancy is
+      // visible in logs for manual reconciliation.
+      await client.query('ROLLBACK TO SAVEPOINT sp_loyalty').catch(() => {});
       console.error("[returns/process] loyalty reversal failed:", safeErr(err));
     }
 

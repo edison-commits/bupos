@@ -35,9 +35,16 @@ describe("R42 audit fixes", () => {
       // Lock acquired inside PUT before the dispensation logic runs.
       expect(src).toMatch(/pg_advisory_xact_lock[\s\S]*?return:\$\{[\s\S]*?transaction_id/);
     });
-    it("PUT dispenses cash via negative tender + pay_out", () => {
+    it("PUT dispenses cash via negative tender (no pay_out — shift-close aggregates negative cash tenders already)", () => {
+      // R43-C1: the pay_out INSERT was wrong (literal 'out' violated
+      // CHECK constraint, AND double-counted with shift-close's
+      // cashSales SUM which already includes negative tender rows).
+      // Only the negative tender row is written; shift-close correctly
+      // sees the outflow via `SUM(amount) WHERE tender_type='cash'`.
       expect(src).toMatch(/transaction_tenders[\s\S]*?-refundAmount/);
-      expect(src).toMatch(/pay_in_outs[\s\S]*?'out'/);
+      // Must NOT write a pay_in_outs row from the refund path.
+      const putSection = src.slice(src.indexOf("export const PUT"));
+      expect(putSection).not.toMatch(/INSERT INTO pay_in_outs/);
     });
     it("PUT dispenses store_credit via ledger + balance UPDATE", () => {
       expect(src).toMatch(/store_credit_ledger[\s\S]*?'refund'/);
@@ -284,7 +291,10 @@ describe("R42 audit fixes", () => {
     const src = read("src/app/admin/layaway-actions.ts");
     it("cash tender writes a pay_in row tied to the open shift", () => {
       expect(src).toMatch(/tenderType === ["']cash["']/);
-      expect(src).toMatch(/INSERT INTO pay_in_outs[\s\S]*?'in'/);
+      // R43-C2: literal must be `'pay_in'` to satisfy the CHECK
+      // constraint. The shorter `'in'` form shipped in R42-P violated
+      // SQLSTATE 23514 and bricked every cash layaway payment.
+      expect(src).toMatch(/INSERT INTO pay_in_outs[\s\S]*?'pay_in'/);
     });
     it("refuses cash payment when no open shift exists", () => {
       expect(src).toMatch(/Cash layaway payment requires an open shift/);

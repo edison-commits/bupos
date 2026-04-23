@@ -22,12 +22,23 @@ export function OfflineStatusBar() {
   const [hasMounted, setHasMounted] = useState(false);
   useEffect(() => { setHasMounted(true); }, []);
 
+  // R43-M: mount-guard. Prior shape had `getPendingCount().then(setPendingCount)`
+  // with no abort — unmount between the IDB round-trip starting and
+  // resolving triggered "setState on unmounted component" in strict
+  // mode and could write stale data to a now-unmounted store.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   // Poll pending count
   useEffect(() => {
     if (typeof window === "undefined" || !("indexedDB" in window)) return;
 
     const check = () => {
-      getPendingCount().then(setPendingCount).catch(() => {});
+      getPendingCount()
+        .then((n) => { if (mountedRef.current) setPendingCount(n); })
+        .catch(() => {});
     };
     check();
     const interval = setInterval(check, 5_000);
@@ -60,6 +71,11 @@ export function OfflineStatusBar() {
 
     try {
       const result = await syncPendingTransactions();
+      // R43-M: guard every setState behind the mount ref. A sync can
+      // take seconds; the component can unmount during it (navigation,
+      // shift close), and strict-mode React will warn on any stale
+      // setState.
+      if (!mountedRef.current) return;
       if (result.synced > 0) {
         setSyncResult(`Synced ${result.synced} transaction${result.synced > 1 ? "s" : ""}`);
       }
@@ -84,12 +100,14 @@ export function OfflineStatusBar() {
       }
       setPendingCount(result.remaining);
     } catch {
-      setSyncResult("Sync error — will retry");
+      if (mountedRef.current) setSyncResult("Sync error — will retry");
     } finally {
-      setSyncing(false);
+      if (mountedRef.current) setSyncing(false);
       // Clear result message after 5s (R34-D16: canceled on unmount).
       if (clearResultTimeoutRef.current) clearTimeout(clearResultTimeoutRef.current);
-      clearResultTimeoutRef.current = setTimeout(() => setSyncResult(null), 5_000);
+      clearResultTimeoutRef.current = setTimeout(() => {
+        if (mountedRef.current) setSyncResult(null);
+      }, 5_000);
     }
   }, [syncing]);
 

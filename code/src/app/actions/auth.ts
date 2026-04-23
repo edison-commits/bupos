@@ -97,15 +97,28 @@ export async function loginAction(_prev: { error: string } | null, formData: For
         // previously left NO trail. Emit a structured warn log so ops/
         // log-sink alerting can still pattern-match.
         if (orgId) {
+          // R43-H4: classify reason (never raw err.message). audit_events
+          // .payload is JSONB and is rendered to any admin who expands the
+          // row in the audit UI (src/app/admin/audit/page.tsx:466-468).
+          // A pg error carries DETAIL fragments with bound-param values
+          // (including the attempted email); persisting them into the
+          // JSONB and then rendering them verbatim is a self-inflicted
+          // data leak. Mirrors `src/app/admin/actions.ts` R42-K fix.
+          const reason = err instanceof Error && /Invalid admin credentials/.test(err.message)
+            ? "invalid_credentials"
+            : "internal_error";
           insertAudit(
             orgId, null, cred?.employeeId ?? null,
             "session", null, "admin_login_failed",
-            { email, reason: err instanceof Error ? err.message : "unknown" },
+            { email, reason },
           ).catch((auditErr) => console.error("[audit] Failed to insert audit event:", safeErr(auditErr)));
         } else {
+          const reason = err instanceof Error && /Invalid admin credentials/.test(err.message)
+            ? "invalid_credentials"
+            : "internal_error";
           console.warn("[admin_login_failed]", JSON.stringify({
             email_prefix: email.slice(0, 3) + "***",
-            reason: err instanceof Error ? err.message : "unknown",
+            reason,
             at: new Date().toISOString(),
           }));
         }
