@@ -4,6 +4,12 @@ import { orgTx } from '@/lib/supabase-rest';
 import { withDualAuth } from '@/lib/api/with-auth';
 import { checkRateLimit } from '@/lib/auth/rate-limit';
 import { validateBody, returnProcessSchema } from '@/lib/validation/schemas';
+// R95-MED: returns/process mutates inventory_levels (restock),
+// transaction_tenders (refund rows), and pay_in_outs (cross-shift
+// cash). All three are in readStore. invalidateInventoryCache
+// cascades to invalidateStoreCache per R94, so one call covers
+// both concerns (and matches the pattern in /api/returns PUT).
+import { invalidateInventoryCache } from '@/lib/cache/inventory-cache';
 
 import { safeErr } from "@/lib/logging/safe-err";
 interface ReturnLineItem {
@@ -994,6 +1000,7 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
     );
 
     await client.query('COMMIT');
+    invalidateInventoryCache(orgId);
     return NextResponse.json({
       return_id: returnId,
       return_number: returnNumber,

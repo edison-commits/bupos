@@ -5,6 +5,10 @@ import { withDualAuth } from '@/lib/api/with-auth';
 import { checkRateLimit } from '@/lib/auth/rate-limit';
 import { getRegisterConfig } from '@/lib/config/register-config';
 import { hasPermission } from '@/lib/domain/permissions';
+// R95-MED: shifts + pay_in_outs are both in the readStore
+// snapshot. All 4 cash-drawer mutation handlers (open/close
+// shift + pay_in + pay_out) must bust the 30s cache.
+import { invalidateStoreCache } from '@/lib/persistence/postgres-read-store';
 
 import { safeErr } from "@/lib/logging/safe-err";
 /**
@@ -302,6 +306,7 @@ async function handleOpenShift(
     }
 
     await client.query('COMMIT');
+    invalidateStoreCache(orgId);
     const shift = shiftRes.rows[0];
 
     return NextResponse.json(
@@ -408,6 +413,7 @@ async function handleCloseShift(
     client.release();
   }
 
+  invalidateStoreCache(orgId);
   return NextResponse.json({
     success: true,
     shift: {
@@ -547,6 +553,7 @@ async function handlePayIn(
     client.release();
   }
 
+  invalidateStoreCache(orgId);
   return NextResponse.json(
     {
       success: true,
@@ -748,6 +755,7 @@ async function handlePayOut(orgId: string, locationId: string, actorEmployeeId: 
 
   const payInOut = { id: payoutResult.id, created_at: payoutResult.created_at };
 
+  invalidateStoreCache(orgId);
   return NextResponse.json(
     {
       success: true,

@@ -3,6 +3,9 @@ import { orgQuery, orgTx } from "@/lib/supabase-rest";
 import { randomUUID } from "@/lib/uuid";
 import { withAdminAuth, withDualAuth } from "@/lib/api/with-auth";
 import { validateBody, shiftReportSchema } from "@/lib/validation/schemas";
+// R95-MED: `shifts` is in readStore; POST close_shift UPDATEs
+// status + closing_* fields. Bust the cache.
+import { invalidateStoreCache } from "@/lib/persistence/postgres-read-store";
 
 
 import { safeErr } from "@/lib/logging/safe-err";
@@ -426,6 +429,7 @@ export const POST = withAdminAuth("register.open", async (req, ctx) => {
         client.release();
       }
 
+      invalidateStoreCache(orgId);
       return NextResponse.json({
         shiftId,
         status: "closed",
