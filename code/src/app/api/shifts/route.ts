@@ -54,10 +54,20 @@ export const GET = withDualAuth("register.open", async (req, ctx) => {
     }
 
     if (date) {
-      params.push(`${date}T00:00:00.000Z`);
+      // R88-MED: org-TZ day bounds for shift date filter, not UTC.
+      // `opened_at` is TIMESTAMPTZ and Pacific-TZ stores filtering
+      // "2026-04-22" previously got UTC-midnight-to-UTC-midnight, so a
+      // shift opened at 2026-04-22 23:30 PT (= 2026-04-23 06:30 UTC)
+      // fell out of the filter even though the manager considered it
+      // a 2026-04-22 shift. Sibling of R83-SEC-H2 dashboard, R83 /api/export
+      // transactions, R83 reports hourly, and R87 /api/returns/search
+      // fixes — sixth and (hopefully) last timezone-sibling in the sweep.
+      const { buildOrgDayRange } = await import("@/lib/reports/day-range");
+      const { fromTs, toTs } = await buildOrgDayRange(orgId, date, date);
+      params.push(fromTs);
       extra.push(`s.opened_at >= $${params.length}`);
-      params.push(`${date}T23:59:59.999Z`);
-      extra.push(`s.opened_at <= $${params.length}`);
+      params.push(toTs);
+      extra.push(`s.opened_at < $${params.length}`);
     }
 
     const andClause = extra.length > 0 ? ` AND ${extra.join(" AND ")}` : "";
