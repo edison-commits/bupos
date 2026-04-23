@@ -26,7 +26,9 @@ import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
 import { checkOrigin } from "@/lib/api/with-auth";
 import { z } from "zod";
 
-const ADMIN_COOKIE = "basicuniformpos_admin_session";
+// R41-2: opaque cookie name (see session.ts for rationale).
+const ADMIN_COOKIE = "bupos_a";
+const OLD_ADMIN_COOKIE = "basicuniformpos_admin_session";
 
 const revokeSchema = z.object({
   currentPassword: z.string().min(1).max(200),
@@ -169,16 +171,22 @@ export async function POST(req: NextRequest) {
     // both drop the cookie.
     const isSecure = req.url.startsWith("https://");
     const r = NextResponse.json({ success: true });
-    const clearCookie = [
-      `${ADMIN_COOKIE}=`,
+    const clearAttrs = [
       `Path=/`,
       `HttpOnly`,
       `SameSite=Lax`,
       `Expires=Thu, 01 Jan 1970 00:00:00 GMT`,
       `Max-Age=0`,
       ...(isSecure ? ["Secure"] : []),
-    ].join("; ");
-    r.headers.set("Set-Cookie", clearCookie);
+    ];
+    // R41-2: clear both the new short cookie AND the legacy
+    // `basicuniformpos_*` name during the rollover window so a
+    // rollover client doesn't keep a live legacy session pinned
+    // after "sign out everywhere".
+    const clearNew = [`${ADMIN_COOKIE}=`, ...clearAttrs].join("; ");
+    const clearOld = [`${OLD_ADMIN_COOKIE}=`, ...clearAttrs].join("; ");
+    r.headers.append("Set-Cookie", clearNew);
+    r.headers.append("Set-Cookie", clearOld);
     return r;
   } catch (err) {
     console.error("[revoke-all-sessions] error:", safeErr(err));

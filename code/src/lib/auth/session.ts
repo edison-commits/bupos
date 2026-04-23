@@ -24,8 +24,51 @@ import { invalidateStoreCache } from "@/lib/persistence/postgres-read-store";
 
 const isPg = () => !!process.env.USE_POSTGRES;
 
-const ADMIN_COOKIE = "basicuniformpos_admin_session";
-const REGISTER_COOKIE = "basicuniformpos_register_session";
+// R41-2: cookie rename for opacity (R38-C-H6: prior names
+// `basicuniformpos_admin_session` vs `basicuniformpos_register_session`
+// telegraphed privilege level to proxy logs / browser DevTools
+// screenshots in support tickets). New names are opaque short
+// identifiers; the session scope is authoritative in the DB row, not
+// the cookie label.
+//
+// Dual-read migration window:
+//   - `getCookieValue` below checks the NEW name first, then the OLD
+//     name, so live sessions don't get logged out on rollout.
+//   - Every fresh session write sets the NEW cookie AND explicitly
+//     deletes the OLD one. After ~7 days of traffic every active
+//     session will have rotated to the new name; the next major
+//     round can drop the OLD_* aliases and the dual-read branch.
+const ADMIN_COOKIE = "bupos_a";
+const REGISTER_COOKIE = "bupos_r";
+const OLD_ADMIN_COOKIE = "basicuniformpos_admin_session";
+const OLD_REGISTER_COOKIE = "basicuniformpos_register_session";
+
+/**
+ * R41-2: read a session cookie tolerating either the new short name
+ * or the legacy long name. Prefers the new name (so a client with
+ * BOTH — right after a rollover — uses the authoritative fresh one).
+ */
+function getCookieValue(
+  jar: { get: (n: string) => { value: string } | undefined },
+  newName: string,
+  oldName: string,
+): string | undefined {
+  return jar.get(newName)?.value ?? jar.get(oldName)?.value;
+}
+
+/**
+ * R41-2: clear the LEGACY session cookie alongside a fresh write to
+ * the new name, so a rotated session doesn't leave both cookies
+ * pinned on the client. Also used on explicit logout. Safe when the
+ * legacy cookie isn't present (jar.delete is idempotent).
+ */
+function deleteLegacyCookie(
+  jar: { delete: (n: string) => void },
+  newName: string,
+): void {
+  if (newName === ADMIN_COOKIE) jar.delete(OLD_ADMIN_COOKIE);
+  if (newName === REGISTER_COOKIE) jar.delete(OLD_REGISTER_COOKIE);
+}
 
 /**
  * R24-M-3: single source of truth for the cookie `secure` flag.
@@ -104,7 +147,14 @@ async function pgDeleteSession(sessionId: string) {
 // ── Resolve session (works for both JSON and PG) ────────────────────
 async function resolveSession(scope: SessionRecord["scope"], cookieName: string, deviceId?: string) {
   const jar = await cookieStore();
-  const sessionId = jar.get(cookieName)?.value;
+  // R41-2: accept either the new short cookie name or the legacy
+  // `basicuniformpos_*` name during the rollover window.
+  const oldName = cookieName === ADMIN_COOKIE
+    ? OLD_ADMIN_COOKIE
+    : cookieName === REGISTER_COOKIE
+      ? OLD_REGISTER_COOKIE
+      : cookieName;
+  const sessionId = getCookieValue(jar, cookieName, oldName);
 
   if (!sessionId) {
     return null;
@@ -543,6 +593,7 @@ export async function signInAdmin(email: string, password: string) {
           path: "/",
           expires: new Date(nextSession.expiresAt),
         });
+        deleteLegacyCookie(jar, ADMIN_COOKIE);
 
         return { sessionId: nextSession.id, expiresAt: nextSession.expiresAt };
       }
@@ -617,6 +668,7 @@ export async function signInAdmin(email: string, password: string) {
       path: "/",
       expires: new Date(nextSession.expiresAt),
     });
+    deleteLegacyCookie(jar, ADMIN_COOKIE);
     return;
   }
 
@@ -654,6 +706,7 @@ export async function signInAdmin(email: string, password: string) {
     path: "/",
     expires: new Date(session.expiresAt),
   });
+  deleteLegacyCookie(jar, ADMIN_COOKIE);
 }
 
 export async function signInRegister(pin: string, locationId: string, deviceId?: string) {
@@ -734,6 +787,7 @@ export async function signInRegister(pin: string, locationId: string, deviceId?:
         path: "/",
         expires: new Date(nextSession.expiresAt),
       });
+      deleteLegacyCookie(jar, REGISTER_COOKIE);
       // R28-H5: companion device cookie so getRegisterSession() can
       // verify the browser matches the paired device_id.
       // R29-M3: HMAC-sign the value so a cookie-write-only XSS (or an
@@ -854,6 +908,7 @@ export async function signInRegister(pin: string, locationId: string, deviceId?:
       path: "/",
       expires: new Date(nextSession.expiresAt),
     });
+    deleteLegacyCookie(jar, REGISTER_COOKIE);
     // R28-H5: companion device cookie (column-level fallback path).
     // R29-M3: HMAC-signed — see RPC path above for rationale.
     // R35-P3: signDeviceId is statically imported at the top.
@@ -967,11 +1022,12 @@ export async function signInRegister(pin: string, locationId: string, deviceId?:
     path: "/",
     expires: new Date(session.authSessionExpiresAt),
   });
+  deleteLegacyCookie(jar, REGISTER_COOKIE);
 }
 
 export async function signOutAdmin() {
   const jar = await cookieStore();
-  const sessionId = jar.get(ADMIN_COOKIE)?.value;
+  const sessionId = getCookieValue(jar, ADMIN_COOKIE, OLD_ADMIN_COOKIE);
 
   if (sessionId) {
     if (isPg()) {
@@ -984,11 +1040,12 @@ export async function signOutAdmin() {
   }
 
   jar.delete(ADMIN_COOKIE);
+  jar.delete(OLD_ADMIN_COOKIE);
 }
 
 export async function signOutRegister() {
   const jar = await cookieStore();
-  const sessionId = jar.get(REGISTER_COOKIE)?.value;
+  const sessionId = getCookieValue(jar, REGISTER_COOKIE, OLD_REGISTER_COOKIE);
 
   if (sessionId) {
     if (isPg()) {
@@ -1103,6 +1160,7 @@ export async function signOutRegister() {
   }
 
   jar.delete(REGISTER_COOKIE);
+  jar.delete(OLD_REGISTER_COOKIE);
   // R28-H5: clear the companion device cookie too so the next pairing
   // re-binds cleanly.
   jar.delete("bupos_register_device");

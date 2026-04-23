@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { activateGiftCardAction, disableGiftCardAction, reloadGiftCardAction } from "@/app/admin/gift-card-actions";
 import type { GiftCard, GiftCardTransaction, Employee, Customer } from "@/lib/domain/types";
 import { formatCurrency } from "@/lib/format";
+import { usePasswordGate } from "@/components/shared/password-gate";
 
 const STATUS_COLORS: Record<string, string> = {
   active: "bg-emerald-100 text-emerald-800",
@@ -26,6 +27,7 @@ export function GiftCardManager({
   const [showActivateForm, setShowActivateForm] = useState(false);
   const [selectedCard, setSelectedCard] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const [promptPassword, passwordGate] = usePasswordGate();
 
   const empMap = new Map(employees.map((e) => [e.id, e]));
   const custMap = new Map(customers.map((c) => [c.id, c]));
@@ -171,16 +173,19 @@ export function GiftCardManager({
                             </button>
                           </form>
                           <button
-                            onClick={() => {
-                              // R37-H3: disable now requires step-up (server
-                              // action gates via requireStepUp). Interim
-                              // UX: native prompt; a later polish pass
-                              // can swap for a proper shared <PasswordGate>
-                              // modal also needed by customer is_active /
-                              // notes edits and email-receipt override.
-                              const pwd = window.prompt(
-                                `Disable gift card ${gc.code}?\n\nThis zeroes the customer's balance and can't be undone.\nEnter your password to confirm:`,
-                              );
+                            onClick={async () => {
+                              // R37-H3 → R41-1: step-up via shared
+                              // <PasswordGate> modal instead of
+                              // window.prompt. Replaces native-ugly
+                              // browser prompt with a proper in-page
+                              // modal + inline error surface.
+                              const pwd = await promptPassword({
+                                title: `Disable gift card ${gc.code}?`,
+                                description:
+                                  "This zeroes the customer's balance and can't be undone. Enter your password to confirm.",
+                                confirmLabel: "Disable",
+                                confirmVariant: "destructive",
+                              });
                               if (!pwd) return;
                               startTransition(async () => {
                                 const r = await disableGiftCardAction(gc.id, pwd);
@@ -204,6 +209,9 @@ export function GiftCardManager({
           })}
         </div>
       )}
+      {/* R41-1: <PasswordGate> renders nothing when no prompt is
+          active; safe to mount once at the component root. */}
+      {passwordGate}
     </div>
   );
 }

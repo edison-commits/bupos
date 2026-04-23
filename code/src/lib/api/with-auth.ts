@@ -57,8 +57,14 @@ function logRouteError(ctx: {
   );
 }
 
-const ADMIN_COOKIE = "basicuniformpos_admin_session";
-const REGISTER_COOKIE = "basicuniformpos_register_session";
+// R41-2: new opaque cookie names (see src/lib/auth/session.ts for the
+// rollover rationale). During the migration window we check BOTH the
+// new short name and the legacy `basicuniformpos_*` long name so live
+// sessions don't get logged out.
+const ADMIN_COOKIE = "bupos_a";
+const REGISTER_COOKIE = "bupos_r";
+const OLD_ADMIN_COOKIE = "basicuniformpos_admin_session";
+const OLD_REGISTER_COOKIE = "basicuniformpos_register_session";
 
 // Admin users with multiple assigned locations need a way to tell the server
 // which location their UI is currently focused on — the `ctx.locationId` was
@@ -389,8 +395,15 @@ export function withDualAuth(
       jar = { get: () => undefined };
       cookiesAvailable = false;
     }
-    const hasAdminCookie = cookiesAvailable ? !!jar.get(ADMIN_COOKIE)?.value : true;
-    const hasRegisterCookie = cookiesAvailable ? !!jar.get(REGISTER_COOKIE)?.value : true;
+    // R41-2: dual-read the cookie presence during the rename
+    // migration window so live sessions with the legacy
+    // `basicuniformpos_*` names still flow through the auth probe.
+    const hasAdminCookie = cookiesAvailable
+      ? !!(jar.get(ADMIN_COOKIE)?.value ?? jar.get(OLD_ADMIN_COOKIE)?.value)
+      : true;
+    const hasRegisterCookie = cookiesAvailable
+      ? !!(jar.get(REGISTER_COOKIE)?.value ?? jar.get(OLD_REGISTER_COOKIE)?.value)
+      : true;
 
     let adminCtx = null;
     let registerCtx = null;

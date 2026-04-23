@@ -16,7 +16,9 @@ import { addDays } from "@/lib/utils/date";
 import { safeErr } from "@/lib/logging/safe-err";
 import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
 
-const ADMIN_COOKIE = "basicuniformpos_admin_session";
+// R41-2: opaque cookie name (see session.ts for rationale).
+const ADMIN_COOKIE = "bupos_a";
+const OLD_ADMIN_COOKIE = "basicuniformpos_admin_session";
 
 export async function GET(req: NextRequest) {
   const token = req.nextUrl.searchParams.get("token");
@@ -191,6 +193,9 @@ export async function GET(req: NextRequest) {
         path: "/",
         expires: new Date(sessionExpiresAt),
       });
+      // R41-2: clear legacy name so a rollover client doesn't end up
+      // with BOTH cookies pinned.
+      jar.delete(OLD_ADMIN_COOKIE);
     } catch (sessionErr) {
       // R21-M-4 + R22-M-3: if the session INSERT committed but cookie-
       // set threw, clean up the orphan row so it doesn't linger until

@@ -81,7 +81,10 @@ async function loginAndOpenShift(cashier, float) {
     throw new Error(`Login failed for ${cashier.name}: ${res.status} ${t}`);
   }
   const jar = parseSetCookies(res);
-  const sessionId = jar.basicuniformpos_register_session;
+  // R41-2: dual-read during rollover. Prefer the new short name; fall
+  // back to the legacy `basicuniformpos_*` until the migration window
+  // closes.
+  const sessionId = jar.bupos_r ?? jar.basicuniformpos_register_session;
   if (!sessionId) throw new Error(`No session cookie returned for ${cashier.name}`);
 
   // Opening a shift requires a server-action form POST. We'll skip that

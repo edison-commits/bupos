@@ -8,6 +8,7 @@ import { authFetch } from '@/lib/api/client';
 import { formatCurrency } from '@/lib/format';
 import { useDebouncedValue } from '@/lib/hooks/use-debounced-value';
 import { safeErr } from "@/lib/logging/safe-err";
+import { usePasswordGate } from "@/components/shared/password-gate";
 interface Customer {
   id: string;
   first_name: string;
@@ -54,6 +55,8 @@ export default function CustomerManagement() {
   const [success, setSuccess] = useState<string | null>(null);
   const [modalMode, setModalMode] = useState<ModalMode>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [promptPassword, passwordGate] = usePasswordGate();
+  const [deleting, setDeleting] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [stats, setStats] = useState({ totalCustomers: 0, newThisMonth: 0, avgSpend: 0, totalPointsOutstanding: 0 });
@@ -223,6 +226,45 @@ export default function CustomerManagement() {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  // R41-1: customer anonymization / right-to-be-forgotten. Uses the
+  // shared PasswordGate for step-up, calls the R39-A1-1 DELETE route
+  // which NULL-anonymizes in place (does NOT hard-delete — financial
+  // history is preserved per tax-retention norms).
+  const handleAnonymize = async () => {
+    if (!selectedCustomer || deleting) return;
+    const pwd = await promptPassword({
+      title: `Anonymize ${selectedCustomer.first_name} ${selectedCustomer.last_name}?`,
+      description:
+        "Scrubs this customer's name, email, phone, address, and notes. Transaction history and financial records are preserved. This is the GDPR/CCPA right-to-be-forgotten action and cannot be undone.",
+      confirmLabel: "Anonymize",
+      confirmVariant: "destructive",
+    });
+    if (!pwd) return;
+    setDeleting(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const response = await authFetch('/api/customers', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: selectedCustomer.id, actorPassword: pwd }),
+      });
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to anonymize customer');
+      }
+      setSuccess('Customer anonymized.');
+      setModalMode(null);
+      resetForm();
+      loadCustomers();
+      loadStats();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -511,6 +553,21 @@ export default function CustomerManagement() {
                   Cancel
                 </button>
               </div>
+              {/* R41-1: right-to-be-forgotten control, edit-mode only.
+                  Separate row + destructive styling so it's not
+                  confused with the regular Update / Cancel buttons. */}
+              {modalMode === 'edit' && (
+                <div className="mt-3 pt-3 border-t border-gray-200">
+                  <button
+                    type="button"
+                    onClick={handleAnonymize}
+                    disabled={deleting}
+                    className="w-full rounded-lg border-2 border-red-300 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50"
+                  >
+                    {deleting ? 'Anonymizing…' : 'Anonymize customer (right-to-be-forgotten)'}
+                  </button>
+                </div>
+              )}
             </form>
           </div>
         </div>
@@ -604,6 +661,9 @@ export default function CustomerManagement() {
           </div>
         </div>
       )}
+      {/* R41-1: mount the shared password-gate modal; it renders
+          nothing until a destructive action asks for a password. */}
+      {passwordGate}
     </div>
   );
 }

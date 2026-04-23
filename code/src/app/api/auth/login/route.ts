@@ -5,7 +5,9 @@ import { addDays } from "@/lib/utils/date";
 import { getPool } from "@/lib/supabase-rest";
 import { safeErr } from "@/lib/logging/safe-err";
 
-const ADMIN_COOKIE = "basicuniformpos_admin_session";
+// R41-2: opaque cookie name (see session.ts for rationale).
+const ADMIN_COOKIE = "bupos_a";
+const OLD_ADMIN_COOKIE = "basicuniformpos_admin_session";
 
 export async function POST(request: Request) {
   const contentType = request.headers.get("content-type") ?? "";
@@ -134,21 +136,34 @@ export async function POST(request: Request) {
     // Build success response — session is delivered via HttpOnly cookie only.
     // Never expose sessionId in the response body (prevents leaks via devtools/logs).
     const isSecure = request.url.startsWith("https");
-    const cookieValue = [
-      `${ADMIN_COOKIE}=${sessionId}`,
+    const cookieAttrs = [
       `Path=/`,
       `HttpOnly`,
       `SameSite=Lax`,
-      `Expires=${expiresAt.toUTCString()}`,
       ...(isSecure ? ["Secure"] : []),
+    ];
+    const setCookieNew = [
+      `${ADMIN_COOKIE}=${sessionId}`,
+      ...cookieAttrs,
+      `Expires=${expiresAt.toUTCString()}`,
+    ].join("; ");
+    // R41-2: explicitly clear the legacy cookie so a rollover client
+    // doesn't end up with BOTH names pinned (could confuse later
+    // read paths until they expire naturally).
+    const clearOld = [
+      `${OLD_ADMIN_COOKIE}=`,
+      ...cookieAttrs,
+      `Max-Age=0`,
     ].join("; ");
 
+    // Next.js Response supports multiple Set-Cookie via a Headers
+    // instance with repeated `append` calls.
+    const headers = new Headers();
+    headers.append("Set-Cookie", setCookieNew);
+    headers.append("Set-Cookie", clearOld);
     return Response.json(
       { success: true, redirect: "/admin" },
-      {
-        status: 200,
-        headers: { "Set-Cookie": cookieValue },
-      },
+      { status: 200, headers },
     );
   } catch (err) {
     // R18-LOW-2: redact via shared `safeErr`. Raw pg errors can include

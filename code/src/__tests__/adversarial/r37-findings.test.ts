@@ -59,7 +59,9 @@ describe("R37 findings", () => {
       expect(action).toMatch(/return \{ success: false, error: stepUp\.error \}/);
     });
     it("UI prompts for password before calling the action", () => {
-      expect(ui).toMatch(/window\.prompt\(/);
+      // R41-1: replaced native window.prompt with shared <PasswordGate>
+      // modal (usePasswordGate hook returns [promptPassword, gate]).
+      expect(ui).toMatch(/usePasswordGate|promptPassword\(/);
       expect(ui).toMatch(/disableGiftCardAction\(gc\.id, pwd\)/);
     });
   });

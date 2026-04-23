@@ -5,7 +5,9 @@ import { hasPermission } from "@/lib/domain/permissions";
 import type { RoleKey } from "@/lib/domain/types";
 import { getPool } from "@/lib/supabase-rest";
 
-const REGISTER_COOKIE = "basicuniformpos_register_session";
+// R41-2: opaque cookie name (see session.ts for rationale).
+const REGISTER_COOKIE = "bupos_r";
+const OLD_REGISTER_COOKIE = "basicuniformpos_register_session";
 
 /** Verify PIN using the same PBKDF2 algorithm as hashSecret in crypto.ts. */
 async function verifyPin(secret: string, encoded: string): Promise<boolean> {
@@ -342,14 +344,25 @@ export async function POST(request: Request) {
     // register_sessions was cosmetic — a stolen REGISTER_COOKIE could
     // be replayed from any browser.
     const isSecure = request.url.startsWith("https");
+    const cookieAttrs = [
+      `Path=/`,
+      `HttpOnly`,
+      `SameSite=Lax`,
+      ...(isSecure ? ["Secure"] : []),
+    ];
     const setCookies: string[] = [
       [
         `${REGISTER_COOKIE}=${sessionId}`,
-        `Path=/`,
-        `HttpOnly`,
-        `SameSite=Lax`,
+        ...cookieAttrs,
         `Expires=${expiresAt.toUTCString()}`,
-        ...(isSecure ? ["Secure"] : []),
+      ].join("; "),
+      // R41-2: explicitly clear the legacy cookie so a rollover client
+      // doesn't end up with BOTH names pinned (could confuse later
+      // read paths until they expire naturally).
+      [
+        `${OLD_REGISTER_COOKIE}=`,
+        ...cookieAttrs,
+        `Max-Age=0`,
       ].join("; "),
     ];
     if (deviceId) {
@@ -360,11 +373,8 @@ export async function POST(request: Request) {
       setCookies.push(
         [
           `bupos_register_device=${encodeURIComponent(signedDevice)}`,
-          `Path=/`,
-          `HttpOnly`,
-          `SameSite=Lax`,
+          ...cookieAttrs,
           `Expires=${expiresAt.toUTCString()}`,
-          ...(isSecure ? ["Secure"] : []),
         ].join("; "),
       );
     }

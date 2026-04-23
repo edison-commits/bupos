@@ -9,14 +9,36 @@
  * fails verification here and `getRegisterSession()` falls through to
  * the fail-closed branch in `resolveSession`.
  *
- * Format: `${deviceId}.${base64url(hmacSha256(SECRET, deviceId) slice 16)}`.
+ * Formats (oldest to newest):
+ *   v1: `${deviceId}.${base64url(hmacSha256(SECRET, deviceId) slice 16)}`
+ *   v2: `v2.${deviceId}.${base64url(hmacSha256(SECRET, "bupos-device-cookie-v2\0" + deviceId))}`
+ *
+ * v2 upgrades over v1:
+ *   - Full 32-byte tag (v1 was truncated to 16). Still far above the
+ *     ~80-bit floor that's considered safe against forgery but aligns
+ *     with "don't truncate without a reason" crypto hygiene.
+ *   - Explicit scope prefix (`bupos-device-cookie-v2\0`) hard-binds
+ *     the HMAC message to THIS purpose, so if any future caller reuses
+ *     CUSTOMER_DISPLAY_SECRET for another signing task the outputs
+ *     cannot collide even if the raw `deviceId` happens to look like
+ *     the other caller's message.
+ *   - Version prefix (`v2.`) lets us evolve the format again without
+ *     requiring a secret rotation.
+ *
+ * Dual-verify: verifyDeviceIdCookie() accepts BOTH v1 and v2 during
+ * the rollover window so live sessions with v1 cookies still validate.
+ * Because login routes reset the cookie, v1 cookies age out naturally
+ * within one day (register session TTL). Drop v1 acceptance after the
+ * dual-read window closes.
  *
  * Secret: uses `CUSTOMER_DISPLAY_SECRET` — already required in prod and
  * already has a dev fallback. Reusing it avoids another env var knob.
- * The signed message differs from display-token payloads
- * (`deviceId` vs `registerSessionId.expiresAt`) so cross-use is
- * structurally impossible.
+ * The scope prefix in v2 makes cross-use with display-token payloads
+ * structurally impossible even under pathological message collisions.
  */
+
+const V2_PREFIX = "v2.";
+const V2_SCOPE = "bupos-device-cookie-v2\0";
 
 const DEV_STATIC_FALLBACK =
   "bupos-dev-only-display-fallback-do-not-use-in-prod-32chars-min-length";
@@ -90,21 +112,43 @@ function constantTimeEq(a: Uint8Array, b: Uint8Array): boolean {
   return diff === 0;
 }
 
-/** Sign a deviceId for the Set-Cookie header. */
+/**
+ * Sign a deviceId for the Set-Cookie header. Always emits v2.
+ */
 export async function signDeviceId(deviceId: string): Promise<string> {
-  const sig = (await hmacSha256(getSecret(), deviceId)).slice(0, 16);
-  return `${deviceId}.${base64urlEncode(sig)}`;
+  const sig = await hmacSha256(getSecret(), V2_SCOPE + deviceId);
+  return `${V2_PREFIX}${deviceId}.${base64urlEncode(sig)}`;
 }
 
 /**
  * Verify a signed cookie value and return the deviceId if the HMAC matches.
- * Returns null for malformed, unsigned, or tampered values. Legacy
- * (unsigned, pre-R29-M3) values also return null — callers MUST re-pair
- * to get a signed cookie. Because both cookies are reset on login, this
- * only affects sessions in-flight across the deploy; they're short-lived.
+ *
+ * Accepts both v2 (current) and v1 (legacy) formats. Returns null for
+ * malformed, unsigned, or tampered values. Pre-R29-M3 unsigned values
+ * also return null — callers MUST re-pair to get a signed cookie.
+ *
+ * R41-3: dual-verify window. v1 acceptance can be removed once the
+ * rollover deploy has been live long enough that all in-flight v1
+ * cookies have aged out (register session TTL = 1 day, so 48h is
+ * sufficient).
  */
 export async function verifyDeviceIdCookie(cookieValue: string): Promise<string | null> {
   try {
+    // v2: `v2.{deviceId}.{fullTag}`
+    if (cookieValue.startsWith(V2_PREFIX)) {
+      const rest = cookieValue.slice(V2_PREFIX.length);
+      const dot = rest.lastIndexOf(".");
+      if (dot < 1) return null;
+      const deviceId = rest.slice(0, dot);
+      const sigB64 = rest.slice(dot + 1);
+      if (!deviceId || !sigB64) return null;
+      const expected = await hmacSha256(getSecret(), V2_SCOPE + deviceId);
+      const provided = base64urlDecode(sigB64);
+      if (!constantTimeEq(expected, provided)) return null;
+      return deviceId;
+    }
+
+    // v1 (legacy): `{deviceId}.{tagSlice16}`
     const dot = cookieValue.lastIndexOf(".");
     if (dot < 1) return null;
     const deviceId = cookieValue.slice(0, dot);

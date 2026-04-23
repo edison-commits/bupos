@@ -28,7 +28,11 @@ const VARIANTS = [
 
 function readCookie(path) {
   const raw = fs.readFileSync(path, "utf8");
-  const line = raw.split("\n").find((l) => l.includes("basicuniformpos_register_session"));
+  // R41-2: dual-read during rollover. Prefer new short name; fall back
+  // to legacy until the migration window closes.
+  const line =
+    raw.split("\n").find((l) => l.includes("\tbupos_r\t")) ??
+    raw.split("\n").find((l) => l.includes("basicuniformpos_register_session"));
   if (!line) throw new Error(`No register-session cookie in ${path}`);
   const fields = line.split(/\s+/);
   return fields[fields.length - 1];
@@ -140,7 +144,7 @@ async function submitTxn(session, index) {
   const headers = {
     "Content-Type": "application/json",
     Origin: ORIGIN,
-    Cookie: `basicuniformpos_register_session=${session.cookieValue}`,
+    Cookie: `bupos_r=${session.cookieValue}`,
   };
 
   for (let attempt = 0; attempt < 6; attempt++) {
