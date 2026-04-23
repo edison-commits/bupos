@@ -912,6 +912,14 @@ export async function processReturnAction(input: ReturnInput): Promise<ReturnRes
       // sees the restocked on_hand immediately.
       const { invalidateInventoryCache } = await import("@/lib/cache/inventory-cache");
       invalidateInventoryCache(context.employee.organizationId);
+      // R84-hand: invalidate admin-side store cache so dashboards
+      // + sales-reports + tax-report + daily-manager-report see
+      // the refund event within the next admin read. Paired with
+      // R83-DB-H1 event-shape fix (register refunds now carry
+      // is_return flag) — otherwise admin widgets still serve
+      // stale data post-refund for up to 30s TTL.
+      const { invalidateStoreCache } = await import("@/lib/persistence/postgres-read-store");
+      invalidateStoreCache(context.employee.organizationId);
       revalidatePath("/register");
       return { returnTransactionId, refundTotal: refundGrandTotal, refundMethod: input.refundMethod };
     } catch (e) {

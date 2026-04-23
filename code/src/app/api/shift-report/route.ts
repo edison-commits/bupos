@@ -211,11 +211,22 @@ export const GET = withDualAuth("register.open", async (req, ctx) => {
     let employeeBreakdown: Record<string, unknown>[] = [];
     if (employeeMap.size > 0) {
       const empIds = Array.from(employeeMap.keys());
-      const emps = await orgQuery(orgId, `SELECT id, display_name FROM employees WHERE id = ANY($1) AND organization_id = $2`, [empIds, orgId]);
+      // R84-hand: parity with /api/reports — deleted employees
+      // (employee_id → SET NULL per migration 046) have no rows in
+      // `employees`, so previously surfaced as "Unknown" on shift-
+      // reports. Reports route uses "Former Employee" which is the
+      // standard fallback. Mirror that.
+      const emps = await orgQuery(
+        orgId,
+        `SELECT id,
+                COALESCE(display_name, CONCAT(first_name, ' ', last_name), 'Former Employee') AS display_name
+           FROM employees WHERE id = ANY($1) AND organization_id = $2`,
+        [empIds, orgId],
+      );
       const empNames = new Map(emps.rows.map((e: Record<string, unknown>) => [e.id, e.display_name]));
       employeeBreakdown = Array.from(employeeMap.values()).map((e) => ({
         ...e,
-        name: empNames.get(e.id) || "Unknown",
+        name: empNames.get(e.id) || "Former Employee",
         total: Number(e.total.toFixed(2)),
       }));
     }

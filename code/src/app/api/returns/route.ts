@@ -59,7 +59,7 @@ export const GET = withDualAuth("audit.view", async (request, ctx) => {
         COUNT(rl.id)::int as line_count,
         COALESCE(SUM(rl.quantity), 0)::int as total_items
       FROM returns r
-      JOIN locations l ON r.location_id = l.id
+      JOIN locations l ON r.location_id = l.id AND l.organization_id = $1
       LEFT JOIN return_lines rl ON r.id = rl.return_id
       WHERE r.organization_id = $1${locClause}
       GROUP BY r.id, l.name

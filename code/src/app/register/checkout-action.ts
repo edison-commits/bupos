@@ -1292,6 +1292,13 @@ export async function checkoutAction(
 
   revalidatePath("/register");
   invalidateInventoryCache(context.employee.organizationId);
+  // R84-hand: invalidate admin-side store cache so dashboards +
+  // sales reports pick up the new transaction within the next read.
+  // Prior shape left admin views stale for up to 30s TTL after
+  // every register sale. Pairs with R82-DB-H1/H2 fixes that made
+  // register-side data correctly visible to admin analytics.
+  const { invalidateStoreCache } = await import("@/lib/persistence/postgres-read-store");
+  invalidateStoreCache(context.employee.organizationId);
   return {
     transactionId,
     cartId: cart.id,
