@@ -161,6 +161,25 @@ export async function shipTransferAction(transferId: string, actorPassword?: str
   const ctx = await requireAdminPermission("inventory.adjust");
   if (!ctx) throw new Error("Not authenticated");
 
+  // R74-A: short-circuit already-shipped transfers BEFORE consuming
+  // a step-up bucket slot. Mirrors the REST parity fix from R72-C.
+  // If status is anything but 'requested', ship is idempotent for
+  // the current caller — no need to prompt for a password again.
+  if (isPg()) {
+    const orgId = ctx.employee.organizationId;
+    const { orgQuery } = await import("@/lib/supabase-rest");
+    const { rows: probe } = await orgQuery(
+      orgId,
+      `SELECT status FROM transfers WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [transferId, orgId],
+    );
+    if (probe.length > 0 && probe[0].status !== "requested") {
+      // Treat as idempotent success — the state the caller wanted
+      // (ship) is already achieved by a prior committed ship.
+      return;
+    }
+  }
+
   // R70-M1: step-up re-auth. Ship is the inventory-draining step;
   // R68-H2 gated CREATE but not SHIP. Mirror the REST parity on
   // bucketKey 'transfer-ship-stepup'.
@@ -311,6 +330,21 @@ export async function shipTransferAction(transferId: string, actorPassword?: str
 export async function receiveTransferAction(transferId: string, actorPassword?: string) {
   const ctx = await requireAdminPermission("inventory.adjust");
   if (!ctx) throw new Error("Not authenticated");
+
+  // R74-A: short-circuit already-received transfers BEFORE
+  // consuming a step-up bucket slot (mirror of ship fix above).
+  if (isPg()) {
+    const orgId = ctx.employee.organizationId;
+    const { orgQuery } = await import("@/lib/supabase-rest");
+    const { rows: probe } = await orgQuery(
+      orgId,
+      `SELECT status FROM transfers WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [transferId, orgId],
+    );
+    if (probe.length > 0 && probe[0].status === "received") {
+      return;
+    }
+  }
 
   // R72-C: step-up on RECEIVE (parity with R70-M1 ship). Receiving
   // credits destination inventory — same inventory-mutation surface

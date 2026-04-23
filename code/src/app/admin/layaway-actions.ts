@@ -55,8 +55,14 @@ export async function makeLayawayPaymentAction(formData: FormData) {
     try {
       // R44-MED: also select location_id here so the cash-path +
       // audit INSERT below can reuse it without a second SELECT.
+      // R74-B: also select customer_id for the store_credit tender
+      // path — we need to debit customers.store_credit_balance +
+      // write a store_credit_ledger redemption row when a layaway
+      // payment is tendered as store credit. Without this, a manager
+      // can mark a layaway as paid from store credit without
+      // consuming any — mirror of R38-A-F4 on the register side.
       const { rows: lay } = await client.query(
-        `SELECT id, status, balance_due, location_id FROM layaways WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
+        `SELECT id, status, balance_due, location_id, customer_id FROM layaways WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
         [layawayId, orgId],
       );
       if (lay.length === 0) {
@@ -72,6 +78,52 @@ export async function makeLayawayPaymentAction(formData: FormData) {
       if (amount > balanceDue + 0.005) {
         await client.query("ROLLBACK");
         throw new Error("Payment exceeds balance due");
+      }
+
+      // R74-B: store_credit tender must debit the customer's balance
+      // + write a ledger redemption row in the SAME tx as the
+      // layaway_payments INSERT + layaways balance UPDATE. Reject
+      // if no customer attached or insufficient balance. Mirrors
+      // register-side pattern in register/layaway-action.ts (R38-A-F4).
+      if (tenderType === "store_credit") {
+        if (!layaway.customer_id) {
+          await client.query("ROLLBACK");
+          throw new Error("Store-credit layaway payment requires a customer attached to the layaway");
+        }
+        const { rows: balRows } = await client.query(
+          `SELECT store_credit_balance FROM customers
+            WHERE id = $1 AND organization_id = $2 AND is_active = true FOR UPDATE`,
+          [layaway.customer_id, orgId],
+        );
+        if (balRows.length === 0) {
+          await client.query("ROLLBACK");
+          throw new Error("Customer not found or inactive");
+        }
+        const currentBalance = Number(balRows[0].store_credit_balance ?? 0);
+        if (currentBalance < amount - 0.005) {
+          await client.query("ROLLBACK");
+          throw new Error(`Insufficient store credit balance (have ${currentBalance.toFixed(2)}, need ${amount.toFixed(2)})`);
+        }
+        const newBalance = Number((currentBalance - amount).toFixed(2));
+        await client.query(
+          `UPDATE customers SET store_credit_balance = $1, updated_at = now()
+            WHERE id = $2 AND organization_id = $3`,
+          [newBalance, layaway.customer_id, orgId],
+        );
+        await client.query(
+          `INSERT INTO store_credit_ledger
+             (id, organization_id, customer_id, transaction_type, amount, balance_after, employee_id, reason, created_at)
+           VALUES ($1, $2, $3, 'redemption', $4, $5, $6, $7, now())`,
+          [
+            randomUUID(),
+            orgId,
+            layaway.customer_id,
+            -amount,
+            newBalance,
+            ctx.employee.id,
+            `Layaway ${layawayId} payment`,
+          ],
+        );
       }
 
       const paymentId = randomUUID();

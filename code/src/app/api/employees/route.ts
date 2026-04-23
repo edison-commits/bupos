@@ -282,6 +282,18 @@ export const POST = withAdminAuth('employee.manage', async (request, ctx) => {
       await client.query('COMMIT');
     } catch (e) {
       await client.query('ROLLBACK').catch(() => {});
+      // R74-C: the auth_credentials email index (migration 051:55,
+      // `uniq_auth_credentials_email_lower`) fires 23505 when two
+      // employees share an email. Prior shape surfaced as a generic
+      // 500 "Failed to create employee" — masking a resolvable
+      // conflict. Return 409 with an actionable message.
+      const err = e as { code?: string };
+      if (err?.code === '23505') {
+        return NextResponse.json(
+          { error: 'An employee with this email already exists. Choose a different email.' },
+          { status: 409 },
+        );
+      }
       throw e;
     } finally {
       client.release();

@@ -656,6 +656,17 @@ export async function createEmployeeAction(formData: FormData) {
       await client.query("COMMIT");
     } catch (e) {
       await client.query("ROLLBACK").catch(() => {});
+      // R74-C: friendly error on auth_credentials email unique index
+      // (migration 051:55). Prior shape surfaced as a generic
+      // "Failed to create employee" — masked the real fix (use a
+      // different email). Mirrors REST /api/employees POST 23505
+      // handler added in the same round.
+      const err = e as { code?: string };
+      if (err?.code === "23505") {
+        redirect(
+          "/admin?error=An+employee+with+this+email+already+exists.+Choose+a+different+email.",
+        );
+      }
       throw e;
     } finally {
       client.release();

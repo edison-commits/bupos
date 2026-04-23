@@ -122,14 +122,21 @@ function ReceiptDetail({ transaction, customer, tenders, onClose }: ReceiptDetai
           >
             Print
           </button>
+          {/* R74-E: the Email button previously fired `alert("Email
+              receipt to ...")` — a visible affordance that looked
+              functional but sent no mail. Any staff member who clicked
+              it and saw the alert had no way to know the receipt
+              hadn't actually been emailed. Disable the button and
+              label it "coming soon" until a mail integration ships;
+              visibly preferable to a dead UX that implies delivery. */}
           <button
-            onClick={() => {
-              // Email functionality would be implemented here
-              alert(`Email receipt to ${customer.email || 'No email on file'}`);
-            }}
-            className="touch-button flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-zinc-200 hover:bg-zinc-300 text-zinc-900 rounded-lg font-medium transition"
+            type="button"
+            disabled
+            aria-disabled="true"
+            title="Email receipts coming soon"
+            className="touch-button flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-zinc-100 text-zinc-400 rounded-lg font-medium cursor-not-allowed"
           >
-            Email
+            Email (soon)
           </button>
           <button
             onClick={onClose}

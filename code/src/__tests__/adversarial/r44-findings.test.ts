@@ -131,7 +131,9 @@ describe("R44 audit fixes", () => {
       expect(src).toMatch(/INSERT INTO audit_events[\s\S]*?'layaway_payment'[\s\S]*?COMMIT/);
     });
     it("layaway SELECT now includes location_id so we can reuse it", () => {
-      expect(src).toMatch(/SELECT id, status, balance_due, location_id FROM layaways/);
+      // R74-B widened the SELECT to also include customer_id for the
+      // store_credit tender debit path. Accept either shape.
+      expect(src).toMatch(/SELECT id, status, balance_due, location_id(, customer_id)? FROM layaways/);
     });
   });
 

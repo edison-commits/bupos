@@ -264,8 +264,15 @@ export function LoyaltyTiers({ customers, currentConfig }: LoyaltyTiersProps) {
           {/* R72-D: aria-label on the fieldset so screen reader
               users get context for why every control is disabled.
               Without this, focusing into the group reads each
-              disabled input without any explanation. */}
-          <legend className="sr-only">Tier Configuration (Preview — not yet persistent)</legend>
+              disabled input without any explanation.
+              R74-D: prior shape ALSO had an sr-only <legend> with
+              the same text, causing most assistive tech to
+              double-announce ("Tier Configuration ... Tier
+              Configuration ...") or override one with the other
+              depending on AT. For a <fieldset>, pick ONE accessible
+              name — aria-label is kept here because the preview
+              messaging reads more naturally as a role-label than
+              as group legend text. */}
           {tiers.map((tier) => (
             <div key={tier.id} className="rounded-2xl bg-zinc-50 border border-zinc-200 p-4">
               <div

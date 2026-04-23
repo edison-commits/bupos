@@ -120,13 +120,16 @@ describe("R72 audit fixes — round 18", () => {
     });
   });
 
-  describe("R72-D LOW: loyalty-tiers fieldset has aria-label + sr-only legend", () => {
+  describe("R72-D LOW: loyalty-tiers fieldset has aria-label (legend removed by R74-D)", () => {
     const src = read("src/components/admin/loyalty-tiers.tsx");
     it("fieldset has aria-label describing preview state", () => {
       expect(src).toMatch(/<fieldset disabled className="grid gap-4 opacity-75" aria-label="Tier Configuration \(Preview/);
     });
-    it("sr-only legend provides additional context", () => {
-      expect(src).toMatch(/<legend className="sr-only">Tier Configuration \(Preview/);
+    // R74-D dropped the duplicate sr-only <legend> with the same
+    // text — AT double-announce. aria-label stays as the single
+    // accessible name for the group.
+    it("does not carry a duplicate sr-only legend with the same text", () => {
+      expect(src).not.toMatch(/<legend className="sr-only">Tier Configuration \(Preview/);
     });
   });
 });

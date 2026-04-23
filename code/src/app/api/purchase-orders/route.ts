@@ -260,7 +260,7 @@ export const POST = withAdminAuth("inventory.adjust", async (request, ctx) => {
 
 // R27-H2: admin-only (see POST above).
 export const PUT = withAdminAuth("inventory.adjust", async (request, ctx) => {
-  const { orgId } = ctx;
+  const { orgId, employee } = ctx;
   try {
     const body = await request.json();
     const v = validateBody(purchaseOrderUpdateSchema, body);
@@ -287,21 +287,57 @@ export const PUT = withAdminAuth("inventory.adjust", async (request, ctx) => {
     values.push(id);
     values.push(orgId);
 
+    // R74-H: wrap UPDATE + audit in one orgTx. Prior shape used
+    // orgQuery with no audit event — status flips (draft → submitted
+    // → received/cancelled) and PO metadata edits are the kinds of
+    // actions that forensic reviews ("when did this PO get
+    // cancelled and by whom?") depend on. Mirrors the POST audit
+    // pattern added in R49.
+    //
     // R30-C2: explicit `AND organization_id = $N` on the UPDATE WHERE.
     // Previously only `id = $N` — the `postgres` role has BYPASSRLS so
     // RLS was cosmetic, and the UPDATE could land on ANY tenant's PO
     // matching the UUID. RETURNING * then exfiltrated the full foreign
     // row. Dynamic `${sets}` interpolation also hid the issue from the
     // guardrail.
-    const { rows } = await orgQuery(
-      orgId,
-      `UPDATE purchase_orders SET ${sets.join(', ')} WHERE id = $${idx} AND organization_id = $${idx + 1} RETURNING *`,
-      values,
-    );
+    const { orgTx } = await import('@/lib/supabase-rest');
+    const client = await orgTx(orgId);
+    let updatedOrder: Record<string, unknown>;
+    try {
+      const { rows } = await client.query(
+        `UPDATE purchase_orders SET ${sets.join(', ')} WHERE id = $${idx} AND organization_id = $${idx + 1} RETURNING *`,
+        values,
+      );
 
-    if (rows.length === 0) return NextResponse.json({ error: 'PO not found' }, { status: 404 });
+      if (rows.length === 0) {
+        await client.query('ROLLBACK');
+        return NextResponse.json({ error: 'PO not found' }, { status: 404 });
+      }
+      updatedOrder = rows[0];
 
-    return NextResponse.json({ order: rows[0] });
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'purchase_order', $5, 'purchase_order_updated', $6, now())`,
+        [
+          randomUUID(), orgId, null, employee.id, id,
+          JSON.stringify({
+            id,
+            status: status ?? null,
+            notes_updated: notes !== undefined,
+            expected_at_updated: expected_at !== undefined,
+            ordered_at_updated: ordered_at !== undefined,
+          }),
+        ],
+      );
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
+
+    return NextResponse.json({ order: updatedOrder });
   } catch (error) {
     console.error('PO PUT error:', safeErr(error));
     return NextResponse.json({ error: 'Failed to update purchase order' }, { status: 500 });
@@ -450,6 +486,26 @@ export const PATCH = withAdminAuth("inventory.adjust", async (request, ctx) => {
         `UPDATE purchase_orders SET status = $1, received_at = $2, updated_at = NOW()
          WHERE id = $3 AND organization_id = $4`,
         [newStatus, allReceived ? new Date().toISOString() : null, id, orgId],
+      );
+
+      // R74-H: audit INSIDE the tx. Receiving items moves inventory,
+      // flips PO status, and triggers cost aging — a forensic trail
+      // is required to match supplier invoices back to physical
+      // receives. Prior shape logged nothing on PATCH, leaving a gap
+      // between PO create (audited via POST in R49) and inventory
+      // reconciliation.
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'purchase_order', $5, 'purchase_order_received', $6, now())`,
+        [
+          randomUUID(), orgId, po.location_id, ctx.employee.id, id,
+          JSON.stringify({
+            id,
+            new_status: newStatus,
+            fully_received: allReceived,
+            receive_count: receives.length,
+          }),
+        ],
       );
 
       await client.query('COMMIT');

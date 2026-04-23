@@ -195,17 +195,55 @@ export const POST = withAdminAuth('employee.manage', async (request, ctx) => {
     if (!v.success) return NextResponse.json({ error: v.error }, { status: 400 });
     const { first_name, last_name, email, phone, address, notes } = v.data;
 
-    // Explicit column list instead of `RETURNING *` so internal fields
-    // (staff notes with fraud flags, future PII columns added by
-    // migrations, etc.) never leak through the create response.
-    const { rows } = await orgQuery(
-      orgId,
-      `INSERT INTO customers (organization_id, first_name, last_name, email, phone, address, notes, loyalty_points, total_spend, visit_count, store_credit_balance)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, 0, 0)
-       RETURNING id, first_name, last_name, email, phone, address, loyalty_points, total_spend, visit_count, store_credit_balance, is_active, created_at, updated_at`,
-      [orgId, first_name.trim(), last_name.trim(), email?.trim() || null, phone?.trim() || null, address?.trim() || null, notes?.trim() || null, 0],
-    );
-    return NextResponse.json({ customer: rows[0] }, { status: 201 });
+    // R74-C / R74-H: wrap INSERT + customer_created audit in one orgTx.
+    // Prior shape used `orgQuery` with no audit row and no friendly
+    // 23505 handler — a duplicate email (idx_customers_org_email on
+    // migration 005) surfaced as a generic 500 instead of a usable
+    // "customer with email X already exists" message, and PII creation
+    // left no trail for compliance.
+    const { orgTx } = await import('@/lib/supabase-rest');
+    const { randomUUID } = await import('@/lib/uuid');
+    const client = await orgTx(orgId);
+    try {
+      // Explicit column list instead of `RETURNING *` so internal fields
+      // (staff notes with fraud flags, future PII columns added by
+      // migrations, etc.) never leak through the create response.
+      const { rows } = await client.query(
+        `INSERT INTO customers (organization_id, first_name, last_name, email, phone, address, notes, loyalty_points, total_spend, visit_count, store_credit_balance)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, 0, 0)
+         RETURNING id, first_name, last_name, email, phone, address, loyalty_points, total_spend, visit_count, store_credit_balance, is_active, created_at, updated_at`,
+        [orgId, first_name.trim(), last_name.trim(), email?.trim() || null, phone?.trim() || null, address?.trim() || null, notes?.trim() || null, 0],
+      );
+      const customer = rows[0];
+      await client.query(
+        `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+         VALUES ($1, $2, $3, $4, 'customer', $5, 'customer_created', $6, now())`,
+        [
+          randomUUID(), orgId, null, employee.id, customer.id,
+          JSON.stringify({
+            id: customer.id,
+            first_name: customer.first_name,
+            last_name: customer.last_name,
+          }),
+        ],
+      );
+      await client.query('COMMIT');
+      return NextResponse.json({ customer }, { status: 201 });
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {});
+      // R74-C: friendly 409 on the (organization_id, LOWER(email))
+      // unique index collision instead of a generic 500.
+      const err = e as { code?: string };
+      if (err?.code === '23505') {
+        return NextResponse.json(
+          { error: 'A customer with this email already exists in your organization.' },
+          { status: 409 },
+        );
+      }
+      throw e;
+    } finally {
+      client.release();
+    }
   } catch (error) {
     console.error('Customers POST error:', safeErr(error));
     return NextResponse.json({ error: 'Failed to create customer' }, { status: 500 });
@@ -324,6 +362,15 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
       await client.query("COMMIT");
     } catch (e) {
       await client.query("ROLLBACK").catch(() => {});
+      // R74-C: friendly 409 on the (organization_id, LOWER(email))
+      // unique index collision when email is being updated.
+      const err = e as { code?: string };
+      if (err?.code === '23505') {
+        return NextResponse.json(
+          { error: 'A customer with this email already exists in your organization.' },
+          { status: 409 },
+        );
+      }
       throw e;
     } finally {
       client.release();

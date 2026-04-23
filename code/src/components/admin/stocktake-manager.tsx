@@ -220,7 +220,22 @@ export function StocktakeManager({
                           Accept &amp; apply adjustments
                         </button>
                         <button
-                          onClick={() => { startTransition(() => cancelStocktakeAction(st.id)); }}
+                          onClick={() => {
+                            // R74-F: surface server failures. Prior shape fired
+                            // the Server Action inside startTransition with no
+                            // error path — "cannot cancel accepted stocktake",
+                            // RBAC reverts, or revalidation hiccups landed in
+                            // the console silently. Wrap in async try/catch +
+                            // alert so ops see the reason, parity with the
+                            // transfer-manager cancel fix.
+                            startTransition(async () => {
+                              try {
+                                await cancelStocktakeAction(st.id);
+                              } catch (e) {
+                                window.alert(`Cancel failed: ${e instanceof Error ? e.message : String(e)}`);
+                              }
+                            });
+                          }}
                           disabled={isPending}
                           className="rounded-lg border border-red-300 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
                         >

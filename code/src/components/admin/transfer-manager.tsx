@@ -254,7 +254,23 @@ export function TransferManager({
                             Mark shipped
                           </button>
                           <button
-                            onClick={() => { startTransition(() => cancelTransferAction(tr.id)); }}
+                            onClick={() => {
+                              // R74-F: surface server failures. Prior shape fired
+                              // the Server Action inside startTransition with no
+                              // error path — a thrown "Transfer cannot be
+                              // cancelled" (wrong status), auth revert, or
+                              // revalidation miss landed in the console silently
+                              // and the Cancel button looked like it had no
+                              // effect. Wrap in async try/catch + alert so ops
+                              // see the reason.
+                              startTransition(async () => {
+                                try {
+                                  await cancelTransferAction(tr.id);
+                                } catch (e) {
+                                  window.alert(`Cancel failed: ${e instanceof Error ? e.message : String(e)}`);
+                                }
+                              });
+                            }}
                             disabled={isPending}
                             className="rounded-lg border border-red-300 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
                           >

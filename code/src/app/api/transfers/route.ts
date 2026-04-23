@@ -566,13 +566,23 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
 
       // R72-C: idempotency short-circuit BEFORE step-up so retries
       // don't burn the bucket. Same rationale as R72-C on ship.
+      // R74-G: also require idempotency_key match (parity with ship
+      // at line ~410). Prior shape returned `_idempotent: true` to
+      // ANY caller who posted to an already-received transfer with
+      // any Idempotency-Key header — a status-oracle for foreign
+      // callers. Now a mismatched key falls through to the normal
+      // "not in transit" error below.
       if (idempotencyKey) {
         const existing = await orgQuery(
           orgId,
-          `SELECT id, status FROM transfers WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+          `SELECT id, status, idempotency_key FROM transfers WHERE id = $1 AND organization_id = $2 LIMIT 1`,
           [transferId, orgId],
         );
-        if (existing.rows.length > 0 && existing.rows[0].status === 'received') {
+        if (
+          existing.rows.length > 0 &&
+          existing.rows[0].status === 'received' &&
+          existing.rows[0].idempotency_key === idempotencyKey
+        ) {
           return NextResponse.json({ id: transferId, status: 'received', _idempotent: true });
         }
       }

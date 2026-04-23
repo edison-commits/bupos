@@ -807,15 +807,33 @@ export async function pgCreateCustomer(data: {
   const ts = new Date().toISOString();
   // Explicit column list on RETURNING — never echo `notes` back to the
   // caller (staff-only field per round 5 H-4 fix on the REST route).
-  const { rows } = await pool.query(
-    `INSERT INTO customers (id, organization_id, first_name, last_name, email, phone, notes, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
-     RETURNING id, organization_id, first_name, last_name, email, phone,
-               loyalty_points, total_spend, visit_count, store_credit_balance,
-               tax_exempt, is_active, created_at, updated_at`,
-    [data.id, data.organizationId, data.firstName, data.lastName, data.email ?? null, data.phone ?? null, data.notes ?? null, ts],
-  );
-  return toCustomerRow(rows[0]);
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO customers (id, organization_id, first_name, last_name, email, phone, notes, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+       RETURNING id, organization_id, first_name, last_name, email, phone,
+                 loyalty_points, total_spend, visit_count, store_credit_balance,
+                 tax_exempt, is_active, created_at, updated_at`,
+      [data.id, data.organizationId, data.firstName, data.lastName, data.email ?? null, data.phone ?? null, data.notes ?? null, ts],
+    );
+    return toCustomerRow(rows[0]);
+  } catch (e) {
+    // R74-I: the (organization_id, LOWER(email)) unique index on
+    // customers (migration 005) fires 23505 when two customers in
+    // the same org share an email. Prior shape let this bubble as a
+    // raw pg error — callers (register-side quick-create, etc) had
+    // to parse the driver error string to distinguish a duplicate
+    // email from a real DB failure. Throw a typed, actionable error
+    // that UIs can map to a 409 / field error. Mirrors the REST
+    // POST + PUT 23505 handlers from R74-C.
+    const err = e as { code?: string };
+    if (err?.code === "23505") {
+      const typed = new Error("A customer with this email already exists in your organization.");
+      (typed as Error & { code?: string }).code = "23505";
+      throw typed;
+    }
+    throw e;
+  }
 }
 
 // ── Audit events ──────────────────────────────────────────────────────
