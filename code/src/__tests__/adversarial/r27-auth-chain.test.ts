@@ -259,7 +259,11 @@ describe("R27 attack-chain B regression: auth-path hardening", () => {
     });
 
     it("kills sessions on email change so the old email can't re-authenticate", () => {
-      expect(src).toMatch(/if \(email !== undefined\) \{[\s\S]*?invalidateEmployeeSessions/);
+      // R98-SEC-M2: DELETE moved INSIDE the orgTx, guarded on the
+      // scope-changing fields (roleKey / email / locationIds). Prior
+      // post-COMMIT `invalidateEmployeeSessions` shape left a
+      // 10-100ms gap on Neon serverless.
+      expect(src).toMatch(/roleKey !== undefined \|\| email !== undefined \|\| locationIds !== undefined[\s\S]{0,400}DELETE FROM sessions\s+WHERE employee_id = \$1/);
     });
   });
 });

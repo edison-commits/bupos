@@ -58,8 +58,12 @@ describe("R79 audit fixes — round 23", () => {
 
   describe("R79-SEC-H1 HIGH: /api/employees PUT invalidates sessions on locationIds change", () => {
     const src = read("src/app/api/employees/route.ts");
-    it("combined invalidation guard includes locationIds", () => {
-      expect(src).toMatch(/roleKey !== undefined \|\| email !== undefined \|\| locationIds !== undefined[\s\S]{0,200}await invalidateEmployeeSessions/);
+    // R98-SEC-M2: DELETE moved INSIDE the orgTx, still guarded on the
+    // same three scope-changing fields. Prior post-COMMIT shape left
+    // a 10-100ms gap on Neon serverless during which a stolen-cookie
+    // session outlived the authority change.
+    it("combined invalidation guard includes locationIds + DELETEs in-tx", () => {
+      expect(src).toMatch(/roleKey !== undefined \|\| email !== undefined \|\| locationIds !== undefined[\s\S]{0,400}DELETE FROM sessions\s+WHERE employee_id = \$1/);
     });
   });
 

@@ -127,6 +127,43 @@ describe("R39 findings", () => {
       // The prior "one-line quote-escape" shape that missed formula injection is gone.
       expect(src).not.toMatch(/`"\$\{String\(cell\)\.replace\(\/"\/g, '""'\)\}"`/);
     });
+    // R98-MED: CSV formula-injection drift — every client-side CSV
+    // exporter must route through the shared `csvCell` sanitizer.
+    // Hand-built `"${val}"` joins are vulnerable to Excel/Calc
+    // formula execution (`=HYPERLINK(...)`, `+cmd|...`, `@SUM(...)`,
+    // leading `-`/`\t`/`\r`) on open.
+    it("admin/reports/page.tsx uses csvCell for every row", () => {
+      const src = read("src/app/admin/reports/page.tsx");
+      expect(src).toMatch(/from "@\/lib\/format\/csv-sanitize"/);
+      expect(src).toMatch(/csvCell\(/);
+    });
+    it("admin/products/page.tsx handleExportCSV uses csvCell", () => {
+      const src = read("src/app/admin/products/page.tsx");
+      expect(src).toMatch(/from '@\/lib\/format\/csv-sanitize'/);
+      expect(src).toMatch(/csvCell\(cell\)/);
+    });
+    it("admin/sales-reports.tsx handleExportCSV uses csvCell", () => {
+      const src = read("src/components/admin/sales-reports.tsx");
+      expect(src).toMatch(/from "@\/lib\/format\/csv-sanitize"/);
+      expect(src).toMatch(/csvCell\(/);
+    });
+    it("admin/tax-report.tsx handleExportCSV uses csvCell", () => {
+      const src = read("src/components/admin/tax-report.tsx");
+      expect(src).toMatch(/from "@\/lib\/format\/csv-sanitize"/);
+      expect(src).toMatch(/csvCell\(/);
+    });
+    it("admin/z-report.tsx exportCSV uses csvCell (no bare double-quote escape)", () => {
+      const src = read("src/components/admin/z-report.tsx");
+      expect(src).toMatch(/from "@\/lib\/format\/csv-sanitize"/);
+      expect(src).toMatch(/csvCell\(/);
+      // The prior `.replace(/"/g, '""')` inline escape is gone.
+      expect(src).not.toMatch(/\.replace\(\/"\/g, '""'\)/);
+    });
+    it("admin/payroll-summary.tsx exportCSV uses csvCell", () => {
+      const src = read("src/components/admin/payroll-summary.tsx");
+      expect(src).toMatch(/from "@\/lib\/format\/csv-sanitize"/);
+      expect(src).toMatch(/csvCell\(/);
+    });
     it("sanitizeCsvCell prefixes formula-trigger cells", () => {
       expect(sanitizeCsvCell("=cmd|'/C calc'!A0")).toBe("'=cmd|'/C calc'!A0");
       expect(sanitizeCsvCell("+HYPERLINK")).toBe("'+HYPERLINK");

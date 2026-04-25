@@ -3,6 +3,7 @@
 import { useMemo, useRef } from "react";
 import type { LocalStoreData } from "@/lib/persistence/types";
 import { formatCurrency } from "@/lib/format";
+import { csvCell } from "@/lib/format/csv-sanitize";
 
 interface ZReportProps {
   store: LocalStoreData;
@@ -179,7 +180,7 @@ export function ZReport({ store, locationId }: ZReportProps) {
       ["Manager approvals", String(report.todayExceptions.length)],
       ["Behavior flags", String(report.todayFlags.length)],
     ];
-    const csv = rows.map((r) => r.map((c) => `"${c.replace(/"/g, '""')}"`).join(",")).join("\n");
+    const csv = rows.map((r) => r.map((c) => csvCell(c)).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");

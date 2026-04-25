@@ -75,8 +75,12 @@ describe("R77 audit fixes — round 21", () => {
     it("event_kind matches REST shape (employee_activated / employee_deactivated)", () => {
       expect(block).toMatch(/targetActive \? "employee_activated" : "employee_deactivated"/);
     });
-    it("DELETEs sessions on deactivate", () => {
-      expect(block).toMatch(/newStatus === false[\s\S]{0,500}DELETE FROM sessions\s+WHERE employee_id/);
+    it("DELETEs sessions in-tx on deactivate", () => {
+      // R98-SEC-M2: session DELETE moved INSIDE the orgTx (pre-COMMIT)
+      // and gated on !targetActive — the prior post-COMMIT shape left
+      // a 10-100ms gap on Neon serverless during which a stolen cookie
+      // could still pass getAdminSession() reads.
+      expect(block).toMatch(/if \(!targetActive\)[\s\S]{0,400}DELETE FROM sessions\s+WHERE employee_id/);
     });
     it("admin-console wires explicit action hidden input", () => {
       const ui = read("src/components/admin/admin-console.tsx");

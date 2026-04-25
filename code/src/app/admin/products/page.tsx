@@ -5,6 +5,7 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 import { useCallback, useEffect, useState } from 'react';
 import { authFetch } from '@/lib/api/client';
 import { formatCurrency } from '@/lib/format';
+import { csvCell } from '@/lib/format/csv-sanitize';
 import { useDebouncedValue } from '@/lib/hooks/use-debounced-value';
 // R53: step-up re-auth when editing a variant's price or cost.
 // Server /api/products PUT gates bucketKey:'variant-price-stepup'
@@ -394,7 +395,7 @@ export default function ProductsPage() {
         });
       }
     });
-    const csv = rows.map(r => r.map(cell => `"${cell}"`).join(',')).join('\n');
+    const csv = rows.map(r => r.map(cell => csvCell(cell)).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');

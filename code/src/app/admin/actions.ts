@@ -750,7 +750,9 @@ export async function toggleEmployeeAction(formData: FormData) {
     redirect("/admin?error=You+cannot+deactivate+yourself");
   }
 
-  let newStatus: boolean | null = null;
+  // R98-SEC-M2: prior `newStatus` sentinel gated a post-COMMIT session
+  // DELETE. Session invalidation now lives INSIDE the orgTx below, so
+  // the sentinel has no consumer and is gone.
   if (isPg()) {
     // R54-M: lock + role-check + toggle + audit ALL in one orgTx.
     //
@@ -805,7 +807,6 @@ export async function toggleEmployeeAction(formData: FormData) {
           await client.query("ROLLBACK").catch(() => {});
           outcome = { kind: "noop" };
         } else {
-          newStatus = targetActive;
           await client.query(
             `UPDATE employees SET is_active = $1, updated_at = $2
              WHERE id = $3 AND organization_id = $4`,
@@ -822,6 +823,19 @@ export async function toggleEmployeeAction(formData: FormData) {
               JSON.stringify({ action: targetActive ? "activated" : "deactivated", target_role: targetRole }),
             ],
           );
+          // R98-SEC-M2: DELETE sessions INSIDE the same tx on
+          // deactivate so the old session row can't outlive the
+          // authority change. Prior R77-SEC-H shape post-COMMIT
+          // left a 10-100ms gap on Neon serverless during which
+          // a stolen cookie still resolved.
+          if (!targetActive) {
+            await client.query(
+              `DELETE FROM sessions
+                 WHERE employee_id = $1
+                   AND employee_id IN (SELECT id FROM employees WHERE organization_id = $2)`,
+              [employeeId, orgId],
+            );
+          }
           await client.query("COMMIT");
         }
       }
@@ -834,23 +848,9 @@ export async function toggleEmployeeAction(formData: FormData) {
     if (outcome.kind === "ok") {
       // Mirror pgToggleEmployee's cache invalidation on the happy path.
       invalidateEmployeesCache(orgId);
-      // R77-SEC-H: on DEACTIVATE, wipe the victim's sessions so a
-      // cookie compromise can't outlive the status flip. Matches
-      // REST /api/employees PATCH invalidateEmployeeSessions shape
-      // (no shared module exists — inline the same DELETE).
-      if (newStatus === false) {
-        const { getPool } = await import("@/lib/supabase-rest");
-        const pool = await getPool();
-        await pool.query(
-          `DELETE FROM sessions
-             WHERE employee_id = $1
-               AND employee_id IN (SELECT id FROM employees WHERE organization_id = $2)`,
-          [employeeId, orgId],
-        ).catch(() => {
-          // Non-fatal — audit already committed; session cleanup
-          // failure logged by pool internals.
-        });
-      }
+      // R77-SEC-H / R98-SEC-M2: session DELETE now lives INSIDE the
+      // orgTx above — see the in-tx block. Post-commit no-op here
+      // kept so the outcome branches stay structurally parallel.
     }
     if (outcome.kind === "not_found") redirect("/admin?error=Employee+not+found");
     if (outcome.kind === "denied") redirect("/admin?error=You+cannot+change+that+employee");
@@ -863,7 +863,6 @@ export async function toggleEmployeeAction(formData: FormData) {
         redirect("/admin?error=You+cannot+change+that+employee");
       }
       const targetActive = explicitAction === "activate";
-      newStatus = targetActive;
       employee!.isActive = targetActive;
       employee!.updatedAt = now();
     });

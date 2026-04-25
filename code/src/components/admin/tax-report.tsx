@@ -3,6 +3,7 @@
 import React, { useState, useMemo } from 'react';
 import { LocalStoreData } from '@/lib/persistence/types';
 import { formatCurrency } from "@/lib/format";
+import { csvCell } from "@/lib/format/csv-sanitize";
 
 type DateRange = {
   startDate: Date;
@@ -215,28 +216,34 @@ export function TaxReport({ store }: { store: LocalStoreData }) {
     const businessName = organization?.name || 'Business';
 
     const headers = [
-      `Tax Report - ${businessName}`,
-      `Period: ${dateRange.startDate.toLocaleDateString()} to ${dateRange.endDate.toLocaleDateString()}`,
-      `Generated: ${new Date().toLocaleDateString()}`,
+      csvCell(`Tax Report - ${businessName}`),
+      csvCell(`Period: ${dateRange.startDate.toLocaleDateString()} to ${dateRange.endDate.toLocaleDateString()}`),
+      csvCell(`Generated: ${new Date().toLocaleDateString()}`),
       '',
       'Daily Breakdown',
-      'Date,Gross Sales,Returns,Net Sales,Tax Collected',
+      ['Date', 'Gross Sales', 'Returns', 'Net Sales', 'Tax Collected'].map(csvCell).join(','),
     ];
 
     const rows = taxSummary.dailyBreakdown.map((day) =>
-      `${day.date},${day.grossSales.toFixed(2)},${day.returns.toFixed(2)},${day.netSales.toFixed(2)},${day.taxCollected.toFixed(2)}`
+      [
+        csvCell(day.date),
+        csvCell(day.grossSales.toFixed(2)),
+        csvCell(day.returns.toFixed(2)),
+        csvCell(day.netSales.toFixed(2)),
+        csvCell(day.taxCollected.toFixed(2)),
+      ].join(',')
     );
 
     const summary = [
       '',
       'Summary',
-      `Gross Sales,${taxSummary.grossSales.toFixed(2)}`,
-      `Returns/Refunds,${taxSummary.totalReturns.toFixed(2)}`,
-      `Net Taxable Sales,${taxSummary.netTaxableSales.toFixed(2)}`,
-      `Tax Rate,${(taxSummary.taxRate * 100).toFixed(2)}%`,
-      `Tax Collected,${taxSummary.taxCollected.toFixed(2)}`,
-      `Expected Tax,${taxSummary.expectedTax.toFixed(2)}`,
-      `Variance,${taxSummary.variance.toFixed(2)}`,
+      [csvCell('Gross Sales'), csvCell(taxSummary.grossSales.toFixed(2))].join(','),
+      [csvCell('Returns/Refunds'), csvCell(taxSummary.totalReturns.toFixed(2))].join(','),
+      [csvCell('Net Taxable Sales'), csvCell(taxSummary.netTaxableSales.toFixed(2))].join(','),
+      [csvCell('Tax Rate'), csvCell((taxSummary.taxRate * 100).toFixed(2) + '%')].join(','),
+      [csvCell('Tax Collected'), csvCell(taxSummary.taxCollected.toFixed(2))].join(','),
+      [csvCell('Expected Tax'), csvCell(taxSummary.expectedTax.toFixed(2))].join(','),
+      [csvCell('Variance'), csvCell(taxSummary.variance.toFixed(2))].join(','),
     ];
 
     const csvContent = [...headers, ...rows, ...summary].join('\n');

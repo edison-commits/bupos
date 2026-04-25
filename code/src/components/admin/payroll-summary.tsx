@@ -3,6 +3,7 @@
 import { useState, useMemo } from 'react';
 import type { LocalStoreData } from '@/lib/persistence/types';
 import { formatCurrency } from "@/lib/format";
+import { csvCell } from "@/lib/format/csv-sanitize";
 
 interface PayrollEntry {
   date: string;
@@ -254,18 +255,40 @@ export function PayrollSummary({ store }: { store: LocalStoreData }) {
   }, [getPeriodDates, store, hourlyRates]);
 
   const exportCSV = () => {
-    let csv = 'Employee,Role,Date,Clock In,Clock Out,Break (hrs),Regular (hrs),Overtime (hrs),Rate,Gross Pay\n';
+    let csv = ['Employee', 'Role', 'Date', 'Clock In', 'Clock Out', 'Break (hrs)', 'Regular (hrs)', 'Overtime (hrs)', 'Rate', 'Gross Pay'].map(csvCell).join(',') + '\n';
 
     payrollData.payrollByEmployee.forEach((emp) => {
       const rate = hourlyRates[emp.employeeId] || DEFAULT_HOURLY_RATES[emp.role] || 15;
 
       emp.entries.forEach((entry) => {
         const grossPay = entry.regularHours * rate + entry.overtimeHours * rate * 1.5;
-        csv += `"${emp.firstName} ${emp.lastName}","${emp.role}","${entry.date}","${entry.clockIn}","${entry.clockOut}",${entry.breakDuration.toFixed(2)},${entry.regularHours.toFixed(2)},${entry.overtimeHours.toFixed(2)},${rate},${grossPay.toFixed(2)}\n`;
+        csv += [
+          csvCell(`${emp.firstName} ${emp.lastName}`),
+          csvCell(emp.role),
+          csvCell(entry.date),
+          csvCell(entry.clockIn),
+          csvCell(entry.clockOut),
+          csvCell(entry.breakDuration.toFixed(2)),
+          csvCell(entry.regularHours.toFixed(2)),
+          csvCell(entry.overtimeHours.toFixed(2)),
+          csvCell(rate),
+          csvCell(grossPay.toFixed(2)),
+        ].join(',') + '\n';
       });
     });
 
-    csv += `\nTotals,,,,,${payrollData.payrollByEmployee.reduce((sum, e) => sum + e.totalBreakHours, 0).toFixed(2)},${payrollData.totalRegularHours.toFixed(2)},${payrollData.totalOvertimeHours.toFixed(2)},,${payrollData.totalGrossPay.toFixed(2)}\n`;
+    csv += '\n' + [
+      csvCell('Totals'),
+      '',
+      '',
+      '',
+      '',
+      csvCell(payrollData.payrollByEmployee.reduce((sum, e) => sum + e.totalBreakHours, 0).toFixed(2)),
+      csvCell(payrollData.totalRegularHours.toFixed(2)),
+      csvCell(payrollData.totalOvertimeHours.toFixed(2)),
+      '',
+      csvCell(payrollData.totalGrossPay.toFixed(2)),
+    ].join(',') + '\n';
 
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);

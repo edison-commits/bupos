@@ -5,6 +5,11 @@ import { AdminTopNav } from "@/components/layout/admin-top-nav";
 import { useState, useEffect } from "react";
 import { authFetch } from '@/lib/api/client';
 import { formatCurrency } from "@/lib/format";
+// R98-MED: use the shared csvCell sanitizer so category/employee/
+// product names (user-editable) can't smuggle =HYPERLINK() /
+// =cmd formulas into the CSV export. Prior hand-built
+// `"${val}"` quoting didn't defend against formula injection.
+import { csvCell } from "@/lib/format/csv-sanitize";
 
 type DateRange = "today" | "week" | "month" | "custom";
 type ReportType = "summary" | "category" | "employee" | "hourly" | "tender" | "products" | "shifts";
@@ -602,38 +607,38 @@ function reportToCSV(type: ReportType, data: AnyReportData): string {
     const d = data as CategoryReportData;
     csv = "Category,Revenue,Items,Transactions,% of Total\n";
     d.categories.forEach((cat) => {
-      csv += `"${cat.name}","${cat.revenue.toFixed(2)}","${cat.itemCount}","${cat.transactionCount}","${((cat.revenue / d.totalRevenue) * 100).toFixed(1)}%"\n`;
+      csv += [csvCell(cat.name), csvCell(cat.revenue.toFixed(2)), csvCell(cat.itemCount), csvCell(cat.transactionCount), csvCell(((cat.revenue / d.totalRevenue) * 100).toFixed(1) + '%')].join(",") + "\n";
     });
   } else if (type === "employee") {
     const d = data as EmployeeReportData;
     csv = "Employee,Transactions,Sales,Avg Ticket,Refunds\n";
     d.employees.forEach((emp) => {
-      csv += `"${emp.name}","${emp.transactionCount}","${emp.totalSales.toFixed(2)}","${emp.avgTicket.toFixed(2)}","${emp.refundCount}"\n`;
+      csv += [csvCell(emp.name), csvCell(emp.transactionCount), csvCell(emp.totalSales.toFixed(2)), csvCell(emp.avgTicket.toFixed(2)), csvCell(emp.refundCount)].join(",") + "\n";
     });
   } else if (type === "hourly") {
     const d = data as HourlyReportData;
     csv = "Hour,Revenue,Transactions\n";
     d.hours.forEach((hour) => {
-      csv += `"${hour.hour}:00","${hour.revenue.toFixed(2)}","${hour.transactionCount}"\n`;
+      csv += [csvCell(hour.hour + ':00'), csvCell(hour.revenue.toFixed(2)), csvCell(hour.transactionCount)].join(",") + "\n";
     });
   } else if (type === "tender") {
     const d = data as TenderReportData;
     csv = "Tender Type,Amount,Count,% of Total\n";
     const total = d.tenders.reduce((sum, t) => sum + t.amount, 0);
     d.tenders.forEach((tender) => {
-      csv += `"${tender.type}","${tender.amount.toFixed(2)}","${tender.count}","${((tender.amount / total) * 100).toFixed(1)}%"\n`;
+      csv += [csvCell(tender.type), csvCell(tender.amount.toFixed(2)), csvCell(tender.count), csvCell(((tender.amount / total) * 100).toFixed(1) + '%')].join(",") + "\n";
     });
   } else if (type === "products") {
     const d = data as ProductsReportData;
     csv = "Product,Revenue,Quantity\n";
     d.byRevenue.forEach((prod) => {
-      csv += `"${prod.name}","${prod.revenue.toFixed(2)}","${prod.quantity}"\n`;
+      csv += [csvCell(prod.name), csvCell(prod.revenue.toFixed(2)), csvCell(prod.quantity)].join(",") + "\n";
     });
   } else if (type === "shifts") {
     const d = data as ShiftsReportData;
     csv = "Employee,Date,Status,Opening Float,Sales,Expected Cash,Declared Cash,Variance\n";
     d.shifts.forEach((shift) => {
-      csv += `"${shift.employee}","${shift.date}","${shift.status}","${shift.openingFloat.toFixed(2)}","${shift.sales.toFixed(2)}","${shift.closingExpectedCash.toFixed(2)}","${shift.closingDeclaredCash.toFixed(2)}","${shift.variance.toFixed(2)}"\n`;
+      csv += [csvCell(shift.employee), csvCell(shift.date), csvCell(shift.status), csvCell(shift.openingFloat.toFixed(2)), csvCell(shift.sales.toFixed(2)), csvCell(shift.closingExpectedCash.toFixed(2)), csvCell(shift.closingDeclaredCash.toFixed(2)), csvCell(shift.variance.toFixed(2))].join(",") + "\n";
     });
   }
 

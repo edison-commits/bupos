@@ -15,22 +15,12 @@ import { validateBody, employeeCreateSchema, employeeUpdateSchema, employeePatch
 import { waitUntilOrAwait } from '@/lib/runtime/wait-until';
 
 import { safeErr } from "@/lib/logging/safe-err";
-/**
- * Invalidate all active sessions for an employee — both admin and register scopes.
- * Call this when the employee's role changes or they are deactivated so that
- * permission changes take effect immediately rather than waiting for session expiry.
- */
-async function invalidateEmployeeSessions(employeeId: string, orgId: string): Promise<void> {
-  const pool = await getPool();
-  // Scope by org defensively — if a future caller passes an id from the wrong
-  // tenant, this won't wipe another org's sessions.
-  await pool.query(
-    `DELETE FROM sessions
-     WHERE employee_id = $1
-       AND employee_id IN (SELECT id FROM employees WHERE organization_id = $2)`,
-    [employeeId, orgId],
-  );
-}
+// R98-SEC-M2: `invalidateEmployeeSessions` helper deleted. Every
+// credential-rotation surface (PUT role/email/locationIds, deactivate,
+// reset_pin) now issues the DELETE INSIDE its own orgTx BEFORE the
+// COMMIT — the prior post-COMMIT helper shape left a 10-100ms gap on
+// Neon serverless during which a stolen cookie could still pass
+// getAdminSession() reads. In-tx shape mirrors /api/auth/password-change.
 
 // GET: List all employees with their roles and location info
 export const GET = withAdminAuth('employee.manage', async (request, ctx) => {
@@ -568,6 +558,20 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
           }),
         ],
       );
+      // R98-SEC-M2: DELETE sessions INSIDE the tx when a scope-
+      // changing field moved (roleKey / email / locationIds).
+      // Prior R79-SEC-H1 shape issued this after COMMIT via
+      // a separate pool.query — gap window let a stolen-cookie
+      // session outlive the authority change. In-tx shape
+      // matches /api/auth/password-change.
+      if (roleKey !== undefined || email !== undefined || locationIds !== undefined) {
+        await client.query(
+          `DELETE FROM sessions
+             WHERE employee_id = $1
+               AND employee_id IN (SELECT id FROM employees WHERE organization_id = $2)`,
+          [id, orgId],
+        );
+      }
       await client.query("COMMIT");
     } catch (e) {
       await client.query("ROLLBACK").catch(() => {});
@@ -589,18 +593,6 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
       createdAt: rows[0].created_at,
       updatedAt: rows[0].updated_at,
     };
-
-    // If role changed, invalidate all of the target employee's sessions immediately
-    // so that the new (possibly lower) permissions take effect without waiting for expiry.
-    // R79-SEC-H1: invalidate on ANY scope-changing field — roleKey OR
-    // email OR locationIds. Prior shape missed locationIds: an owner
-    // could remove Employee X from Location A, but Employee X's live
-    // register session at A continued ringing sales on an
-    // unauthorized location until natural expiry. Mirrors
-    // R77-SEC-H class (stolen-cookie outlives authority change).
-    if (roleKey !== undefined || email !== undefined || locationIds !== undefined) {
-      await invalidateEmployeeSessions(id, orgId);
-    }
 
     invalidateEmployeesCache(orgId);
     return NextResponse.json({ employee });
@@ -767,6 +759,18 @@ export const PATCH = withAdminAuth('employee.manage', async (request, ctx) => {
             JSON.stringify({ target_role: targetRole, actor_email: actor.email ?? null }),
           ],
         );
+        // R98-SEC-M2: DELETE sessions in-tx on deactivate. Prior
+        // post-COMMIT pool.query left a 10-100ms gap during which
+        // the just-deactivated employee's stolen cookie could
+        // still pass getAdminSession() reads.
+        if (!rows[0].is_active) {
+          await client.query(
+            `DELETE FROM sessions
+               WHERE employee_id = $1
+                 AND employee_id IN (SELECT id FROM employees WHERE organization_id = $2)`,
+            [id, orgId],
+          );
+        }
         await client.query("COMMIT");
       } catch (e) {
         await client.query("ROLLBACK").catch(() => {});
@@ -788,12 +792,6 @@ export const PATCH = withAdminAuth('employee.manage', async (request, ctx) => {
         createdAt: rows[0].created_at,
         updatedAt: rows[0].updated_at,
       };
-
-      // If the employee was just deactivated, kill all their sessions immediately
-      // so they cannot continue to act with their old permissions.
-      if (!rows[0].is_active) {
-        await invalidateEmployeeSessions(id, orgId);
-      }
 
       invalidateEmployeesCache(orgId);
       return NextResponse.json({ employee });
@@ -888,6 +886,21 @@ export const PATCH = withAdminAuth('employee.manage', async (request, ctx) => {
             JSON.stringify({ target_role: targetRole, actor_email: actor.email ?? null }),
           ],
         );
+        // R98-SEC-M2: move session DELETE INSIDE the tx (mirror
+        // /api/auth/password-change:249 shape). Prior R76-SEC-H2
+        // fix committed the pin_hash rotation then issued the
+        // invalidate as a separate pool.query — 10-100ms gap on
+        // Neon serverless during which a stolen-cookie attacker
+        // could still pass getAdminSession() reads because the
+        // old sessions row was still extant. Moving DELETE
+        // in-tx closes that window: either both changes commit
+        // together or both roll back together.
+        await pinClient.query(
+          `DELETE FROM sessions
+             WHERE employee_id = $1
+               AND employee_id IN (SELECT id FROM employees WHERE organization_id = $2)`,
+          [id, orgId],
+        );
         await pinClient.query("COMMIT");
       } catch (e) {
         await pinClient.query("ROLLBACK").catch(() => {});
@@ -895,18 +908,6 @@ export const PATCH = withAdminAuth('employee.manage', async (request, ctx) => {
       } finally {
         pinClient.release();
       }
-
-      // R76-SEC-H2 (HIGH): invalidate existing sessions for the target
-      // employee. Prior shape committed the new pin_hash + audit +
-      // notification email but left every live `sessions` row
-      // untouched — the #1 reason a victim asks for a PIN reset
-      // (suspected cookie compromise) was defeated silently because
-      // the attacker's stolen cookie remained valid until natural
-      // expiry. Matches the PUT email-change / role-change path
-      // (line 596, 602) and deactivate path (line 795). Mirrors
-      // password-change / password-reset-confirm session DELETE on
-      // credential rotation.
-      await invalidateEmployeeSessions(id, orgId);
 
       // R27-M7: notify the employee whose PIN was reset. Best-effort
       // email via Resend — the target's `email` may be missing or

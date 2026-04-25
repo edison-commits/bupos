@@ -95,9 +95,13 @@ describe("R76 audit fixes — round 20", () => {
 
   describe("R76-SEC-H2 HIGH: PIN reset invalidates sessions", () => {
     const src = read("src/app/api/employees/route.ts");
-    it("reset_pin branch calls invalidateEmployeeSessions after COMMIT", () => {
+    // R98-SEC-M2: DELETE FROM sessions moved INSIDE the orgTx
+    // BEFORE the COMMIT — the prior post-COMMIT shape left a
+    // 10-100ms gap on Neon serverless during which a stolen-cookie
+    // attacker could still pass getAdminSession() reads.
+    it("reset_pin branch DELETEs sessions in-tx before COMMIT", () => {
       const block = src.slice(src.indexOf("action === 'reset_pin'"));
-      expect(block.slice(0, 6000)).toMatch(/await pinClient\.query\("COMMIT"\);[\s\S]{0,2500}await invalidateEmployeeSessions\(id, orgId\)/);
+      expect(block.slice(0, 6000)).toMatch(/await pinClient\.query\(\s*`DELETE FROM sessions[\s\S]{0,400}WHERE employee_id = \$1[\s\S]{0,400}organization_id = \$2[\s\S]{0,800}await pinClient\.query\("COMMIT"\)/);
     });
   });
 

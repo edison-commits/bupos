@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react";
 import type { LocalStoreData } from "@/lib/persistence/types";
 import { formatCurrency } from "@/lib/format";
+import { csvCell } from "@/lib/format/csv-sanitize";
 
 type DateRange = "today" | "7d" | "30d" | "all";
 
@@ -144,7 +145,16 @@ export function SalesReports({ store }: { store: LocalStoreData }) {
       const tenders = tenderMap.get(event.transactionId) || ["Unknown"];
 
       tenders.forEach((tenderType) => {
-        rows.push(`${dateStr},${timeStr},${event.transactionId},${employeeName},${grand_total},${tax_total},${tenderType},${is_return}`);
+        rows.push([
+          csvCell(dateStr),
+          csvCell(timeStr),
+          csvCell(event.transactionId),
+          csvCell(employeeName),
+          csvCell(grand_total),
+          csvCell(tax_total),
+          csvCell(tenderType),
+          csvCell(is_return),
+        ].join(","));
       });
     });
 
