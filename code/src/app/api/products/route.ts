@@ -125,6 +125,9 @@ export const GET = withDualAuth("catalog.manage", async (request, ctx) => {
         [orgId]
       );
 
+      // ISO-LOW2: belt-and-suspenders org filter on JOIN-side tables
+      // (R36-M4 pattern). p.organization_id = $1 already gates the
+      // outer scope — this defends against future FK uniqueness drift.
       summaryResult = await client.query(
         `
         SELECT
@@ -133,8 +136,8 @@ export const GET = withDualAuth("catalog.manage", async (request, ctx) => {
           COUNT(DISTINCT pv.id) as total_variants,
           COUNT(DISTINCT c.id) as categories_count
         FROM products p
-        LEFT JOIN product_variants pv ON p.id = pv.product_id
-        LEFT JOIN categories c ON p.category_id = c.id
+        LEFT JOIN product_variants pv ON p.id = pv.product_id AND pv.organization_id = $1
+        LEFT JOIN categories c ON p.category_id = c.id AND c.organization_id = $1
         WHERE p.organization_id = $1
         `,
         [orgId]

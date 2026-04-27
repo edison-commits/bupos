@@ -652,27 +652,18 @@ export async function pgToggleEmployee(id: string, organizationId: string): Prom
   }
 }
 
-export async function pgReadEmployeeById(id: string, organizationId?: string): Promise<Employee | null> {
-  // organizationId is optional for backward compat with auth-lookup callers
-  // that don't yet know the org (e.g., session resolution). Every caller
-  // that has the actor's org should pass it — without it, this function
-  // returns employees across all tenants (postgres role bypasses RLS).
-  if (organizationId) {
-    const { rows } = await pool.query(
-      `SELECT * FROM employees WHERE id = $1 AND organization_id = $2`,
-      [id, organizationId],
-    );
-    return rows[0] ? toEmployee(rows[0]) : null;
-  }
-  // check-pool-org-filter: scoped-by-session-auth-lookup
-  // Reached only by auth / session resolution where the caller hasn't
-  // yet proven an org. The `id` comes from a validated session cookie
-  // (HttpOnly, signed by our server), so the id itself is the proof of
-  // tenancy. Every downstream caller that has the actor's org already
-  // takes the branch above.
+// ISO-LOW3: organizationId is REQUIRED. Prior shape kept an optional
+// fallback for "auth-lookup callers that don't yet know the org" but
+// every actual auth-lookup goes through inline `pool.query` in
+// session.ts (which carries its own scoped-by-session-auth-lookup
+// suppression comment). The optional branch had zero live callers in
+// production code — only a stale comment reference at admin/actions.ts:
+// 774. Removing it eliminates a footgun for any future caller that
+// might forget the orgId.
+export async function pgReadEmployeeById(id: string, organizationId: string): Promise<Employee | null> {
   const { rows } = await pool.query(
-    `SELECT * FROM employees WHERE id = $1`,
-    [id],
+    `SELECT * FROM employees WHERE id = $1 AND organization_id = $2`,
+    [id, organizationId],
   );
   return rows[0] ? toEmployee(rows[0]) : null;
 }

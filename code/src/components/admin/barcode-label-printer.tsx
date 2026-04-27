@@ -160,14 +160,25 @@ export function BarcodeLabelPrinter({ products, variants }: BarcodeLabelPrinterP
 
   const handlePrint = useCallback(() => {
     if (!printRef.current) return;
-    const printWindow = window.open("", "_blank");
+    // FE-LOW3: open with `noopener` so the print window can't reach
+    // `window.opener` to navigate the parent. Same-origin, so the
+    // tabnabbing class doesn't apply, but `noopener` is conventional
+    // discipline that costs nothing.
+    const printWindow = window.open("", "_blank", "noopener");
     if (!printWindow) return;
     // Safe print: extract label content as text and rebuild. Avoids innerHTML XSS.
     const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     const labels = labelItems.map(({ variant, product, quantity }) => {
       const name = escapeHtml(product.name);
       const sku = escapeHtml(variant.sku || '');
-      const price = formatCurrency(variant.price);
+      // FE-LOW2: escape the formatCurrency output before HTML
+      // interpolation. Today returns plain `$1.23` (safe), but if a
+      // future locale extension ever embeds `<`/`>`/quotes (some ICU
+      // currency narrow-symbols use combining marks that round-trip
+      // differently), the raw interpolation becomes an XSS-on-print
+      // vector — self-targeted only since it's the user's own browser
+      // window, but a cheap belt-and-suspenders fix.
+      const price = escapeHtml(formatCurrency(variant.price));
       const barcode = generateBarcodeSVG(variant.barcode || variant.sku || variant.id, sizeConfig.w - 16, sizeConfig.bh);
       return Array.from({ length: quantity }, () =>
         `<div class="label"><div class="label-name">${name}</div><div class="label-sku">${sku}</div>${barcode}<div class="label-price">${price}</div></div>`

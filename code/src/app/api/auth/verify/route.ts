@@ -15,6 +15,7 @@ import { randomUUID } from "@/lib/uuid";
 import { addDays } from "@/lib/utils/date";
 import { safeErr } from "@/lib/logging/safe-err";
 import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
+import { shouldUseSecureCookie } from "@/lib/auth/session";
 
 // R41-2: opaque cookie name (see session.ts for rationale).
 const ADMIN_COOKIE = "bupos_a";
@@ -199,14 +200,15 @@ export async function GET(req: NextRequest) {
         clientS.release();
       }
       const jar = await cookies();
-      // R24-M-3: mirror the cookie-secure helper in session.ts. `true`
-      // on prod/HTTPS, `false` on local HTTP so dev + Playwright work.
-      const secureFlag =
-        process.env.NODE_ENV === "production" || req.url.startsWith("https://");
+      // AUTH-LOW2: route through the centralized `shouldUseSecureCookie`
+      // helper from session.ts. Prior shape forked the rule inline —
+      // R24-M-3 explicitly warned against this, but verify/route.ts
+      // drifted. Adds the AUTH-LOW1 Workers-runtime fail-closed branch
+      // automatically.
       jar.set(ADMIN_COOKIE, sessionId, {
         httpOnly: true,
         sameSite: "lax",
-        secure: secureFlag,
+        secure: shouldUseSecureCookie(req),
         path: "/",
         expires: new Date(sessionExpiresAt),
       });

@@ -110,7 +110,16 @@ export async function POST(request: Request) {
   }
 
   const { checkDbRateLimit } = await import("@/lib/auth/db-rate-limit");
-  const dbPinBucket = await checkDbRateLimit(`register-pin:${pinFingerprint}`, { maxAttempts: 10, windowMs: 600_000 });
+  // AUTH-MED4: tighten DB-layer per-PIN bucket from 10/10min to
+  // 5/30min. Combined with the mem(5/5min) + KV(8/5min) layers, the
+  // global per-PIN-fingerprint cap drops from ~23 attempts/5min to
+  // ~13/5min and ~5/30min absolute. For a 4-digit cashier PIN
+  // (10⁴ space) brute-force time goes from ~36h to ~167h. Owner/
+  // manager PINs are 6-digit (10⁶ space) so already safe; the bound
+  // exists to protect cashier PIN minimum length. 5 attempts per
+  // 30min still permits 6 honest typos before lockout (the PIN UI
+  // surfaces the failed-attempts count + countdown).
+  const dbPinBucket = await checkDbRateLimit(`register-pin:${pinFingerprint}`, { maxAttempts: 5, windowMs: 1_800_000 });
   if (!dbPinBucket.allowed) {
     logRateLimited({ bucket: "register-pin", layer: "db", actor: pinFingerprint.slice(0, 6) });
     return Response.json({ error: "Too many attempts for this PIN. Try again later." }, { status: 429 });

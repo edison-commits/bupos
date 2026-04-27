@@ -111,12 +111,18 @@ export async function createStocktakeAction(formData: FormData) {
 
       // Build stocktake_lines from current inventory at this location.
       // Filter by category when doing a cycle count with a category filter.
+      // ISO-LOW2: belt-and-suspenders org filter on every JOIN-side
+      // table. Sister routes (products/route.ts, expenses/route.ts,
+      // purchase-orders/route.ts) all gate the JOIN-side `organization_id`
+      // even when the parent's `il.organization_id = $3` already enforces
+      // the boundary. Latent regression defense — keeps the cross-tenant
+      // invariant true even if FK uniqueness is ever weakened.
       const lineInsertSql = categoryFilter
         ? `INSERT INTO stocktake_lines (id, stocktake_id, product_variant_id, expected_qty, created_at)
            SELECT gen_random_uuid(), $1, il.product_variant_id, il.on_hand, NOW()
            FROM inventory_levels il
-           JOIN product_variants pv ON pv.id = il.product_variant_id
-           JOIN products p ON p.id = pv.product_id
+           JOIN product_variants pv ON pv.id = il.product_variant_id AND pv.organization_id = $3
+           JOIN products p ON p.id = pv.product_id AND p.organization_id = $3
            WHERE il.location_id = $2 AND il.organization_id = $3 AND p.category_id = $4`
         : `INSERT INTO stocktake_lines (id, stocktake_id, product_variant_id, expected_qty, created_at)
            SELECT gen_random_uuid(), $1, il.product_variant_id, il.on_hand, NOW()
@@ -328,11 +334,21 @@ export async function acceptStocktakeAction(stocktakeId: string, actorPassword?:
 
       // Load counted lines with variance. Apply each variance to inventory_levels
       // and log an inventory_adjustments row.
+      // INT-LOW2: ORDER BY counted_at NULLS LAST, id makes the
+      // last-write-wins iteration of `latestByVariant` deterministic.
+      // Today UNIQUE on (stocktake_id, variant) prevents duplicates per
+      // stocktake (R75 introduced; lines are created via INSERT ...
+      // SELECT FROM inventory_levels with that uniqueness invariant)
+      // — so the iteration order doesn't change behavior. But any
+      // future code path that inserts a second line for the same
+      // variant per stocktake would silently get non-deterministic
+      // behavior on accept. Belt-and-suspenders.
       // check-pool-org-filter: scoped-by-parent-stocktake-org-verified-line-202
       const { rows: lines } = await client.query(
-        `SELECT id, product_variant_id, expected_qty, counted_qty
+        `SELECT id, product_variant_id, expected_qty, counted_qty, counted_at
          FROM stocktake_lines
-         WHERE stocktake_id = $1 AND counted_qty IS NOT NULL`,
+         WHERE stocktake_id = $1 AND counted_qty IS NOT NULL
+         ORDER BY counted_at NULLS LAST, id`,
         [stocktakeId],
       );
 

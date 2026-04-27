@@ -317,20 +317,43 @@ export const POST = withAdminAuth("employee.manage", async (req, ctx) => {
         }
       }
 
+      // INT-LOW1: lock the customer row FIRST, then UPDATE — the SELECT
+      // FOR UPDATE acquires the row lock so prev_points and the
+      // subsequent UPDATE see the same committed value. Prior shape
+      // used a CTE `previous` SELECT that ran on the start-of-statement
+      // snapshot; under READ COMMITTED a concurrent committed mint
+      // between snapshot and lock acquisition would re-read the new
+      // value in the SET expression but leave the CTE's prev_points
+      // stale — money math was correct (SET uses locked-row value)
+      // but the audit log's previous_points could disagree with reality.
+      // Note: cannot derive previous_points by `loyalty_points - $1`
+      // post-UPDATE because GREATEST(0, ...) clamps a redeem-past-zero
+      // adjustment, breaking the subtraction. Lock-then-update is the
+      // correct shape.
+      const { rows: lockRows } = await client.query(
+        `SELECT COALESCE(loyalty_points, 0)::int AS prev_points
+         FROM customers
+         WHERE id = $1 AND organization_id = $2
+         FOR UPDATE`,
+        [customer_id, orgId],
+      );
+      if (lockRows.length === 0) {
+        await client.query("ROLLBACK");
+        return NextResponse.json({ error: "Customer not found" }, { status: 404 });
+      }
+      const lockedPrev = Number(lockRows[0].prev_points) || 0;
       const { rows: updRows } = await client.query(
-        `WITH previous AS (
-           SELECT COALESCE(loyalty_points, 0)::int AS prev_points
-           FROM customers WHERE id = $2 AND organization_id = $3
-         )
-         UPDATE customers SET
+        `UPDATE customers SET
            loyalty_points = GREATEST(0, COALESCE(loyalty_points, 0) + $1),
            updated_at = NOW()
          WHERE id = $2 AND organization_id = $3
-         RETURNING id, loyalty_points,
-                   (SELECT prev_points FROM previous) AS previous_points,
-                   first_name, last_name`,
+         RETURNING id, loyalty_points, first_name, last_name`,
         [adjustment, customer_id, orgId],
       );
+      // Synthesize the previous_points field expected downstream.
+      if (updRows[0]) {
+        updRows[0].previous_points = lockedPrev;
+      }
       if (updRows.length === 0) {
         await client.query("ROLLBACK");
         return NextResponse.json({ error: "Customer not found" }, { status: 404 });

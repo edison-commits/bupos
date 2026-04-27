@@ -55,6 +55,12 @@ export async function pgInsertTimeClockEntry(data: {
   organizationId: string;
   eventType: TimeClockEventType;
   note?: string;
+  /** OPS-LOW1: when set, use this employeeId as the audit_events
+   *  actor_employee_id. The default (the time-clock subject themselves)
+   *  is correct for self-punch flows; an admin extending an employee's
+   *  day on their behalf should pass the admin's id explicitly so the
+   *  audit row distinguishes self-punch from admin-on-behalf. */
+  actorEmployeeId?: string;
 }): Promise<TimeClockEntry> {
   // R12-M-6: route through `orgTx` so the RLS `WITH CHECK` on
   // time_clock_entries is actually evaluated. The previous `pool.query`
@@ -68,6 +74,35 @@ export async function pgInsertTimeClockEntry(data: {
       `INSERT INTO time_clock_entries (organization_id, employee_id, location_id, event_type, note, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $6) RETURNING *`,
       [data.organizationId, data.employeeId, data.locationId, data.eventType, data.note ?? null, ts],
+    );
+    // OPS-LOW1: record the time-clock event in audit_events INSIDE the
+    // same orgTx so an admin extending an employee's day or a cashier
+    // punching a buddy in leaves a forensic trail. Prior shape had no
+    // audit row — the only evidence was the time_clock_entries row
+    // itself, which is editable by anyone holding `employee.manage`
+    // (with no second-order audit either). Mirrors the canonical
+    // R49 in-tx audit shape.
+    await client.query(
+      `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+       VALUES (gen_random_uuid(), $1, $2, $3, 'time_clock_entry', $4, $5, $6, $7)`,
+      [
+        data.organizationId,
+        data.locationId,
+        data.actorEmployeeId ?? data.employeeId,
+        rows[0].id,
+        // event_kind matches the user-visible action: clock_in,
+        // clock_out, break_start, break_end. Exact strings are the
+        // TimeClockEventType union — the DB column is `text` so any
+        // future addition rides through unchanged.
+        `time_clock_${data.eventType}`,
+        JSON.stringify({
+          subject_employee_id: data.employeeId,
+          event_type: data.eventType,
+          on_behalf: data.actorEmployeeId !== undefined && data.actorEmployeeId !== data.employeeId,
+          note: data.note ?? null,
+        }),
+        ts,
+      ],
     );
     await client.query('COMMIT');
     return toTimeClockEntry(rows[0]);

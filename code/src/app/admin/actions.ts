@@ -83,13 +83,21 @@ export async function adminLoginAction(formData: FormData) {
           // including the email being probed; persisting that into
           // audit_events.payload JSONB would expose attempted-login
           // emails via audit views accessible to org owners.
+          //
+          // AUTH-MED1: persist `email_prefix` (first 3 chars + ***)
+          // instead of the full email. Owners can render audit_events
+          // via /admin/audit; a successful brute-force probe would
+          // otherwise yield the victim's email plaintext alongside
+          // 'admin_login_failed'. The unknown-email branch below
+          // already used this shape — bring the known-org branch into
+          // parity.
           const reason = err instanceof Error && /Invalid admin credentials/.test(err.message)
             ? "invalid_credentials"
             : "internal_error";
           await waitUntilOrAwait(pgInsertAuditEvent(
             orgId, null, cred?.employeeId ?? null,
             "session", null, "admin_login_failed",
-            { email, reason },
+            { email_prefix: email.slice(0, 3) + "***", reason },
           ).catch((err) => console.error("[audit] Failed to insert audit event:", safeErr(err))));
         } else {
           // Unknown-email attempt — no org to attribute to. Structured log
@@ -606,6 +614,13 @@ export async function createEmployeeAction(formData: FormData) {
 
   if (["owner", "manager"].includes(roleKey) && !password) {
     redirect("/admin?error=Admin-capable+roles+need+a+password");
+  }
+  // AUTH-HIGH1: parity with signupAction + password-change/reset Zod
+  // (12-char floor). Prior shape had no minimum on the admin-side
+  // employee-create path, so a 1-char owner password could persist
+  // indefinitely. Empty is already gated above for owner/manager.
+  if (password && password.length < 12) {
+    redirect("/admin?error=Password+must+be+at+least+12+characters");
   }
 
   if (isPg()) {

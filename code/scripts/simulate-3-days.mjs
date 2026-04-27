@@ -73,6 +73,39 @@ function loadEnv() {
   }
 }
 
+// TST-L3: refuse to run against a non-test database. This script
+// inserts ~60 transactions, shifts, inventory adjustments, audit
+// rows — running it against production by accident is a measurable
+// data event. .env.local on a developer's machine often has a prod
+// connection string for live debugging; running `node scripts/
+// simulate-3-days.mjs` would otherwise mutate prod silently. Override
+// only by setting SIMULATE_FORCE=1.
+function assertSafeTargetDb() {
+  if (process.env.SIMULATE_FORCE === '1') {
+    console.warn('[simulate-3-days] SIMULATE_FORCE=1 — bypassing safety guard.');
+    return;
+  }
+  const conn = process.env.DATABASE_URL;
+  if (!conn) {
+    throw new Error('[simulate-3-days] DATABASE_URL is not set');
+  }
+  let url;
+  try {
+    url = new URL(conn);
+  } catch {
+    throw new Error('[simulate-3-days] DATABASE_URL is not a valid URL');
+  }
+  const host = (url.hostname || '').toLowerCase();
+  const PROD_HOST_PATTERNS = ['supabase.com', 'supabase.co', 'neon.tech', 'amazonaws.com'];
+  const isProdHost = PROD_HOST_PATTERNS.some(p => host.endsWith(p));
+  if (isProdHost) {
+    throw new Error(
+      `[simulate-3-days] refusing to run against host '${host}' — ` +
+      `looks like a production database. Set SIMULATE_FORCE=1 to override.`,
+    );
+  }
+}
+
 // Fix a "day" to a specific YYYY-MM-DD and anchor times to it.
 function atDay(day /* Date */, hour, min = 0, sec = 0) {
   const d = new Date(day);
@@ -510,6 +543,7 @@ async function simulateCashierDay(pool, day, cashier) {
 async function main() {
   loadEnv();
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL not found in .env.local");
+  assertSafeTargetDb();
   const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 3 });
 
   console.log(`→ Simulating 3 days × ${CASHIERS.length} cashiers at ${ORG_ID.slice(0, 8)}…`);

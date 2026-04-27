@@ -30,6 +30,27 @@ for (const line of txt.split("\n")) {
   if (m) process.env[m[1]] = process.env[m[1]] ?? m[2].replace(/^"|"$/g, "");
 }
 
+// TST-L3: prod-host guard. Adversarial cross-tenant test mutates rows
+// across two seeded orgs — running it against production is a data
+// event. Override with TEST_ADV_FORCE=1.
+{
+  const conn = process.env.DATABASE_URL;
+  if (!conn) throw new Error('[test-adv] DATABASE_URL not set');
+  if (process.env.TEST_ADV_FORCE !== '1') {
+    let host = '';
+    try { host = new URL(conn).hostname.toLowerCase(); } catch { /* ignore */ }
+    const PROD_HOSTS = ['supabase.com', 'supabase.co', 'neon.tech', 'amazonaws.com'];
+    if (PROD_HOSTS.some(p => host.endsWith(p))) {
+      throw new Error(
+        `[test-adv] refusing to run against host '${host}' (prod-like). ` +
+        `Set TEST_ADV_FORCE=1 to override.`,
+      );
+    }
+  } else {
+    console.warn('[test-adv] TEST_ADV_FORCE=1 — bypassing safety guard.');
+  }
+}
+
 const ORG_A = "33262270-7100-4b46-b2fb-8b50ad872bbb"; // Casualwear
 const ORG_B = "713b3ff4-0582-40b1-98b0-02303af31e6f"; // Basic Uniform
 

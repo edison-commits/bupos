@@ -15,6 +15,27 @@ for (const line of txt.split("\n")) {
   if (m) process.env[m[1]] = process.env[m[1]] ?? m[2].replace(/^"|"$/g, "");
 }
 
+// TST-L3: prod-host guard. This script seeds adversarial fixtures
+// (org A and org B side-by-side) for cross-tenant attack testing —
+// it must NOT run against production. Override with SEED_ADV_FORCE=1.
+{
+  const conn = process.env.DATABASE_URL;
+  if (!conn) throw new Error('[seed-adv] DATABASE_URL not set');
+  if (process.env.SEED_ADV_FORCE !== '1') {
+    let host = '';
+    try { host = new URL(conn).hostname.toLowerCase(); } catch { /* ignore */ }
+    const PROD_HOSTS = ['supabase.com', 'supabase.co', 'neon.tech', 'amazonaws.com'];
+    if (PROD_HOSTS.some(p => host.endsWith(p))) {
+      throw new Error(
+        `[seed-adv] refusing to run against host '${host}' (prod-like). ` +
+        `Set SEED_ADV_FORCE=1 to override.`,
+      );
+    }
+  } else {
+    console.warn('[seed-adv] SEED_ADV_FORCE=1 — bypassing safety guard.');
+  }
+}
+
 const ORG_B = "713b3ff4-0582-40b1-98b0-02303af31e6f"; // Basic Uniform
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });

@@ -21,6 +21,7 @@ import { getPool } from "@/lib/supabase-rest";
 import { verifyDeviceIdCookie, signDeviceId } from "@/lib/auth/device-cookie";
 import { pgFindCredentialByEmail, pgFindCredentialByPin } from "@/lib/persistence/postgres-store";
 import { invalidateStoreCache } from "@/lib/persistence/postgres-read-store";
+import { safeErr } from "@/lib/logging/safe-err";
 
 const isPg = () => !!process.env.USE_POSTGRES;
 
@@ -81,16 +82,30 @@ function deleteLegacyCookie(
  *
  * New rule:
  *   - In production (Workers / prod Next): `true`.
+ *   - On Cloudflare Workers runtime (regardless of NODE_ENV): `true`.
  *   - In non-prod AND request URL is HTTPS: `true`.
  *   - Else (local HTTP dev + tests): `false`.
  *
- * If `req` isn't available at the cookie-set site, we default to
- * production-only-secure — which lets `next dev` over HTTP work
- * without weakening prod. The `request.cf` / `request.url` check is
- * preferred when we have it.
+ * AUTH-LOW1: the Workers-runtime branch was missing. If a Worker
+ * deploy lands without NODE_ENV=production set (env-var rotation,
+ * preview deploy, misconfig), the prior shape would set non-Secure
+ * cookies on a HTTPS-only Workers domain. Mirrors the fail-closed
+ * pattern in device-cookie.ts:58-66 and display-token.ts:53-67.
+ *
+ * If `req` isn't available at the cookie-set site, we still get the
+ * Workers fail-closed branch above; otherwise we default to non-prod-
+ * non-Workers HTTP-allowed dev mode.
  */
-function shouldUseSecureCookie(req?: { url?: string }): boolean {
+// AUTH-LOW2: exported so peer routes (e.g. /api/auth/verify) can
+// call this same helper instead of forking inline `secureFlag` logic.
+// Prior shape had verify/route.ts:204-209 reimplementing the rule —
+// drift bait for any future tightening.
+export function shouldUseSecureCookie(req?: { url?: string }): boolean {
   if (process.env.NODE_ENV === "production") return true;
+  // AUTH-LOW1: Cloudflare Workers always serves HTTPS — force secure
+  // even if NODE_ENV is undefined (e.g. mid-deploy, preview build).
+  const isWorkers = typeof (globalThis as { WebSocketPair?: unknown }).WebSocketPair === 'function';
+  if (isWorkers) return true;
   if (req?.url && req.url.startsWith("https://")) return true;
   return false;
 }
@@ -531,12 +546,24 @@ export async function getRegisterSession(deviceId?: string) {
         // writes a fresh signed cookie. Without this, a stale
         // unsigned cookie stays in the jar forever until the user
         // manually clears cookies OR goes through signInRegister.
+        //
+        // AUTH-MED3: emit a structured warn when the cookie-jar write
+        // is silently swallowed. In RSC contexts `jar.delete` throws
+        // (jar is read-only) — the fallback is "the NEXT route handler
+        // / Server Action will clear it." For a register session
+        // attempt that lands in RSC and never transitions to a writable
+        // context (rare, but possible if the user opens the page and
+        // immediately closes it), the cookie persists until the next
+        // signInRegister. Logging here makes the loop observable so
+        // ops can detect users stuck in fail-closed state.
         if (verified === null) {
           try {
             jar.delete("bupos_register_device");
-          } catch {
-            // Cookie-jar writes are unavailable in some RSC contexts;
-            // non-fatal, the next writable handler will drop it.
+          } catch (err) {
+            // RSC contexts have a read-only jar. The next writable
+            // handler will drop it — but log so we can detect users
+            // that never transition out of RSC-only mode.
+            console.warn("[register-device-cookie] cleanup deferred (RSC):", safeErr(err));
           }
         }
       }

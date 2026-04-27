@@ -3,7 +3,10 @@ import { orgQuery, orgTx } from "@/lib/supabase-rest";
 import { randomUUID } from "@/lib/uuid";
 import { withAdminAuth } from "@/lib/api/with-auth";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
-import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
+// OPS-LOW2: pgInsertAuditEvent + waitUntilOrAwait removed — this
+// route writes audit rows via raw `INSERT INTO audit_events` inside
+// the orgTx (R49 shape). The dangling imports were ESLint warnings
+// AND made grep-based audit-coverage scans report a false positive.
 import { validateBody, storeCreditSchema } from "@/lib/validation/schemas";
 import { formatCurrency } from "@/lib/format";
 // R94-sweep: customers.store_credit_balance is in the readStore
@@ -12,7 +15,6 @@ import { invalidateStoreCache } from "@/lib/persistence/postgres-read-store";
 
 
 import { safeErr } from "@/lib/logging/safe-err";
-import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
 /**
  * GET /api/store-credit
  *

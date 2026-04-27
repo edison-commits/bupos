@@ -2,13 +2,16 @@ import { NextResponse } from "next/server";
 import { orgQuery, orgTx } from "@/lib/supabase-rest";
 import { randomUUID } from "@/lib/uuid";
 import { withAdminAuth } from "@/lib/api/with-auth";
-import { pgInsertAuditEvent } from "@/lib/persistence/postgres-store";
+// OPS-LOW2: pgInsertAuditEvent + waitUntilOrAwait removed. Every audit
+// write in this route uses raw `INSERT INTO audit_events` inside the
+// orgTx (R49 canonical shape). The dangling imports were ESLint
+// warnings AND made grep-based audit-coverage scans report a false
+// positive on this file.
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { validateBody, giftCardSchema } from "@/lib/validation/schemas";
 import { formatCurrency } from "@/lib/format";
 
 import { safeErr } from "@/lib/logging/safe-err";
-import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
 /**
  * GET /api/gift-cards
  *
@@ -31,11 +34,16 @@ export const GET = withAdminAuth("audit.view", async (req, ctx) => {
       // collision-style lookup could still reach a different tenant's row on
       // environments where RLS is temporarily disabled. Migration 035
       // replaces the global unique with a per-org partial index.
+      // ISO-LOW1: belt-and-suspenders org filter on the JOIN — the
+      // sister id-detail (line 53-58) and list (line 105-113) paths
+      // already gate `c.organization_id = $1` to defend against legacy
+      // pre-R14 rows whose `customer_id` could theoretically reference
+      // a foreign tenant. Lookup-by-code missed parity.
       const result = await orgQuery(
         orgId,
         `SELECT gc.*, c.first_name || ' ' || c.last_name AS customer_name
          FROM gift_cards gc
-         LEFT JOIN customers c ON c.id = gc.customer_id
+         LEFT JOIN customers c ON c.id = gc.customer_id AND c.organization_id = $2
          WHERE LOWER(gc.code) = LOWER($1) AND gc.organization_id = $2`,
         [code, orgId],
       );

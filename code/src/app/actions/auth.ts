@@ -104,13 +104,16 @@ export async function loginAction(_prev: { error: string } | null, formData: For
           // (including the attempted email); persisting them into the
           // JSONB and then rendering them verbatim is a self-inflicted
           // data leak. Mirrors `src/app/admin/actions.ts` R42-K fix.
+          // AUTH-MED1: persist `email_prefix` (first 3 chars + ***)
+          // instead of the full email — parity with the unknown-org
+          // warn log just below + sibling fix in src/app/admin/actions.ts.
           const reason = err instanceof Error && /Invalid admin credentials/.test(err.message)
             ? "invalid_credentials"
             : "internal_error";
           insertAudit(
             orgId, null, cred?.employeeId ?? null,
             "session", null, "admin_login_failed",
-            { email, reason },
+            { email_prefix: email.slice(0, 3) + "***", reason },
           ).catch((auditErr) => console.error("[audit] Failed to insert audit event:", safeErr(auditErr)));
         } else {
           const reason = err instanceof Error && /Invalid admin credentials/.test(err.message)

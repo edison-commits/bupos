@@ -45,6 +45,15 @@ export interface StepUpInput {
   /** Short token identifying the protected operation — used as the RL
    *  bucket prefix so one operation's failures don't lock another. */
   bucketKey: string;
+  /** AUTH-MED2: optional session_id used in the audit payload so SOC
+   *  analytics can correlate step-up events back to the originating
+   *  session. A pattern like "8 step-up events for actorId X across
+   *  3 distinct sessionIds in 5 min" flags a stolen-cookie + phished-
+   *  password chain. Absent this field, all step-ups for an actor
+   *  collapse into one line and the cross-session signal is lost.
+   *  Token-binding-by-design (e.g. WebAuthn) is the proper next step;
+   *  this audit-side correlation is the cheap interim defense. */
+  sessionId?: string;
 }
 
 export type StepUpResult =
@@ -56,6 +65,7 @@ export async function requireStepUp({
   orgId,
   actorPassword,
   bucketKey,
+  sessionId,
 }: StepUpInput): Promise<StepUpResult> {
   if (!actorPassword || typeof actorPassword !== 'string') {
     return { ok: false, error: 'Your password is required to perform this action.', status: 400 };
@@ -150,7 +160,14 @@ export async function requireStepUp({
     await pgInsertAuditEvent(
       orgId, null, actorId,
       'employee', actorId, 'step_up_verified',
-      { bucket: bucketKey },
+      // AUTH-MED2: include sessionId (when caller provides it) so a
+      // SOC analyst can correlate "N step-ups for actorId X across
+      // K distinct sessionIds in 5 min" — a stolen-cookie + phished-
+      // password chain shows as multiple sessionIds binding the same
+      // actor. Without sessionId in payload, every step-up for an
+      // actor folds into one line. Optional — falls back to bucket
+      // only for callers that haven't been threaded yet.
+      sessionId ? { bucket: bucketKey, session_id: sessionId } : { bucket: bucketKey },
     ).catch((err: unknown) => {
       // R42-K: route via safeErr so PG DETAIL + bound-param values
       // (including actorId which is PII-adjacent) can't leak into

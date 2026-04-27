@@ -4,6 +4,12 @@ import { withAdminAuth, withDualAuth } from "@/lib/api/with-auth";
 import { validateBody, eodReportSchema } from "@/lib/validation/schemas";
 import { formatCurrency } from "@/lib/format";
 import { safeErr } from "@/lib/logging/safe-err";
+// FE-LOW1: route through the shared `escapeHtml` so any future
+// tightening (e.g. backtick escape for attribute context) propagates
+// here. Prior shape forked an inline 5-char `esc` helper — drift bait
+// already cleaned up in email-receipt + send-verification (R32-D4 /
+// R39-A1-6 sweep), but eod-report was missed.
+import { escapeHtml } from "@/lib/format/html-escape";
 const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
 
 interface SalesSummary {
@@ -267,8 +273,19 @@ async function sendEmailReport(reportData: ReportData) {
     throw new Error("EOD_REPORT_EMAIL not configured — skipping email send");
   }
 
+  // OPS-LOW3: explicit EOD_REPORT_FROM env var instead of brittle
+  // `RESEND_API_KEY.includes("test")` substring sniffing. The prior
+  // shape would silently send EOD email from the sandbox sender if
+  // a prod key happened to contain the literal substring "test"
+  // (vanishingly unlikely random base62, but possible). Explicit env
+  // var also makes the from-address swap visible in deploy diffs.
+  // Falls back to the prior heuristic if the env var isn't set so
+  // existing deploys keep working unchanged.
+  const eodFrom =
+    process.env.EOD_REPORT_FROM
+    ?? (RESEND_API_KEY.includes("test") ? "onboarding@resend.dev" : "reports@basicuniform.com");
   const emailPayload = {
-    from: RESEND_API_KEY.includes("test") ? "onboarding@resend.dev" : "reports@basicuniform.com",
+    from: eodFrom,
     to: eodRecipient,
     subject: `BasicUniform Daily Report - ${today}`,
     html: emailBody,
@@ -308,10 +325,9 @@ function generateEmailHTML(data: ReportData): string {
   // Use the shared helper (imported at top of file, R10 sweep). Local
   // shadow removed so locale/currency changes propagate.
   const formatCount = (val: number) => (val || 0).toString();
-  // Escape user-controlled strings to prevent XSS in HTML email body
-  const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-  })[c]!);
+  // FE-LOW1: route through the shared escapeHtml. Local alias keeps
+  // call sites short and matches the prior `esc()` shape.
+  const esc = (s: unknown) => escapeHtml(String(s ?? ''));
 
   return `
 <!DOCTYPE html>

@@ -6,7 +6,35 @@ const now = new Date().toISOString();
 
 const orgId = () => seedBundle.organization.id;
 
+// TST-M2: hard fail-closed in production. The legacy in-memory store
+// (the `else` branch of `isPg()`) is the only consumer; prod sets
+// USE_POSTGRES=true so this is unreachable. But the file ships in the
+// OpenNext bundle, so a deploy without USE_POSTGRES (preview build,
+// env-var rotation drop) would otherwise silently seed `ownerpass` /
+// `managerpass` / PINs `1111`/`2222`/`3333` into the JSON-file store
+// on the first request. Explicit refusal makes that fail loud.
+function assertNotProd(): void {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(
+      '[seed.ts] createSeedStore() called in production. The legacy ' +
+      'mock-data seed must never run on a prod deploy — set ' +
+      'USE_POSTGRES=true to route through the canonical Postgres path.',
+    );
+  }
+  // Workers runtime check — `globalThis.WebSocketPair` is the standard
+  // Cloudflare Workers tell. If we're on Workers and USE_POSTGRES is
+  // missing, refuse rather than seed the bundled creds.
+  const isWorkers = typeof (globalThis as { WebSocketPair?: unknown }).WebSocketPair === 'function';
+  if (isWorkers && !process.env.USE_POSTGRES) {
+    throw new Error(
+      '[seed.ts] running on Cloudflare Workers without USE_POSTGRES — ' +
+      'refusing to seed mock credentials. Provision USE_POSTGRES=true.',
+    );
+  }
+}
+
 export async function createSeedStore(): Promise<LocalStoreData> {
+  assertNotProd();
   return {
     ...seedBundle,
     customers: [

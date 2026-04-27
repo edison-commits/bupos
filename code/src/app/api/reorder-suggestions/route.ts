@@ -52,13 +52,16 @@ export const GET = withDualAuth("inventory.adjust", async (req, ctx) => {
         s.name as supplier_name,
         l.name as location_name
       FROM inventory_levels il
-      JOIN product_variants pv ON il.product_variant_id = pv.id
-      JOIN products p ON pv.product_id = p.id
-      LEFT JOIN suppliers s ON p.supplier_id = s.id
-      LEFT JOIN locations l ON il.location_id = l.id
+      JOIN product_variants pv ON il.product_variant_id = pv.id AND pv.organization_id = $1
+      JOIN products p ON pv.product_id = p.id AND p.organization_id = $1
+      LEFT JOIN suppliers s ON p.supplier_id = s.id AND s.organization_id = $1
+      LEFT JOIN locations l ON il.location_id = l.id AND l.organization_id = $1
       WHERE il.organization_id = $1
         AND il.on_hand <= il.reorder_point${locationFilter}
       ORDER BY s.name NULLS LAST, p.name, pv.name`,
+      // ISO-LOW2: belt-and-suspenders org filter on every JOIN-side
+      // table — parity with products/route.ts:111-115 and the rest
+      // of the JOIN-defense-in-depth pattern.
       params,
     );
 

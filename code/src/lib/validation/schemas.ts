@@ -140,7 +140,13 @@ export const productCreateSchema = z.object({
   slug: optionalString,
   category_id: uuid.optional(),
   description: optionalString,
-  image_url: optionalString,
+  // FE-MED1: route through `imageUrlField` so `javascript:` / `data:` /
+  // `vbscript:` / `file:` URIs are rejected at the validation boundary.
+  // Bundle/category schemas (lines 786, 799) use it; product schemas
+  // had drifted to bare `optionalString`. Today nothing renders
+  // `<a href={imageUrl}>`, but the documented invariant per R33-M-
+  // admin-image-url is "every admin-writable imageUrl" — restore parity.
+  image_url: imageUrlField,
   is_active: z.boolean().optional(),
   is_touch_favorite: z.boolean().optional(),
   variant: variantCreateSchema.optional(),
@@ -161,7 +167,9 @@ export const productUpdateSchema = z.object({
   slug: optionalString,
   category_id: uuid.optional(),
   description: optionalString,
-  image_url: optionalString,
+  // FE-MED1: parity with productCreateSchema — `imageUrlField` rejects
+  // `javascript:` / `data:` / `vbscript:` / `file:` URIs.
+  image_url: imageUrlField,
   is_active: z.boolean().optional(),
   is_touch_favorite: z.boolean().optional(),
   variant: variantUpdateSchema.optional(),

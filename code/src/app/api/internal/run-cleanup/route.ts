@@ -130,10 +130,33 @@ export async function POST(req: NextRequest) {
       `SELECT run_nightly_cleanup() AS result`,
     );
     const result = rows[0]?.result ?? {};
+    // OPS-LOW4: project to a known whitelist before logging. The pg
+    // function returns aggregate counts today, but a future migration
+    // could evolve the JSONB shape (e.g. add `deleted_session_ids: [...]`
+    // for diagnostics) and that PII would land in 30-day Worker logs.
+    // Pin the projection here; the API response still returns the full
+    // result for the ops caller (which is the bearer-authenticated
+    // cleanup secret holder, not a public client).
+    const safeResult: Record<string, unknown> = {};
+    if (result && typeof result === 'object') {
+      // Whitelist: aggregate-count keys only (current shape). Any
+      // unexpected key gets dropped from the LOG but kept in the
+      // RESPONSE so ops can see the full payload.
+      const KNOWN_COUNT_KEYS = new Set([
+        'sessions_deleted', 'idempotency_keys_cleared',
+        'pending_signups_purged', 'rate_limit_buckets_cleared',
+        'audit_events_archived', 'expired_tokens_purged',
+      ]);
+      for (const [k, v] of Object.entries(result as Record<string, unknown>)) {
+        if (KNOWN_COUNT_KEYS.has(k) && (typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean')) {
+          safeResult[k] = v;
+        }
+      }
+    }
     console.log(JSON.stringify({
       event: "internal_cleanup_run",
       usedReplayGuard,
-      result,
+      result: safeResult,
     }));
     return NextResponse.json({ ok: true, result });
   } catch (err) {

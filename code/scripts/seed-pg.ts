@@ -1,6 +1,15 @@
 /**
  * seed-pg.ts — UUID-based standalone seed script for BasicUniformPOS Postgres.
  * No @/ aliases. No server-only. Just pg + node:crypto.
+ *
+ * TST-M1 SAFETY: this script seeds well-known credentials (the strings
+ * below are NOT secrets, they are test fixtures) and TRUNCATEs every
+ * table in dependency order. Running it against a non-test DB is a
+ * data-loss event AND a credential-injection event. The allowlist
+ * below refuses to proceed unless DATABASE_URL points at a known-test
+ * host or contains the literal string 'bupos_test' in the database
+ * name. Override only by explicitly setting SEED_PG_FORCE=1 — which
+ * itself prints a clear warning before proceeding.
  */
 import { Pool } from 'pg';
 import { randomUUID, randomBytes, scryptSync, createHash } from 'node:crypto';
@@ -13,23 +22,67 @@ function hashSecret(secret: string): string {
   return `${salt}:${derived}`;
 }
 
+// TST-M1: refuse to run unless DATABASE_URL matches an explicit
+// test-DB allowlist. The seed inserts hardcoded credentials and
+// TRUNCATEs every table — if a developer accidentally has prod
+// DATABASE_URL set in their shell when running `npm run seed`, the
+// prior shape would happily wipe production. Allowlist:
+//   - hostname is localhost / 127.0.0.1 / ::1
+//   - database name contains 'bupos_test' or 'basicuniformpos_test'
+//   - SEED_PG_FORCE=1 environment variable explicitly bypasses (with
+//     a printed warning)
+function assertSafeTargetDb(connStr: string): void {
+  if (process.env.SEED_PG_FORCE === '1') {
+    console.warn(
+      '[seed-pg] SEED_PG_FORCE=1 — bypassing safety guard. ' +
+      'TARGET DB: ' + connStr.replace(/:[^:@]*@/, ':***@'),
+    );
+    return;
+  }
+  let url: URL;
+  try {
+    url = new URL(connStr);
+  } catch {
+    throw new Error(
+      `[seed-pg] DATABASE_URL is not a valid URL — refusing to seed. ` +
+      `Set DATABASE_URL to a test database explicitly.`,
+    );
+  }
+  const host = (url.hostname || '').toLowerCase();
+  const dbName = (url.pathname || '').replace(/^\//, '').toLowerCase();
+  const localHosts = new Set(['localhost', '127.0.0.1', '::1']);
+  const isLocal = localHosts.has(host);
+  const isTestDb = dbName.includes('bupos_test') || dbName.includes('basicuniformpos_test');
+  if (!isLocal && !isTestDb) {
+    throw new Error(
+      `[seed-pg] refusing to seed — DATABASE_URL host '${host}' is not localhost ` +
+      `and database name '${dbName}' does not contain 'bupos_test'. ` +
+      `Set SEED_PG_FORCE=1 to explicitly override (will print a warning).`,
+    );
+  }
+}
+
 async function seedAll() {
-  const pool = new Pool({
-    connectionString: process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/basicuniformpos',
-  });
+  const connectionString = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/bupos_test';
+  assertSafeTargetDb(connectionString);
+  const pool = new Pool({ connectionString });
   const client = await pool.connect();
 
   try {
     await client.query('BEGIN');
 
     // Truncate everything in dependency order
+    // TST-M1: table names corrected. The codebase canonicalized to
+    // `employees` (no `_profiles` suffix) and replaced the
+    // `employee_locations` join table with a `location_ids UUID[]`
+    // column on the employees row directly.
     await client.query(`
       TRUNCATE TABLE
         transaction_exceptions, transaction_events, transaction_tenders,
         audit_events, register_configurations, inventory_adjustments, inventory_levels,
         product_variants, product_modifier_groups, products,
         modifiers, modifier_groups, categories,
-        employee_locations, employee_profiles, role_permissions, roles,
+        employees, role_permissions, roles,
         locations, organizations
       CASCADE
     `);
@@ -92,20 +145,32 @@ async function seedAll() {
     );
 
     // ── 4. Employees ──
+    // TST-M1: passwords/PINs randomized per-run instead of hardcoded.
+    // The hashed creds are still well-known (only the seeded DB has
+    // them), but the printed plaintext gives developers a one-shot
+    // login + force-rotates if the script runs twice. PINs stay short
+    // numeric so the dev login UI works.
+    const ownerPass = randomBytes(9).toString('base64').replace(/[+/=]/g, '').slice(0, 12);
+    const mgrPass = randomBytes(9).toString('base64').replace(/[+/=]/g, '').slice(0, 12);
+    const ownerPin = String(Math.floor(100000 + Math.random() * 900000));
+    const mgrPin = String(Math.floor(100000 + Math.random() * 900000));
+    const cashPin = String(Math.floor(1000 + Math.random() * 9000));
+    console.log('[seed-pg] Generated test credentials (write these down):');
+    console.log(`  owner  email=owner@basicuniformpos.local password=${ownerPass} pin=${ownerPin}`);
+    console.log(`  manager email=manager@basicuniformpos.local password=${mgrPass} pin=${mgrPin}`);
+    console.log(`  cashier (no email) pin=${cashPin}`);
     const emps = [
-      { id: empOwner, role: 'owner', first: 'Edison', last: 'Owner', display: 'Edison O.', email: 'owner@basicuniformpos.local', pin: '1111', pass: 'ownerpass' },
-      { id: empMgr, role: 'manager', first: 'Maya', last: 'Manager', display: 'Maya M.', email: 'manager@basicuniformpos.local', pin: '2222', pass: 'managerpass' },
-      { id: empCash, role: 'cashier', first: 'Chris', last: 'Cashier', display: 'Chris C.', email: null, pin: '3333', pass: null },
+      { id: empOwner, role: 'owner', first: 'Edison', last: 'Owner', display: 'Edison O.', email: 'owner@basicuniformpos.local', pin: ownerPin, pass: ownerPass },
+      { id: empMgr, role: 'manager', first: 'Maya', last: 'Manager', display: 'Maya M.', email: 'manager@basicuniformpos.local', pin: mgrPin, pass: mgrPass },
+      { id: empCash, role: 'cashier', first: 'Chris', last: 'Cashier', display: 'Chris C.', email: null, pin: cashPin, pass: null },
     ];
     for (const e of emps) {
+      // TST-M1: table is `employees` and locations are stored as
+      // location_ids UUID[] (no separate join table). Mig 035 + later.
       await client.query(
-        `INSERT INTO employee_profiles (id, organization_id, role_key, first_name, last_name, display_name, email, pin_hash, pin_last_rotated_at, is_active, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, $9, $9)`,
-        [e.id, orgId, e.role, e.first, e.last, e.display, e.email, hashSecret(e.pin), now],
-      );
-      await client.query(
-        `INSERT INTO employee_locations (employee_id, location_id) VALUES ($1, $2)`,
-        [e.id, locBellflower],
+        `INSERT INTO employees (id, organization_id, role_key, first_name, last_name, display_name, email, pin_hash, pin_last_rotated_at, location_ids, is_active, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, $9, $9)`,
+        [e.id, orgId, e.role, e.first, e.last, e.display, e.email, hashSecret(e.pin), now, [locBellflower]],
       );
     }
 
@@ -216,7 +281,7 @@ async function seedAll() {
 
     // ── Verification ──
     const counts: Record<string, number> = {};
-    for (const t of ['organizations', 'locations', 'roles', 'employee_profiles', 'employee_locations', 'categories', 'modifier_groups', 'modifiers', 'products', 'product_modifier_groups', 'product_variants', 'inventory_levels', 'register_configurations']) {
+    for (const t of ['organizations', 'locations', 'roles', 'employees', 'categories', 'modifier_groups', 'modifiers', 'products', 'product_modifier_groups', 'product_variants', 'inventory_levels', 'register_configurations']) {
       const r = await client.query(`SELECT count(*)::int AS c FROM ${t}`);
       counts[t] = r.rows[0].c;
     }
