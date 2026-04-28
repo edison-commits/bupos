@@ -3,6 +3,11 @@
 import { useState, useRef, useCallback, useMemo } from "react";
 import type { Product, ProductVariant } from "@/lib/domain/types";
 import { formatCurrency } from "@/lib/format";
+// FE2-LOW2: use the shared 5-char escapeHtml (which also covers `'`).
+// Prior shape had a local 4-char duplicate (omitting `'`) that would
+// have drifted the moment any future interpolation moved into an
+// attribute context.
+import { escapeHtml as escHtmlBody } from "@/lib/format/html-escape";
 
 interface BarcodeLabelPrinterProps {
   products: Product[];
@@ -167,10 +172,10 @@ export function BarcodeLabelPrinter({ products, variants }: BarcodeLabelPrinterP
     const printWindow = window.open("", "_blank", "noopener");
     if (!printWindow) return;
     // Safe print: extract label content as text and rebuild. Avoids innerHTML XSS.
-    const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    // FE2-LOW2: shared `escapeHtml` covers all 5 chars (`&<>"'`).
     const labels = labelItems.map(({ variant, product, quantity }) => {
-      const name = escapeHtml(product.name);
-      const sku = escapeHtml(variant.sku || '');
+      const name = escHtmlBody(product.name);
+      const sku = escHtmlBody(variant.sku || '');
       // FE-LOW2: escape the formatCurrency output before HTML
       // interpolation. Today returns plain `$1.23` (safe), but if a
       // future locale extension ever embeds `<`/`>`/quotes (some ICU
@@ -178,7 +183,7 @@ export function BarcodeLabelPrinter({ products, variants }: BarcodeLabelPrinterP
       // differently), the raw interpolation becomes an XSS-on-print
       // vector — self-targeted only since it's the user's own browser
       // window, but a cheap belt-and-suspenders fix.
-      const price = escapeHtml(formatCurrency(variant.price));
+      const price = escHtmlBody(formatCurrency(variant.price));
       const barcode = generateBarcodeSVG(variant.barcode || variant.sku || variant.id, sizeConfig.w - 16, sizeConfig.bh);
       return Array.from({ length: quantity }, () =>
         `<div class="label"><div class="label-name">${name}</div><div class="label-sku">${sku}</div>${barcode}<div class="label-price">${price}</div></div>`

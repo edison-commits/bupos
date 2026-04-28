@@ -192,6 +192,9 @@ async function runTransfer(pool, { sourceLoc, destLoc, lines, notes, outcome }) 
 
 async function main() {
   loadEnv();
+  // TST2-H2: prod-host guard via shared helper.
+  const { assertSafeTargetDb } = await import("./_safe-db.mjs");
+  assertSafeTargetDb({ forceEnv: 'SIMULATE_TRANSFERS_FORCE', scriptId: 'simulate-transfers' });
   const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 3 });
 
   console.log("→ Inter-store transfer simulation for Casualwear (3 locations)\n");

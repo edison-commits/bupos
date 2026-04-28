@@ -80,7 +80,7 @@ async function main() {
 
   await orgTx(ORG_B, async (c) => {
     // Idempotent seed — use a stable UUID so reruns target the same row.
-    const custId = "aaaaaaaa-bbbb-cccc-dddd-000000000001";
+    const custId = "aaaaaaaa-bbbb-4ccc-8ddd-000000000001";
     await c.query(
       `INSERT INTO customers (id, organization_id, first_name, last_name, email, loyalty_points, total_spend, visit_count, store_credit_balance, is_active, created_at, updated_at)
        VALUES ($1, $2, 'Victim', 'Customer', 'victim@org-b.test', 500, 0, 0, 250.00, true, NOW(), NOW())
@@ -89,7 +89,7 @@ async function main() {
     );
     console.log(`  customer: ${custId} (store_credit=250.00, loyalty=500)`);
 
-    const gcId = "aaaaaaaa-bbbb-cccc-dddd-000000000002";
+    const gcId = "aaaaaaaa-bbbb-4ccc-8ddd-000000000002";
     const gcInserted = await c.query(
       `INSERT INTO gift_cards (id, organization_id, code, balance, initial_balance, status, activated_by, activated_at, created_at, updated_at)
        VALUES ($1, $2, 'ORGB-VICTIM-GC', 100.00, 100.00, 'active', $3, NOW(), NOW(), NOW())
@@ -150,7 +150,7 @@ async function main() {
         [variantId, ORG_B, productId],
       );
     }
-    const invId = "aaaaaaaa-bbbb-cccc-dddd-000000000003";
+    const invId = "aaaaaaaa-bbbb-4ccc-8ddd-000000000003";
     await c.query(
       `INSERT INTO inventory_levels (id, organization_id, location_id, product_variant_id, on_hand, reserved, reorder_point, created_at, updated_at)
        VALUES ($1, $2, $3, $4, 50, 0, 5, NOW(), NOW())
@@ -161,7 +161,7 @@ async function main() {
     console.log(`  inventory_level: ${invId} (variant=${variantId}, on_hand=50)`);
 
     // A completed transaction for returns-path adversarial tests.
-    const txnId = "aaaaaaaa-bbbb-cccc-dddd-000000000004";
+    const txnId = "aaaaaaaa-bbbb-4ccc-8ddd-000000000004";
     const existingTxn = await c.query(`SELECT id FROM transactions WHERE id = $1`, [txnId]);
     if (existingTxn.rows.length === 0) {
       const { rows: regRows } = await c.query(

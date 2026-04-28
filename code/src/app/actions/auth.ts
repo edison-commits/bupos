@@ -1,8 +1,12 @@
 "use server";
 
 import { headers } from "next/headers";
-import { signInAdmin, getAdminSession } from "@/lib/auth/session";
-import { redirect } from "next/navigation";
+// OPS2-LOW2: `getAdminSession` and `redirect` were dead imports —
+// loginAction returns `{ success, redirect: "/admin" }` as a plain
+// object (the `redirect` here is a key name, not the `next/navigation`
+// helper). signInAdmin is still in use; the rest were just leftover
+// from a prior refactor.
+import { signInAdmin } from "@/lib/auth/session";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { hashSecret, sha256Hex } from "@/lib/auth/crypto";
 import { randomUUID } from "@/lib/uuid";

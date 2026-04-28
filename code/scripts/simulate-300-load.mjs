@@ -449,6 +449,9 @@ function reportInvariants(invariants) {
 
 async function main() {
   loadEnv();
+  // TST2-H2: prod-host guard via shared helper.
+  const { assertSafeTargetDb } = await import("./_safe-db.mjs");
+  assertSafeTargetDb({ forceEnv: 'SIMULATE_300_LOAD_FORCE', scriptId: 'simulate-300-load' });
   const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: CONCURRENCY + 4 });
 
   console.log(`SIM_RUN_ID: ${SIM_RUN_ID}`);

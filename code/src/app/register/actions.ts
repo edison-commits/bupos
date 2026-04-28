@@ -23,6 +23,22 @@ const isPg = () => !!process.env.USE_POSTGRES;
 // free impersonation / audit-forgery primitive. Direct DB access through
 // getPool() uses the `postgres` role and never depends on anon reachability.
 
+// SCH2-H1 / ISO2-MED1 / ISO2-MED2: the catch in each wrapper used to
+// be a bare `} catch {}`. That swallowed EVERY error from the SECDEF
+// RPC — including the cross-tenant `RAISE EXCEPTION 'Cross-tenant
+// ...'` checks that mig 077 added — and silently fell through to the
+// legacy `pg*()` helper, which doesn't have those checks. Net effect:
+// mig 077's defense-in-depth was dead code on every existing call path.
+// Narrow the catch to only treat "RPC unavailable" classes as
+// recoverable (function-not-installed, permission-denied), mirroring
+// the pattern at register_quick_switch:648-653. Cross-tenant
+// exceptions now propagate as errors.
+function isRecoverableRpcError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /function .* does not exist/i.test(msg)
+      || /permission denied for function/i.test(msg);
+}
+
 async function rpcInsertAudit(
   orgId: string, locationId: string | null, employeeId: string | null,
   entityType: string, entityId: string | null, eventKind: string,
@@ -35,8 +51,13 @@ async function rpcInsertAudit(
       `SELECT register_insert_audit($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::jsonb)`,
       [orgId, locationId, employeeId, entityType, entityId, eventKind, JSON.stringify(payload)],
     );
-  } catch {
-    // RPC unavailable — fall back to direct insert helper.
+  } catch (rpcErr) {
+    if (!isRecoverableRpcError(rpcErr)) throw rpcErr;
+    // RPC unavailable — fall back to direct insert helper. The
+    // helper itself was hardened in tandem with this commit
+    // (postgres-store.ts pgInsertAuditEvent gained a cross-row org
+    // consistency check) so the fallback now ALSO enforces ISO2-MED2.
+    console.warn("[register_insert_audit] RPC unavailable; using column fallback:", safeErr(rpcErr));
     const { pgInsertAuditEvent } = await import("@/lib/persistence/postgres-store");
     await pgInsertAuditEvent(orgId, locationId, employeeId, entityType, entityId, eventKind, payload);
   }
@@ -53,7 +74,9 @@ async function rpcOpenShift(data: {
       `SELECT register_open_shift($1::text, $2::text, $3::text, $4::text, $5::text, $6::numeric, $7::text)`,
       [data.id, data.organizationId, data.locationId, data.employeeId, data.registerSessionId, data.openingFloat, data.openedNote ?? null],
     );
-  } catch {
+  } catch (rpcErr) {
+    if (!isRecoverableRpcError(rpcErr)) throw rpcErr;
+    console.warn("[register_open_shift] RPC unavailable; using column fallback:", safeErr(rpcErr));
     const { pgOpenShift } = await import("@/lib/persistence/postgres-store");
     await pgOpenShift(data);
   }
@@ -71,7 +94,9 @@ async function rpcCloseShift(shiftId: string, registerSessionId: string, data: {
     );
     const result = (rows[0]?.result ?? {}) as Record<string, unknown>;
     return { id: result.id as string, closingVariance: Number(result.closing_variance ?? 0) };
-  } catch {
+  } catch (rpcErr) {
+    if (!isRecoverableRpcError(rpcErr)) throw rpcErr;
+    console.warn("[register_close_shift] RPC unavailable; using column fallback:", safeErr(rpcErr));
     const { pgCloseShift } = await import("@/lib/persistence/postgres-store");
     return pgCloseShift(shiftId, registerSessionId, data, organizationId);
   }

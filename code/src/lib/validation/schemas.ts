@@ -201,6 +201,15 @@ const csvShortOptionalString = z.preprocess(
   z.string().trim().max(200).optional(),
 );
 
+// FE2-LOW1: csvImportRowSchema previously omitted `image_url`,
+// `description`, `is_active`. The route handler reads them via
+// `row.image_url || row.imageUrl || row.IMAGE_URL`, but Zod's default
+// strip-mode dropped every unknown key — so the URL/description/
+// is_active flag from the CSV silently never threaded through. Three
+// fields added below; all kept optional so existing imports keep
+// working unchanged. `image_url` uses the same `imageUrlField`
+// validator as productCreateSchema so `javascript:` / `data:` URIs
+// are rejected at the validation boundary.
 const csvImportRowSchema = z.object({
   name: csvShortString,
   sku: csvShortString,
@@ -211,6 +220,16 @@ const csvImportRowSchema = z.object({
   color: csvShortOptionalString,
   cost: nonnegativeNumber.optional(),
   compare_at_price: nonnegativeNumber.optional(),
+  image_url: imageUrlField,
+  description: csvShortOptionalString,
+  // CSVs ship `is_active` as the string "true"/"false". Pre-process to
+  // a boolean so the route's `String(row.is_active).toLowerCase() !==
+  // "false"` shape keeps working with both the raw CSV string AND a
+  // future parser that hands us a boolean.
+  is_active: z.preprocess(
+    (v) => (v === undefined || v === null || v === '' ? undefined : String(v)),
+    z.string().max(10).optional(),
+  ),
 });
 
 export const productImportSchema = z.object({

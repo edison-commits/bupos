@@ -56,13 +56,19 @@ export const GET = withAdminAuth("audit.view", async (req, ctx) => {
     // ── Lookup by ID (with history) ──
     const id = sp.get("id");
     if (id) {
+      // ISO2-LOW1: belt-and-suspenders org filter on the JOIN-side.
+      // Round-1 ISO-LOW1 added this to the lookup-by-code path with
+      // a comment claiming the id-detail path was already covered —
+      // it wasn't. Add parity here to defend against legacy pre-R14
+      // gift_cards rows whose `customer_id` / `activated_by` could
+      // reference a foreign tenant.
       const card = await orgQuery(
         orgId,
         `SELECT gc.*, c.first_name || ' ' || c.last_name AS customer_name,
                 e.display_name AS activated_by_name
          FROM gift_cards gc
-         LEFT JOIN customers c ON c.id = gc.customer_id
-         LEFT JOIN employees e ON e.id = gc.activated_by
+         LEFT JOIN customers c ON c.id = gc.customer_id AND c.organization_id = $2
+         LEFT JOIN employees e ON e.id = gc.activated_by AND e.organization_id = $2
          WHERE gc.id = $1 AND gc.organization_id = $2`,
         [id, orgId],
       );

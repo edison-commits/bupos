@@ -4,12 +4,51 @@
  *
  * Uses the Docker Postgres directly (bypasses HTTP) to idempotently
  * create an org / location / employee / auth_credentials row.
+ *
+ * TST2-M2: prod-host guard. `playwright.config.ts:44` only sets
+ * DATABASE_URL for the webServer subprocess; globalSetup inherits the
+ * parent env. A developer running `npm run test:e2e` with .env.local
+ * exporting a prod DATABASE_URL would otherwise persist
+ * `e2e-admin@bupos.test` (with role `owner`) to prod with no teardown.
+ * Refuse to run unless the URL is localhost or the DB name is the
+ * canonical e2e test DB. Override via E2E_SETUP_FORCE=1 (with warning).
  */
 import { Pool } from "pg";
 import crypto from "node:crypto";
 
 const DATABASE_URL =
   process.env.DATABASE_URL ?? "postgresql://postgres:postgres@localhost:54329/bupos_test";
+
+function assertSafeTargetDb(): void {
+  if (process.env.E2E_SETUP_FORCE === '1') {
+    console.warn('[e2e/global-setup] E2E_SETUP_FORCE=1 — bypassing prod-host safety guard.');
+    return;
+  }
+  let url: URL;
+  try {
+    url = new URL(DATABASE_URL);
+  } catch {
+    throw new Error('[e2e/global-setup] DATABASE_URL is not a valid URL');
+  }
+  const host = (url.hostname || '').toLowerCase();
+  const dbName = (url.pathname || '').replace(/^\//, '').toLowerCase();
+  const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '0.0.0.0']);
+  if (LOCAL_HOSTS.has(host)) return;
+  if (dbName.endsWith('_test')) return;
+  const PROD_HOST_SUFFIXES = [
+    '.supabase.com', '.supabase.co', '.neon.tech', '.amazonaws.com',
+    '.rds.amazonaws.com', '.compute.amazonaws.com', '.herokuapp.com',
+    '.dbs.aiven.io',
+  ];
+  if (PROD_HOST_SUFFIXES.some(s => host.endsWith(s))) {
+    throw new Error(
+      `[e2e/global-setup] refusing to run against host '${host}' (looks like a ` +
+      `production database). The e2e test seeds an owner-role admin account ` +
+      `with a known password; running against prod would persist that account. ` +
+      `Set E2E_SETUP_FORCE=1 to override.`,
+    );
+  }
+}
 
 export const SEED = {
   orgId: "e2e11111-1111-1111-1111-111111111111",
@@ -32,6 +71,7 @@ async function hashPbkdf2(password: string): Promise<string> {
 }
 
 export default async function globalSetup(): Promise<void> {
+  assertSafeTargetDb();
   const pool = new Pool({ connectionString: DATABASE_URL, max: 2 });
   const pwHash = await hashPbkdf2(SEED.password);
 

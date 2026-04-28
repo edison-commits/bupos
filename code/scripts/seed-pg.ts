@@ -12,13 +12,20 @@
  * itself prints a clear warning before proceeding.
  */
 import { Pool } from 'pg';
-import { randomUUID, randomBytes, scryptSync, createHash } from 'node:crypto';
+import { randomUUID, randomBytes, pbkdf2Sync, createHash } from 'node:crypto';
 
-// ── Crypto (mirrors src/lib/auth/crypto.ts) ──
+// ── Crypto (matches src/lib/auth/crypto.ts) ──
+// TST2-M1: production verifies via crypto.subtle.deriveBits with
+// PBKDF2-SHA-256 / 100k iterations / 64-byte key (src/lib/auth/
+// crypto.ts:54-60). The prior shape used scryptSync — incompatible
+// hashes meant seeded credentials could never log in. The salt is
+// stored as hex (matches `uint8ArrayToHex(salt)` in crypto.ts:67).
 const KEY_LENGTH = 64;
+const PBKDF2_ITERATIONS = 100_000;
 function hashSecret(secret: string): string {
-  const salt = randomBytes(16).toString('hex');
-  const derived = scryptSync(secret, salt, KEY_LENGTH).toString('hex');
+  const saltBuf = randomBytes(16);
+  const salt = saltBuf.toString('hex');
+  const derived = pbkdf2Sync(secret, saltBuf, PBKDF2_ITERATIONS, KEY_LENGTH, 'sha256').toString('hex');
   return `${salt}:${derived}`;
 }
 
@@ -52,11 +59,22 @@ function assertSafeTargetDb(connStr: string): void {
   const dbName = (url.pathname || '').replace(/^\//, '').toLowerCase();
   const localHosts = new Set(['localhost', '127.0.0.1', '::1']);
   const isLocal = localHosts.has(host);
-  const isTestDb = dbName.includes('bupos_test') || dbName.includes('basicuniformpos_test');
+  // TST2-L3: tighten the dbName match. Prior shape used `.includes()`
+  // which would have matched `bupos_test_prod`, `bupos_test_replica`,
+  // or even `production_bupos_test_audit`. Now require an exact match
+  // OR a `_test` suffix on the canonical names.
+  const TEST_DB_NAMES = new Set([
+    'bupos_test',
+    'basicuniformpos_test',
+  ]);
+  const isTestDb = TEST_DB_NAMES.has(dbName)
+    || dbName.startsWith('bupos_test_')
+    || dbName.startsWith('basicuniformpos_test_');
   if (!isLocal && !isTestDb) {
     throw new Error(
       `[seed-pg] refusing to seed — DATABASE_URL host '${host}' is not localhost ` +
-      `and database name '${dbName}' does not contain 'bupos_test'. ` +
+      `and database name '${dbName}' is not in the test-DB allowlist ` +
+      `(${[...TEST_DB_NAMES].join(', ')}). ` +
       `Set SEED_PG_FORCE=1 to explicitly override (will print a warning).`,
     );
   }

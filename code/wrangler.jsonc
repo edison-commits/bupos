@@ -42,11 +42,22 @@
     "head_sampling_rate": 1
   },
 
-  // Environment variables for the Worker
+  // Environment variables for the Worker.
+  //
+  // OPS2-LOW3: NEXT_PUBLIC_SUPABASE_ANON_KEY removed — it had zero
+  // references in src/. The supabase-js client never imports here;
+  // every DB access goes through `getPool` + `orgQuery`. Keeping the
+  // ANON_KEY in vars (a) bloated the client bundle (NEXT_PUBLIC_*
+  // gets inlined into client JS), and (b) was drift bait — a future
+  // contributor importing `@supabase/supabase-js` would silently
+  // bypass the with-auth.ts tenancy gate.
+  //
+  // NEXT_PUBLIC_SUPABASE_URL stays — middleware.ts reads it as a CSP
+  // `connect-src` fallback when SUPABASE_URL isn't set (mig-time
+  // defense at next.config.ts). It's a public URL, not a secret.
   "vars": {
     "USE_POSTGRES": "true",
-    "NEXT_PUBLIC_SUPABASE_URL": "https://jkdgdcfpgxjfdlccvqjf.supabase.co",
-    "NEXT_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImprZGdkY2ZwZ3hqZmRsY2N2cWpmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzMTUxMzIsImV4cCI6MjA4OTg5MTEzMn0.EDjvUob3B6kp2dPMkuNS3xnVTW8Rt43tUHOZm6r4xkg"
+    "NEXT_PUBLIC_SUPABASE_URL": "https://jkdgdcfpgxjfdlccvqjf.supabase.co"
   },
 
 

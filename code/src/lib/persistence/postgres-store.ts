@@ -843,6 +843,39 @@ export async function pgInsertAuditEvent(
     const { orgTx } = await import("@/lib/supabase-rest");
     const client = await orgTx(orgId);
     try {
+      // ISO2-MED2: cross-row org consistency check. Prior shape inserted
+      // with caller-supplied (orgId, locationId, employeeId) and trusted
+      // them. Mig 077 hardened the SECDEF RPC `register_insert_audit`
+      // with the same check, but the SCH2-H1 wrapper-catch could swallow
+      // those exceptions and route here. Mirror mig 077's logic
+      // verbatim: if locationId is supplied, it must belong to orgId;
+      // same for employeeId. NULLs are allowed (some events have no
+      // location/actor).
+      if (locationId !== null) {
+        // The whole point of this query is to read the row's
+        // organization_id and compare it to the caller's claimed
+        // orgId — adding `AND organization_id = $N` would defeat the
+        // check (we'd never see a cross-tenant location, just an
+        // empty result, and the message would be wrong).
+        // check-pool-org-filter: scoped-by-cross-tenant-verify
+        const { rows } = await client.query(
+          `SELECT organization_id FROM locations WHERE id = $1`,
+          [locationId],
+        );
+        if (rows.length === 0 || rows[0].organization_id !== orgId) {
+          throw new Error('Cross-tenant location in audit insert');
+        }
+      }
+      if (employeeId !== null) {
+        // check-pool-org-filter: scoped-by-cross-tenant-verify
+        const { rows } = await client.query(
+          `SELECT organization_id FROM employees WHERE id = $1`,
+          [employeeId],
+        );
+        if (rows.length === 0 || rows[0].organization_id !== orgId) {
+          throw new Error('Cross-tenant employee in audit insert');
+        }
+      }
       await client.query(
         `INSERT INTO audit_events (organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
@@ -1039,9 +1072,49 @@ export async function pgFindActiveRegisterSession(authSessionId: string): Promis
 export async function pgOpenShift(data: {
   id: string; organizationId: string; locationId: string; employeeId: string; registerSessionId: string | null;
   openingFloat: number; openedNote?: string; idempotencyKey?: string | null;
+  /** OPS2-MED1: actorEmployeeId distinguishes self-open from
+   *  admin-on-behalf in the audit row. Defaults to data.employeeId
+   *  (self-punch / register flow). */
+  actorEmployeeId?: string;
 }): Promise<ShiftRecord> {
   const client = await orgTx(data.organizationId);
   try {
+    // ISO2-MED1: cross-row org consistency check on the location +
+    // employee + register_session referenced. Mig 077 hardened the
+    // SECDEF RPC `register_open_shift` with the same logic; prior
+    // SCH2-H1 wrapper-catch could swallow those exceptions and route
+    // here, so the legacy helper now mirrors the check.
+    {
+      // check-pool-org-filter: scoped-by-cross-tenant-verify
+      // (read row's org_id to compare with claimed; adding org filter
+      // would defeat the check)
+      const { rows: locRows } = await client.query(
+        `SELECT organization_id FROM locations WHERE id = $1`,
+        [data.locationId],
+      );
+      if (locRows.length === 0 || locRows[0].organization_id !== data.organizationId) {
+        throw new Error('Cross-tenant location in shift open');
+      }
+      // check-pool-org-filter: scoped-by-cross-tenant-verify
+      const { rows: empRows } = await client.query(
+        `SELECT organization_id FROM employees WHERE id = $1`,
+        [data.employeeId],
+      );
+      if (empRows.length === 0 || empRows[0].organization_id !== data.organizationId) {
+        throw new Error('Cross-tenant employee in shift open');
+      }
+      if (data.registerSessionId) {
+        // check-pool-org-filter: scoped-by-cross-tenant-verify
+        const { rows: rsRows } = await client.query(
+          `SELECT organization_id FROM register_sessions WHERE id = $1`,
+          [data.registerSessionId],
+        );
+        if (rsRows.length === 0 || rsRows[0].organization_id !== data.organizationId) {
+          throw new Error('Cross-tenant register_session in shift open');
+        }
+      }
+    }
+
     const ts = new Date().toISOString();
     const { rows: existingShiftRows } = await client.query(
       `SELECT id
@@ -1059,14 +1132,43 @@ export async function pgOpenShift(data: {
        VALUES ($1, $2, $3, $4, $5, 'open', $6, $7, $8, $9) RETURNING *`,
       [data.id, data.organizationId, data.locationId, data.employeeId, data.registerSessionId, ts, data.openingFloat, data.openedNote ?? null, data.idempotencyKey ?? null],
     );
-    // Only update register_sessions if a register session is provided (admin-initiated shifts have none)
+    // ISO2-MED1: organization_id filter on the register_sessions UPDATE.
+    // Prior shape was `WHERE id = $1` only.
     if (data.registerSessionId) {
-      await client.query(`SELECT id FROM register_sessions WHERE id = $1 FOR UPDATE`, [data.registerSessionId]);
       await client.query(
-        `UPDATE register_sessions SET active_shift_id = $1 WHERE id = $2`,
-        [data.id, data.registerSessionId],
+        `SELECT id FROM register_sessions WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
+        [data.registerSessionId, data.organizationId],
+      );
+      await client.query(
+        `UPDATE register_sessions SET active_shift_id = $1
+           WHERE id = $2 AND organization_id = $3`,
+        [data.id, data.registerSessionId, data.organizationId],
       );
     }
+    // OPS2-MED1: write audit_events INSIDE the same orgTx. Prior shape
+    // had no audit row at all — cash-bearing mutation (opening_float)
+    // with no forensic trail beyond the shifts row itself, which is
+    // editable by anyone with the same role. Mirrors R47-M shift-close
+    // pattern.
+    const actorId = data.actorEmployeeId ?? data.employeeId;
+    await client.query(
+      `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+       VALUES (gen_random_uuid(), $1, $2, $3, 'shift', $4, 'shift_opened', $5, $6)`,
+      [
+        data.organizationId,
+        data.locationId,
+        actorId,
+        data.id,
+        JSON.stringify({
+          subject_employee_id: data.employeeId,
+          opening_float: data.openingFloat,
+          opened_note: data.openedNote ?? null,
+          register_session_id: data.registerSessionId,
+          on_behalf: data.actorEmployeeId !== undefined && data.actorEmployeeId !== data.employeeId,
+        }),
+        ts,
+      ],
+    );
     await client.query('COMMIT');
     return toShift(rows[0]);
   } catch (e) {
@@ -1079,6 +1181,8 @@ export async function pgOpenShift(data: {
 
 export async function pgCloseShift(shiftId: string, registerSessionId: string, data: {
   closingExpectedCash: number; closingDeclaredCash: number; closedNote?: string;
+  /** OPS2-LOW1: actorEmployeeId for audit-row distinction. */
+  actorEmployeeId?: string;
 }, organizationId: string): Promise<ShiftRecord> {
   // Cross-tenant guard (R11-M-4): require the caller to pass their verified
   // org and refuse to operate if the shift's org doesn't match. The pre-R11
@@ -1086,14 +1190,27 @@ export async function pgCloseShift(shiftId: string, registerSessionId: string, d
   // same anti-pattern round 6 closed on `pgAdjustInventory`/`pgToggleEmployee`.
   // Now any caller must pass ctx.orgId; the UPDATE also filters by org.
   const { rows: shiftRows } = await pool.query(
-    `SELECT l.organization_id FROM shifts s JOIN locations l ON s.location_id = l.id
+    `SELECT s.location_id, s.employee_id, l.organization_id
+       FROM shifts s JOIN locations l ON s.location_id = l.id
      WHERE s.id = $1 AND l.organization_id = $2`,
     [shiftId, organizationId],
   );
   if (!shiftRows[0]) throw new Error('Shift not found in this organization');
+  const shiftLocationId = shiftRows[0].location_id as string;
+  const shiftEmployeeId = shiftRows[0].employee_id as string;
 
   const client = await orgTx(organizationId);
   try {
+    // ISO2-MED1: verify register_session belongs to the same org as
+    // the shift before the UPDATE. Mig 077 RPC has the same check.
+    const { rows: rsRows } = await client.query(
+      `SELECT organization_id FROM register_sessions WHERE id = $1`,
+      [registerSessionId],
+    );
+    if (rsRows.length === 0 || rsRows[0].organization_id !== organizationId) {
+      throw new Error('Cross-tenant register_session in shift close');
+    }
+
     const ts = new Date().toISOString();
     const variance = Number((data.closingDeclaredCash - data.closingExpectedCash).toFixed(2));
     const { rows } = await client.query(
@@ -1103,9 +1220,37 @@ export async function pgCloseShift(shiftId: string, registerSessionId: string, d
       [ts, data.closingExpectedCash, data.closingDeclaredCash, variance, data.closedNote ?? null, shiftId, organizationId],
     );
     if (!rows[0]) throw new Error('Shift not found or already closed');
+    // ISO2-MED1: organization_id filter on the register_sessions UPDATE.
     await client.query(
-      `UPDATE register_sessions SET active_shift_id = NULL WHERE id = $1`,
-      [registerSessionId],
+      `UPDATE register_sessions SET active_shift_id = NULL
+         WHERE id = $1 AND organization_id = $2`,
+      [registerSessionId, organizationId],
+    );
+    // OPS2-LOW1: write audit_events INSIDE the same orgTx. Prior shape
+    // had no audit row in this fallback path — only the inline
+    // /api/shift-close path audits. When the SCH2-H1 catch fallback
+    // fires (RPC unavailable), the close was committing without a
+    // forensic trail.
+    const actorId = data.actorEmployeeId ?? shiftEmployeeId;
+    await client.query(
+      `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+       VALUES (gen_random_uuid(), $1, $2, $3, 'shift', $4, 'shift_closed', $5, $6)`,
+      [
+        organizationId,
+        shiftLocationId,
+        actorId,
+        shiftId,
+        JSON.stringify({
+          subject_employee_id: shiftEmployeeId,
+          closing_expected_cash: data.closingExpectedCash,
+          closing_declared_cash: data.closingDeclaredCash,
+          closing_variance: variance,
+          closed_note: data.closedNote ?? null,
+          register_session_id: registerSessionId,
+          on_behalf: data.actorEmployeeId !== undefined && data.actorEmployeeId !== shiftEmployeeId,
+        }),
+        ts,
+      ],
     );
     await client.query('COMMIT');
     return toShift(rows[0]);

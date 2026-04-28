@@ -22,12 +22,16 @@
 import pg from "pg";
 import crypto from "node:crypto";
 import fs from "node:fs";
+// TST2-H2: prod-host guard via shared helper.
+import { assertSafeTargetDb } from "./_safe-db.mjs";
 
 const txt = fs.readFileSync("/Users/edison/Desktop/bupos/code/.env.local", "utf8");
 for (const line of txt.split("\n")) {
   const m = line.match(/^([A-Z_][A-Z0-9_]*)=(.+)$/);
   if (m) process.env[m[1]] = process.env[m[1]] ?? m[2].replace(/^"|"$/g, "");
 }
+
+assertSafeTargetDb({ forceEnv: 'TEST_R9_FORCE', scriptId: 'test-r9-regressions' });
 
 const ORG_A = "33262270-7100-4b46-b2fb-8b50ad872bbb";
 const LOCATION_ID = "c57268b3-cb14-4c1a-bda6-55e49ddc6313";

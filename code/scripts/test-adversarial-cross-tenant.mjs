@@ -55,9 +55,9 @@ const ORG_A = "33262270-7100-4b46-b2fb-8b50ad872bbb"; // Casualwear
 const ORG_B = "713b3ff4-0582-40b1-98b0-02303af31e6f"; // Basic Uniform
 
 // ORG_B victim rows (seeded by scripts/seed-adversarial-fixtures.mjs).
-const VICTIM_CUSTOMER_ID = "aaaaaaaa-bbbb-cccc-dddd-000000000001";
-const VICTIM_GIFT_CARD_ID = "aaaaaaaa-bbbb-cccc-dddd-000000000002";
-const VICTIM_INVENTORY_ID = "aaaaaaaa-bbbb-cccc-dddd-000000000003";
+const VICTIM_CUSTOMER_ID = "aaaaaaaa-bbbb-4ccc-8ddd-000000000001";
+const VICTIM_GIFT_CARD_ID = "aaaaaaaa-bbbb-4ccc-8ddd-000000000002";
+const VICTIM_INVENTORY_ID = "aaaaaaaa-bbbb-4ccc-8ddd-000000000003";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 

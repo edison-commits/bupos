@@ -561,6 +561,9 @@ async function simulateCashierDay(pool, day, cashier, dayTxnIds) {
 async function main() {
   loadEnv();
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL not found");
+  // TST2-H2: prod-host guard via shared helper.
+  const { assertSafeTargetDb } = await import("./_safe-db.mjs");
+  assertSafeTargetDb({ forceEnv: 'SIMULATE_WEEK_FORCE', scriptId: 'simulate-week' });
   const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 3 });
 
   console.log(`→ Simulating ${DAYS} days × variable cashiers at ${ORG_ID.slice(0, 8)}…`);

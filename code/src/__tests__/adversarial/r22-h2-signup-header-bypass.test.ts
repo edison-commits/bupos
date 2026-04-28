@@ -39,17 +39,19 @@ vi.mock("next/navigation", () => ({
 }));
 
 describe("R22-H-2 regression: signup refuses without client IP in prod", () => {
-  let originalNodeEnv: string | undefined;
   beforeEach(() => {
-    originalNodeEnv = process.env.NODE_ENV;
     vi.resetModules();
   });
   afterEach(() => {
-    // NODE_ENV is readonly in TS but writable at runtime via the
-    // cast; keep the cast consistent for restore.
-    const env = process.env as unknown as Record<string, string | undefined>;
-    if (originalNodeEnv === undefined) delete env.NODE_ENV;
-    else env.NODE_ENV = originalNodeEnv;
+    // TST2-L1: route NODE_ENV mutations through `vi.stubEnv` so
+    // `vi.unstubAllEnvs()` here guarantees restore even on test
+    // failure. Prior shape captured originalNodeEnv in a closure +
+    // restored manually; if the test threw before reaching the
+    // mutation, the restore still ran (afterEach is unconditional)
+    // BUT if a future test added an `as Record<string, string>` cast
+    // bypass for a different env var, the restore wouldn't cover it.
+    // Stub-based shape makes the contract explicit.
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
@@ -68,7 +70,9 @@ describe("R22-H-2 regression: signup refuses without client IP in prod", () => {
     // we're running under vitest which DOESN'T do this inlining, so
     // the env-var override takes effect. In production-bundled code
     // the literal "production" is baked in.
-    (process.env as Record<string, string>).NODE_ENV = "production";
+    // TST2-L1: vi.stubEnv guarantees restore via unstubAllEnvs in
+    // afterEach.
+    vi.stubEnv("NODE_ENV", "production");
 
     const { signupAction } = await import("@/app/actions/auth");
     const fd = new FormData();
@@ -91,7 +95,8 @@ describe("R22-H-2 regression: signup refuses without client IP in prod", () => {
         return null;
       },
     });
-    (process.env as unknown as Record<string, string>).NODE_ENV = "development";
+    // TST2-L1: vi.stubEnv guarantees restore via unstubAllEnvs in afterEach.
+    vi.stubEnv("NODE_ENV", "development");
 
     const { signupAction } = await import("@/app/actions/auth");
     const fd = new FormData();

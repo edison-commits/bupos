@@ -819,6 +819,15 @@ export async function processReturnAction(input: ReturnInput): Promise<ReturnRes
         // sum of rounded chunks to drift from the true proportional
         // total — up to 3 points kept by the customer on a fully-
         // refunded sale that earned 3 points (10 × round(3×0.1) = 0).
+        //
+        // INT2-MED1: also count refunds from the `returns` table
+        // (admin-side refund path via /api/returns POST→PUT or
+        // /api/returns/process). Prior shape only summed
+        // `transactions` rows (register-side refund path), so a
+        // mixed-surface refund would under-count prior cumulative
+        // refunds and over-reverse loyalty / total_spend / visit_count.
+        // Mirror the admin-path two-source aggregation seen in
+        // /api/returns/process/route.ts:914-930.
         const { rows: priorRefundRows } = await client.query(
           `SELECT COALESCE(SUM(grand_total), 0)::numeric AS prior_refund
              FROM transactions
@@ -828,7 +837,17 @@ export async function processReturnAction(input: ReturnInput): Promise<ReturnRes
               AND id <> $3`,
           [context.employee.organizationId, input.originalTransactionId, returnTransactionId],
         );
-        const priorRefundAbs = Math.abs(Number(priorRefundRows[0]?.prior_refund ?? 0)) || 0;
+        const { rows: priorRefundReturnsRows } = await client.query(
+          `SELECT COALESCE(SUM(refund_amount), 0)::numeric AS prior_refund
+             FROM returns
+            WHERE organization_id = $1
+              AND transaction_id = $2
+              AND status IN ('pending', 'completed')`,
+          [context.employee.organizationId, input.originalTransactionId],
+        );
+        const priorRefundAbs =
+          (Math.abs(Number(priorRefundRows[0]?.prior_refund ?? 0)) || 0) +
+          (Math.abs(Number(priorRefundReturnsRows[0]?.prior_refund ?? 0)) || 0);
         const priorShare = Math.min(1, Math.max(0, priorRefundAbs / origGrandTotal));
         const priorExpectedReverse = Math.round(origPointsEarned * priorShare);
         const newCumulativeAbs = priorRefundAbs + refundGrandTotal;
@@ -861,6 +880,9 @@ export async function processReturnAction(input: ReturnInput): Promise<ReturnRes
       // refunds don't spuriously reduce lifetime-visit counts —
       // matches the cumulative-share semantic used for loyalty.
       if (origCustomerId && origGrandTotal > 0) {
+        // INT2-MED1: same dual-source aggregation as the loyalty
+        // block — count refunds from BOTH transactions (register path)
+        // and returns (admin path).
         const { rows: priorRefundRows2 } = await client.query(
           `SELECT COALESCE(SUM(grand_total), 0)::numeric AS prior_refund
              FROM transactions
@@ -870,7 +892,17 @@ export async function processReturnAction(input: ReturnInput): Promise<ReturnRes
               AND id <> $3`,
           [context.employee.organizationId, input.originalTransactionId, returnTransactionId],
         );
-        const priorRefundAbs2 = Math.abs(Number(priorRefundRows2[0]?.prior_refund ?? 0)) || 0;
+        const { rows: priorRefundReturnsRows2 } = await client.query(
+          `SELECT COALESCE(SUM(refund_amount), 0)::numeric AS prior_refund
+             FROM returns
+            WHERE organization_id = $1
+              AND transaction_id = $2
+              AND status IN ('pending', 'completed')`,
+          [context.employee.organizationId, input.originalTransactionId],
+        );
+        const priorRefundAbs2 =
+          (Math.abs(Number(priorRefundRows2[0]?.prior_refund ?? 0)) || 0) +
+          (Math.abs(Number(priorRefundReturnsRows2[0]?.prior_refund ?? 0)) || 0);
         const newCumulativeAbs2 = priorRefundAbs2 + refundGrandTotal;
         const wasPriorFullyRefunded = priorRefundAbs2 >= origGrandTotal - 0.005;
         const isNowFullyRefunded = newCumulativeAbs2 >= origGrandTotal - 0.005;
