@@ -66,10 +66,19 @@ export default async function AdminPage({
   }, store);
 
   const { runWithTimeZone } = await import("@/lib/format");
+  // Defensive: if `safeStore.organization` is somehow undefined here
+  // (theoretically `readStore` throws when org is missing — line 198
+  // of postgres-read-store.ts — and we redirect on throw, so this
+  // shouldn't happen), fall back to a static title rather than
+  // letting `safeStore.organization.name` throw and trip the admin
+  // error boundary. Three sections of admin-console.tsx (Settings
+  // most clearly) deref `store.organization.X` without optional
+  // chaining; same defensive pattern is applied there.
+  const orgTitle = safeStore.organization?.name ?? "Admin";
   return runWithTimeZone(orgTz, () => (
     <PageShell
       eyebrow="Admin"
-      title={safeStore.organization.name}
+      title={orgTitle}
       description="Manage your store's catalog, inventory, employees, and settings."
     >
       <AppNav />

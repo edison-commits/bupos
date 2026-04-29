@@ -868,12 +868,21 @@ export function AdminConsole({
       {/* ━━ Settings ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
       <SectionPanel sectionKey="settings">
         <SectionCard title="Store information" description="Business name, legal details, and contact info.">
+          {/*
+            Defensive: `store.organization` is populated by readStore
+            on the happy path (postgres-read-store.ts:198 throws if
+            missing), and admin/page.tsx redirects on readStore throw.
+            But the React error boundary catching anything during a
+            re-render still surfaces a useless "Admin Error" — making
+            these accesses optional gives the user a recoverable UI
+            even on a partial store snapshot.
+          */}
           <SubmitGuardForm action={updateOrganizationAction} className="grid gap-3 md:grid-cols-2">
-            <Input name="name" label="Store name" defaultValue={store.organization.name} />
-            <Input name="legalName" label="Legal name" defaultValue={store.organization.legalName} />
-            <Input name="phone" label="Phone" type="tel" defaultValue={store.organization.phone ?? ""} />
-            <Input name="email" label="Email" type="email" defaultValue={store.organization.email ?? ""} />
-            <Input name="website" label="Website" defaultValue={store.organization.website ?? ""} />
+            <Input name="name" label="Store name" defaultValue={store.organization?.name ?? ""} />
+            <Input name="legalName" label="Legal name" defaultValue={store.organization?.legalName ?? ""} />
+            <Input name="phone" label="Phone" type="tel" defaultValue={store.organization?.phone ?? ""} />
+            <Input name="email" label="Email" type="email" defaultValue={store.organization?.email ?? ""} />
+            <Input name="website" label="Website" defaultValue={store.organization?.website ?? ""} />
             <div className="md:col-span-2">
               <button className="touch-button rounded-2xl bg-teal-700 px-5 text-sm font-semibold text-white">Save store info</button>
             </div>
@@ -923,15 +932,15 @@ export function AdminConsole({
 
         <SectionCard title="Receipt customization" description="Header and footer text shown on printed receipts.">
           <SubmitGuardForm action={updateOrganizationAction} className="grid gap-3">
-            <input type="hidden" name="name" value={store.organization.name} />
-            <input type="hidden" name="legalName" value={store.organization.legalName} />
+            <input type="hidden" name="name" value={store.organization?.name ?? ""} />
+            <input type="hidden" name="legalName" value={store.organization?.legalName ?? ""} />
             <label className="grid gap-1 text-sm font-medium text-zinc-700">
               <span>Receipt header (appears above store name)</span>
-              <textarea name="receiptHeader" rows={2} className="rounded-2xl border border-zinc-300 bg-white px-4 py-3" defaultValue={store.organization.receiptHeader ?? ""} />
+              <textarea name="receiptHeader" rows={2} className="rounded-2xl border border-zinc-300 bg-white px-4 py-3" defaultValue={store.organization?.receiptHeader ?? ""} />
             </label>
             <label className="grid gap-1 text-sm font-medium text-zinc-700">
               <span>Receipt footer</span>
-              <textarea name="receiptFooter" rows={2} className="rounded-2xl border border-zinc-300 bg-white px-4 py-3" defaultValue={store.organization.receiptFooter ?? "Thank you for shopping with us!"} />
+              <textarea name="receiptFooter" rows={2} className="rounded-2xl border border-zinc-300 bg-white px-4 py-3" defaultValue={store.organization?.receiptFooter ?? "Thank you for shopping with us!"} />
             </label>
             <button className="touch-button w-fit rounded-2xl bg-teal-700 px-5 text-sm font-semibold text-white">Save receipt text</button>
           </SubmitGuardForm>

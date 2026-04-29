@@ -16,6 +16,8 @@ function getDeviceId(): string {
 export function PinLoginForm({ locationId }: { locationId: string }) {
   const [pin, setPin] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // Stuck-submission recovery — see useEffect below.
+  const [stuckHint, setStuckHint] = useState(false);
 
   // R46-M2: double-submit guard. The PIN pad's OK button is the form's
   // submit control; a fast double-tap fires two concurrent
@@ -40,6 +42,30 @@ export function PinLoginForm({ locationId }: { locationId: string }) {
   useEffect(() => {
     setDeviceId(getDeviceId());
   }, []);
+
+  // Stuck-submission recovery: on the happy path, registerLoginAction
+  // redirects with either ?notice=... or ?error=... and the whole
+  // page re-renders (so `submitting` resets to false). If the action
+  // POST hits a 5xx (Worker hot-reload / sub-request budget) the
+  // browser stays on /register with NO redirect, and the OK button
+  // is stuck disabled forever.
+  //
+  // After 5 s of `submitting=true`, surface a hint that the user can
+  // retry. After 30 s, force-reset `submitting=false` so the OK
+  // button is interactive again and the user can try a different PIN
+  // without reloading the page.
+  useEffect(() => {
+    if (!submitting) return;
+    const hintTimer = setTimeout(() => setStuckHint(true), 5_000);
+    const resetTimer = setTimeout(() => {
+      setSubmitting(false);
+      setStuckHint(false);
+    }, 30_000);
+    return () => {
+      clearTimeout(hintTimer);
+      clearTimeout(resetTimer);
+    };
+  }, [submitting]);
 
   return (
     <div className="grid gap-4">
@@ -76,6 +102,13 @@ export function PinLoginForm({ locationId }: { locationId: string }) {
           spellCheck={false}
         />
       </label>
+      {stuckHint ? (
+        <p className="rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          The login request is taking longer than usual. The OK button will
+          re-enable in a few seconds — if it stays stuck, please reload the
+          page and try again.
+        </p>
+      ) : null}
       <div className="grid grid-cols-3 gap-3">
         {pad.map((key) => (
           <button
