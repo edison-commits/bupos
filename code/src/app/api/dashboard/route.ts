@@ -235,11 +235,13 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
     lowStockAlerts: lowStockResult.rows,
   });
   } catch (error) {
-    // Include error class (e.g. "TypeError") + a short marker in
-    // structured logs so ops can class which dashboard query fails
-    // without us having to attach Worker logs every time. The
-    // client still receives only the generic message — no PII /
-    // SQL fragments in the response body.
+    // Include error class (e.g. "TypeError") + pg code in structured
+    // logs so ops can class which dashboard query fails. The 500
+    // response body now ALSO includes the error class + pg code (NOT
+    // the message — that may carry SQL fragments / PG DETAIL with
+    // bound-param values). Class + code are structurally safe and
+    // surface enough signal that an admin reading the response in
+    // browser devtools can debug without Worker-log access.
     const errName = error instanceof Error ? error.name : 'unknown';
     const errCode = (error as { code?: string })?.code ?? null;
     console.error(JSON.stringify({
@@ -249,6 +251,9 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
       pg_code: errCode,
       error: safeErr(error),
     }));
-    return NextResponse.json({ error: "Failed to load dashboard" }, { status: 500 });
+    return NextResponse.json({
+      error: "Failed to load dashboard",
+      _diag: { error_name: errName, pg_code: errCode },
+    }, { status: 500 });
   }
 });

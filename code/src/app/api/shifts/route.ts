@@ -125,9 +125,9 @@ export const GET = withDualAuth("register.open", async (req, ctx) => {
       pageSize,
     });
   } catch (error) {
-    // Same structured-log pattern as /api/dashboard — surface error
-    // class + pg code so ops can triage without attaching Worker
-    // logs. Client receives only the generic message.
+    // Surface error class + pg code in BOTH structured log AND
+    // response _diag so ops can triage from devtools without
+    // Worker-log access. Same shape as /api/dashboard.
     const errName = error instanceof Error ? error.name : 'unknown';
     const errCode = (error as { code?: string })?.code ?? null;
     console.error(JSON.stringify({
@@ -137,7 +137,10 @@ export const GET = withDualAuth("register.open", async (req, ctx) => {
       pg_code: errCode,
       error: safeErr(error),
     }));
-    return NextResponse.json({ error: "Failed to load shifts" }, { status: 500 });
+    return NextResponse.json({
+      error: "Failed to load shifts",
+      _diag: { error_name: errName, pg_code: errCode },
+    }, { status: 500 });
   }
 });
 
