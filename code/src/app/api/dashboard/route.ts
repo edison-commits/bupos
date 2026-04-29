@@ -144,6 +144,15 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
       // R82-DB-L5: COALESCE display_name so deleted-employee rows
       // (employee_id → SET NULL in migration 046) don't show a
       // NULL name in the UI. Parity with /api/reports route.
+      //
+      // GROUP-BY-FIX: prior shape grouped on `t.employee_id, e.display_name`
+      // but the SELECT's COALESCE referenced `e.first_name` and
+      // `e.last_name` which were NOT in GROUP BY (and not functionally
+      // dependent on a non-PK column). Postgres can REJECT this with
+      // "column must appear in GROUP BY clause or be used in an
+      // aggregate function". Add e.id (the PK) to GROUP BY so PG's
+      // functional-dependency rule lets us reference any column of
+      // `e` in the SELECT. Same shape as /api/reports's getSalesByEmployee.
       `SELECT t.employee_id,
               COALESCE(e.display_name, CONCAT(e.first_name, ' ', e.last_name), 'Former Employee') AS display_name,
               COUNT(*)::int AS transaction_count,
@@ -152,7 +161,7 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
        FROM transactions t
        LEFT JOIN employees e ON e.id = t.employee_id AND e.organization_id = $1
        WHERE t.organization_id = $1 AND t.location_id = $2 AND t.created_at >= $3 AND t.created_at < $4 AND t.status = 'completed'
-       GROUP BY t.employee_id, e.display_name
+       GROUP BY t.employee_id, e.id, e.display_name, e.first_name, e.last_name
        ORDER BY total_sales DESC`,
       [orgId, locationId, fromDate, toDate],
     );
