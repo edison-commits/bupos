@@ -35,14 +35,31 @@ const STATUS_TABS = [
   { key: "closed", label: "Closed" },
 ];
 
+// Local-time today as YYYY-MM-DD (NOT UTC). The prior shape used
+// `new Date().toISOString().slice(0, 10)` which returns a UTC date.
+// In Pacific TZ at evening, the UTC date is already TOMORROW — so
+// the page defaulted to a future date, surfaced "Failed to load
+// shifts" in tomorrow's empty range, and a manager looking for
+// today's shifts had to manually pick a date. Compute in local TZ
+// so the default actually matches "today" as the cashier sees it.
+function getLocalToday(): string {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 export default function ShiftsPage() {
   const [shifts, setShifts] = useState<ShiftSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [dateFilter, setDateFilter] = useState<string>(
-    new Date().toISOString().slice(0, 10),
-  );
+  // Default to "all dates" (empty filter) — the API returns ALL shifts
+  // when no date is set, which is more useful than locking the page
+  // to today's empty range. Users can filter to a specific date via
+  // the date input. Picking a date lets them narrow down.
+  const [dateFilter, setDateFilter] = useState<string>("");
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const pageSize = 20;

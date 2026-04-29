@@ -226,7 +226,20 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
     lowStockAlerts: lowStockResult.rows,
   });
   } catch (error) {
-    console.error("[dashboard GET]", safeErr(error));
+    // Include error class (e.g. "TypeError") + a short marker in
+    // structured logs so ops can class which dashboard query fails
+    // without us having to attach Worker logs every time. The
+    // client still receives only the generic message — no PII /
+    // SQL fragments in the response body.
+    const errName = error instanceof Error ? error.name : 'unknown';
+    const errCode = (error as { code?: string })?.code ?? null;
+    console.error(JSON.stringify({
+      level: "error",
+      event: "dashboard_load_failed",
+      error_name: errName,
+      pg_code: errCode,
+      error: safeErr(error),
+    }));
     return NextResponse.json({ error: "Failed to load dashboard" }, { status: 500 });
   }
 });

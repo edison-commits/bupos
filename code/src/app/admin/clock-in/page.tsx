@@ -21,6 +21,12 @@ interface Employee {
 interface Location {
   id: string;
   name: string;
+  // Optional fallback fields used when `name` is empty (a legacy
+  // location row from initial signup with no name set yet). The
+  // /api/clock-in-data endpoint returns the full Location shape
+  // including these.
+  code?: string;
+  city?: string;
 }
 
 function ClockInContent() {
@@ -153,9 +159,23 @@ function ClockInContent() {
             }}
           >
             <option value="">Select location...</option>
-            {locations.map(l => (
-              <option key={l.id} value={l.id}>{l.name}</option>
-            ))}
+            {locations.map(l => {
+              // Defensive fallback: some legacy locations were created
+              // with an empty `name` (e.g. Bellflower row from the
+              // initial signup). Without a fallback, the option
+              // renders as a blank string and the dropdown LOOKS
+              // empty even though it's selected. Fall back to code
+              // → city → "Location {id-prefix}" so the user always
+              // sees something selectable.
+              const label =
+                (l.name && l.name.trim()) ||
+                (l.code && l.code.trim()) ||
+                (l.city && l.city.trim()) ||
+                `Location ${l.id.slice(0, 8)}`;
+              return (
+                <option key={l.id} value={l.id}>{label}</option>
+              );
+            })}
           </select>
         </div>
 

@@ -159,7 +159,31 @@ export const GET = withDualAuth("catalog.manage", async (req, ctx) => {
       params,
     );
 
-    return NextResponse.json({ promoCodes: codes.rows });
+    // Map snake_case DB columns to the camelCase shape the
+    // /admin/promos page expects (PromoCode in `@/lib/domain/types`).
+    // Prior shape returned raw `codes.rows` which had snake_case keys
+    // — the page rendered every numeric column as `undefined / undefined`
+    // because `p.maxRedemptions` and `p.currentRedemptions` resolved
+    // to undefined off the snake_case row. Coerce numeric columns
+    // through Number() since pg `numeric` columns serialize as
+    // strings.
+    const promoCodes = codes.rows.map((r: Record<string, unknown>) => ({
+      id: r.id as string,
+      organizationId: r.organization_id as string,
+      code: r.code as string,
+      description: (r.description as string) ?? '',
+      type: r.type as string,
+      value: Number(r.value),
+      minimumPurchase: Number(r.minimum_purchase ?? 0),
+      maxRedemptions: Number(r.max_redemptions ?? 0),
+      currentRedemptions: Number(r.current_redemptions ?? 0),
+      status: r.status as string,
+      startsAt: String(r.starts_at),
+      expiresAt: r.expires_at ? String(r.expires_at) : undefined,
+      freeVariantId: (r.free_variant_id as string) ?? undefined,
+      createdAt: String(r.created_at),
+    }));
+    return NextResponse.json({ promoCodes });
   } catch (err) {
     console.error("GET /api/promo-codes error:", safeErr(err));
     return NextResponse.json({ error: "Failed to fetch promo codes" }, { status: 500 });

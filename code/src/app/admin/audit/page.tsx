@@ -436,7 +436,12 @@ export default function AuditPage() {
                           </span>
                         </td>
                         <td className="px-4 py-3 text-sm text-slate-600 font-mono">
-                          {event.transaction_id.slice(0, 8)}...
+                          {/* event.transaction_id is null for non-
+                              transaction events (e.g. admin_logout,
+                              employee_activated, password_change).
+                              Render an em-dash instead of crashing
+                              the whole page on `.slice(...)` of null. */}
+                          {event.transaction_id ? `${event.transaction_id.slice(0, 8)}…` : '—'}
                         </td>
                         <td className="px-4 py-3 text-sm text-slate-600 max-w-xs truncate">
                           {event.notes || '—'}

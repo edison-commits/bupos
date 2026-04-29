@@ -125,7 +125,18 @@ export const GET = withDualAuth("register.open", async (req, ctx) => {
       pageSize,
     });
   } catch (error) {
-    console.error("[shifts GET]", safeErr(error));
+    // Same structured-log pattern as /api/dashboard — surface error
+    // class + pg code so ops can triage without attaching Worker
+    // logs. Client receives only the generic message.
+    const errName = error instanceof Error ? error.name : 'unknown';
+    const errCode = (error as { code?: string })?.code ?? null;
+    console.error(JSON.stringify({
+      level: "error",
+      event: "shifts_load_failed",
+      error_name: errName,
+      pg_code: errCode,
+      error: safeErr(error),
+    }));
     return NextResponse.json({ error: "Failed to load shifts" }, { status: 500 });
   }
 });
