@@ -83,30 +83,45 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
 
   let data: unknown;
 
-  switch (type) {
-    case "summary":
-      data = await getSalesSummary(orgId, locationId, from, to);
-      break;
-    case "category":
-      data = await getSalesByCategory(orgId, locationId, from, to);
-      break;
-    case "employee":
-      data = await getSalesByEmployee(orgId, locationId, from, to);
-      break;
-    case "hourly":
-      data = await getSalesByHour(orgId, locationId, from, to);
-      break;
-    case "tender":
-      data = await getTenderAnalysis(orgId, locationId, from, to);
-      break;
-    case "products":
-      data = await getTopProducts(orgId, locationId, from, to);
-      break;
-    case "shifts":
-      data = await getShiftSummary(orgId, locationId, from, to);
-      break;
-    default:
-      return NextResponse.json({ error: `Unknown report type: ${type}` }, { status: 400 });
+  // Wrap query dispatch in a route-local try/catch so any pg
+  // error reaches the response with `_diag.error_name` + pg_code
+  // attached. Without this, withAuth's catch (lib/api/with-auth.ts)
+  // returned a generic "Internal server error" + reqId — useful for
+  // log correlation but opaque from the client side. The 500
+  // response body now ALSO carries the safe class info.
+  try {
+    switch (type) {
+      case "summary":
+        data = await getSalesSummary(orgId, locationId, from, to);
+        break;
+      case "category":
+        data = await getSalesByCategory(orgId, locationId, from, to);
+        break;
+      case "employee":
+        data = await getSalesByEmployee(orgId, locationId, from, to);
+        break;
+      case "hourly":
+        data = await getSalesByHour(orgId, locationId, from, to);
+        break;
+      case "tender":
+        data = await getTenderAnalysis(orgId, locationId, from, to);
+        break;
+      case "products":
+        data = await getTopProducts(orgId, locationId, from, to);
+        break;
+      case "shifts":
+        data = await getShiftSummary(orgId, locationId, from, to);
+        break;
+      default:
+        return NextResponse.json({ error: `Unknown report type: ${type}` }, { status: 400 });
+    }
+  } catch (err) {
+    const errName = err instanceof Error ? err.name : 'unknown';
+    const errCode = (err as { code?: string })?.code ?? null;
+    return NextResponse.json({
+      error: `Failed to load ${type} report`,
+      _diag: { error_name: errName, pg_code: errCode, type },
+    }, { status: 500 });
   }
 
   return NextResponse.json(data);
