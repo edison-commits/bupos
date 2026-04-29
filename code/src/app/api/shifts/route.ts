@@ -241,7 +241,36 @@ export const POST = withAdminAuth('register.open', async (req, ctx) => {
 
     return NextResponse.json({ shift, success: true }, { status: 201 });
   } catch (error) {
-    console.error("[shifts POST]", safeErr(error));
+    // Classify expected error messages from pgOpenShift to return
+    // useful HTTP status codes. Prior shape returned a generic 500
+    // for every error including "Employee already has an open shift"
+    // — that's a 409 (conflict), not a server fault. Same for the
+    // cross-tenant guards added by mig 077 / R-round2 (those should
+    // be 403, not 500). Anything else falls through to 500.
+    const msg = error instanceof Error ? error.message : '';
+    if (/already has an open shift/i.test(msg)) {
+      return NextResponse.json(
+        { error: "Employee already has an open shift. Close it before opening a new one." },
+        { status: 409 },
+      );
+    }
+    if (/Cross-tenant /i.test(msg)) {
+      return NextResponse.json(
+        { error: "Forbidden: cross-tenant resource in shift open." },
+        { status: 403 },
+      );
+    }
+    // Structured log for ops triage — error class + pg code surface
+    // in Logpush so the actual root cause of 500s is queryable.
+    const errName = error instanceof Error ? error.name : 'unknown';
+    const errCode = (error as { code?: string })?.code ?? null;
+    console.error(JSON.stringify({
+      level: "error",
+      event: "shift_open_failed",
+      error_name: errName,
+      pg_code: errCode,
+      error: safeErr(error),
+    }));
     return NextResponse.json({ error: "Failed to open shift" }, { status: 500 });
   }
 });
