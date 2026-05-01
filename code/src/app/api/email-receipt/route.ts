@@ -43,14 +43,28 @@ export const POST = withDualAuth("register.open", async (req, ctx) => {
     // limited per employee, not per transaction). 3 sends per txn is
     // plenty for "lost the first one, please resend" flows while
     // stopping harassment at two re-sends.
-    // check-pool-org-filter: scoped-by-prior-org-verified-transaction-id
+    // SEC-AUDIT5-HIGH2: org-scope the count by joining through
+    // `transactions`. transaction_events has no organization_id
+    // column, so the prior `WHERE transaction_id = $1` matched events
+    // GLOBALLY across tenants. Two harms: (a) cross-tenant
+    // discoverability oracle — a tenant Z cashier passing a foreign
+    // transactionId could observe whether N>=3 sends happened anywhere,
+    // probing for "is this txn id real and frequently re-sent?" (b) a
+    // tenant Z attacker who scraped target-tenant txn ids could DoS
+    // legitimate retries by burning the global cap from another
+    // tenant. Subquery through transactions gates the count to the
+    // caller's tenant only.
+    // check-pool-org-filter: scoped-by-parent-transaction-table
     const { rows: priorSendRows } = await orgQuery(
       orgId,
       `SELECT COUNT(*)::int AS n
-         FROM transaction_events
-        WHERE transaction_id = $1
-          AND event_kind = 'receipt_emailed'`,
-      [transactionId],
+         FROM transaction_events te
+        WHERE te.transaction_id = $1
+          AND te.event_kind = 'receipt_emailed'
+          AND te.transaction_id IN (
+            SELECT id FROM transactions WHERE organization_id = $2
+          )`,
+      [transactionId, orgId],
     );
     const priorSends = Number((priorSendRows[0] as { n?: number })?.n ?? 0);
     if (priorSends >= 3) {

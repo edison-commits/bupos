@@ -5,7 +5,7 @@ import { randomUUID } from "@/lib/uuid";
 import { withDualAuth, withAdminAuth } from "@/lib/api/with-auth";
 import { validateBody, shiftCreateSchema } from "@/lib/validation/schemas";
 
-import { safeErr, safeErrorName } from "@/lib/logging/safe-err";
+import { safeErr, safeErrorName, safePgCode } from "@/lib/logging/safe-err";
 export const GET = withDualAuth("register.open", async (req, ctx) => {
   const { orgId, locationId } = ctx;
   try {
@@ -128,11 +128,12 @@ export const GET = withDualAuth("register.open", async (req, ctx) => {
     // Surface error class + pg code in BOTH structured log AND
     // response _diag so ops can triage from devtools without
     // Worker-log access. Same shape as /api/dashboard.
-    // OPS-AUDIT4-2: full error.name in structured log, whitelist
-    // version in response _diag (see /api/dashboard for rationale).
+    // OPS-AUDIT4-2 + OPS-AUDIT5-HIGH1: full error.name + raw err.code
+    // in structured log; whitelisted/SQLSTATE-only in response _diag.
     const errName = error instanceof Error ? error.name : 'unknown';
     const errNameSafe = safeErrorName(error);
     const errCode = (error as { code?: string })?.code ?? null;
+    const errCodeSafe = safePgCode(error);
     console.error(JSON.stringify({
       level: "error",
       event: "shifts_load_failed",
@@ -142,7 +143,7 @@ export const GET = withDualAuth("register.open", async (req, ctx) => {
     }));
     return NextResponse.json({
       error: "Failed to load shifts",
-      _diag: { error_name: errNameSafe, pg_code: errCode },
+      _diag: { error_name: errNameSafe, pg_code: errCodeSafe },
     }, { status: 500 });
   }
 });
@@ -313,11 +314,12 @@ export const POST = withAdminAuth('register.open', async (req, ctx) => {
 
     // Structured log for ops triage — error class + pg code surface
     // in Logpush so the actual root cause of 500s is queryable.
-    // OPS-AUDIT4-2: full error.name in structured log, whitelist
-    // version in response _diag (see /api/dashboard for rationale).
+    // OPS-AUDIT4-2 + OPS-AUDIT5-HIGH1: full error.name + raw err.code
+    // in structured log; whitelisted/SQLSTATE-only in response _diag.
     const errName = error instanceof Error ? error.name : 'unknown';
     const errNameSafe = safeErrorName(error);
     const errCode = (error as { code?: string })?.code ?? null;
+    const errCodeSafe = safePgCode(error);
     console.error(JSON.stringify({
       level: "error",
       event: "shift_open_failed",
@@ -330,7 +332,7 @@ export const POST = withAdminAuth('register.open', async (req, ctx) => {
     // pattern in /api/dashboard, /api/shifts GET, /api/reports.
     return NextResponse.json({
       error: "Failed to open shift",
-      _diag: { error_name: errNameSafe, pg_code: errCode },
+      _diag: { error_name: errNameSafe, pg_code: errCodeSafe },
     }, { status: 500 });
   }
 });

@@ -3,7 +3,7 @@ import { orgTx } from "@/lib/supabase-rest";
 import { withAuth } from "@/lib/api/with-auth";
 
 
-import { safeErr, safeErrorName } from "@/lib/logging/safe-err";
+import { safeErr, safeErrorName, safePgCode } from "@/lib/logging/safe-err";
 /**
  * GET /api/dashboard
  *
@@ -41,18 +41,33 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
   // first 8 hours of tomorrow counted as today. Dashboard
   // disagreed with /api/reports summary for the same date.
   // Parity with R16-L-2 reports route + R82-DB-H3 eod-report.
-  const { buildOrgDayRange } = await import("@/lib/reports/day-range");
-  const now = new Date();
-  const todayStr = now.toISOString().slice(0, 10);
+  // OPS-AUDIT5-HIGH2: compute "today" in the ORG's timezone, not UTC.
+  // Prior shape used `new Date().toISOString().slice(0, 10)` which
+  // returns the UTC calendar day. For a Pacific-TZ store at 5pm local
+  // on Apr 30, UTC has already rolled to May 1 — the dashboard would
+  // show the next day's (empty) data and skip Apr 30's last 7 hours.
+  // Equally for week/month: `setDate(d.getDate() - 7)` operates on a
+  // UTC-snapshot Date, so the 7-day window is offset by the UTC-local
+  // delta. Compute today in org TZ, then derive week/month spans by
+  // subtracting from that date string in SQL inside buildOrgDayRange.
+  const { buildOrgDayRange, getOrgToday } = await import("@/lib/reports/day-range");
+  const todayStr = await getOrgToday(orgId);
   let fromDay: string;
   let toDay: string;
 
   if (range === "week") {
-    const d = new Date(now); d.setDate(d.getDate() - 7);
+    // 7 days back in calendar days — string arithmetic via Date is
+    // stable here because we're starting from a YYYY-MM-DD string and
+    // the toISOString slicing is on a Date created from that string,
+    // both interpreted at UTC-midnight (no DST jumps within a 7-day
+    // window of UTC-midnight Dates).
+    const d = new Date(todayStr + "T00:00:00Z");
+    d.setUTCDate(d.getUTCDate() - 7);
     fromDay = d.toISOString().slice(0, 10);
     toDay = todayStr;
   } else if (range === "month") {
-    const d = new Date(now); d.setDate(d.getDate() - 30);
+    const d = new Date(todayStr + "T00:00:00Z");
+    d.setUTCDate(d.getUTCDate() - 30);
     fromDay = d.toISOString().slice(0, 10);
     toDay = todayStr;
   } else {
@@ -247,19 +262,24 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
     // body's `_diag.error_name` is whitelisted via safeErrorName so
     // a custom Error subclass name (e.g. from a 3rd-party SDK) can't
     // leak to a browser devtools request inspector.
+    // OPS-AUDIT4-2 + OPS-AUDIT5-HIGH1: structured log gets raw err.code
+    // (any string — `ENOTFOUND`, `23505`, etc.); response _diag gets
+    // SQLSTATE-only via safePgCode so non-pg `Error.code` strings can't
+    // leak to devtools.
     const errNameLog = error instanceof Error ? error.name : 'unknown';
     const errNameSafe = safeErrorName(error);
-    const errCode = (error as { code?: string })?.code ?? null;
+    const errCodeLog = (error as { code?: string })?.code ?? null;
+    const errCodeSafe = safePgCode(error);
     console.error(JSON.stringify({
       level: "error",
       event: "dashboard_load_failed",
       error_name: errNameLog,
-      pg_code: errCode,
+      pg_code: errCodeLog,
       error: safeErr(error),
     }));
     return NextResponse.json({
       error: "Failed to load dashboard",
-      _diag: { error_name: errNameSafe, pg_code: errCode },
+      _diag: { error_name: errNameSafe, pg_code: errCodeSafe },
     }, { status: 500 });
   }
 });

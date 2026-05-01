@@ -1102,8 +1102,25 @@ export async function signOutAdmin() {
     }
   }
 
-  jar.delete(ADMIN_COOKIE);
-  jar.delete(OLD_ADMIN_COOKIE);
+  // SEC-AUDIT5-MED4: clear cookies with attributes matching what they
+  // were set with. Per RFC 6265bis, Safari and Firefox may refuse to
+  // clear a `Secure` cookie via a non-Secure clearing Set-Cookie even
+  // on HTTPS — bare `jar.delete(name)` only emits `Path=/`, losing the
+  // Secure / HttpOnly / SameSite attrs the cookie was minted with. The
+  // DB-side session row IS deleted (above), so the cookie is functionally
+  // dead, but a stale cookie sitting in the browser is a UX/forensic
+  // issue and a future-proofing risk if any code path ever re-validates
+  // sessions by id alone. Mirror the /revoke-all-sessions pattern.
+  const adminClearOpts = {
+    path: "/",
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: shouldUseSecureCookie(),
+    expires: new Date(0),
+    maxAge: 0,
+  };
+  jar.set(ADMIN_COOKIE, "", adminClearOpts);
+  jar.set(OLD_ADMIN_COOKIE, "", adminClearOpts);
 }
 
 export async function signOutRegister() {
@@ -1293,9 +1310,19 @@ export async function signOutRegister() {
     }
   }
 
-  jar.delete(REGISTER_COOKIE);
-  jar.delete(OLD_REGISTER_COOKIE);
+  // SEC-AUDIT5-MED4: clear with matching attrs (RFC 6265bis). See
+  // signOutAdmin above for rationale.
+  const registerClearOpts = {
+    path: "/",
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: shouldUseSecureCookie(),
+    expires: new Date(0),
+    maxAge: 0,
+  };
+  jar.set(REGISTER_COOKIE, "", registerClearOpts);
+  jar.set(OLD_REGISTER_COOKIE, "", registerClearOpts);
   // R28-H5: clear the companion device cookie too so the next pairing
   // re-binds cleanly.
-  jar.delete("bupos_register_device");
+  jar.set("bupos_register_device", "", registerClearOpts);
 }

@@ -280,6 +280,48 @@ const noWorkersHazards = {
         }
       },
 
+      // OPS-AUDIT5-MED3 + OPS-AUDIT5-CRIT1: also catch the BARE-statement
+      // forms — `import("...").then(...)` and
+      // `import("...").then(...).catch(...)` as ExpressionStatements.
+      // These are equally dangling under `no_handle_cross_request_promise_resolution`
+      // because nothing adopts the resulting Promise. The prior pattern
+      // only matched the `void`-prefixed form, so a fire-and-forget
+      // cascade in src/lib/cache/inventory-cache.ts (caught in round 5)
+      // slipped past for two rounds.
+      //
+      // Scoped to server files (src/lib/** and src/app/api/**) to match
+      // the rule's existing scope. next.config.ts and tooling scripts
+      // load OUTSIDE the request path and aren't subject to the
+      // `no_handle_cross_request_promise_resolution` flag — they have
+      // legitimate fire-and-forget initialization patterns (e.g.
+      // initOpenNextCloudflareForDev).
+      ExpressionStatement(node) {
+        if (!isServerScope || isClient) return;
+        // Walk down through optional .catch(...) wrapper.
+        let expr = node.expression;
+        if (
+          expr?.type === "CallExpression" &&
+          expr.callee?.type === "MemberExpression" &&
+          expr.callee.property?.name === "catch"
+        ) {
+          expr = expr.callee.object;
+        }
+        if (
+          expr?.type !== "CallExpression" ||
+          expr.callee?.type !== "MemberExpression" ||
+          expr.callee.property?.name !== "then"
+        ) {
+          return;
+        }
+        const importCall = expr.callee.object;
+        const isImport =
+          importCall?.type === "ImportExpression" ||
+          (importCall?.type === "CallExpression" && importCall.callee?.type === "Import");
+        if (isImport) {
+          context.report({ node, messageId: "voidImport" });
+        }
+      },
+
       // Module-scope mutable state in server-scope files, outside allowlist
       // + not a client file.
       //

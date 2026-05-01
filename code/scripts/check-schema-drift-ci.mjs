@@ -233,6 +233,10 @@ const PG_BUILTINS = new Set([
   "string_agg", "array_agg", "unnest", "length", "lower", "upper",
   "trim", "substring", "position", "split_part", "regexp_replace",
   "extract", "date_trunc", "age", "round", "floor", "ceil", "abs",
+  // OPS-AUDIT5-HIGH2 sibling: to_char is a built-in (date/number ↔
+  // string formatter), not a project RPC. Used by lib/reports/day-
+  // range.ts:getOrgToday to format the org-TZ day as YYYY-MM-DD.
+  "to_char", "to_date", "to_timestamp", "to_number",
   "greatest", "least", "nullif", "encode", "decode", "md5", "digest",
   "hmac", "crypt", "gen_salt", "to_tsvector", "to_tsquery",
   "plainto_tsquery", "ts_rank", "similarity", "pg_typeof",

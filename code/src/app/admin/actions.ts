@@ -11,8 +11,11 @@ import { invalidateStoreCache } from "@/lib/persistence/postgres-read-store";
 import { redirect } from "next/navigation";
 import { hashSecret } from "@/lib/auth/crypto";
 import { canManageEmployeeRole, requireAdminPermission } from "@/lib/authz";
-import { signInAdmin, signOutAdmin } from "@/lib/auth/session";
-import { checkRateLimit } from "@/lib/auth/rate-limit";
+// SEC-AUDIT5-HIGH1: `signInAdmin` + `checkRateLimit` (top-level) +
+// `pgFindCredentialByEmail` were used only by the deleted
+// adminLoginAction Server Action. Dynamic-import + alternate caller
+// sites for these still exist — the static-import surface here is gone.
+import { signOutAdmin } from "@/lib/auth/session";
 import { mutateStore } from "@/lib/persistence/store";
 import type { RoleKey } from "@/lib/domain/types";
 import {
@@ -21,7 +24,6 @@ import {
   VariantUniquenessConflictError,
   pgCreateInventoryLevel,
   pgAdjustInventory,
-  pgFindCredentialByEmail,
   pgInsertAuditEvent,
   pgUpdateProduct,
   pgDeleteProduct,
@@ -39,100 +41,32 @@ function now() {
   return new Date().toISOString();
 }
 
-export async function adminLoginAction(formData: FormData) {
-  const email = String(formData.get("email") ?? "").trim().toLowerCase();
-
-  // Rate-limit by email to prevent password brute-force (5 attempts/min)
-  const rl = checkRateLimit(`admin:${email}`);
-  if (!rl.allowed) {
-    const secs = Math.ceil(rl.retryAfterMs / 1000);
-    redirect(`/?error=Too+many+login+attempts.+Try+again+in+${secs}+seconds`);
-  }
-
-  try {
-    await signInAdmin(email, String(formData.get("password") ?? ""));
-  } catch (err) {
-    // Audit: log failed admin login attempt (non-fatal — redirect still proceeds).
-    //
-    // R15-L-3: previously passed `orgId ?? 'unknown'` to pgInsertAuditEvent,
-    // which then fails the `app.current_org_id::uuid` cast inside orgTx.
-    // pgInsertAuditEvent swallows the error, so brute-force probes of
-    // non-existent emails left NO trace. Split the logic: write to the DB
-    // only when we resolved a real orgId; otherwise emit a structured warn
-    // log so the trail still exists for ops/security monitoring.
-    if (isPg()) {
-      try {
-        const cred = await pgFindCredentialByEmail(email);
-        let orgId: string | null = null;
-        if (cred) {
-          const { pool } = await import("@/lib/db");
-          // check-pool-org-filter: scoped-by-just-looked-up-employee-id
-          // cred.employeeId came from the email→credential lookup above;
-          // this SELECT resolves the org from that row.
-          const { rows } = await pool.query(
-            `SELECT organization_id FROM employees WHERE id = $1 LIMIT 1`,
-            [cred.employeeId],
-          );
-          orgId = (rows[0]?.organization_id as string) ?? null;
-        }
-        if (orgId) {
-          // R42-K: classify to a stable reason string instead of
-          // dumping the raw err.message into the audit payload (which
-          // is persisted to DB + serialized to logs). A pg error
-          // reaching this catch carries DETAIL with bound-param values
-          // including the email being probed; persisting that into
-          // audit_events.payload JSONB would expose attempted-login
-          // emails via audit views accessible to org owners.
-          //
-          // AUTH-MED1: persist `email_prefix` (first 3 chars + ***)
-          // instead of the full email. Owners can render audit_events
-          // via /admin/audit; a successful brute-force probe would
-          // otherwise yield the victim's email plaintext alongside
-          // 'admin_login_failed'. The unknown-email branch below
-          // already used this shape — bring the known-org branch into
-          // parity.
-          const reason = err instanceof Error && /Invalid admin credentials/.test(err.message)
-            ? "invalid_credentials"
-            : "internal_error";
-          await waitUntilOrAwait(pgInsertAuditEvent(
-            orgId, null, cred?.employeeId ?? null,
-            "session", null, "admin_login_failed",
-            { email_prefix: email.slice(0, 3) + "***", reason },
-          ).catch((err) => console.error("[audit] Failed to insert audit event:", safeErr(err))));
-        } else {
-          // Unknown-email attempt — no org to attribute to. Structured log
-          // so log-sink alerting can still pattern-match brute-force probes.
-          const reason = err instanceof Error && /Invalid admin credentials/.test(err.message)
-            ? "invalid_credentials"
-            : "internal_error";
-          console.warn("[admin_login_failed]", JSON.stringify({
-            email_prefix: email.slice(0, 3) + "***",
-            reason,
-            at: new Date().toISOString(),
-          }));
-        }
-      } catch {
-        // audit lookup failed — skip audit, still redirect
-      }
-    }
-    redirect("/?error=Invalid+admin+credentials");
-  }
-
-  // Audit: log successful admin login (non-fatal — redirect still proceeds)
-  if (isPg()) {
-    const { getAdminSession } = await import("@/lib/auth/session");
-    const ctx = await getAdminSession();
-    if (ctx) {
-      await waitUntilOrAwait(pgInsertAuditEvent(
-        ctx.employee.organizationId, null, ctx.employee.id,
-        "session", ctx.session.id, "admin_login",
-        { email, role: ctx.employee.roleKey },
-      ).catch((err) => console.error("[adminLoginAction] audit failed:", safeErr(err))));
-    }
-  }
-
-  redirect("/admin?notice=Signed+in");
-}
+// SEC-AUDIT5-HIGH1: `adminLoginAction` Server Action removed.
+//
+// History: this was an early-architecture admin login surface that got
+// orphaned when the unified `loginAction` (src/app/actions/auth.ts) +
+// `/api/auth/login` route took over. No UI form referenced this action
+// (grep confirms zero callers other than the audit-log line within the
+// function itself), but as an exported `"use server"` action it was
+// still discoverable / invocable by anyone with the bundled action ID.
+//
+// The hazard: it used a separate rate-limit bucket (`admin:${email}`)
+// that was single-tier in-memory only — distinct from the unified
+// `admin-login:${email}` bucket the live login surfaces use (which has
+// mem + KV + DB layers). An attacker rotating between the live login
+// routes and this dead action got an extra ~96 attempts/5 min/email
+// beyond the per-isolate cap, with no KV/DB layer to backstop.
+//
+// Deleted entirely rather than aligning the bucket key, because:
+//   - There is no UI caller to preserve.
+//   - Keeping a dead Server Action exported is itself a discoverability
+//     hazard (encrypted action IDs are stable across deploys; an
+//     attacker who scraped one when the action existed retains the
+//     ability to invoke it).
+//   - The unified login flow (loginAction in actions/auth.ts +
+//     /api/auth/login) is the canonical surface; consolidating to one
+//     surface removes a class of "drift between two implementations"
+//     bugs.
 
 export async function adminLogoutAction() {
   // Capture session context before destroying the cookie

@@ -154,7 +154,11 @@ describe("R75 audit fixes — round 19 (HIGH streak ended)", () => {
     });
     it("layaway-manager collectLayawayAction wraps in try/catch + alert", () => {
       const src = read("src/components/admin/layaway-manager.tsx");
-      expect(src).toMatch(/try \{\s*await collectLayawayAction\(lay\.id\);[\s\S]{0,300}\} catch \(err\) \{[\s\S]{0,200}window\.alert\([\s\S]{0,100}Collect failed:/);
+      // INT-AUDIT5-MED5: collectLayawayAction now takes a step-up
+      // password second arg. Allow `(lay.id, pwd)` (or any short
+      // additional argument list) to keep the regression check on
+      // the try/catch + alert shape without locking the call signature.
+      expect(src).toMatch(/try \{\s*await collectLayawayAction\(lay\.id[^)]*\);[\s\S]{0,300}\} catch \(err\) \{[\s\S]{0,200}window\.alert\([\s\S]{0,100}Collect failed:/);
     });
     it("stocktake-manager createStocktakeAction surfaces errors + keeps form open", () => {
       const src = read("src/components/admin/stocktake-manager.tsx");

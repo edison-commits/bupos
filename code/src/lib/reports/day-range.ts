@@ -16,6 +16,38 @@
  */
 import { orgQuery } from "@/lib/supabase-rest";
 
+/**
+ * OPS-AUDIT5-HIGH2: get "today" / "now" as a YYYY-MM-DD date string in
+ * the org's configured timezone. Many handlers used
+ * `new Date().toISOString().slice(0, 10)` which is UTC — for a Pacific-
+ * TZ org at 5pm local on April 30, that returns "2026-05-01" because
+ * UTC has already rolled over. The org-TZ-aware version returns
+ * "2026-04-30" so EOD reports, expense rows, customer "new this month"
+ * counters, and returns/search "this week / this month" windows all
+ * line up with what the shop considers the local day.
+ *
+ * Cheap to compute: a single PG round-trip per call. Callers that need
+ * both today + a day-range can chain into `buildOrgDayRange(orgId,
+ * today, today)`. Worth the round-trip — the wrong day in an EOD
+ * report shows up the next morning in finance reconciliation as a
+ * "ghost day", and "missing yesterday's last hour" of returns when
+ * filtering by date.
+ */
+export async function getOrgToday(orgId: string): Promise<string> {
+  const { rows } = await orgQuery(
+    orgId,
+    `SELECT to_char(
+              (now() AT TIME ZONE COALESCE(
+                (SELECT timezone FROM organizations WHERE id = $1),
+                'UTC'
+              ))::date,
+              'YYYY-MM-DD'
+            ) AS today`,
+    [orgId],
+  );
+  return (rows[0] as { today: string }).today;
+}
+
 export async function buildOrgDayRange(
   orgId: string,
   from: string,

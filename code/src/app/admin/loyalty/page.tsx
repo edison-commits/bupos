@@ -489,7 +489,7 @@ export default function LoyaltyDashboard() {
 
       {/* Adjustment Modal */}
       {modalMode === 'adjust' && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 sticky top-0 bg-white">
               <h2 className="text-lg font-semibold text-slate-900">Adjust Loyalty Points</h2>
@@ -571,7 +571,7 @@ export default function LoyaltyDashboard() {
 
       {/* Customer Detail Modal */}
       {modalMode === 'search' && selectedCustomerDetails && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 sticky top-0 bg-white">
               <h2 className="text-lg font-semibold text-slate-900">Customer Details</h2>

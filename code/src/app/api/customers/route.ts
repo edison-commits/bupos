@@ -40,8 +40,36 @@ export const GET = withAdminAuth('employee.manage', async (request, ctx) => {
   // Stats-only mode: return aggregate stats without fetching customer rows
   if (statsOnly) {
     try {
-      const now = new Date();
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      // OPS-AUDIT5-HIGH2: month-start in org TZ. Prior shape used
+      // `new Date(now.getFullYear(), now.getMonth(), 1)` which is the
+      // SERVER's local-month-start (Workers run UTC, so this was UTC
+      // month-start). For a Pacific-TZ org, the last 7 hours of the
+      // previous local month would slip into "new this month" because
+      // those rows have UTC timestamps already in the new UTC month
+      // even though local hadn't ticked over yet — and conversely, the
+      // first 7 hours of local month-1 wouldn't count yet. Compute the
+      // org-TZ first day of the current month via SQL.
+      // check-pool-org-filter: scoped-by-pk-equals-org
+      // The only `organizations` table reference is `WHERE id = $1`
+      // (the verified caller's orgId). PK lookup is structurally
+      // tenant-bounded — there's no cross-tenant data path here.
+      const { rows: monthStartRows } = await orgQuery(
+        orgId,
+        `SELECT (
+           date_trunc(
+             'month',
+             now() AT TIME ZONE COALESCE(
+               (SELECT timezone FROM organizations WHERE id = $1),
+               'UTC'
+             )
+           ) AT TIME ZONE COALESCE(
+             (SELECT timezone FROM organizations WHERE id = $1),
+             'UTC'
+           )
+         )::text AS month_start`,
+        [orgId],
+      );
+      const monthStart = (monthStartRows[0] as { month_start: string }).month_start;
       // R13-H-6: the `$3` placeholder for monthStart hard-coded $3 whether
       // or not `search` was bound. When the admin customers page loads
       // without a search term it passes only [orgId, monthStart] (2

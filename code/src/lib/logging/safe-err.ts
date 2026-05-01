@@ -87,3 +87,20 @@ export function safeErrorName(err: unknown): string {
   }
   return "unknown";
 }
+
+// OPS-AUDIT5-HIGH1: extract `err.code` strictly as a SQLSTATE for the
+// `_diag.pg_code` field on 500 response bodies. Postgres SQLSTATE is
+// always 5 ASCII chars from [0-9A-Z] (e.g. '23505' for unique_violation,
+// '40001' for serialization_failure). Other libraries hang their own
+// `code` strings off Error — Node's net errors use `'ENOTFOUND'`,
+// `'ECONNREFUSED'`, `'ECONNRESET'`; AWS SDK uses
+// `'CredentialsProviderError'`; Stripe uses `'StripeInvalidRequestError'`.
+// Surfacing those in the 500 body leaks deployment internals to anyone
+// reading devtools. Whitelist to the SQLSTATE shape only; return null
+// otherwise (the structured server log via safeErr still carries the
+// raw code for ops triage).
+export function safePgCode(err: unknown): string | null {
+  const code = (err as { code?: unknown })?.code;
+  if (typeof code !== "string") return null;
+  return /^[0-9A-Z]{5}$/.test(code) ? code : null;
+}

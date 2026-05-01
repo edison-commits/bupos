@@ -100,7 +100,14 @@ export const POST = withAdminAuth("audit.view", async (req, ctx) => {
 });
 
 async function generateReportData(orgId: string, locationId?: string): Promise<ReportData> {
-  const today = new Date().toISOString().split("T")[0];
+  // OPS-AUDIT5-HIGH2: org-TZ "today", not UTC. Cron fires daily; if it
+  // runs at 00:30 UTC for a Pacific-TZ org, UTC `today` is May 1 but
+  // the org's ledger considers Apr 30 still in progress. Prior shape
+  // would generate an EOD report for May 1 (empty, because no sales
+  // have happened yet at 16:30 PDT), missing all of Apr 30. Use the
+  // org-TZ today so the EOD always covers the local calendar day.
+  const { getOrgToday } = await import("@/lib/reports/day-range");
+  const today = await getOrgToday(orgId);
 
   // Compute all day-windows in the ORG'S configured timezone. Previously
   // daily_sales/payment_breakdown/employee_performance used UTC (startOfDay/
@@ -265,7 +272,12 @@ async function generateReportData(orgId: string, locationId?: string): Promise<R
 
 async function sendEmailReport(reportData: ReportData) {
   const emailBody = generateEmailHTML(reportData);
-  const today = new Date().toISOString().split("T")[0];
+  // OPS-AUDIT5-HIGH2: reuse the report's `date` field (already org-TZ'd
+  // upstream by generateReportData) instead of recomputing UTC today.
+  // The email subject/body referenced UTC today which could disagree
+  // with the report's actual date by one day for Pacific-TZ orgs near
+  // UTC-midnight cron fires.
+  const today = reportData.date ?? new Date().toISOString().split("T")[0];
 
   // M-11: Read recipient from env var instead of hardcoding
   const eodRecipient = process.env.EOD_REPORT_EMAIL;

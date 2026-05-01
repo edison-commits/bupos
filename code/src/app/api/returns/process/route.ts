@@ -652,17 +652,40 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
     // entire restock run in a single round-trip. Mirror of
     // /api/purchase-orders PATCH (R31-H6) and register/return-
     // action.ts (R30-C7).
-    for (const [variantId, qty] of restockByVariant) {
-      if (qty <= 0) continue;
+    //
+    // INT-AUDIT5-HIGH3: collapse the per-variant serial loop into a
+    // SINGLE batched UPSERT via unnest. Two motivations:
+    //   1. Deterministic lock acquisition order eliminates the deadlock
+    //      window. Map iteration order is insertion order; two refunds
+    //      that touch overlapping variants in different insertion orders
+    //      can each grab a row lock the other needs and 40P01 deadlock.
+    //      A single statement with sorted variantIds acquires locks in
+    //      one stable order across all callers.
+    //   2. Single round-trip mirrors the parent /api/returns PUT path's
+    //      restock query (route.ts:592) — keeps behavior consistent and
+    //      reduces pgbouncer pressure under refund bursts.
+    // Sort the keys so any two concurrent transactions that share a
+    // subset of variants always lock that subset in the same order.
+    const restockEntries = Array.from(restockByVariant.entries())
+      .filter(([, qty]) => qty > 0)
+      .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+    if (restockEntries.length > 0) {
+      const variantIds = restockEntries.map(([id]) => id);
+      const quantities = restockEntries.map(([, qty]) => qty);
       // R30-H1: restock at the ORIGINAL sale's location, not the
       // caller's. See txnResult SELECT above for rationale.
+      // Restocks from refunds must NOT touch received_at on existing
+      // rows (it's the FIFO-aging anchor for supplier receipts);
+      // brand-new rows DO get received_at = NOW() at creation since
+      // there's no prior value. Mirrors /api/returns/route.ts:592.
       await client.query(
         `INSERT INTO inventory_levels (organization_id, product_variant_id, location_id, on_hand, received_at, updated_at)
-         VALUES ($1, $2, $3, $4, NOW(), NOW())
+         SELECT $1, delta.variant_id, $2, delta.qty, NOW(), NOW()
+         FROM (SELECT unnest($3::uuid[]) AS variant_id, unnest($4::int[]) AS qty) AS delta
          ON CONFLICT (product_variant_id, location_id)
          DO UPDATE SET on_hand = inventory_levels.on_hand + EXCLUDED.on_hand,
                        updated_at = NOW()`,
-        [orgId, variantId, restockLocationId, qty]
+        [orgId, restockLocationId, variantIds, quantities]
       );
     }
 

@@ -74,7 +74,10 @@ describe("R83 audit fixes — round 27", () => {
   describe("R83-SEC-H2 HIGH: /api/dashboard buildOrgDayRange", () => {
     const src = read("src/app/api/dashboard/route.ts");
     it("imports + calls buildOrgDayRange", () => {
-      expect(src).toMatch(/const \{ buildOrgDayRange \} = await import\("@\/lib\/reports\/day-range"\);/);
+      // OPS-AUDIT5-HIGH2: also imports getOrgToday now (org-TZ today
+      // for the week/month range anchor), so the import line may
+      // carry both names. Match either form.
+      expect(src).toMatch(/const \{ buildOrgDayRange(?:, getOrgToday)? \} = await import\("@\/lib\/reports\/day-range"\);/);
       expect(src).toMatch(/await buildOrgDayRange\(orgId, fromDay, toDay\)/);
     });
     it("uses EXCLUSIVE upper bound (created_at < $4, not <=)", () => {

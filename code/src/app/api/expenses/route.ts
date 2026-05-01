@@ -131,10 +131,33 @@ export const POST = withAdminAuth("employee.manage", async (request, ctx) => {
     const client = await orgTx(orgId);
     let created: { id: string; category: string; description: string; amount: number; expense_date: string; is_recurring: boolean; recurrence_period: string | null; notes: string | null; location_id: string; created_at: string; updated_at: string };
     try {
+      // OPS-AUDIT5-HIGH2: when expense_date is omitted, default to the
+      // ORG's "today", not UTC's. Prior fallback
+      // `new Date().toISOString().slice(0, 10)` is the UTC calendar
+      // day — for a Pacific-TZ store at 5pm local on Apr 30, the
+      // expense would post against May 1 (UTC has rolled). The shop
+      // owner's end-of-day reconciliation then shows a missing Apr 30
+      // expense and an unexpected May 1 one. Compute org-today via
+      // CURRENT_DATE in the org TZ inside the same SQL round-trip
+      // (no extra query — COALESCE gates on whether $6 is null).
+      // Pass `null` rather than the JS-computed string so PG branches
+      // into the org-TZ fallback.
+      const expenseDateForInsert = expense_date || null;
       const { rows } = await client.query(
         `INSERT INTO expenses (organization_id, location_id, category, description, amount, expense_date, is_recurring, recurrence_period, notes)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, category, description, amount, expense_date, is_recurring, recurrence_period, notes, location_id, created_at, updated_at`,
-        [orgId, locationId, category, description, amount, expense_date || new Date().toISOString().slice(0, 10), is_recurring || false, recurrence_period || null, notes || null],
+         VALUES (
+           $1, $2, $3, $4, $5,
+           COALESCE(
+             $6::date,
+             (now() AT TIME ZONE COALESCE(
+               (SELECT timezone FROM organizations WHERE id = $1),
+               'UTC'
+             ))::date
+           ),
+           $7, $8, $9
+         )
+         RETURNING id, category, description, amount, expense_date, is_recurring, recurrence_period, notes, location_id, created_at, updated_at`,
+        [orgId, locationId, category, description, amount, expenseDateForInsert, is_recurring || false, recurrence_period || null, notes || null],
       );
       created = rows[0] as typeof created;
       await client.query(

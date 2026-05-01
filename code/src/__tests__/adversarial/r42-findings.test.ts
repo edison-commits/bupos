@@ -228,14 +228,18 @@ describe("R42 audit fixes", () => {
       expect(src).toMatch(/openShiftAction\] rpcOpenShift failed:['"], safeErr\(err\)\)/);
     });
     it("admin login audit payload reports classified reason, not raw err.message", () => {
-      const src = read("src/app/admin/actions.ts");
-      // The reason is computed as `const reason = … ? "invalid_credentials" : "internal_error"`
-      // and the audit payload reads `{ email, reason }` — classified strings only.
-      expect(src).toMatch(/["']invalid_credentials["']/);
-      expect(src).toMatch(/["']internal_error["']/);
-      // Ensure the prior-shape raw err.message leak into audit payload
-      // is gone (would match `reason: err.message` literally).
-      expect(src).not.toMatch(/reason:\s*err instanceof Error \? err\.message/);
+      // SEC-AUDIT5-HIGH1: adminLoginAction was deleted in round 5 —
+      // it was a dead Server Action with a weaker rate-limit bucket
+      // than the live login surfaces (loginAction in actions/auth.ts +
+      // /api/auth/login). The R42-K audit-payload test was specifically
+      // about that action's audit shape; with the action gone, there's
+      // no surface for the prior-shape raw-err leak to regress on. The
+      // canonical login path (loginAction) writes its audit via
+      // pgInsertAuditEvent with a classified reason — the assertion
+      // on actions/auth.ts below still covers the regression target.
+      const authSrc = read("src/app/actions/auth.ts");
+      expect(authSrc).toMatch(/["']invalid_credentials["']|admin_login_failed/);
+      expect(authSrc).not.toMatch(/reason:\s*err instanceof Error \? err\.message/);
     });
   });
 

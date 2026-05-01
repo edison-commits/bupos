@@ -393,6 +393,21 @@ export async function checkoutAction(
       const loyaltyTendered = tenders.filter((t) => t.type === "loyalty").reduce((sum, t) => sum + t.amount, 0);
       const giftCardTendered = tenders.filter((t) => t.type === "gift_card").reduce((sum, t) => sum + t.amount, 0);
       const storeCreditTenderedTotal = baseStoreCreditTendered;
+      // INT-AUDIT5-CRIT1: reject carts where non-cash + loyalty tenders
+      // sum to MORE than the grand total. Non-cash tenders (gift card,
+      // store credit, card, etc.) and loyalty redemption do NOT generate
+      // change — only cash does. Prior shape allowed e.g. a $20 sale
+      // tendered as { gift_card: $50, cash: $100 } to clear: cashPortion
+      // clamped to 0 via Math.max, the cashier handed back $100 cash, and
+      // the gift card was still debited the FULL $50. Customer effectively
+      // converted $30 of gift-card balance into cashier-pocketable cash;
+      // a malicious cashier could ring a $20 sale, charge the customer's
+      // gift card $50, and skim $30 from the till. Reject before any
+      // ledger row writes; cashier must re-enter the tender mix correctly.
+      const nonCashPlusLoyalty = Number((nonCashTendered + loyaltyTendered).toFixed(2));
+      if (nonCashPlusLoyalty > totals.grandTotal + 0.005) {
+        redirect(`/register?error=Non-cash+tenders+exceed+sale+total`);
+      }
       const cashPortion = Math.max(0, totals.grandTotal - nonCashTendered - loyaltyTendered);
       changeDue = cashTendered > cashPortion ? Number((cashTendered - cashPortion).toFixed(2)) : 0;
 

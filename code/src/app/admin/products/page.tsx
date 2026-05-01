@@ -7,6 +7,8 @@ import { authFetch } from '@/lib/api/client';
 import { formatCurrency } from '@/lib/format';
 import { csvCell } from '@/lib/format/csv-sanitize';
 import { useDebouncedValue } from '@/lib/hooks/use-debounced-value';
+// FE-AUDIT5-HIGH3: Escape-to-close + role/aria-modal on every modal.
+import { useEscapeClose } from '@/lib/hooks/use-escape-close';
 // R53: step-up re-auth when editing a variant's price or cost.
 // Server /api/products PUT gates bucketKey:'variant-price-stepup'
 // when price or cost drifts; name/SKU/stock etc stay cookie-only.
@@ -753,6 +755,7 @@ function CSVImportModal({
   onClose: () => void;
   saving: boolean;
 }) {
+  useEscapeClose(onClose);
   const [dragOver, setDragOver] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
   const [preview, setPreview] = useState<string[][]>([]);
@@ -816,12 +819,12 @@ function CSVImportModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+    <div role="dialog" aria-modal="true" aria-labelledby="csv-import-modal-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between rounded-t-2xl border-b border-gray-200 px-6 py-4">
           <div>
-            <h2 className="text-xl font-bold text-gray-900">Import Products from CSV</h2>
+            <h2 id="csv-import-modal-title" className="text-xl font-bold text-gray-900">Import Products from CSV</h2>
             <p className="mt-1 text-sm text-gray-500">
               Upload a CSV with columns: name, sku, price, category, size, color, cost, barcode, description
             </p>
@@ -927,6 +930,7 @@ function CSVImportModal({
 }
 
 function AddProductModal({ categories = [], onSave, onClose, saving }: ModalProps) {
+  useEscapeClose(onClose);
   const [formData, setFormData] = useState({
     name: '',
     slug: '',
@@ -946,9 +950,9 @@ function AddProductModal({ categories = [], onSave, onClose, saving }: ModalProp
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+    <div role="dialog" aria-modal="true" aria-labelledby="add-product-modal-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
       <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-lg">
-        <h2 className="mb-4 text-lg font-bold text-emerald-900">Add Product</h2>
+        <h2 id="add-product-modal-title" className="mb-4 text-lg font-bold text-emerald-900">Add Product</h2>
         <div className="space-y-3">
           <input
             type="text"
@@ -1032,6 +1036,7 @@ function AddProductModal({ categories = [], onSave, onClose, saving }: ModalProp
 }
 
 function EditProductModal({ product, categories = [], onSave, onClose, saving }: ModalProps) {
+  useEscapeClose(onClose);
   const [formData, setFormData] = useState<Partial<Product>>(product || {});
 
   const handleSubmit = () => {
@@ -1039,9 +1044,9 @@ function EditProductModal({ product, categories = [], onSave, onClose, saving }:
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+    <div role="dialog" aria-modal="true" aria-labelledby="edit-product-modal-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
       <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-lg">
-        <h2 className="mb-4 text-lg font-bold text-emerald-900">Edit Product</h2>
+        <h2 id="edit-product-modal-title" className="mb-4 text-lg font-bold text-emerald-900">Edit Product</h2>
         <div className="space-y-3">
           <input type="text" placeholder="Product Name" aria-label="Product Name" value={formData.name || ''} onChange={e => setFormData({ ...formData, name: e.target.value })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
           <input type="text" placeholder="Slug" aria-label="URL slug" value={formData.slug || ''} onChange={e => setFormData({ ...formData, slug: e.target.value })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
@@ -1074,6 +1079,7 @@ function EditProductModal({ product, categories = [], onSave, onClose, saving }:
 }
 
 function AddVariantModal({ onSave, onClose, saving }: ModalProps) {
+  useEscapeClose(onClose);
   const [formData, setFormData] = useState({
     sku: '',
     barcode: '',
@@ -1094,9 +1100,9 @@ function AddVariantModal({ onSave, onClose, saving }: ModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+    <div role="dialog" aria-modal="true" aria-labelledby="add-variant-modal-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
       <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-lg">
-        <h2 className="mb-4 text-lg font-bold text-emerald-900">Add Variant</h2>
+        <h2 id="add-variant-modal-title" className="mb-4 text-lg font-bold text-emerald-900">Add Variant</h2>
         <div className="space-y-3">
           <input type="text" placeholder="SKU" aria-label="Variant SKU" value={formData.sku} onChange={e => setFormData({ ...formData, sku: e.target.value })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
           <input type="text" placeholder="Barcode" aria-label="Variant barcode" value={formData.barcode} onChange={e => setFormData({ ...formData, barcode: e.target.value })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
@@ -1125,6 +1131,7 @@ function AddVariantModal({ onSave, onClose, saving }: ModalProps) {
 }
 
 function EditVariantModal({ variant, onSave, onClose, saving }: ModalProps) {
+  useEscapeClose(onClose);
   const [formData, setFormData] = useState<Partial<ProductVariant>>(variant || {});
 
   const handleSubmit = () => {
@@ -1132,9 +1139,9 @@ function EditVariantModal({ variant, onSave, onClose, saving }: ModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+    <div role="dialog" aria-modal="true" aria-labelledby="edit-variant-modal-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
       <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-lg">
-        <h2 className="mb-4 text-lg font-bold text-emerald-900">Edit Variant</h2>
+        <h2 id="edit-variant-modal-title" className="mb-4 text-lg font-bold text-emerald-900">Edit Variant</h2>
         <div className="space-y-3">
           {/* R60-B6: same NaN-silent-zero fix as CreateVariantModal. */}
           <input type="number" placeholder="Price" aria-label="Variant price" step="0.01" value={formData.price || 0} onChange={e => setFormData({ ...formData, price: parseFloat(e.target.value) || 0 })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />

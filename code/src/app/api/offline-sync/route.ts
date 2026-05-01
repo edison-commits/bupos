@@ -756,6 +756,16 @@ export const POST = withDualAuth("register.open", async (request, ctx) => {
     const cashTendered = tenders.filter((t: { type: string }) => t.type === "cash").reduce((sum: number, t: { amount: number }) => sum + t.amount, 0);
     const loyaltyTendered = tenders.filter((t: { type: string }) => t.type === "loyalty").reduce((sum: number, t: { amount: number }) => sum + t.amount, 0);
     const nonCashTendered = tenders.filter((t: { type: string }) => t.type !== "cash" && t.type !== "loyalty").reduce((sum: number, t: { amount: number }) => sum + t.amount, 0);
+    // INT-AUDIT5-CRIT1 (offline-sync sibling): mirror the online checkout
+    // guard. Non-cash + loyalty tenders cannot exceed grandTotal because
+    // they don't generate change — only cash does. An offline cart that
+    // sums non-cash > grandTotal would silently over-debit gift cards /
+    // store credit while paying out cash change. See checkout-action.ts
+    // for the threat model + a worked example.
+    const nonCashPlusLoyalty = Number((nonCashTendered + loyaltyTendered).toFixed(2));
+    if (nonCashPlusLoyalty > grandTotal + 0.005) {
+      return NextResponse.json({ error: "Non-cash tenders exceed sale total" }, { status: 400 });
+    }
     const cashPortion = Math.max(0, grandTotal - nonCashTendered - loyaltyTendered);
     const changeDue = cashTendered > cashPortion ? Number((cashTendered - cashPortion).toFixed(2)) : 0;
     const primaryTenderType = tenders.length === 1 ? tenders[0].type : "split";
@@ -853,7 +863,20 @@ export const POST = withDualAuth("register.open", async (request, ctx) => {
           // Defensive: if another request (e.g. online checkout) burned the
           // same approvals between our SELECT and this UPDATE, fail the sync
           // so thresholds are re-validated on the next retry.
-          if (burnedRows.length !== approvedExceptions.length) {
+          // INT-AUDIT5-MED1: Set-based equality, not length-only. Mirrors
+          // the online checkout-action.ts:942-944 hardening — length
+          // alone matches when both sides have the same count of
+          // duplicates but a DIFFERENT set of codes (e.g. client requested
+          // [A, A, B] and DB burned [A, C, B] — both 3, different sets).
+          // The UNIQUE on (register_session_id, exception_code) makes the
+          // duplicate case theoretical rather than active, but defense-
+          // in-depth aligns the parity check with the canonical approval
+          // gate logic.
+          const requestedSet = new Set(approvedExceptions);
+          const burnedSet = new Set(burnedRows.map((r: { exception_code: string }) => r.exception_code));
+          const equal = requestedSet.size === burnedSet.size &&
+            [...requestedSet].every((c) => burnedSet.has(c));
+          if (!equal) {
             await syncClient.query("ROLLBACK");
             return NextResponse.json({ error: "Approval was consumed by another request" }, { status: 409 });
           }

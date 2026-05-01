@@ -130,11 +130,14 @@ describe("R30 findings", () => {
     });
     it("uses restockLocationId (not ctx.locationId) in inventory writes", () => {
       expect(src).toMatch(/restockLocationId = origLocationId \?\? locationId/);
-      // R77-DB-M2 refactored UPDATE-then-INSERT to a single UPSERT.
-      // Keep the assertion on parameter-list shape (orgId, variantId,
-      // restockLocationId, qty) — the SQL shape is tolerated either
-      // way since the UPSERT is strictly safer under concurrency.
-      expect(src).toMatch(/\[orgId, variantId, restockLocationId, qty\]/);
+      // INT-AUDIT5-HIGH3 refactored the per-variant serial loop into
+      // a SINGLE batched UPSERT via unnest (deterministic lock-order
+      // to eliminate the deadlock window). Parameter shape moved from
+      // `[orgId, variantId, restockLocationId, qty]` (per-iteration)
+      // to `[orgId, restockLocationId, variantIds, quantities]` (one
+      // call). Assert the new shape — restockLocationId is still the
+      // anchor (not ctx.locationId), which is the original intent.
+      expect(src).toMatch(/\[orgId, restockLocationId, variantIds, quantities\]/);
     });
   });
 

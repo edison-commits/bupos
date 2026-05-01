@@ -48,21 +48,37 @@ export const GET = withAdminAuth('audit.view', async (req, ctx) => {
       // → now instead of today-00:00 PT → now. Sibling of
       // R83-SEC-H2 dashboard fix + R83-MED reports hourly + R83
       // /api/export sweep.
-      const { buildOrgDayRange } = await import("@/lib/reports/day-range");
-      const todayStr = now.toISOString().slice(0, 10);
+      // OPS-AUDIT5-HIGH2: use org-TZ today, not UTC.
+      const { buildOrgDayRange, getOrgToday } = await import("@/lib/reports/day-range");
+      const todayStr = await getOrgToday(ctx.orgId);
       const { fromTs: startOfDay } = await buildOrgDayRange(ctx.orgId, todayStr, todayStr);
       dateCondition = ' AND t.created_at >= $3 AND t.created_at < $4';
       dateParams.push(startOfDay, now.toISOString());
     } else if (dateRange === 'week') {
-      const weekAgo = new Date(now);
-      weekAgo.setDate(weekAgo.getDate() - 7);
+      // OPS-AUDIT5-HIGH2: 7 days ago anchored at org-TZ today's
+      // start-of-day, not UTC-now. Prior `setDate(d.getDate() - 7)`
+      // on a UTC Date pulled in returns from "8 days ago in org TZ"
+      // for Pacific stores — the local Apr 24 evening returns showed
+      // up under "this week" on Apr 30 morning (UTC May 1).
+      const { buildOrgDayRange, getOrgToday } = await import("@/lib/reports/day-range");
+      const todayStr = await getOrgToday(ctx.orgId);
+      const weekStart = new Date(todayStr + "T00:00:00Z");
+      weekStart.setUTCDate(weekStart.getUTCDate() - 7);
+      const weekStartStr = weekStart.toISOString().slice(0, 10);
+      const { fromTs: weekFromTs } = await buildOrgDayRange(ctx.orgId, weekStartStr, weekStartStr);
       dateCondition = ' AND t.created_at >= $3';
-      dateParams.push(weekAgo.toISOString());
+      dateParams.push(weekFromTs);
     } else if (dateRange === 'month') {
-      const monthAgo = new Date(now);
-      monthAgo.setMonth(monthAgo.getMonth() - 1);
+      // OPS-AUDIT5-HIGH2: 1 month ago anchored at org-TZ today's
+      // start-of-day. Same rationale as the 'week' branch.
+      const { buildOrgDayRange, getOrgToday } = await import("@/lib/reports/day-range");
+      const todayStr = await getOrgToday(ctx.orgId);
+      const monthStart = new Date(todayStr + "T00:00:00Z");
+      monthStart.setUTCMonth(monthStart.getUTCMonth() - 1);
+      const monthStartStr = monthStart.toISOString().slice(0, 10);
+      const { fromTs: monthFromTs } = await buildOrgDayRange(ctx.orgId, monthStartStr, monthStartStr);
       dateCondition = ' AND t.created_at >= $3';
-      dateParams.push(monthAgo.toISOString());
+      dateParams.push(monthFromTs);
     }
 
     // Append the location filter AFTER the date params so its $N index lines

@@ -43,6 +43,24 @@ export async function makeLayawayPaymentAction(formData: FormData) {
   if (!ALLOWED_TENDERS.has(tenderType)) {
     throw new Error("Invalid tender type");
   }
+  // INT-AUDIT5-MED2: sanity-cap the payment amount. balanceDue is the
+  // primary bound (checked downstream against the layaway row), but
+  // the cash-tender branch INSERTs into pay_in_outs directly —
+  // bypassing /api/cash-drawer's $10,000 cap. Without this guard, a
+  // compromised manager + a layaway with an inflated balance_due
+  // could record an arbitrarily large pay_in (e.g. $10M), inflating
+  // expected cash on shift close enough to hide a real shortage. Cap
+  // at $50K to match the spirit of the cash-drawer cap (allowing
+  // legitimate large layaway payouts on big-ticket items, but
+  // rejecting the laundering vector).
+  const LAYAWAY_PAYMENT_CAP = 50_000;
+  if (amount > LAYAWAY_PAYMENT_CAP) {
+    // Format via formatCurrency to satisfy the `local/no-hand-rolled-
+    // currency` lint rule (and to keep currency formatting consistent
+    // across the app's locale).
+    const { formatCurrency } = await import("@/lib/format");
+    throw new Error(`Layaway payment exceeds the ${formatCurrency(LAYAWAY_PAYMENT_CAP)} per-payment cap`);
+  }
 
   // R36-H1 (authz): `catalog.manage` is ALSO held by `inventory_clerk`
   // (see src/lib/domain/permissions.ts:55) — but an inventory clerk
@@ -559,7 +577,7 @@ export async function cancelLayawayAction(
   revalidatePath("/admin");
 }
 
-export async function collectLayawayAction(layawayId: string) {
+export async function collectLayawayAction(layawayId: string, actorPassword?: string) {
   const ctx = await requireAdminPermission("catalog.manage");
   // R46-M4: tighten to owner/manager — `catalog.manage` is also held
   // by inventory_clerk, who shouldn't be marking layaways as
@@ -569,6 +587,23 @@ export async function collectLayawayAction(layawayId: string) {
   if (ctx.employee.roleKey !== "owner" && ctx.employee.roleKey !== "manager") {
     throw new Error("Layaway collection requires manager authority");
   }
+  // INT-AUDIT5-MED5: step-up re-auth. `paid_in_full → collected` is
+  // the transition that ends the customer's liability and releases
+  // held inventory (the goods physically walk out of the store). A
+  // stolen manager cookie without this gate could mark any
+  // paid-in-full layaway as collected and the merchandise would walk
+  // — paired with a complicit register-side employee, this is a fast
+  // exfil path. Mirrors the makeLayawayPaymentAction + cancelLayawayAction
+  // step-ups already on this surface; bucket key is distinct so a
+  // shared rate-limit can't be drained on one to slip past the other.
+  const { requireStepUp } = await import("@/lib/auth/step-up");
+  const stepUp = await requireStepUp({
+    actorId: ctx.employee.id,
+    orgId: ctx.employee.organizationId,
+    actorPassword: actorPassword ?? "",
+    bucketKey: "layaway-collect-stepup",
+  });
+  if (!stepUp.ok) throw new Error(stepUp.error);
 
   if (isPg()) {
     const orgId = ctx.employee.organizationId;

@@ -7,7 +7,7 @@ import { orgQuery, orgTx } from "@/lib/supabase-rest";
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api/with-auth";
 import { buildOrgDayRange } from "@/lib/reports/day-range";
-import { safeErrorName } from "@/lib/logging/safe-err";
+import { safeErr, safeErrorName, safePgCode } from "@/lib/logging/safe-err";
 
 const REPORT_TYPES = new Set(["summary", "category", "employee", "hourly", "tender", "products", "shifts"]);
 
@@ -117,10 +117,24 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
         return NextResponse.json({ error: `Unknown report type: ${type}` }, { status: 400 });
     }
   } catch (err) {
-    // OPS-AUDIT4-2: whitelist error_name in response _diag (see
-    // /api/dashboard for rationale).
+    // OPS-AUDIT4-2 + OPS-AUDIT5-HIGH1: whitelist error_name + SQLSTATE
+    // in response _diag.
+    // OPS-AUDIT5-HIGH3: emit a structured server log too. The route
+    // returns NextResponse from the catch (rather than throwing), so
+    // withAuth's outer wrapper never sees the error — without this
+    // line, report failures were INVISIBLE in Logpush / Workers Logs.
+    const errNameLog = err instanceof Error ? err.name : 'unknown';
     const errName = safeErrorName(err);
-    const errCode = (err as { code?: string })?.code ?? null;
+    const errCodeLog = (err as { code?: string })?.code ?? null;
+    const errCode = safePgCode(err);
+    console.error(JSON.stringify({
+      level: "error",
+      event: "report_load_failed",
+      type,
+      error_name: errNameLog,
+      pg_code: errCodeLog,
+      error: safeErr(err),
+    }));
     return NextResponse.json({
       error: `Failed to load ${type} report`,
       _diag: { error_name: errName, pg_code: errCode, type },

@@ -646,6 +646,36 @@ export const PUT = withAdminAuth('approval.void_transaction', async (request, ct
         }
         if (refundAmount > 0) {
           if (refundMethod === 'cash' || refundMethod === 'card' || refundMethod === 'original_tender') {
+            // INT-AUDIT5-HIGH1: re-verify the cash/card refund cap RIGHT
+            // HERE before the negative tender insert. The POST handler
+            // ran the cap check at return-creation time, but between
+            // POST(pending|approved) and this PUT(completed) transition,
+            // a parallel refund path (/api/returns/process, register-
+            // side return-action, or another concurrent PUT on a sibling
+            // return for the same txn) can land negative tenders that
+            // shrink the remaining refundable. Without this re-check, two
+            // returns for the same transaction can both clear their
+            // creation-time cap and then both complete — producing
+            // cumulative refund > original cash/card tender. Mirrors the
+            // pattern at /api/returns/process:444-481 + POST line 348-374.
+            const { rows: capRecheckRows } = await client.query(
+              `SELECT COALESCE(SUM(tt.amount), 0)::numeric AS cash_tendered
+                 FROM transaction_tenders tt
+                 JOIN transactions t ON t.id = tt.transaction_id AND t.organization_id = $2
+                WHERE tt.transaction_id = $1
+                  AND tt.tender_type NOT IN ('gift_card', 'store_credit', 'loyalty')`,
+              [retRow.transaction_id, orgId],
+            );
+            const remainingCap = Math.max(0, Number(capRecheckRows[0]?.cash_tendered ?? 0));
+            if (refundAmount > remainingCap + 0.005) {
+              await client.query("ROLLBACK");
+              return NextResponse.json(
+                {
+                  error: `Refund amount ${refundAmount.toFixed(2)} exceeds remaining refundable amount ${remainingCap.toFixed(2)}. Another refund may have completed since this return was approved — re-create the return with the updated amount.`,
+                },
+                { status: 409 },
+              );
+            }
             // Negative-amount convention marks the row as a refund.
             await client.query(
               `INSERT INTO transaction_tenders (id, transaction_id, tender_type, amount, metadata)

@@ -174,7 +174,18 @@ export function LayawayManager({
 
                       {lay.status === "paid_in_full" && (
                         <button
-                          onClick={() => {
+                          onClick={async () => {
+                            // INT-AUDIT5-MED5: prompt for step-up password
+                            // before marking the layaway collected — this
+                            // releases the merchandise from store custody.
+                            const pwd = await promptPassword({
+                              title: "Mark layaway collected?",
+                              description:
+                                "Confirm with your password — collecting releases the merchandise from store custody.",
+                              confirmLabel: "Mark collected",
+                              confirmVariant: "default",
+                            });
+                            if (!pwd) return;
                             // R75-F: surface Server Action errors. Prior
                             // shape swallowed throws into React's
                             // transition boundary — Mark collected did
@@ -182,7 +193,7 @@ export function LayawayManager({
                             // inventory-missing errors.
                             startTransition(async () => {
                               try {
-                                await collectLayawayAction(lay.id);
+                                await collectLayawayAction(lay.id, pwd);
                               } catch (err) {
                                 window.alert(
                                   `Collect failed: ${err instanceof Error ? err.message : String(err)}`,

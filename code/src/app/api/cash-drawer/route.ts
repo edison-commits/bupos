@@ -798,6 +798,14 @@ async function calculateExpectedCash(orgId: string, shiftId: string): Promise<nu
   //    refund was recorded here but the original sale was earlier)
   //   -change_due given back (only for txns whose CREATED_AT is in window)
   //   +pay_ins - pay_outs
+  // INT-AUDIT5-HIGH2: `cash_net` and `cash_change` BOTH must filter
+  // `t.status = 'completed'`. The cash_change subquery already had
+  // the filter; cash_net dropped it. Today every reachable code path
+  // sets transactions.status='completed' before any tender row is
+  // visible, but the asymmetry let any future code path that creates
+  // a non-completed transaction with tender rows (e.g. a future
+  // pre-auth/hold flow) drift expected-cash. Cheap to add and
+  // matches the pattern in closeShiftEnhanced.
   const res = await orgQuery(
     orgId,
     `SELECT
@@ -808,6 +816,7 @@ async function calculateExpectedCash(orgId: string, shiftId: string): Promise<nu
          SELECT SUM(tt.amount) FROM transaction_tenders tt
          JOIN transactions t ON t.id = tt.transaction_id AND t.organization_id = $2
          WHERE t.register_session_id = s.register_session_id
+           AND t.status = 'completed'
            AND tt.tender_type = 'cash'
            AND tt.created_at >= s.opened_at
            AND (s.closed_at IS NULL OR tt.created_at <= s.closed_at)
