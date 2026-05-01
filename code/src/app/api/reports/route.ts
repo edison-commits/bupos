@@ -7,6 +7,7 @@ import { orgQuery, orgTx } from "@/lib/supabase-rest";
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api/with-auth";
 import { buildOrgDayRange } from "@/lib/reports/day-range";
+import { safeErrorName } from "@/lib/logging/safe-err";
 
 const REPORT_TYPES = new Set(["summary", "category", "employee", "hourly", "tender", "products", "shifts"]);
 
@@ -116,7 +117,9 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
         return NextResponse.json({ error: `Unknown report type: ${type}` }, { status: 400 });
     }
   } catch (err) {
-    const errName = err instanceof Error ? err.name : 'unknown';
+    // OPS-AUDIT4-2: whitelist error_name in response _diag (see
+    // /api/dashboard for rationale).
+    const errName = safeErrorName(err);
     const errCode = (err as { code?: string })?.code ?? null;
     return NextResponse.json({
       error: `Failed to load ${type} report`,
@@ -231,9 +234,9 @@ async function getSalesByCategory(orgId: string, locationId: string, from: strin
       COALESCE(SUM((item->>'quantity')::integer * (item->>'unitPrice')::numeric), 0) as revenue
     FROM transactions t
     CROSS JOIN LATERAL jsonb_array_elements(t.cart_snapshot::jsonb -> 'items') AS item
-    JOIN product_variants pv ON pv.id = (item->>'productVariantId')::uuid
-    JOIN products p ON p.id = pv.product_id
-    JOIN categories c ON c.id = p.category_id
+    JOIN product_variants pv ON pv.id = (item->>'productVariantId')::uuid AND pv.organization_id = $1
+    JOIN products p ON p.id = pv.product_id AND p.organization_id = $1
+    JOIN categories c ON c.id = p.category_id AND c.organization_id = $1
     WHERE t.organization_id = $1 AND t.location_id = $2
       AND t.created_at >= $3 AND t.created_at < $4
       AND t.status = 'completed'
@@ -398,8 +401,8 @@ async function getTopProducts(orgId: string, locationId: string, from: string, t
       SUM((item->>'quantity')::integer * (item->>'unitPrice')::numeric) as revenue
     FROM transactions t
     CROSS JOIN LATERAL jsonb_array_elements(t.cart_snapshot::jsonb -> 'items') AS item
-    JOIN product_variants pv ON pv.id = (item->>'productVariantId')::uuid
-    JOIN products p ON p.id = pv.product_id
+    JOIN product_variants pv ON pv.id = (item->>'productVariantId')::uuid AND pv.organization_id = $1
+    JOIN products p ON p.id = pv.product_id AND p.organization_id = $1
     WHERE t.organization_id = $1 AND t.location_id = $2
       AND t.created_at >= $3 AND t.created_at < $4
       AND t.status = 'completed'

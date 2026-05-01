@@ -888,11 +888,19 @@ export async function signInRegister(pin: string, locationId: string, deviceId?:
       `SELECT id, organization_id, is_active FROM locations WHERE id = $1 AND is_active = true LIMIT 1`,
       [locationId],
     );
-    const locOrgId = (locResult.rows[0] as Record<string, unknown>)?.organization_id as string | undefined;
+    // AUTH-AUDIT4-LOW1: verify the location row exists BEFORE
+    // scanning credentials. Prior shape coerced a missing row to
+    // locOrgId=undefined and called pgFindCredentialByPin(pin,
+    // undefined), which treats undefined orgId as "no org filter"
+    // and PBKDF2-verifies the PIN against EVERY credential in the
+    // database (DoS amplification + cross-tenant timing oracle on
+    // the dev/RPC fallback path). Reject the request before the
+    // expensive global scan when the location is unknown.
+    if (!locResult.rows[0]) redirect("/register?error=PIN+login+failed");
+    const locOrgId = (locResult.rows[0] as Record<string, unknown>).organization_id as string;
     const credential = await pgFindCredentialByPin(cleanPin, locOrgId);
 
     if (!credential) redirect("/register?error=PIN+login+failed");
-    if (!locResult.rows[0]) redirect("/register?error=PIN+login+failed");
 
     // check-pool-org-filter: scoped-by-just-looked-up-credential
     const { rows: empRows } = await pool.query(

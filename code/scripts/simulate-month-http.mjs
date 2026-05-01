@@ -41,6 +41,39 @@ const DAYS = Number(process.env.DAYS ?? 30);
 const PIN = process.env.PIN ?? '1111';
 const DELAY_MS = Number(process.env.DELAY_MS ?? 50);
 
+// TST-AUDIT4-1: prod-host guard. The simulation creates real shifts,
+// transactions, and audit rows on the target tenant — pointing at a
+// customer-facing host would corrupt their data. Refuse to run unless
+// the URL is `localhost`, the dev `basicuniformpos.com` (our test
+// host), or an explicit SIMULATE_FORCE=1 override is set. The DB-
+// level _safe-db.mjs guards mutating SQL scripts; this is the HTTP
+// equivalent for the simulation script that hits a live deployment.
+{
+  const url = (() => {
+    try { return new URL(BUPOS_URL); }
+    catch { throw new Error(`[simulate-month-http] BUPOS_URL is not a valid URL: ${BUPOS_URL}`); }
+  })();
+  const host = url.hostname.toLowerCase();
+  const ALLOWED_HOSTS = new Set([
+    'localhost',
+    '127.0.0.1',
+    '::1',
+    '0.0.0.0',
+    'basicuniformpos.com',
+    'www.basicuniformpos.com',
+  ]);
+  if (!ALLOWED_HOSTS.has(host)) {
+    if (process.env.SIMULATE_FORCE !== '1') {
+      throw new Error(
+        `[simulate-month-http] refusing to simulate against host '${host}' ` +
+        `(not in known-test allowlist). Set SIMULATE_FORCE=1 to override; ` +
+        `this script creates real shifts/transactions on the target tenant.`,
+      );
+    }
+    console.warn(`[simulate-month-http] SIMULATE_FORCE=1 — simulating against unknown host '${host}'.`);
+  }
+}
+
 // ─── Small fetch helper that tracks cookies (per-session jar) ────────
 
 function makeJar() {

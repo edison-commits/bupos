@@ -73,7 +73,7 @@ export const POST = withDualAuth("register.open", async (req, ctx) => {
               c.email AS customer_email
        FROM transactions t
        JOIN organizations o ON o.id = t.organization_id
-       LEFT JOIN customers c ON c.id = t.customer_id
+       LEFT JOIN customers c ON c.id = t.customer_id AND c.organization_id = $2
        WHERE t.id = $1 AND t.organization_id = $2`,
       [transactionId, orgId],
     );

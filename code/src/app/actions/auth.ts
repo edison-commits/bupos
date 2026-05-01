@@ -47,6 +47,23 @@ export async function loginAction(_prev: { error: string } | null, formData: For
     // Fail-open on KV error — in-memory bucket above still caps.
   }
 
+  // AUTH-AUDIT4-MED4: DB-layer backstop for the loginAction Server
+  // Action. /api/auth/login already has this; the Server Action did
+  // not. With KV outage that meant per-isolate mem only — on Workers
+  // ~32 isolates effectively 3 × 32 = 96 attempts per email per 5 min.
+  // Shares the `admin-login:` bucket with the HTTP route so an
+  // attacker rotating between the two entry points can't double
+  // their budget.
+  try {
+    const { checkDbRateLimit } = await import("@/lib/auth/db-rate-limit");
+    const dbRl = await checkDbRateLimit(`admin-login:${email}`, { maxAttempts: 10, windowMs: 600_000 });
+    if (!dbRl.allowed) {
+      return { error: "Too many attempts. Try again later." };
+    }
+  } catch {
+    // Fail-open on DB rate-limit error — mem + KV layers still cap.
+  }
+
   const requestHeaders = await headers();
   const origin = requestHeaders.get("origin");
   const host = requestHeaders.get("host");

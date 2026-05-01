@@ -41,8 +41,8 @@ export const GET = withDualAuth("inventory.adjust", async (request, ctx) => {
         orgId,
         `SELECT po.*, s.name as supplier_name, s.contact_name as supplier_contact, s.email as supplier_email, l.name as location_name
          FROM purchase_orders po
-         JOIN suppliers s ON po.supplier_id = s.id
-         JOIN locations l ON po.location_id = l.id
+         JOIN suppliers s ON po.supplier_id = s.id AND s.organization_id = $2
+         JOIN locations l ON po.location_id = l.id AND l.organization_id = $2
          WHERE po.id = $1 AND po.organization_id = $2`,
         [poId, orgId],
       );

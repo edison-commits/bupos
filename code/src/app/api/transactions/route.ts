@@ -116,11 +116,23 @@ export const GET = withAdminAuth("audit.view", async (req, ctx) => {
              FROM transaction_tenders WHERE transaction_id = $1 ORDER BY created_at`,
           [id],
         );
+        // ISO-AUDIT4-HIGH1: `transaction_events` has NO
+        // `organization_id` column (mig 001 lines 300-308). The
+        // prior `te.organization_id = $2` predicate threw SQLSTATE
+        // 42703 (undefined_column) on EVERY detail-view of a
+        // transaction with any events row — every voided / refunded
+        // / manager-overridden sale 500'd. Scope via the parent
+        // transactions table instead — same shape as
+        // /api/audit/route.ts's R28-C1 fix.
+        // check-pool-org-filter: scoped-by-parent-transactions-org
         events = await client.query(
           `SELECT te.*, e.display_name AS actor_name
              FROM transaction_events te
              LEFT JOIN employees e ON e.id = te.actor_employee_id AND e.organization_id = $2
-            WHERE te.transaction_id = $1 AND te.organization_id = $2
+            WHERE te.transaction_id = $1
+              AND te.transaction_id IN (
+                SELECT id FROM transactions WHERE organization_id = $2
+              )
             ORDER BY te.created_at`,
           [id, orgId],
         );

@@ -146,7 +146,14 @@ export async function POST(request: Request) {
 
     // Build success response — session is delivered via HttpOnly cookie only.
     // Never expose sessionId in the response body (prevents leaks via devtools/logs).
-    const isSecure = request.url.startsWith("https");
+    // AUTH-AUDIT4-MED1: route through the centralized
+    // `shouldUseSecureCookie` helper so a Workers deploy without
+    // NODE_ENV=production (preview/staging/canary) still correctly
+    // emits Secure cookies. Prior `request.url.startsWith("https")`
+    // shape forked the rule inline and missed the Workers-runtime
+    // fail-closed branch added in AUTH-LOW1.
+    const { shouldUseSecureCookie } = await import("@/lib/auth/session");
+    const isSecure = shouldUseSecureCookie(request);
     const cookieAttrs = [
       `Path=/`,
       `HttpOnly`,

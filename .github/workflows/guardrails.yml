@@ -104,6 +104,14 @@ jobs:
       - name: No-raw-err-log check
         run: npm run check:logs
 
+      # OPS-AUDIT4 wire-up: check:eslint-guard verifies the local
+      # eslint-rules/index.mjs is intact (no-workers-hazards +
+      # no-raw-err-log custom rules). Was orphaned in package.json
+      # for a round — check:ci-wiring meta-guard caught it. Wire so
+      # tampering with the eslint config breaks CI, not just local.
+      - name: ESLint config guard
+        run: npm run check:eslint-guard
+
       # Meta-guardrail: enforce that every `check:*` script in
       # package.json is invoked from THIS workflow. R23-C-2 showed
       # that adding a npm script without wiring it into CI leaves

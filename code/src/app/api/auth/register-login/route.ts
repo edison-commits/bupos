@@ -44,6 +44,24 @@ export async function POST(request: Request) {
     return Response.json({ error: "PIN and location are required." }, { status: 400 });
   }
 
+  // AUTH-AUDIT4-HIGH1: synthesize a deviceId when the caller doesn't
+  // supply one. Prior shape coerced missing/empty deviceId to NULL,
+  // and `register_sessions.device_id` was inserted as NULL — which
+  // disabled the R28-H5 device-bind check entirely (resolveSession
+  // skips the device-match guard when sessionDeviceId is null,
+  // making the resulting REGISTER_COOKIE replayable from any
+  // browser). The companion form pin-login-form.tsx claimed the
+  // server "synthesizes a device id when missing"; that synthesis
+  // was missing here. Mint one server-side now so every register
+  // session has a deviceId binding even for API clients that don't
+  // send the field. The client cookie is set by the same flow
+  // downstream (signInRegister → setRegisterCookie) so the binding
+  // round-trips.
+  if (!deviceId) {
+    const { randomUUID } = await import("@/lib/uuid");
+    deviceId = randomUUID();
+  }
+
   // R27-H1: per-IP rate limit added. The existing per-PIN / per-location
   // buckets are IP-independent — a 4-digit PIN space (10 000 values)
   // against a 50-employee location, with the per-location cap of 30
@@ -360,7 +378,11 @@ export async function POST(request: Request) {
     // mismatch. Without this cookie, the device_id stored on
     // register_sessions was cosmetic — a stolen REGISTER_COOKIE could
     // be replayed from any browser.
-    const isSecure = request.url.startsWith("https");
+    // AUTH-AUDIT4-MED1: shouldUseSecureCookie covers the Workers-
+    // runtime fail-closed branch (AUTH-LOW1) that the inline
+    // request.url check misses on preview/staging deploys.
+    const { shouldUseSecureCookie } = await import("@/lib/auth/session");
+    const isSecure = shouldUseSecureCookie(request);
     const cookieAttrs = [
       `Path=/`,
       `HttpOnly`,

@@ -6,12 +6,30 @@
  */
 import pg from "pg";
 import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const txt = fs.readFileSync("/Users/edison/Desktop/bupos/code/.env.local", "utf8");
+// TST-AUDIT4-2: resolve .env.local relative to the script's repo root,
+// not a hardcoded absolute path. Prior shape baked
+// `/Users/edison/Desktop/bupos/code/.env.local` into the script —
+// running from any other clone (CI, another dev's box, a worktree
+// under a different parent dir) would `ENOENT` even though the env
+// file is sitting next to the script's package.json.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const envPath = path.resolve(__dirname, "..", ".env.local");
+const txt = fs.readFileSync(envPath, "utf8");
 for (const line of txt.split("\n")) {
   const m = line.match(/^([A-Z_][A-Z0-9_]*)=(.+)$/);
   if (m) process.env[m[1]] = process.env[m[1]] ?? m[2].replace(/^"|"$/g, "");
 }
+
+// TST-AUDIT4-4 (sibling): import the shared safe-db guard so this
+// read-only diagnostic refuses to run against a prod host without an
+// explicit CHECK_FIXTURES_FORCE=1 override (cheap insurance — the
+// queries are read-only but `\dt` against prod still leaks tenant
+// counts to whoever's running the script).
+const { assertSafeTargetDb } = await import("./_safe-db.mjs");
+assertSafeTargetDb({ forceEnv: "CHECK_FIXTURES_FORCE", scriptId: "check-test-fixtures" });
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 

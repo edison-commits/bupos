@@ -402,6 +402,14 @@ export default function ProductsPage() {
     a.href = url;
     a.download = `products-${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
+    // FE-AUDIT4-LOW2: revoke the blob URL after the download fires.
+    // Prior shape leaked the URL (and the underlying Blob memory)
+    // until the document unloaded — a manager exporting catalogues
+    // 20× per session would accumulate ~MB of dead blobs in the
+    // tab. Use rAF-then-revoke so the click handler completes the
+    // navigation before the URL is freed (immediate revoke can race
+    // the browser's download trigger in some Safari builds).
+    requestAnimationFrame(() => URL.revokeObjectURL(url));
   };
 
   if (loading) {
@@ -818,7 +826,7 @@ function CSVImportModal({
               Upload a CSV with columns: name, sku, price, category, size, color, cost, barcode, description
             </p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 ml-4">
+          <button onClick={onClose} aria-label="Close dialog" className="text-gray-400 hover:text-gray-600 ml-4">
             ✕
           </button>
         </div>
@@ -945,6 +953,7 @@ function AddProductModal({ categories = [], onSave, onClose, saving }: ModalProp
           <input
             type="text"
             placeholder="Product Name"
+            aria-label="Product Name"
             value={formData.name}
             onChange={e => setFormData({ ...formData, name: e.target.value, slug: e.target.value.toLowerCase().replace(/\s+/g, '-') })}
             className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
@@ -952,6 +961,7 @@ function AddProductModal({ categories = [], onSave, onClose, saving }: ModalProp
           <input
             type="text"
             placeholder="Slug"
+            aria-label="URL slug"
             value={formData.slug}
             onChange={e => setFormData({ ...formData, slug: e.target.value })}
             className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
@@ -968,6 +978,7 @@ function AddProductModal({ categories = [], onSave, onClose, saving }: ModalProp
           </select>
           <textarea
             placeholder="Description"
+            aria-label="Product description"
             value={formData.description}
             onChange={e => setFormData({ ...formData, description: e.target.value })}
             className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
@@ -976,6 +987,7 @@ function AddProductModal({ categories = [], onSave, onClose, saving }: ModalProp
           <input
             type="text"
             placeholder="Image URL"
+            aria-label="Product image URL"
             value={formData.image_url}
             onChange={e => setFormData({ ...formData, image_url: e.target.value })}
             className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
@@ -1031,16 +1043,16 @@ function EditProductModal({ product, categories = [], onSave, onClose, saving }:
       <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-lg">
         <h2 className="mb-4 text-lg font-bold text-emerald-900">Edit Product</h2>
         <div className="space-y-3">
-          <input type="text" placeholder="Product Name" value={formData.name || ''} onChange={e => setFormData({ ...formData, name: e.target.value })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
-          <input type="text" placeholder="Slug" value={formData.slug || ''} onChange={e => setFormData({ ...formData, slug: e.target.value })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
+          <input type="text" placeholder="Product Name" aria-label="Product Name" value={formData.name || ''} onChange={e => setFormData({ ...formData, name: e.target.value })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
+          <input type="text" placeholder="Slug" aria-label="URL slug" value={formData.slug || ''} onChange={e => setFormData({ ...formData, slug: e.target.value })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
           <select value={formData.category_id || ''} onChange={e => setFormData({ ...formData, category_id: e.target.value || null })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none">
             <option value="">Select Category</option>
             {categories.map(cat => (
               <option key={cat.id} value={cat.id}>{cat.name}</option>
             ))}
           </select>
-          <textarea placeholder="Description" value={formData.description || ''} onChange={e => setFormData({ ...formData, description: e.target.value })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" rows={3} />
-          <input type="text" placeholder="Image URL" value={formData.image_url || ''} onChange={e => setFormData({ ...formData, image_url: e.target.value })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
+          <textarea placeholder="Description" aria-label="Product description" value={formData.description || ''} onChange={e => setFormData({ ...formData, description: e.target.value })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" rows={3} />
+          <input type="text" placeholder="Image URL" aria-label="Product image URL" value={formData.image_url || ''} onChange={e => setFormData({ ...formData, image_url: e.target.value })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
           <div className="flex gap-2">
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={formData.is_active || false} onChange={e => setFormData({ ...formData, is_active: e.target.checked })} />
@@ -1086,11 +1098,11 @@ function AddVariantModal({ onSave, onClose, saving }: ModalProps) {
       <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-lg">
         <h2 className="mb-4 text-lg font-bold text-emerald-900">Add Variant</h2>
         <div className="space-y-3">
-          <input type="text" placeholder="SKU" value={formData.sku} onChange={e => setFormData({ ...formData, sku: e.target.value })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
-          <input type="text" placeholder="Barcode" value={formData.barcode} onChange={e => setFormData({ ...formData, barcode: e.target.value })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
-          <input type="text" placeholder="Variant Name" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
-          <input type="text" placeholder="Size" value={formData.size_label} onChange={e => setFormData({ ...formData, size_label: e.target.value })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
-          <input type="text" placeholder="Color" value={formData.color_label} onChange={e => setFormData({ ...formData, color_label: e.target.value })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
+          <input type="text" placeholder="SKU" aria-label="Variant SKU" value={formData.sku} onChange={e => setFormData({ ...formData, sku: e.target.value })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
+          <input type="text" placeholder="Barcode" aria-label="Variant barcode" value={formData.barcode} onChange={e => setFormData({ ...formData, barcode: e.target.value })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
+          <input type="text" placeholder="Variant Name" aria-label="Variant Name" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
+          <input type="text" placeholder="Size" aria-label="Variant size label" value={formData.size_label} onChange={e => setFormData({ ...formData, size_label: e.target.value })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
+          <input type="text" placeholder="Color" aria-label="Variant color label" value={formData.color_label} onChange={e => setFormData({ ...formData, color_label: e.target.value })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
           {/* R60-B6: `parseFloat("")` is NaN → JSON.stringify emits
               `null` → server Number(null)=0, silently setting price
               to $0 without the step-up prompt (priceChanged=false).
@@ -1099,9 +1111,9 @@ function AddVariantModal({ onSave, onClose, saving }: ModalProps) {
               field sees "0" (obvious wrong value) rather than silent
               zero-pricing. Also: R60-B2 server now rejects null so
               this closes both ends of the funnel. */}
-          <input type="number" placeholder="Price" step="0.01" value={formData.price ?? 0} onChange={e => setFormData({ ...formData, price: parseFloat(e.target.value) || 0 })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
-          <input type="number" placeholder="Compare at Price" step="0.01" value={formData.compare_at_price ?? ''} onChange={e => setFormData({ ...formData, compare_at_price: e.target.value ? (parseFloat(e.target.value) || 0) : null })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
-          <input type="number" placeholder="Cost" step="0.01" value={formData.cost ?? 0} onChange={e => setFormData({ ...formData, cost: parseFloat(e.target.value) || 0 })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
+          <input type="number" placeholder="Price" aria-label="Variant price" step="0.01" value={formData.price ?? 0} onChange={e => setFormData({ ...formData, price: parseFloat(e.target.value) || 0 })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
+          <input type="number" placeholder="Compare at Price" aria-label="Compare-at price (original/list price)" step="0.01" value={formData.compare_at_price ?? ''} onChange={e => setFormData({ ...formData, compare_at_price: e.target.value ? (parseFloat(e.target.value) || 0) : null })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
+          <input type="number" placeholder="Cost" aria-label="Variant cost" step="0.01" value={formData.cost ?? 0} onChange={e => setFormData({ ...formData, cost: parseFloat(e.target.value) || 0 })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
         </div>
         <div className="mt-4 flex gap-2">
           <button onClick={onClose} className="flex-1 rounded-lg border-2 border-emerald-300 px-5 py-4 text-lg font-bold text-emerald-700 hover:bg-emerald-50">Cancel</button>
@@ -1125,9 +1137,9 @@ function EditVariantModal({ variant, onSave, onClose, saving }: ModalProps) {
         <h2 className="mb-4 text-lg font-bold text-emerald-900">Edit Variant</h2>
         <div className="space-y-3">
           {/* R60-B6: same NaN-silent-zero fix as CreateVariantModal. */}
-          <input type="number" placeholder="Price" step="0.01" value={formData.price || 0} onChange={e => setFormData({ ...formData, price: parseFloat(e.target.value) || 0 })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
-          <input type="number" placeholder="Cost" step="0.01" value={formData.cost || 0} onChange={e => setFormData({ ...formData, cost: parseFloat(e.target.value) || 0 })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
-          <input type="number" placeholder="Stock" value={formData.stock || 0} onChange={e => setFormData({ ...formData, stock: parseInt(e.target.value) || 0 })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
+          <input type="number" placeholder="Price" aria-label="Variant price" step="0.01" value={formData.price || 0} onChange={e => setFormData({ ...formData, price: parseFloat(e.target.value) || 0 })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
+          <input type="number" placeholder="Cost" aria-label="Variant cost" step="0.01" value={formData.cost || 0} onChange={e => setFormData({ ...formData, cost: parseFloat(e.target.value) || 0 })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
+          <input type="number" placeholder="Stock" aria-label="Variant stock count" value={formData.stock || 0} onChange={e => setFormData({ ...formData, stock: parseInt(e.target.value) || 0 })} className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
         </div>
         <div className="mt-4 flex gap-2">
           <button onClick={onClose} className="flex-1 rounded-lg border-2 border-emerald-300 px-5 py-4 text-lg font-bold text-emerald-700 hover:bg-emerald-50">Cancel</button>

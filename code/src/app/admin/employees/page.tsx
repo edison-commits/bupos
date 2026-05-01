@@ -420,6 +420,7 @@ export default function EmployeeManagement() {
             <span>{success}</span>
             <button
               onClick={() => setSuccess(null)}
+              aria-label="Dismiss success message"
               className="text-emerald-600 hover:text-emerald-800"
             >
               ✕
@@ -435,6 +436,7 @@ export default function EmployeeManagement() {
             <span>{error}</span>
             <button
               onClick={() => setError(null)}
+              aria-label="Dismiss error message"
               className="text-red-600 hover:text-red-800"
             >
               ✕

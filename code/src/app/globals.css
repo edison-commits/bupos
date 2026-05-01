@@ -585,28 +585,93 @@ html.dark .text-yellow-700 { color: #fde68a !important; }
 /* indigo / violet */
 html.dark .bg-indigo-50 { background-color: rgba(99, 102, 241, 0.1) !important; }
 html.dark .bg-indigo-100 { background-color: rgba(99, 102, 241, 0.18) !important; }
+html.dark .border-indigo-100 { border-color: rgba(99, 102, 241, 0.2) !important; }
 html.dark .border-indigo-200 { border-color: rgba(99, 102, 241, 0.3) !important; }
 html.dark .text-indigo-900 { color: #a5b4fc !important; }
 html.dark .text-indigo-800 { color: #a5b4fc !important; }
 html.dark .text-indigo-700 { color: #a5b4fc !important; }
+html.dark .text-indigo-600 { color: #818cf8 !important; }
 html.dark .bg-violet-50 { background-color: rgba(139, 92, 246, 0.1) !important; }
 html.dark .bg-violet-100 { background-color: rgba(139, 92, 246, 0.18) !important; }
+html.dark .border-violet-100 { border-color: rgba(139, 92, 246, 0.2) !important; }
+html.dark .border-violet-200 { border-color: rgba(139, 92, 246, 0.3) !important; }
+html.dark .text-violet-900 { color: #c4b5fd !important; }
+html.dark .text-violet-800 { color: #c4b5fd !important; }
 html.dark .text-violet-700 { color: #c4b5fd !important; }
+html.dark .text-violet-600 { color: #a78bfa !important; }
 
-/* lime / cyan / sky / rose / pink / fuchsia (lower-volume) */
+/* FE-AUDIT4-MED1: full coverage parity for the lower-volume family
+   (lime / cyan / sky / rose / pink / fuchsia). Prior shape only had
+   a single `-50` bg + `-700` text per family — pages using `-100`
+   bg, `-200` border, or `-800/-900` text still rendered the bright
+   light pastel on the dark page background. Mirror the structure of
+   the higher-volume blocks above. */
+
+/* lime */
 html.dark .bg-lime-50 { background-color: rgba(132, 204, 22, 0.1) !important; }
+html.dark .bg-lime-100 { background-color: rgba(132, 204, 22, 0.18) !important; }
+html.dark .border-lime-100 { border-color: rgba(132, 204, 22, 0.2) !important; }
+html.dark .border-lime-200 { border-color: rgba(132, 204, 22, 0.3) !important; }
+html.dark .text-lime-900 { color: #bef264 !important; }
+html.dark .text-lime-800 { color: #bef264 !important; }
 html.dark .text-lime-700 { color: #bef264 !important; }
+html.dark .text-lime-600 { color: #a3e635 !important; }
+
+/* cyan */
 html.dark .bg-cyan-50 { background-color: rgba(6, 182, 212, 0.1) !important; }
 html.dark .bg-cyan-100 { background-color: rgba(6, 182, 212, 0.18) !important; }
+html.dark .border-cyan-100 { border-color: rgba(6, 182, 212, 0.2) !important; }
 html.dark .border-cyan-200 { border-color: rgba(6, 182, 212, 0.3) !important; }
+html.dark .text-cyan-900 { color: #67e8f9 !important; }
+html.dark .text-cyan-800 { color: #67e8f9 !important; }
 html.dark .text-cyan-700 { color: #67e8f9 !important; }
 html.dark .text-cyan-600 { color: #22d3ee !important; }
+
+/* sky */
 html.dark .bg-sky-50 { background-color: rgba(14, 165, 233, 0.1) !important; }
+html.dark .bg-sky-100 { background-color: rgba(14, 165, 233, 0.18) !important; }
+html.dark .border-sky-100 { border-color: rgba(14, 165, 233, 0.2) !important; }
+html.dark .border-sky-200 { border-color: rgba(14, 165, 233, 0.3) !important; }
+html.dark .text-sky-900 { color: #7dd3fc !important; }
+html.dark .text-sky-800 { color: #7dd3fc !important; }
 html.dark .text-sky-700 { color: #7dd3fc !important; }
+html.dark .text-sky-600 { color: #38bdf8 !important; }
+
+/* rose */
 html.dark .bg-rose-50 { background-color: rgba(244, 63, 94, 0.1) !important; }
+html.dark .bg-rose-100 { background-color: rgba(244, 63, 94, 0.18) !important; }
+html.dark .border-rose-100 { border-color: rgba(244, 63, 94, 0.2) !important; }
+html.dark .border-rose-200 { border-color: rgba(244, 63, 94, 0.3) !important; }
+html.dark .text-rose-900 { color: #fda4af !important; }
+html.dark .text-rose-800 { color: #fda4af !important; }
 html.dark .text-rose-700 { color: #fda4af !important; }
+html.dark .text-rose-600 { color: #fb7185 !important; }
+
+/* pink */
 html.dark .bg-pink-50 { background-color: rgba(236, 72, 153, 0.1) !important; }
+html.dark .bg-pink-100 { background-color: rgba(236, 72, 153, 0.18) !important; }
+html.dark .border-pink-100 { border-color: rgba(236, 72, 153, 0.2) !important; }
+html.dark .border-pink-200 { border-color: rgba(236, 72, 153, 0.3) !important; }
+html.dark .text-pink-900 { color: #f9a8d4 !important; }
+html.dark .text-pink-800 { color: #f9a8d4 !important; }
 html.dark .text-pink-700 { color: #f9a8d4 !important; }
+html.dark .text-pink-600 { color: #f472b6 !important; }
+
+/* fuchsia */
+html.dark .bg-fuchsia-50 { background-color: rgba(217, 70, 239, 0.1) !important; }
+html.dark .bg-fuchsia-100 { background-color: rgba(217, 70, 239, 0.18) !important; }
+html.dark .border-fuchsia-100 { border-color: rgba(217, 70, 239, 0.2) !important; }
+html.dark .border-fuchsia-200 { border-color: rgba(217, 70, 239, 0.3) !important; }
+html.dark .text-fuchsia-900 { color: #f0abfc !important; }
+html.dark .text-fuchsia-800 { color: #f0abfc !important; }
+html.dark .text-fuchsia-700 { color: #f0abfc !important; }
+html.dark .text-fuchsia-600 { color: #e879f9 !important; }
+
+/* yellow / orange / purple — fill remaining gaps for parity */
+html.dark .border-yellow-100 { border-color: rgba(234, 179, 8, 0.2) !important; }
+html.dark .text-yellow-600 { color: #facc15 !important; }
+html.dark .border-orange-100 { border-color: rgba(249, 115, 22, 0.2) !important; }
+html.dark .border-purple-100 { border-color: rgba(168, 85, 247, 0.2) !important; }
 
 /* ───────────────────────────────────────────────────────────────────
    Native <select> dropdown styling in dark mode

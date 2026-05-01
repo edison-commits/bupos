@@ -110,7 +110,12 @@ describe("R28 wave-2 HIGH fixes", () => {
     const src = read("src/app/api/auth/revoke-all-sessions/route.ts");
 
     it("clear-cookie emits Secure when request URL is HTTPS", () => {
-      expect(src).toMatch(/isSecure = req\.url\.startsWith\("https:\/\/"\)/);
+      // AUTH-AUDIT4-MED1: migrated from inline `req.url.startsWith` to the
+      // shared `shouldUseSecureCookie(req)` helper so the Workers-runtime
+      // branch (where NODE_ENV is missing) is treated consistently with
+      // the login + register-login routes. Assert against the helper call
+      // shape now.
+      expect(src).toMatch(/shouldUseSecureCookie\(req\)/);
       expect(src).toMatch(/isSecure \? \["Secure"\] : \[\]/);
     });
 

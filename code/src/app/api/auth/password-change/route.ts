@@ -122,6 +122,29 @@ export async function POST(req: NextRequest) {
     // Fail-open on KV error.
   }
 
+  // AUTH-AUDIT4-MED3: DB-layer rate-limit backstop. Without this,
+  // KV unavailability (binding rename / namespace outage) reduces
+  // the password-change gate to per-isolate in-memory only — on
+  // Workers ~32 isolates that's effectively 3 × 32 = 96 password
+  // guesses per 5 min per employee with a stolen cookie. /api/auth/
+  // login already has the 3-layer (mem/KV/DB) defense; mirror it
+  // here so password-change can't be brute-forced via KV outage.
+  try {
+    const { checkDbRateLimit } = await import("@/lib/auth/db-rate-limit");
+    const dbRl = await checkDbRateLimit(`pwd-change:${ctx.employee.id}`, { maxAttempts: 6, windowMs: 600_000 });
+    if (!dbRl.allowed) {
+      logRateLimited({ bucket: "pwd-change", layer: "db", actor });
+      return NextResponse.json(
+        { error: "Too many attempts. Try again later." },
+        { status: 429 },
+      );
+    }
+  } catch {
+    // Fail-open on DB rate-limit error — the mem + KV layers above
+    // still gate, and a DB outage means the password-change can't
+    // actually mutate the row anyway.
+  }
+
   try {
     // R52-C / R54-Framework-1 / R56-B3: password rotation + session
     // wipe + audit all atomic, but with NO CPU-heavy work held under

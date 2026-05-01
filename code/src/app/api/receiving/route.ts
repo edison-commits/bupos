@@ -33,8 +33,8 @@ export const GET = withDualAuth("inventory.adjust", async (request, ctx) => {
           COALESCE(SUM(pol.quantity_ordered), 0)::int as total_units_ordered,
           COALESCE(SUM(pol.quantity_received), 0)::int as total_units_received
         FROM purchase_orders po
-        JOIN suppliers s ON po.supplier_id = s.id
-        JOIN locations l ON po.location_id = l.id
+        JOIN suppliers s ON po.supplier_id = s.id AND s.organization_id = $1
+        JOIN locations l ON po.location_id = l.id AND l.organization_id = $1
         LEFT JOIN purchase_order_lines pol ON po.id = pol.purchase_order_id
         WHERE po.organization_id = $1
           AND po.status IN ('pending', 'partial')

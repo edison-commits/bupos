@@ -392,15 +392,25 @@ export async function cancelLayawayAction(
         // refund was issued, but the customer has nothing to redeem.
         // Now we bail out loudly and push the operator toward
         // `refund_cash` instead.
+        // INT-AUDIT4-MED2: also gate on is_active = true. Soft-deleted
+        // customers (is_active = false) shouldn't receive new store
+        // credit — a credit issued to a deactivated profile can't be
+        // redeemed at the register because admin/customers/page.tsx
+        // hides inactive customers from the lookup. The ledger row
+        // would still exist but the credit would be effectively
+        // orphaned (and worse, if the customer is later re-activated,
+        // they'd get unexpected credit from a transaction they may not
+        // remember). Push the operator toward refund_cash for inactive
+        // customers, same as the missing-row case.
         const { rows: balRows } = await client.query(
           `SELECT COALESCE(store_credit_balance, 0) AS balance FROM customers
-            WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
+            WHERE id = $1 AND organization_id = $2 AND is_active = true FOR UPDATE`,
           [layaway.customer_id, orgId],
         );
         if (balRows.length === 0) {
           await client.query("ROLLBACK");
           throw new Error(
-            "Cannot refund to store credit: the layaway's customer has been removed. Use refund_cash instead, or restore the customer record first.",
+            "Cannot refund to store credit: the layaway's customer has been removed or deactivated. Use refund_cash instead, or restore the customer record first.",
           );
         }
         const prevBalance = Number(balRows[0].balance ?? 0);
@@ -411,9 +421,16 @@ export async function cancelLayawayAction(
            VALUES ($1, $2, 'refund', $3, $4, $5, $6)`,
           [orgId, layaway.customer_id, depositPaid, newBalance, ctx.employee.id, reason || "Layaway cancelled — store credit refund"],
         );
+        // INT-AUDIT4-MED2: defense-in-depth — the FOR UPDATE above
+        // already gated on is_active, but a concurrent UPDATE flipping
+        // is_active=false between the SELECT lock and this UPDATE is
+        // technically possible if another connection skips the FOR
+        // UPDATE (e.g. a maintenance script). Mirror the filter so a
+        // race-loser deactivation doesn't slip a credit into a
+        // soft-deleted row.
         const upd = await client.query(
           `UPDATE customers SET store_credit_balance = $1, updated_at = NOW()
-            WHERE id = $2 AND organization_id = $3`,
+            WHERE id = $2 AND organization_id = $3 AND is_active = true`,
           [newBalance, layaway.customer_id, orgId],
         );
         // Defensive invariant — the FOR UPDATE row lock above should

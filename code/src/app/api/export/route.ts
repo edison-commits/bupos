@@ -119,8 +119,8 @@ export const GET = withAdminAuth("reports.export", async (req, ctx) => {
                   l.name AS location,
                   EXTRACT(DAY FROM now() - il.received_at)::int AS days_on_shelf
            FROM inventory_levels il
-           JOIN product_variants pv ON pv.id = il.product_variant_id
-           JOIN products p ON p.id = pv.product_id
+           JOIN product_variants pv ON pv.id = il.product_variant_id AND pv.organization_id = $1
+           JOIN products p ON p.id = pv.product_id AND p.organization_id = $1
            JOIN locations l ON l.id = il.location_id AND l.organization_id = $1
            WHERE il.organization_id = $1 AND il.location_id = $2
            ORDER BY p.name, pv.sku`,

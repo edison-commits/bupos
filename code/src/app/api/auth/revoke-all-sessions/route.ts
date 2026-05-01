@@ -105,6 +105,25 @@ export async function POST(req: NextRequest) {
     // Fail-open on KV error; in-memory bucket still caps.
   }
 
+  // AUTH-AUDIT4-MED3: DB-layer rate-limit backstop (mirror /api/auth/
+  // password-change). Shares the `pwd-change:` bucket prefix because
+  // a stolen cookie can pivot between revoke-all-sessions and
+  // password-change to deplete one of them and continue brute-
+  // forcing on the other.
+  try {
+    const { checkDbRateLimit } = await import("@/lib/auth/db-rate-limit");
+    const dbRl = await checkDbRateLimit(`pwd-change:${ctx.employee.id}`, { maxAttempts: 6, windowMs: 600_000 });
+    if (!dbRl.allowed) {
+      logRateLimited({ bucket: "pwd-change", layer: "db", actor });
+      return NextResponse.json(
+        { error: "Too many attempts. Try again later." },
+        { status: 429 },
+      );
+    }
+  } catch {
+    // Fail-open on DB rate-limit error.
+  }
+
   try {
     // R52-E / R54-L1 / R56-B4: credential verify OUTSIDE the tx; tx
     // re-reads with FOR UPDATE + TOCTOU-guards via password_hash
@@ -213,7 +232,11 @@ export async function POST(req: NextRequest) {
     // may be kept by the browser. Also add Max-Age=0 belt-and-braces
     // with Expires=1970 so browsers that prefer one over the other
     // both drop the cookie.
-    const isSecure = req.url.startsWith("https://");
+    // AUTH-AUDIT4-MED1: route through shouldUseSecureCookie so the
+    // clearing cookies match the Workers-runtime branch when
+    // NODE_ENV is missing (preview / canary deploys).
+    const { shouldUseSecureCookie } = await import("@/lib/auth/session");
+    const isSecure = shouldUseSecureCookie(req);
     const r = NextResponse.json({ success: true });
     const clearAttrs = [
       `Path=/`,

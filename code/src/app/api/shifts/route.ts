@@ -5,7 +5,7 @@ import { randomUUID } from "@/lib/uuid";
 import { withDualAuth, withAdminAuth } from "@/lib/api/with-auth";
 import { validateBody, shiftCreateSchema } from "@/lib/validation/schemas";
 
-import { safeErr } from "@/lib/logging/safe-err";
+import { safeErr, safeErrorName } from "@/lib/logging/safe-err";
 export const GET = withDualAuth("register.open", async (req, ctx) => {
   const { orgId, locationId } = ctx;
   try {
@@ -128,7 +128,10 @@ export const GET = withDualAuth("register.open", async (req, ctx) => {
     // Surface error class + pg code in BOTH structured log AND
     // response _diag so ops can triage from devtools without
     // Worker-log access. Same shape as /api/dashboard.
+    // OPS-AUDIT4-2: full error.name in structured log, whitelist
+    // version in response _diag (see /api/dashboard for rationale).
     const errName = error instanceof Error ? error.name : 'unknown';
+    const errNameSafe = safeErrorName(error);
     const errCode = (error as { code?: string })?.code ?? null;
     console.error(JSON.stringify({
       level: "error",
@@ -139,7 +142,7 @@ export const GET = withDualAuth("register.open", async (req, ctx) => {
     }));
     return NextResponse.json({
       error: "Failed to load shifts",
-      _diag: { error_name: errName, pg_code: errCode },
+      _diag: { error_name: errNameSafe, pg_code: errCode },
     }, { status: 500 });
   }
 });
@@ -263,17 +266,71 @@ export const POST = withAdminAuth('register.open', async (req, ctx) => {
         { status: 403 },
       );
     }
+
+    // INT-AUDIT4-MED1: classify pg unique_violation 23505 from the
+    // race-loser tx. Two concurrent POSTs both pass pgOpenShift's
+    // SELECT FOR UPDATE check (no row to lock when none exists),
+    // then race the INSERT. The losing tx hits one of three partial
+    // unique indexes:
+    //   - idx_shifts_one_open_per_employee (mig 043)
+    //   - idx_shifts_one_open_per_register (mig 045)
+    //   - idx_shifts_org_idempotency_key   (mig 045/048)
+    // The pg error message ("duplicate key value violates unique
+    // constraint…") doesn't match the /already has an open shift/
+    // regex above, so prior shape returned a generic 500. Map back
+    // to 409 Conflict for the open-shift races, and mirror the
+    // idempotent-replay shape for the idempotency-key race.
+    const pgCode = (error as { code?: string })?.code;
+    const pgConstraint = (error as { constraint?: string })?.constraint;
+    if (pgCode === '23505') {
+      if (pgConstraint && /shifts_one_open_per_employee|shifts_one_open_per_register/i.test(pgConstraint)) {
+        return NextResponse.json(
+          { error: "Employee already has an open shift. Close it before opening a new one." },
+          { status: 409 },
+        );
+      }
+      if (pgConstraint && /idempotency/i.test(pgConstraint)) {
+        // Race winner already inserted with this idempotency key —
+        // re-SELECT and return the same payload so the caller sees
+        // an idempotent success.
+        if (idempotencyKey) {
+          const replay = await orgQuery(
+            orgId,
+            `SELECT id, employee_id, location_id, opening_float, status, opened_at FROM shifts WHERE organization_id = $1 AND idempotency_key = $2 LIMIT 1`,
+            [orgId, idempotencyKey],
+          ).catch(() => null);
+          if (replay && replay.rows.length > 0) {
+            return NextResponse.json({ shift: replay.rows[0], success: true, _idempotent: true });
+          }
+        }
+        // Couldn't replay — surface as 409 (still better than 500).
+        return NextResponse.json(
+          { error: "Idempotency key conflict. Retry with a new key." },
+          { status: 409 },
+        );
+      }
+    }
+
     // Structured log for ops triage — error class + pg code surface
     // in Logpush so the actual root cause of 500s is queryable.
+    // OPS-AUDIT4-2: full error.name in structured log, whitelist
+    // version in response _diag (see /api/dashboard for rationale).
     const errName = error instanceof Error ? error.name : 'unknown';
+    const errNameSafe = safeErrorName(error);
     const errCode = (error as { code?: string })?.code ?? null;
     console.error(JSON.stringify({
       level: "error",
       event: "shift_open_failed",
       error_name: errName,
       pg_code: errCode,
+      pg_constraint: pgConstraint ?? null,
       error: safeErr(error),
     }));
-    return NextResponse.json({ error: "Failed to open shift" }, { status: 500 });
+    // OPS-AUDIT4-1: include _diag in 500 response to match the
+    // pattern in /api/dashboard, /api/shifts GET, /api/reports.
+    return NextResponse.json({
+      error: "Failed to open shift",
+      _diag: { error_name: errNameSafe, pg_code: errCode },
+    }, { status: 500 });
   }
 });

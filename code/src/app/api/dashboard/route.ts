@@ -3,7 +3,7 @@ import { orgTx } from "@/lib/supabase-rest";
 import { withAuth } from "@/lib/api/with-auth";
 
 
-import { safeErr } from "@/lib/logging/safe-err";
+import { safeErr, safeErrorName } from "@/lib/logging/safe-err";
 /**
  * GET /api/dashboard
  *
@@ -242,18 +242,24 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
     // bound-param values). Class + code are structurally safe and
     // surface enough signal that an admin reading the response in
     // browser devtools can debug without Worker-log access.
-    const errName = error instanceof Error ? error.name : 'unknown';
+    // OPS-AUDIT4-2: structured log carries the FULL error.name so
+    // ops can debug with full signal in Logpush, but the response
+    // body's `_diag.error_name` is whitelisted via safeErrorName so
+    // a custom Error subclass name (e.g. from a 3rd-party SDK) can't
+    // leak to a browser devtools request inspector.
+    const errNameLog = error instanceof Error ? error.name : 'unknown';
+    const errNameSafe = safeErrorName(error);
     const errCode = (error as { code?: string })?.code ?? null;
     console.error(JSON.stringify({
       level: "error",
       event: "dashboard_load_failed",
-      error_name: errName,
+      error_name: errNameLog,
       pg_code: errCode,
       error: safeErr(error),
     }));
     return NextResponse.json({
       error: "Failed to load dashboard",
-      _diag: { error_name: errName, pg_code: errCode },
+      _diag: { error_name: errNameSafe, pg_code: errCode },
     }, { status: 500 });
   }
 });

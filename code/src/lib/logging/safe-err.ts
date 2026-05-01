@@ -45,3 +45,45 @@ export function safeErr(err: unknown): Record<string, unknown> {
   }
   return { value: scrubPgDetail(String(err)).slice(0, 200) };
 }
+
+// OPS-AUDIT4-2: error_name surfaces in 500 response bodies (`_diag.
+// error_name`) so ops can triage from devtools. Whitelist to a known-
+// safe set so a custom Error subclass with a sensitive name (e.g.
+// `BillingApiTokenInvalidError` from a hypothetical 3rd-party SDK)
+// doesn't leak via the response. Anything outside the whitelist is
+// reported as `OtherError` — the actual class name still goes to
+// the structured server log via safeErr.
+//
+// Implementation note: deliberately a `function isSafeErrorName` with
+// inline string comparisons rather than a module-scope `new Set([...])`.
+// The eslint `local/no-workers-hazards` rule rejects module-scope
+// mutable containers because callers could `.add` / `.delete` and
+// leak state across Worker isolates. With <15 entries the .includes
+// scan is well below any real perf threshold.
+function isSafeErrorName(name: string): boolean {
+  switch (name) {
+    case "Error":
+    case "TypeError":
+    case "RangeError":
+    case "SyntaxError":
+    case "ReferenceError":
+    case "URIError":
+    case "EvalError":
+    // node-postgres error class
+    case "DatabaseError":
+    // Standard fetch/AbortController
+    case "AbortError":
+    // zod
+    case "ZodError":
+      return true;
+    default:
+      return false;
+  }
+}
+
+export function safeErrorName(err: unknown): string {
+  if (err instanceof Error) {
+    return isSafeErrorName(err.name) ? err.name : "OtherError";
+  }
+  return "unknown";
+}

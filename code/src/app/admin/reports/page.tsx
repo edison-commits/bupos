@@ -193,6 +193,10 @@ export default function ReportsPage() {
     a.href = url;
     a.download = `${activeReport}-report-${from}-to-${to}.csv`;
     a.click();
+    // FE-AUDIT4-LOW2: revoke the blob URL after the download fires.
+    // See products/page.tsx export comment for rationale + the
+    // rAF-then-revoke timing choice.
+    requestAnimationFrame(() => window.URL.revokeObjectURL(url));
   };
 
   return (
