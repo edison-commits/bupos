@@ -674,6 +674,33 @@ html.dark .border-orange-100 { border-color: rgba(249, 115, 22, 0.2) !important;
 html.dark .border-purple-100 { border-color: rgba(168, 85, 247, 0.2) !important; }
 
 /* ───────────────────────────────────────────────────────────────────
+   Light page-wrapper gradients → dark surface in dark mode
+   ───────────────────────────────────────────────────────────────────
+   Several admin pages (inventory, customers, loyalty, promos, shift-
+   close, products loading skeleton) use a hardcoded light gradient on
+   their full-page wrapper:
+       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
+   The single-color overrides above cover `bg-slate-50` etc. but
+   Tailwind's gradient-image utilities (`bg-gradient-to-br` + `from-…
+   -50` + `to-…-100`) compose into a `linear-gradient(...)` background
+   IMAGE that escapes any single-class rule. Result on dark mode: the
+   wrapper paints a near-white gradient, and KPI cards using
+   `bg-{color}-50` (now correctly alpha-0.1 dark tints) sit on top of
+   white and appear bright pastel.
+   Kill the gradient in dark mode and fall back to the page surface
+   colour so the alpha-tinted cards composite over dark, as designed. */
+html.dark .bg-gradient-to-br.from-slate-50,
+html.dark .bg-gradient-to-br.from-zinc-50,
+html.dark .bg-gradient-to-br.from-gray-50,
+html.dark .bg-gradient-to-br.from-emerald-50,
+html.dark .bg-gradient-to-br.from-teal-50,
+html.dark .bg-gradient-to-br.from-blue-50,
+html.dark .bg-gradient-to-br.from-amber-50 {
+  background-image: none !important;
+  background-color: var(--surface-app) !important;
+}
+
+/* ───────────────────────────────────────────────────────────────────
    Native <select> dropdown styling in dark mode
    ───────────────────────────────────────────────────────────────────
    Inventory / shifts / audit pages use unstyled <select> elements.
