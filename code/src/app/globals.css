@@ -475,6 +475,190 @@ html.dark textarea::placeholder {
   opacity: 1;
 }
 
+/* ───────────────────────────────────────────────────────────────────
+   Pastel-tinted "summary cards" → subtle dark tints in dark mode
+   ───────────────────────────────────────────────────────────────────
+   Many KPI / status cards use `bg-{color}-50` with `border-{color}-200`
+   and `text-{color}-700`. Those resolve to LIGHT pastels intended for
+   light-mode cards on a white page. On the dark page background
+   (#09090b) those pastel cards look like they belong to a different
+   app — bright cyan / amber / red blocks pasted onto navy.
+
+   Map every commonly-used semantic-color tinted surface to a
+   tint-on-dark equivalent using the {color}-500 hex at 12% / 30% /
+   50% alpha. The card keeps its semantic colour identity but reads
+   as part of the dark theme. Text in {color}-700 lifts to {color}-300
+   so it stays legible on the new tinted-dark surface.
+
+   Family list ordered by occurrence count from the codebase audit:
+   emerald (121), red (119), teal (66), amber (60), blue (32),
+   green (17), purple (12), orange (10), yellow (8), indigo (6),
+   violet (4), lime (4), cyan (4), sky (3), rose (3).
+*/
+
+/* emerald (active states, success, positive metrics) */
+html.dark .bg-emerald-50 { background-color: rgba(16, 185, 129, 0.1) !important; }
+html.dark .bg-emerald-100 { background-color: rgba(16, 185, 129, 0.18) !important; }
+html.dark .border-emerald-100 { border-color: rgba(16, 185, 129, 0.2) !important; }
+html.dark .border-emerald-200 { border-color: rgba(16, 185, 129, 0.3) !important; }
+html.dark .text-emerald-900 { color: #6ee7b7 !important; }
+html.dark .text-emerald-800 { color: #6ee7b7 !important; }
+html.dark .text-emerald-700 { color: #6ee7b7 !important; }
+html.dark .text-emerald-600 { color: #34d399 !important; }
+
+/* red (errors, destructive, alerts) */
+html.dark .bg-red-50 { background-color: rgba(239, 68, 68, 0.1) !important; }
+html.dark .bg-red-100 { background-color: rgba(239, 68, 68, 0.18) !important; }
+html.dark .border-red-100 { border-color: rgba(239, 68, 68, 0.2) !important; }
+html.dark .border-red-200 { border-color: rgba(239, 68, 68, 0.3) !important; }
+html.dark .text-red-900 { color: #fca5a5 !important; }
+html.dark .text-red-800 { color: #fca5a5 !important; }
+html.dark .text-red-700 { color: #fca5a5 !important; }
+html.dark .text-red-600 { color: #f87171 !important; }
+
+/* teal (brand accent — Total Products card etc.) */
+html.dark .bg-teal-50 { background-color: rgba(20, 184, 166, 0.1) !important; }
+html.dark .bg-teal-100 { background-color: rgba(20, 184, 166, 0.18) !important; }
+html.dark .border-teal-100 { border-color: rgba(20, 184, 166, 0.2) !important; }
+html.dark .border-teal-200 { border-color: rgba(20, 184, 166, 0.3) !important; }
+html.dark .text-teal-900 { color: #5eead4 !important; }
+html.dark .text-teal-800 { color: #5eead4 !important; }
+html.dark .text-teal-700 { color: #5eead4 !important; }
+html.dark .text-teal-600 { color: #2dd4bf !important; }
+
+/* amber (warnings — Low Stock card etc.) */
+html.dark .bg-amber-50 { background-color: rgba(245, 158, 11, 0.1) !important; }
+html.dark .bg-amber-100 { background-color: rgba(245, 158, 11, 0.18) !important; }
+html.dark .border-amber-100 { border-color: rgba(245, 158, 11, 0.2) !important; }
+html.dark .border-amber-200 { border-color: rgba(245, 158, 11, 0.3) !important; }
+html.dark .text-amber-900 { color: #fcd34d !important; }
+html.dark .text-amber-800 { color: #fcd34d !important; }
+html.dark .text-amber-700 { color: #fcd34d !important; }
+html.dark .text-amber-600 { color: #fbbf24 !important; }
+
+/* blue (informational, links) */
+html.dark .bg-blue-50 { background-color: rgba(59, 130, 246, 0.1) !important; }
+html.dark .bg-blue-100 { background-color: rgba(59, 130, 246, 0.18) !important; }
+html.dark .border-blue-100 { border-color: rgba(59, 130, 246, 0.2) !important; }
+html.dark .border-blue-200 { border-color: rgba(59, 130, 246, 0.3) !important; }
+html.dark .text-blue-900 { color: #93c5fd !important; }
+html.dark .text-blue-800 { color: #93c5fd !important; }
+html.dark .text-blue-700 { color: #93c5fd !important; }
+html.dark .text-blue-600 { color: #60a5fa !important; }
+
+/* green (legacy success — kept distinct from emerald for some pages) */
+html.dark .bg-green-50 { background-color: rgba(34, 197, 94, 0.1) !important; }
+html.dark .bg-green-100 { background-color: rgba(34, 197, 94, 0.18) !important; }
+html.dark .border-green-100 { border-color: rgba(34, 197, 94, 0.2) !important; }
+html.dark .border-green-200 { border-color: rgba(34, 197, 94, 0.3) !important; }
+html.dark .text-green-900 { color: #86efac !important; }
+html.dark .text-green-800 { color: #86efac !important; }
+html.dark .text-green-700 { color: #86efac !important; }
+html.dark .text-green-600 { color: #4ade80 !important; }
+
+/* purple */
+html.dark .bg-purple-50 { background-color: rgba(168, 85, 247, 0.1) !important; }
+html.dark .bg-purple-100 { background-color: rgba(168, 85, 247, 0.18) !important; }
+html.dark .border-purple-200 { border-color: rgba(168, 85, 247, 0.3) !important; }
+html.dark .text-purple-900 { color: #d8b4fe !important; }
+html.dark .text-purple-800 { color: #d8b4fe !important; }
+html.dark .text-purple-700 { color: #d8b4fe !important; }
+html.dark .text-purple-600 { color: #c084fc !important; }
+
+/* orange */
+html.dark .bg-orange-50 { background-color: rgba(249, 115, 22, 0.1) !important; }
+html.dark .bg-orange-100 { background-color: rgba(249, 115, 22, 0.18) !important; }
+html.dark .border-orange-200 { border-color: rgba(249, 115, 22, 0.3) !important; }
+html.dark .text-orange-900 { color: #fdba74 !important; }
+html.dark .text-orange-800 { color: #fdba74 !important; }
+html.dark .text-orange-700 { color: #fdba74 !important; }
+html.dark .text-orange-600 { color: #fb923c !important; }
+
+/* yellow */
+html.dark .bg-yellow-50 { background-color: rgba(234, 179, 8, 0.1) !important; }
+html.dark .bg-yellow-100 { background-color: rgba(234, 179, 8, 0.18) !important; }
+html.dark .border-yellow-200 { border-color: rgba(234, 179, 8, 0.3) !important; }
+html.dark .text-yellow-900 { color: #fde68a !important; }
+html.dark .text-yellow-800 { color: #fde68a !important; }
+html.dark .text-yellow-700 { color: #fde68a !important; }
+
+/* indigo / violet */
+html.dark .bg-indigo-50 { background-color: rgba(99, 102, 241, 0.1) !important; }
+html.dark .bg-indigo-100 { background-color: rgba(99, 102, 241, 0.18) !important; }
+html.dark .border-indigo-200 { border-color: rgba(99, 102, 241, 0.3) !important; }
+html.dark .text-indigo-900 { color: #a5b4fc !important; }
+html.dark .text-indigo-800 { color: #a5b4fc !important; }
+html.dark .text-indigo-700 { color: #a5b4fc !important; }
+html.dark .bg-violet-50 { background-color: rgba(139, 92, 246, 0.1) !important; }
+html.dark .bg-violet-100 { background-color: rgba(139, 92, 246, 0.18) !important; }
+html.dark .text-violet-700 { color: #c4b5fd !important; }
+
+/* lime / cyan / sky / rose / pink / fuchsia (lower-volume) */
+html.dark .bg-lime-50 { background-color: rgba(132, 204, 22, 0.1) !important; }
+html.dark .text-lime-700 { color: #bef264 !important; }
+html.dark .bg-cyan-50 { background-color: rgba(6, 182, 212, 0.1) !important; }
+html.dark .bg-cyan-100 { background-color: rgba(6, 182, 212, 0.18) !important; }
+html.dark .border-cyan-200 { border-color: rgba(6, 182, 212, 0.3) !important; }
+html.dark .text-cyan-700 { color: #67e8f9 !important; }
+html.dark .text-cyan-600 { color: #22d3ee !important; }
+html.dark .bg-sky-50 { background-color: rgba(14, 165, 233, 0.1) !important; }
+html.dark .text-sky-700 { color: #7dd3fc !important; }
+html.dark .bg-rose-50 { background-color: rgba(244, 63, 94, 0.1) !important; }
+html.dark .text-rose-700 { color: #fda4af !important; }
+html.dark .bg-pink-50 { background-color: rgba(236, 72, 153, 0.1) !important; }
+html.dark .text-pink-700 { color: #f9a8d4 !important; }
+
+/* ───────────────────────────────────────────────────────────────────
+   Native <select> dropdown styling in dark mode
+   ───────────────────────────────────────────────────────────────────
+   Inventory / shifts / audit pages use unstyled <select> elements.
+   In dark mode the dropdown chevron + native white background broke
+   visual continuity. Apply a subtle dark surface + custom chevron
+   so selects match the rest of the dark UI.
+*/
+html.dark select {
+  background-color: var(--surface-panel) !important;
+  color: var(--text-primary) !important;
+  border-color: var(--border-subtle) !important;
+  /* SVG chevron tinted for dark theme */
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%23a1a1aa'%3E%3Cpath fill-rule='evenodd' d='M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.06l3.71-3.83a.75.75 0 1 1 1.08 1.04l-4.25 4.39a.75.75 0 0 1-1.08 0L5.21 8.27a.75.75 0 0 1 .02-1.06z' clip-rule='evenodd'/%3E%3C/svg%3E") !important;
+  background-repeat: no-repeat !important;
+  background-position: right 0.5rem center !important;
+  background-size: 1.25rem !important;
+  -webkit-appearance: none !important;
+  -moz-appearance: none !important;
+  appearance: none !important;
+  padding-right: 2rem !important;
+}
+html.dark select option {
+  background-color: var(--surface-panel) !important;
+  color: var(--text-primary) !important;
+}
+
+/* ───────────────────────────────────────────────────────────────────
+   Top-tab nav scroll-fade affordance
+   ───────────────────────────────────────────────────────────────────
+   The admin top tab strip overflows on narrower viewports
+   (Register / Dashboard / Transactions / Inventory / Products /
+    Customers / Employees / Loyalty / Promos / Shifts / Log /
+    Clock In / Cash Drawer / Receiving / Settings). Without a fade,
+   rightmost tabs are simply truncated with no cue that the user
+   can scroll horizontally. Add a gradient fade on the right edge
+   as an affordance — same pattern Tailwind docs uses for their
+   tab nav. Theme-aware via --surface-panel (matches the nav bar
+   background, not the page).
+*/
+.admin-top-nav-overflow-fade::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 3rem;
+  background: linear-gradient(to left, var(--surface-panel), transparent);
+  pointer-events: none;
+}
+
 /* Virtual keyboard / numpad slide-up animation */
 @keyframes slide-up {
   from { transform: translateY(100%); }

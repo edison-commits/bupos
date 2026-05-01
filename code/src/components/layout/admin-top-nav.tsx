@@ -38,15 +38,23 @@ export function AdminTopNav() {
         borderBottom: "1px solid var(--border-subtle)",
       }}
     >
-      <div className="max-w-7xl mx-auto px-8">
-        <div className="flex items-center gap-1 overflow-x-auto py-2">
+      <div className="max-w-7xl mx-auto px-8 relative admin-top-nav-overflow-fade">
+        {/*
+          The relative + .admin-top-nav-overflow-fade class wires up
+          the right-edge gradient fade defined in globals.css. On
+          narrow viewports where some tabs (Cash Drawer, Receiving,
+          Settings) overflow horizontally, the fade signals
+          "scroll for more" instead of just truncating tabs.
+        */}
+        <div className="flex items-center gap-1 overflow-x-auto py-2 scroll-smooth">
           {adminLinks.map((link) => {
             const active = isActive(link.href);
             return (
               <Link
                 key={link.href}
                 href={link.href}
-                className="flex-shrink-0 px-4 py-2 rounded-xl text-sm font-medium transition-all"
+                aria-current={active ? "page" : undefined}
+                className="flex-shrink-0 px-4 py-2 rounded-xl text-sm font-medium transition-all hover:opacity-80"
                 style={{
                   backgroundColor: active ? "var(--surface-accent)" : "transparent",
                   color: active ? "#ffffff" : "var(--text-secondary)",
