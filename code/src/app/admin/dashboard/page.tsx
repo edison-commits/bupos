@@ -113,21 +113,24 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen bg-gray-50 pt-6">
         <AdminTopNav />
-      <div className="mx-auto max-w-7xl space-y-6">
+      <div className="mx-auto max-w-7xl space-y-6 px-8 pb-12">
         {/* Header */}
-        <div className="flex items-center justify-between">
-          <h1 className="text-3xl font-bold text-gray-900">Sales Dashboard</h1>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-semibold text-gray-900">Sales Dashboard</h1>
+            <p className="mt-0.5 text-sm text-gray-500">Performance at a glance</p>
+          </div>
 
-          {/* Range Selector */}
-          <div className="flex gap-2">
+          {/* Range Selector — Fluent segmented control */}
+          <div className="inline-flex items-center rounded-lg border border-gray-300 bg-white p-0.5 shadow-sm">
             {rangeButtons.map((btn) => (
               <button
                 key={btn.value}
                 onClick={() => setRange(btn.value)}
-                className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                className={`rounded-md px-3.5 py-1.5 text-sm font-medium transition-colors ${
                   range === btn.value
                     ? 'bg-teal-600 text-white'
-                    : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                    : 'text-gray-600 hover:bg-gray-100'
                 }`}
               >
                 {btn.label}
@@ -167,16 +170,16 @@ export default function DashboardPage() {
             {/* Charts Row */}
             <div className="grid gap-6 lg:grid-cols-2">
               {/* Hourly Sales Chart */}
-              <div className="rounded-lg bg-white p-6 shadow-sm">
-                <h2 className="mb-4 text-lg font-semibold text-gray-900">
+              <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+                <h2 className="mb-4 text-base font-semibold text-gray-900">
                   Hourly Sales
                 </h2>
                 <HourlyChart data={data.hourlyBreakdown} />
               </div>
 
               {/* Tender Breakdown */}
-              <div className="rounded-lg bg-white p-6 shadow-sm">
-                <h2 className="mb-4 text-lg font-semibold text-gray-900">
+              <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+                <h2 className="mb-4 text-base font-semibold text-gray-900">
                   Payment Methods
                 </h2>
                 <TenderBreakdown data={data.tenderBreakdown} />
@@ -184,16 +187,16 @@ export default function DashboardPage() {
             </div>
 
             {/* Employee Performance */}
-            <div className="rounded-lg bg-white p-6 shadow-sm">
-              <h2 className="mb-4 text-lg font-semibold text-gray-900">
+            <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+              <h2 className="mb-4 text-base font-semibold text-gray-900">
                 Employee Performance
               </h2>
               <EmployeeTable data={data.employeePerformance} />
             </div>
 
             {/* Recent Transactions */}
-            <div className="rounded-lg bg-white p-6 shadow-sm">
-              <h2 className="mb-4 text-lg font-semibold text-gray-900">
+            <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+              <h2 className="mb-4 text-base font-semibold text-gray-900">
                 Recent Transactions
               </h2>
               <TransactionList
@@ -231,9 +234,9 @@ interface MetricCardProps {
 
 function MetricCard({ label, value }: MetricCardProps) {
   return (
-    <div className="rounded-lg bg-white p-6 shadow-sm border border-gray-200">
-      <p className="text-sm font-medium text-gray-600">{label}</p>
-      <p className="mt-2 text-2xl font-bold text-teal-600">{value}</p>
+    <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm transition-shadow hover:shadow-md">
+      <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</p>
+      <p className="mt-2 text-3xl font-semibold tabular-nums text-gray-900">{value}</p>
     </div>
   );
 }

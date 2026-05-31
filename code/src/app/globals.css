@@ -316,7 +316,31 @@ button,
 [role="button"],
 a {
   touch-action: manipulation;
-  font-weight: 700;
+  /* Fluent uses semibold (600) for controls; 700 everywhere read heavy. */
+  font-weight: 600;
+}
+
+/* ───────────────────────────────────────────────────────────────────
+   Professional Fluent button polish (element-scoped)
+   ───────────────────────────────────────────────────────────────────
+   Scoped to <button> so chart bars, progress fills, and the logo tile
+   (all <div> using the same bg-* utilities) are untouched. Gives every
+   admin/POS button the crisp Windows-11 4px radius + a subtle 1px
+   elevation so filled buttons read as defined, tactile controls rather
+   than flat colour blocks. Not !important so a component can still opt
+   out. */
+button.rounded-lg,
+button.rounded-xl,
+button.rounded-2xl {
+  border-radius: var(--radius-control);
+}
+button.bg-teal-500, button.bg-teal-600, button.bg-teal-700,
+button.bg-emerald-500, button.bg-emerald-600, button.bg-emerald-700 {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12), inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+button.bg-teal-500:active, button.bg-teal-600:active, button.bg-teal-700:active,
+button.bg-emerald-500:active, button.bg-emerald-600:active, button.bg-emerald-700:active {
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.10);
 }
 
 ::selection {

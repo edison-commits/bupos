@@ -54,11 +54,11 @@ export function AdminTopNav() {
                 key={link.href}
                 href={link.href}
                 aria-current={active ? "page" : undefined}
-                className="flex-shrink-0 px-4 py-2 rounded-xl text-sm font-medium transition-all hover:opacity-80"
-                style={{
-                  backgroundColor: active ? "var(--surface-accent)" : "transparent",
-                  color: active ? "#ffffff" : "var(--text-secondary)",
-                }}
+                className={`flex-shrink-0 rounded-md px-3.5 py-1.5 text-sm font-medium transition-colors ${
+                  active
+                    ? "bg-[var(--surface-accent)] text-white shadow-sm"
+                    : "text-[var(--text-secondary)] hover:bg-[var(--surface-panel-muted)] hover:text-[var(--text-primary)]"
+                }`}
               >
                 {link.label}
               </Link>
