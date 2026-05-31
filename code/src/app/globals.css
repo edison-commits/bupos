@@ -893,6 +893,42 @@ html.dark .bg-teal-100 { background-color: rgba(40, 153, 245, 0.20) !important; 
   --tw-gradient-to: var(--surface-accent-hover) !important;
 }
 
+/* ── Emerald → blue (FULL brand alias, matching teal) ──
+   Round-7 revision: in this app emerald was used as a STRUCTURAL brand
+   accent — KPI-card tints + values, metric labels, input borders,
+   secondary-button outlines — not purely "success". Keeping it green
+   left the admin looking half-blue/half-green (amateur + inconsistent).
+   Alias the whole emerald ramp to the Fluent accent so admin reads as
+   one coherent blue system. Genuinely semantic colours (error red,
+   warning amber) are untouched, so status still communicates. */
+.text-emerald-500, .text-emerald-600, .text-emerald-700,
+.text-emerald-800, .text-emerald-900 {
+  color: var(--surface-accent) !important;
+}
+.hover\:text-emerald-700:hover, .hover\:text-emerald-800:hover {
+  color: var(--surface-accent-hover) !important;
+}
+/* dark mode remaps emerald text to green above; re-point to blue */
+html.dark .text-emerald-600, html.dark .text-emerald-700,
+html.dark .text-emerald-800, html.dark .text-emerald-900 {
+  color: var(--surface-accent) !important;
+}
+.border-emerald-200 { border-color: var(--border-subtle) !important; }
+.border-emerald-300, .border-emerald-400, .border-emerald-500, .border-emerald-600 {
+  border-color: var(--surface-accent) !important;
+}
+.bg-emerald-50 { background-color: rgba(0, 120, 212, 0.08) !important; }
+.bg-emerald-100 { background-color: rgba(0, 120, 212, 0.16) !important; }
+.hover\:bg-emerald-50:hover { background-color: rgba(0, 120, 212, 0.08) !important; }
+html.dark .bg-emerald-50 { background-color: rgba(40, 153, 245, 0.12) !important; }
+html.dark .bg-emerald-100 { background-color: rgba(40, 153, 245, 0.20) !important; }
+.from-emerald-400, .from-emerald-500, .from-emerald-600 {
+  --tw-gradient-from: var(--surface-accent) !important;
+}
+.to-emerald-400, .to-emerald-500, .to-emerald-600 {
+  --tw-gradient-to: var(--surface-accent-hover) !important;
+}
+
 /* ── Focus affordance: both families get the Fluent blue focus ── */
 .focus\:border-teal-500:focus, .focus\:border-emerald-500:focus,
 .focus\:border-teal-600:focus, .focus\:border-emerald-600:focus {
