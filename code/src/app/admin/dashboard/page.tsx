@@ -7,6 +7,7 @@ import { authFetch } from '@/lib/api/client';
 import { DASHBOARD_POLL_INTERVAL_MS } from '@/lib/config/timing';
 import { formatCurrency } from '@/lib/format';
 import { safeErr } from "@/lib/logging/safe-err";
+import { KpiCard } from "@/components/ui/kpi-card";
 interface Metrics {
   grossSales: number;
   discounts: number;
@@ -233,12 +234,9 @@ interface MetricCardProps {
 }
 
 function MetricCard({ label, value }: MetricCardProps) {
-  return (
-    <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm transition-shadow hover:shadow-md">
-      <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</p>
-      <p className="mt-2 text-3xl font-semibold tabular-nums text-gray-900">{value}</p>
-    </div>
-  );
+  // Delegates to the shared KpiCard so every admin stat tile stays
+  // visually identical (one source of truth).
+  return <KpiCard label={label} value={value} />;
 }
 
 interface HourlyChartProps {

@@ -9,6 +9,7 @@ import { csvCell } from '@/lib/format/csv-sanitize';
 import { useDebouncedValue } from '@/lib/hooks/use-debounced-value';
 // FE-AUDIT5-HIGH3: Escape-to-close + role/aria-modal on every modal.
 import { useEscapeClose } from '@/lib/hooks/use-escape-close';
+import { KpiCard } from '@/components/ui/kpi-card';
 // R53: step-up re-auth when editing a variant's price or cost.
 // Server /api/products PUT gates bucketKey:'variant-price-stepup'
 // when price or cost drifts; name/SKU/stock etc stay cookie-only.
@@ -454,10 +455,7 @@ export default function ProductsPage() {
           { label: 'Total Variants', value: data?.summary.total_variants || 0 },
           { label: 'Categories', value: data?.summary.categories_count || 0 },
         ].map((card, i) => (
-          <div key={i} className="rounded-lg border border-emerald-200 bg-gradient-to-br from-emerald-50 to-teal-50 p-4">
-            <div className="text-xs font-medium text-emerald-600">{card.label}</div>
-            <div className="text-2xl font-bold text-emerald-900">{card.value}</div>
-          </div>
+          <KpiCard key={i} label={card.label} value={card.value} />
         ))}
       </div>
 

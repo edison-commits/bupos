@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { AdminTopNav } from "@/components/layout/admin-top-nav";
 import { authFetch } from '@/lib/api/client';
 import { formatCurrency } from '@/lib/format';
+import { KpiCard } from "@/components/ui/kpi-card";
 
 interface ProductVariant {
   variant_id: string | null;
@@ -157,34 +158,10 @@ export default function InventoryPage() {
 
         {/* Summary Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <SummaryCard
-            title="Total Products"
-            value={summary.totalProducts}
-            icon="📦"
-            color="bg-teal-50 border-teal-200"
-            textColor="text-teal-700"
-          />
-          <SummaryCard
-            title="Total Variants"
-            value={summary.totalVariants}
-            icon="🎯"
-            color="bg-cyan-50 border-cyan-200"
-            textColor="text-cyan-700"
-          />
-          <SummaryCard
-            title="Low Stock"
-            value={summary.lowStockCount}
-            icon="⚠️"
-            color="bg-amber-50 border-amber-200"
-            textColor="text-amber-700"
-          />
-          <SummaryCard
-            title="Out of Stock"
-            value={summary.outOfStockCount}
-            icon="❌"
-            color="bg-red-50 border-red-200"
-            textColor="text-red-700"
-          />
+          <KpiCard label="Total Products" value={summary.totalProducts} />
+          <KpiCard label="Total Variants" value={summary.totalVariants} />
+          <KpiCard label="Low Stock" value={summary.lowStockCount} tone="warn" />
+          <KpiCard label="Out of Stock" value={summary.outOfStockCount} tone="alert" />
         </div>
 
         {/* Filters and Export */}
@@ -326,34 +303,6 @@ export default function InventoryPage() {
             ))
           )}
         </div>
-      </div>
-    </div>
-  );
-}
-
-function SummaryCard({
-  title,
-  value,
-  icon,
-  color,
-  textColor,
-}: {
-  title: string;
-  value: number;
-  icon: string;
-  color: string;
-  textColor: string;
-}) {
-  return (
-    <div
-      className={`${color} border rounded-lg p-6 transition hover:shadow-md`}
-    >
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-slate-600 text-sm font-medium">{title}</p>
-          <p className={`${textColor} text-3xl font-bold mt-2`}>{value}</p>
-        </div>
-        <div className="text-4xl opacity-30">{icon}</div>
       </div>
     </div>
   );

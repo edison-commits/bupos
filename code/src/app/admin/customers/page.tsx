@@ -3,12 +3,13 @@
 import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import { useState, useEffect } from 'react';
-import { Plus, Search, Edit2, Eye, AlertCircle, Loader2, DollarSign, Users, TrendingUp, Award } from 'lucide-react';
+import { Plus, Search, Edit2, Eye, AlertCircle, Loader2, Users } from 'lucide-react';
 import { authFetch } from '@/lib/api/client';
 import { formatCurrency } from '@/lib/format';
 import { useDebouncedValue } from '@/lib/hooks/use-debounced-value';
 import { safeErr } from "@/lib/logging/safe-err";
 import { usePasswordGate } from "@/components/shared/password-gate";
+import { KpiCard } from "@/components/ui/kpi-card";
 interface Customer {
   id: string;
   first_name: string;
@@ -330,42 +331,10 @@ export default function CustomerManagement() {
 
         {/* Summary Cards */}
         <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-lg border border-emerald-200 bg-white p-6 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Total Customers</p>
-                <p className="mt-2 text-3xl font-bold text-gray-900">{stats.totalCustomers}</p>
-              </div>
-              <Users className="h-10 w-10 text-emerald-500" />
-            </div>
-          </div>
-          <div className="rounded-lg border border-teal-200 bg-white p-6 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">New This Month</p>
-                <p className="mt-2 text-3xl font-bold text-gray-900">{stats.newThisMonth}</p>
-              </div>
-              <TrendingUp className="h-10 w-10 text-teal-500" />
-            </div>
-          </div>
-          <div className="rounded-lg border border-cyan-200 bg-white p-6 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Avg Spend</p>
-                <p className="mt-2 text-3xl font-bold text-gray-900">{formatCurrency(stats.avgSpend)}</p>
-              </div>
-              <DollarSign className="h-10 w-10 text-cyan-500" />
-            </div>
-          </div>
-          <div className="rounded-lg border border-emerald-200 bg-white p-6 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Total Points Outstanding</p>
-                <p className="mt-2 text-3xl font-bold text-gray-900">{stats.totalPointsOutstanding.toLocaleString()}</p>
-              </div>
-              <Award className="h-10 w-10 text-emerald-500" />
-            </div>
-          </div>
+          <KpiCard label="Total Customers" value={stats.totalCustomers} />
+          <KpiCard label="New This Month" value={stats.newThisMonth} />
+          <KpiCard label="Avg Spend" value={formatCurrency(stats.avgSpend)} />
+          <KpiCard label="Total Points Outstanding" value={stats.totalPointsOutstanding.toLocaleString()} />
         </div>
 
         {/* Error and Success Messages */}
