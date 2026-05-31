@@ -1,23 +1,37 @@
 @import "tailwindcss";
 
 :root {
-  --surface-app: #f4f4f5;
+  /* ───────────────────────────────────────────────────────────────
+     Microsoft Fluent Design theme (light)
+     Adopts Microsoft's Fluent / Windows 11 design language:
+       • Azure "communication blue" #0078D4 brand accent
+       • Fluent neutral background (#f3f3f3 Mica-light)
+       • Windows 11 geometry (8px card radius, 4px controls)
+       • Fluent elevation (soft, tight, layered shadows)
+     Brand-accent token drives every primary control via the utility
+     remap block near the end of this file, so swapping these few
+     values reskins the whole app.
+     ─────────────────────────────────────────────────────────────── */
+  --surface-app: #f3f3f3;
   --surface-panel: #ffffff;
-  --surface-panel-muted: #fafafa;
-  --surface-inverse: #18181b;
-  --surface-accent: #0f766e;
-  --surface-danger: #991b1b;
-  --border-subtle: #e4e4e7;
-  --border-strong: #d4d4d8;
-  --text-primary: #18181b;
-  --text-secondary: #52525b;
-  --text-inverse: #fafafa;
-  --status-ok: #166534;
-  --status-warn: #b45309;
-  --status-alert: #b91c1c;
+  --surface-panel-muted: #faf9f8;
+  --surface-inverse: #1b1a19;
+  --surface-accent: #0078d4;          /* Microsoft/Azure blue */
+  --surface-accent-hover: #106ebe;    /* Fluent rest → hover */
+  --surface-accent-pressed: #005a9e;  /* Fluent pressed */
+  --surface-danger: #a4262c;          /* Fluent "danger" red */
+  --border-subtle: #e1dfdd;           /* Fluent neutralStroke */
+  --border-strong: #c8c6c4;
+  --text-primary: #1b1a19;            /* Fluent neutralForeground */
+  --text-secondary: #605e5c;
+  --text-inverse: #ffffff;
+  --status-ok: #107c10;               /* Fluent green */
+  --status-warn: #797673;
+  --status-alert: #a4262c;
   --touch-target: 3.5rem;
-  --radius-card: 1.25rem;
-  --shadow-card: 0 16px 40px rgba(24, 24, 27, 0.08);
+  --radius-card: 8px;                 /* Windows 11 card radius */
+  --radius-control: 4px;              /* Windows 11 button/input radius */
+  --shadow-card: 0 4px 8px rgba(0, 0, 0, 0.10), 0 0 2px rgba(0, 0, 0, 0.12);
   /* Accessibility: larger base for older/vision-impaired workers */
   --pos-base-font: 1.0625rem;   /* 17px base instead of 16px */
   --pos-label-font: 0.9375rem;  /* 15px for labels */
@@ -25,21 +39,26 @@
 }
 
 html.dark {
-  --surface-app: #09090b;
-  --surface-panel: #18181b;
-  --surface-panel-muted: #27272a;
-  --surface-inverse: #fafafa;
-  --surface-accent: #14b8a6;
-  --surface-danger: #ef4444;
-  --border-subtle: #3f3f46;
-  --border-strong: #52525b;
-  --text-primary: #fafafa;
-  --text-secondary: #a1a1aa;
-  --text-inverse: #18181b;
-  --status-ok: #4ade80;
-  --status-warn: #fbbf24;
-  --status-alert: #f87171;
-  --shadow-card: 0 16px 40px rgba(0, 0, 0, 0.3);
+  /* Microsoft Fluent Design theme (dark) — Windows 11 dark surfaces +
+     the brighter Fluent dark-theme brand blue (#2899F5 / #479EF5 family)
+     so the accent keeps AA contrast on near-black panels. */
+  --surface-app: #1f1f1f;             /* Win11 dark Mica base */
+  --surface-panel: #2b2b2b;           /* Fluent dark card */
+  --surface-panel-muted: #333333;
+  --surface-inverse: #ffffff;
+  --surface-accent: #2899f5;          /* Fluent dark brand blue */
+  --surface-accent-hover: #4ca8f7;
+  --surface-accent-pressed: #1a86e0;
+  --surface-danger: #f1707b;
+  --border-subtle: #3d3d3d;
+  --border-strong: #4a4a4a;
+  --text-primary: #ffffff;
+  --text-secondary: #c8c6c4;
+  --text-inverse: #1b1a19;
+  --status-ok: #54b054;
+  --status-warn: #d6ca00;
+  --status-alert: #f1707b;
+  --shadow-card: 0 4px 8px rgba(0, 0, 0, 0.40), 0 0 2px rgba(0, 0, 0, 0.50);
 }
 
 /* ─── Accessibility: larger everything for older workers ─── */
@@ -259,8 +278,17 @@ html[data-theme="high-contrast"] .fixed.bottom-0 .text-2xl {
 @theme inline {
   --color-background: var(--surface-app);
   --color-foreground: var(--text-primary);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* Microsoft Fluent type ramp. "Segoe UI Variable" / "Segoe UI" are the
+     signature Microsoft typefaces — referenced via the font STACK (not
+     bundled as a webfont, which Segoe's license doesn't permit), so
+     Windows users render the genuine article and every other platform
+     falls back to a clean system sans. Cascadia Code / Consolas are
+     Microsoft's monospace faces. */
+  --font-sans: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI",
+    system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial,
+    sans-serif;
+  --font-mono: "Cascadia Code", "Cascadia Mono", Consolas, "Courier New",
+    ui-monospace, monospace;
 }
 
 * {
@@ -318,12 +346,12 @@ a {
 
 .touch-button {
   min-height: var(--touch-target);
-  border-radius: 1rem;
+  border-radius: var(--radius-control);  /* Windows 11 4px control radius */
 }
 
-/* Loyverse-inspired smooth transitions */
+/* Fluent uses restrained, quick motion (the "fast" 150ms curve). */
 .card, .touch-button, button {
-  transition: all 0.15s ease;
+  transition: all 0.15s cubic-bezier(0.33, 0, 0.67, 1);
 }
 
 /* Subtle hover lift for interactive cards */
@@ -760,9 +788,9 @@ html.dark select option {
   animation: slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* Cart item flash on add */
+/* Cart item flash on add — Fluent blue accent flash */
 @keyframes cart-item-flash {
-  0% { background-color: rgba(20, 184, 166, 0.2); }
+  0% { background-color: rgba(0, 120, 212, 0.2); }
   100% { background-color: transparent; }
 }
 .cart-item-new {
@@ -777,5 +805,90 @@ html.dark select option {
 }
 .scan-feedback-fade {
   animation: fade-out 2s ease-out forwards;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Microsoft Fluent brand remap
+   ───────────────────────────────────────────────────────────────────
+   The app was authored with teal/emerald Tailwind utilities as the
+   brand accent (login + register = teal; admin primary actions =
+   emerald). Rather than editing hundreds of component files, remap
+   those brand-shade utilities to the Fluent blue accent token here —
+   light AND dark — so the whole app reads as a Microsoft Fluent app.
+
+   Scope decisions:
+     • TEAL is pure brand (no semantics) → remap fully (fills, text,
+       borders, tints, gradients, focus).
+     • EMERALD is dual-use: filled -500/-600/-700 are primary-action
+       buttons → blue; but emerald -50/-100 tints, -700/-800 text, and
+       success badges mean "good" → LEFT GREEN, exactly as Microsoft's
+       own apps keep success green. So emerald gets only its filled
+       backgrounds + focus remapped.
+   `!important` matches the existing dark-mode override blocks above.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Filled backgrounds: primary buttons, logo tile, active tabs ── */
+.bg-teal-500, .bg-teal-600,
+.bg-emerald-500, .bg-emerald-600 {
+  background-color: var(--surface-accent) !important;
+}
+.bg-teal-700, .bg-emerald-700 {
+  background-color: var(--surface-accent-pressed) !important;
+}
+.hover\:bg-teal-500:hover, .hover\:bg-teal-600:hover, .hover\:bg-teal-700:hover,
+.hover\:bg-emerald-500:hover, .hover\:bg-emerald-600:hover, .hover\:bg-emerald-700:hover {
+  background-color: var(--surface-accent-hover) !important;
+}
+
+/* ── Teal brand: text → blue (no semantic conflict) ── */
+.text-teal-500, .text-teal-600, .text-teal-700 {
+  color: var(--surface-accent) !important;
+}
+.hover\:text-teal-700:hover, .hover\:text-teal-800:hover {
+  color: var(--surface-accent-hover) !important;
+}
+/* dark mode remaps teal text to teal-green above; re-point to blue */
+html.dark .text-teal-600, html.dark .text-teal-700 {
+  color: var(--surface-accent) !important;
+}
+
+/* ── Teal brand: borders + tints + gradients → blue ── */
+.border-teal-200 { border-color: var(--border-subtle) !important; }
+.border-teal-300, .border-teal-400, .border-teal-500, .border-teal-600 {
+  border-color: var(--surface-accent) !important;
+}
+.bg-teal-50 { background-color: rgba(0, 120, 212, 0.08) !important; }
+.bg-teal-100 { background-color: rgba(0, 120, 212, 0.16) !important; }
+.hover\:bg-teal-50:hover { background-color: rgba(0, 120, 212, 0.08) !important; }
+html.dark .bg-teal-50 { background-color: rgba(40, 153, 245, 0.12) !important; }
+html.dark .bg-teal-100 { background-color: rgba(40, 153, 245, 0.20) !important; }
+.from-teal-400, .from-teal-500, .from-teal-600 {
+  --tw-gradient-from: var(--surface-accent) !important;
+}
+.to-teal-400, .to-teal-500, .to-teal-600 {
+  --tw-gradient-to: var(--surface-accent-hover) !important;
+}
+
+/* ── Focus affordance: both families get the Fluent blue focus ── */
+.focus\:border-teal-500:focus, .focus\:border-emerald-500:focus,
+.focus\:border-teal-600:focus, .focus\:border-emerald-600:focus {
+  border-color: var(--surface-accent) !important;
+}
+.focus\:ring-teal-500:focus, .focus\:ring-emerald-500:focus,
+.focus\:ring-teal-400:focus, .focus\:ring-emerald-400:focus,
+.ring-teal-500, .ring-emerald-500 {
+  --tw-ring-color: var(--surface-accent) !important;
+}
+
+/* ── Fluent focus stroke: a clear 2px accent outline on every
+   interactive control (Windows 11 keyboard-focus affordance). ── */
+a:focus-visible,
+button:focus-visible,
+[role="button"]:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--surface-accent);
+  outline-offset: 1px;
 }
 

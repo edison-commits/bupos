@@ -7,7 +7,9 @@ import { SwUpdateBanner } from "@/components/sw-update-banner";
 import "./globals.css";
 
 export const viewport: Viewport = {
-  themeColor: "#0d9488",
+  // Microsoft Fluent / Azure blue — matches --surface-accent so the
+  // mobile browser chrome + PWA splash tint with the brand colour.
+  themeColor: "#0078d4",
 };
 
 export const metadata: Metadata = {
