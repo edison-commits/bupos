@@ -199,10 +199,18 @@ describe("R43 audit fixes", () => {
       const count = (src.match(/logRateLimited\(\{/g) ?? []).length;
       expect(count).toBeGreaterThanOrEqual(3);
     });
-    it("register-login route emits logRateLimited on all 6 429 branches", () => {
-      const src = read("src/app/api/auth/register-login/route.ts");
-      const count = (src.match(/logRateLimited\(\{/g) ?? []).length;
+    it("register-login rate-limit gate emits logRateLimited on all 6 layers", () => {
+      // AUTH-AUDIT6-HIGH1: the 6-layer PIN-login rate-limit stack (and its
+      // per-denial telemetry) moved into the shared
+      // `enforceRegisterPinRateLimits` gate, shared by the HTTP route AND
+      // the production registerLoginAction Server Action. Count the
+      // logRateLimited calls in the gate.
+      const gate = read("src/lib/auth/register-pin-rate-limit.ts");
+      const count = (gate.match(/logRateLimited\(\{/g) ?? []).length;
       expect(count).toBeGreaterThanOrEqual(6);
+      // And the route must route through that gate.
+      const route = read("src/app/api/auth/register-login/route.ts");
+      expect(route).toMatch(/enforceRegisterPinRateLimits\(/);
     });
   });
 

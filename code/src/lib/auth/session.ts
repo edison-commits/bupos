@@ -6,7 +6,9 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { verifySecret } from "@/lib/auth/crypto";
 import { hasPermission } from "@/lib/domain/permissions";
-import { checkRateLimit } from "@/lib/auth/rate-limit";
+// AUTH-AUDIT6-HIGH1: register PIN-login rate-limiting moved to the shared
+// `enforceRegisterPinRateLimits` gate; signInRegister no longer rate-limits
+// inline, so `checkRateLimit` is no longer imported here.
 import { mutateStore, readStore } from "@/lib/persistence/store";
 import type { AdminSessionContext, RegisterSessionContext, SessionRecord } from "@/lib/persistence/types";
 import type { RegisterSessionRecord, ShiftRecord, RoleKey, Employee, Location } from "@/lib/domain/types";
@@ -767,12 +769,17 @@ export async function signInAdmin(email: string, password: string) {
 export async function signInRegister(pin: string, locationId: string, deviceId?: string) {
   const cleanPin = pin.trim();
 
-  // Rate-limit PIN attempts per location to prevent brute-force
-  const rl = checkRateLimit(`register:${locationId}`);
-  if (!rl.allowed) {
-    const secs = Math.ceil(rl.retryAfterMs / 1000);
-    redirect(`/register?error=Too+many+PIN+attempts.+Try+again+in+${secs}+seconds`);
-  }
+  // AUTH-AUDIT6-HIGH1 / -LOW2: PIN-login rate-limiting is enforced by the
+  // shared `enforceRegisterPinRateLimits` gate at the call site
+  // (registerLoginAction runs it before this function; the HTTP route runs
+  // it before its inline verify). The previous inline
+  // `checkRateLimit("register:" + locationId)` bucket here used a key
+  // prefix (`register:`) inconsistent with every other PIN path
+  // (`register-pin:` / `register-loc:` / `register-ip:`), only fired on
+  // the Server-Action path (not the HTTP route, which inlines the SQL),
+  // and was per-isolate-in-memory so it added no cross-isolate value.
+  // Removed to keep ONE consistent rate-limit surface. INVARIANT: any new
+  // caller of signInRegister MUST run enforceRegisterPinRateLimits first.
 
   if (isPg()) {
     // Try RPC-on-pool path first (direct DB, no service-role-key dependency).

@@ -103,9 +103,49 @@ export async function verifyManagerApproval(pin: string, request: ApprovalReques
   // `approval:${locationId}` — 5 attempts/min shared across the whole
   // store meant one confused cashier could block all approvals for a
   // minute. Per-cashier scope preserves DoS defense without cross-impact.
+  //
+  // AUTH-AUDIT6-MED3: layer KV + DB + an org-aggregate cap on top of the
+  // in-memory bucket, mirroring requireStepUp. The PIN verify below runs
+  // pgFindCredentialByPin, which serially PBKDF2-verifies the submitted
+  // PIN against EVERY active PIN credential in the org — so each attempt
+  // is both a brute-force probe of MANAGER PINs (a compromised register
+  // session self-approving discounts / voids / cash payouts) AND a CPU
+  // amplifier proportional to org headcount. The in-memory bucket alone
+  // is per-isolate; ~32 isolates/colo gave ~96/5min/cashier with no
+  // cross-isolate coherence and no org-wide ceiling.
+  const { logRateLimited } = await import("@/lib/logging/rate-limit-log");
   const rl = checkRateLimit(`approval:${locationId}:${cashierEmployeeId}`);
   if (!rl.allowed) {
+    logRateLimited({ bucket: "approval", layer: "mem", actor: `${locationId.slice(0, 8)}|${cashierEmployeeId.slice(0, 8)}` });
     return { approved: false, reason: "Too many attempts. Please wait before trying again." };
+  }
+  try {
+    const { checkKvRateLimit } = await import("@/lib/auth/kv-rate-limit");
+    const kvRl = await checkKvRateLimit(`approval:${organizationId}:${cashierEmployeeId}`, { maxAttempts: 4, windowMs: 300_000 });
+    if (!kvRl.allowed) {
+      logRateLimited({ bucket: "approval", layer: "kv", actor: cashierEmployeeId.slice(0, 8) });
+      return { approved: false, reason: "Too many attempts. Please wait before trying again." };
+    }
+    // Org-aggregate cap: one compromised terminal must not be able to
+    // spread guesses across many cashier identities to multiply the
+    // per-cashier budget. Mirrors step-up's `stepup-aggregate`.
+    const kvAgg = await checkKvRateLimit(`approval-agg:${organizationId}`, { maxAttempts: 20, windowMs: 300_000 });
+    if (!kvAgg.allowed) {
+      logRateLimited({ bucket: "approval-agg", layer: "kv", actor: organizationId.slice(0, 8) });
+      return { approved: false, reason: "Too many approval attempts at this store. Please wait before trying again." };
+    }
+  } catch {
+    // Fail-open on KV error — the mem layer above + DB layer below gate.
+  }
+  try {
+    const { checkDbRateLimit } = await import("@/lib/auth/db-rate-limit");
+    const dbRl = await checkDbRateLimit(`approval:${organizationId}:${cashierEmployeeId}`, { maxAttempts: 10, windowMs: 1_800_000 });
+    if (!dbRl.allowed) {
+      logRateLimited({ bucket: "approval", layer: "db", actor: cashierEmployeeId.slice(0, 8) });
+      return { approved: false, reason: "Too many attempts. Please try again later." };
+    }
+  } catch {
+    // Fail-open on DB error — the mem + KV layers above still gate.
   }
 
   // 1. Resolve the PIN to an employee.

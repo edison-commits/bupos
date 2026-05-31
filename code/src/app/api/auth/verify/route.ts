@@ -27,6 +27,47 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL("/?error=Invalid+verification+link", req.url));
   }
 
+  // AUTH-AUDIT6-MED2: per-IP rate limit (mem / KV / DB). This was the ONE
+  // auth endpoint with NO limiter — every GET ran an unauthenticated
+  // SHA-256 + a `DELETE FROM pending_signups … RETURNING` write attempt.
+  // The token is 256-bit so a valid one can't be guessed, but an
+  // unthrottled attacker could drive write-lock + hash CPU pressure (a
+  // cheap DoS lever) with zero telemetry — `logRateLimited` was never
+  // reachable here. Bring it to parity with every sibling auth route.
+  // No Origin check: this is a GET that only consumes a token, so CSRF
+  // isn't the concern (the limiter is).
+  const { clientIpFrom } = await import("@/lib/net/client-ip");
+  const clientIp = clientIpFrom(req.headers);
+  const { checkRateLimit } = await import("@/lib/auth/rate-limit");
+  const { logRateLimited } = await import("@/lib/logging/rate-limit-log");
+  const tooManyRedirect = () =>
+    NextResponse.redirect(new URL("/?error=Too+many+attempts.+Try+again+later.", req.url));
+  const memRl = checkRateLimit(`verify-token:${clientIp}`, { maxAttempts: 10, windowMs: 600_000 });
+  if (!memRl.allowed) {
+    logRateLimited({ bucket: "verify-token", layer: "mem", actor: clientIp });
+    return tooManyRedirect();
+  }
+  try {
+    const { checkKvRateLimit } = await import("@/lib/auth/kv-rate-limit");
+    const kvRl = await checkKvRateLimit(`verify-token:${clientIp}`, { maxAttempts: 20, windowMs: 600_000 });
+    if (!kvRl.allowed) {
+      logRateLimited({ bucket: "verify-token", layer: "kv", actor: clientIp });
+      return tooManyRedirect();
+    }
+  } catch {
+    // Fail-open on KV error — mem + DB still gate.
+  }
+  try {
+    const { checkDbRateLimit } = await import("@/lib/auth/db-rate-limit");
+    const dbRl = await checkDbRateLimit(`verify-token:${clientIp}`, { maxAttempts: 40, windowMs: 1_800_000 });
+    if (!dbRl.allowed) {
+      logRateLimited({ bucket: "verify-token", layer: "db", actor: clientIp });
+      return tooManyRedirect();
+    }
+  } catch {
+    // Fail-open on DB error.
+  }
+
   const pool = await getPool();
 
   try {

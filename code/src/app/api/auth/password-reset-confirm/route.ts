@@ -59,12 +59,40 @@ export async function POST(req: NextRequest) {
   // R28-M3: default-deny on x-forwarded-for. See lib/net/client-ip.ts.
   const { clientIpFrom } = await import("@/lib/net/client-ip");
   const clientIp = clientIpFrom(req.headers);
+  const { logRateLimited } = await import("@/lib/logging/rate-limit-log");
+
+  // AUTH-AUDIT6-MED1: 3-layer rate limit (mem / KV / DB), parity with
+  // /password-reset-initiate. The reset token is 256-bit so online
+  // guessing is infeasible regardless; these layers cap the CPU +
+  // write pressure an unauthenticated attacker can drive. Prior shape
+  // was in-memory only — on ~32 Workers isolates/colo that degraded to
+  // ~320/10min/IP with no cross-isolate coherence, diverging from the
+  // documented 3-layer standard the rest of the auth surface enforces.
   const rl = checkRateLimit(`pwd-reset-confirm:${clientIp}`, { maxAttempts: 10, windowMs: 600_000 });
   if (!rl.allowed) {
     // R47-M: structured 429 log for ops alerting.
-    const { logRateLimited } = await import("@/lib/logging/rate-limit-log");
     logRateLimited({ bucket: "pwd-reset-confirm", layer: "mem", actor: clientIp });
     return NextResponse.json({ error: "Too many attempts. Try again later." }, { status: 429 });
+  }
+  try {
+    const { checkKvRateLimit } = await import("@/lib/auth/kv-rate-limit");
+    const kvRl = await checkKvRateLimit(`pwd-reset-confirm:${clientIp}`, { maxAttempts: 15, windowMs: 600_000 });
+    if (!kvRl.allowed) {
+      logRateLimited({ bucket: "pwd-reset-confirm", layer: "kv", actor: clientIp });
+      return NextResponse.json({ error: "Too many attempts. Try again later." }, { status: 429 });
+    }
+  } catch {
+    // Fail-open on KV error — the mem layer above + DB layer below gate.
+  }
+  try {
+    const { checkDbRateLimit } = await import("@/lib/auth/db-rate-limit");
+    const dbRl = await checkDbRateLimit(`pwd-reset-confirm:${clientIp}`, { maxAttempts: 30, windowMs: 1_800_000 });
+    if (!dbRl.allowed) {
+      logRateLimited({ bucket: "pwd-reset-confirm", layer: "db", actor: clientIp });
+      return NextResponse.json({ error: "Too many attempts. Try again later." }, { status: 429 });
+    }
+  } catch {
+    // Fail-open on DB error — the mem + KV layers above still gate.
   }
 
   let body: unknown;
@@ -83,11 +111,14 @@ export async function POST(req: NextRequest) {
   const { token, newPassword } = parsed.data;
 
   try {
-    // R28-L6: hash OUTSIDE the transaction so the client connection is
-    // held open for milliseconds, not ~100ms. If hashSecret throws,
-    // the tx never starts — no rollback needed, and the pool doesn't
-    // see ~100ms of per-request pressure under concurrent resets.
-    const newHash = await hashSecret(newPassword);
+    // AUTH-AUDIT6-MED1: defer hashSecret(newPassword) until AFTER the
+    // token row is validated (below). Prior shape computed the ~100ms
+    // PBKDF2 here — before the token lookup — so an attacker spraying
+    // random/expired tokens with a well-formed body forced one PBKDF2
+    // per request even though the token would be rejected. An invalid
+    // token now short-circuits with zero hashing cost. The hash is
+    // still computed OUTSIDE the transaction (R28-L6) once we know the
+    // token is good.
 
     // R58-4: also move the reset-token lookup + password-reuse check
     // OUTSIDE the tx. Prior shape held `auth_credentials FOR UPDATE`
@@ -152,6 +183,11 @@ export async function POST(req: NextRequest) {
         throw err;
       }
     }
+
+    // AUTH-AUDIT6-MED1: token + reuse checks passed — NOW hash the new
+    // password (still outside any tx, per R28-L6). Deferring to here
+    // means a sprayed invalid/expired token costs zero PBKDF2.
+    const newHash = await hashSecret(newPassword);
 
     // (4) Tx: atomically consume the token, re-read credential with
     // FOR UPDATE + TOCTOU guard, UPDATE, revoke sessions, audit.

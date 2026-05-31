@@ -8,7 +8,9 @@ import { revalidatePath } from "next/cache";
 import { invalidateStoreCache } from "@/lib/persistence/postgres-read-store";
 import { redirect } from "next/navigation";
 import { requireRegisterPermission, hasPermission } from "@/lib/authz";import { getRegisterSession, getAdminSession, signInRegister, signOutRegister } from "@/lib/auth/session";
-import { checkRateLimit } from "@/lib/auth/rate-limit";
+// AUTH-AUDIT6-HIGH1: PIN-login rate-limiting now goes through the shared
+// `enforceRegisterPinRateLimits` gate (imported inline at the call sites),
+// so the bare in-memory `checkRateLimit` is no longer used in this file.
 import { mutateStore } from "@/lib/persistence/store";
 import type { Customer } from "@/lib/domain/types";
 
@@ -107,28 +109,27 @@ export async function registerLoginAction(formData: FormData) {
   const deviceId = String(formData.get("deviceId") ?? "") || undefined;
   const pin = String(formData.get("pin") ?? "");
 
-  // R16-M-4: use a SHA-256 fingerprint of `${locationId}:${pin}` as the
-  // bucket key, matching the `/api/auth/register-login` route. The old
-  // `pin.slice(0,1)${pin.length}` key leaked the PIN's first character
-  // and length via bucket-exhaustion timing — an attacker could probe
-  // {"1000","2000",…,"9000"} to identify which PIN prefix+length
-  // combinations have real employees.
-  const pinFingerprint = crypto.subtle
-    ? await (async () => {
-        const enc = new TextEncoder().encode(`${locationId}:${pin}`);
-        const hash = await crypto.subtle.digest("SHA-256", enc);
-        return Array.from(new Uint8Array(hash)).slice(0, 8).map((b) => b.toString(16).padStart(2, "0")).join("");
-      })()
-    : pin;
-  const pinBucket = checkRateLimit(`register-pin:${pinFingerprint}`, { maxAttempts: 5, windowMs: 300_000 });
-  if (!pinBucket.allowed) {
-    const secs = Math.ceil(pinBucket.retryAfterMs / 1000);
-    redirect(`/register?error=Too+many+attempts+for+this+PIN.+Try+again+in+${secs}+seconds`);
-  }
-  const locBucket = checkRateLimit(`register-loc:${locationId}`, { maxAttempts: 30, windowMs: 300_000 });
-  if (!locBucket.allowed) {
-    const secs = Math.ceil(locBucket.retryAfterMs / 1000);
-    redirect(`/register?error=Too+many+login+attempts.+Try+again+in+${secs}+seconds`);
+  // AUTH-AUDIT6-HIGH1: this Server Action is the path the production PIN
+  // pad actually submits to (register/page.tsx → `<form action=
+  // {registerLoginAction}>`). Until round 6 it ran ONLY two in-memory
+  // buckets and skipped the KV + DB + per-IP layers the HTTP route had —
+  // and the in-memory limiter is per-isolate, so Cloudflare's ~32
+  // isolates/colo degraded the per-PIN cap from a coherent ~13/5min
+  // (5/30min absolute) to ~160/5min with NO cross-isolate backstop and
+  // NO per-IP ceiling. Route through the SAME shared gate as
+  // /api/auth/register-login so the defense is identical regardless of
+  // which entry point a client hits. Client IP uses spoof-resistant
+  // defaults (cf-connecting-ip always; XFF only when
+  // TRUST_FORWARDED_FOR=1).
+  const { headers } = await import("next/headers");
+  const { clientIpFrom } = await import("@/lib/net/client-ip");
+  const clientIp = clientIpFrom(await headers());
+  const { enforceRegisterPinRateLimits } = await import("@/lib/auth/register-pin-rate-limit");
+  const rl = await enforceRegisterPinRateLimits({ pin, locationId, clientIp });
+  if (!rl.allowed) {
+    const secs = Math.ceil((rl.retryAfterMs ?? 60_000) / 1000);
+    const msg = encodeURIComponent(rl.message ?? "Too many attempts. Try again shortly.");
+    redirect(`/register?error=${msg}+Try+again+in+${secs}+seconds`);
   }
 
   const loginResult = await signInRegister(
@@ -577,21 +578,20 @@ export async function quickSwitchAction(pin: string): Promise<{ success: boolean
   const cleanPin = pin.trim();
   if (!cleanPin) return { success: false, error: "PIN is required" };
 
-  // R16-M-4: SHA-256 fingerprint bucket key; see registerLoginAction above.
-  const pinFingerprint = crypto.subtle
-    ? await (async () => {
-        const enc = new TextEncoder().encode(`${locationId}:${cleanPin}`);
-        const hash = await crypto.subtle.digest("SHA-256", enc);
-        return Array.from(new Uint8Array(hash)).slice(0, 8).map((b) => b.toString(16).padStart(2, "0")).join("");
-      })()
-    : cleanPin;
-  const pinBucket = checkRateLimit(`register-pin:${pinFingerprint}`, { maxAttempts: 5, windowMs: 300_000 });
-  if (!pinBucket.allowed) {
-    return { success: false, error: `Too many attempts for this PIN. Try again in ${Math.ceil(pinBucket.retryAfterMs / 1000)}s` };
-  }
-  const locBucket = checkRateLimit(`register-loc:${locationId}`, { maxAttempts: 30, windowMs: 300_000 });
-  if (!locBucket.allowed) {
-    return { success: false, error: `Too many attempts. Try again in ${Math.ceil(locBucket.retryAfterMs / 1000)}s` };
+  // AUTH-AUDIT6-HIGH1: quick-switch is a SECOND PIN-brute-force surface —
+  // an already-authenticated cashier can probe a MANAGER PIN to switch
+  // up (and a manager session can authorize voids / discounts / payouts).
+  // It previously ran the same in-memory-only buckets as the old
+  // registerLoginAction. Route through the shared gate so it gets the
+  // KV + DB + per-IP layers too.
+  const { headers } = await import("next/headers");
+  const { clientIpFrom } = await import("@/lib/net/client-ip");
+  const clientIp = clientIpFrom(await headers());
+  const { enforceRegisterPinRateLimits } = await import("@/lib/auth/register-pin-rate-limit");
+  const rl = await enforceRegisterPinRateLimits({ pin: cleanPin, locationId, clientIp });
+  if (!rl.allowed) {
+    const secs = Math.ceil((rl.retryAfterMs ?? 60_000) / 1000);
+    return { success: false, error: `${rl.message ?? "Too many attempts."} Try again in ${secs}s` };
   }
 
   if (isPg()) {

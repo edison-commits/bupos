@@ -20,7 +20,11 @@
  *     collapses all unknown-origin clients into a single bucket,
  *     which is a tighter ceiling than rotating-per-request spoofing.
  */
-export function clientIpFrom(headers: Headers): string {
+// AUTH-AUDIT6-HIGH1: accept any header bag exposing `get()` so Server
+// Actions can pass Next's `ReadonlyHeaders` (from `await headers()`),
+// not just the route-handler `Request.headers` (`Headers`). Both satisfy
+// this structural type; existing callers passing `Headers` are unaffected.
+export function clientIpFrom(headers: { get(name: string): string | null }): string {
   const cf = headers.get("cf-connecting-ip")?.trim();
   if (cf) return cf;
 

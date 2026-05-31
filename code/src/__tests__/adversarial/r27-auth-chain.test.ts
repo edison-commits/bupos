@@ -49,14 +49,23 @@ describe("R27 attack-chain B regression: auth-path hardening", () => {
     });
 
     it("adds a per-(IP, location) in-memory rate limit bucket", () => {
-      expect(src).toMatch(/register-ip:\$\{clientIp\}:\$\{locationId\}/);
+      // AUTH-AUDIT6-HIGH1: the PIN-login rate-limit stack moved into the
+      // shared `enforceRegisterPinRateLimits` gate so the HTTP route AND
+      // the production registerLoginAction Server Action share one
+      // implementation (the action previously ran in-memory-only). Assert
+      // the per-(IP, location) bucket in the shared gate.
+      const gate = read("src/lib/auth/register-pin-rate-limit.ts");
+      expect(gate).toMatch(/register-ip:\$\{clientIp\}:\$\{locationId\}/);
+      // The route must invoke that gate.
+      expect(src).toMatch(/enforceRegisterPinRateLimits\(/);
     });
 
     it("adds a per-(IP, location) DB-layer rate limit bucket", () => {
       // Cross-isolate coherence — a Workers colo has ~32 isolates.
       // Without the DB layer the in-memory bucket gives the attacker
-      // ~32× the budget across isolates.
-      expect(src).toMatch(/checkDbRateLimit\([^)]*register-ip:/);
+      // ~32× the budget across isolates. Now lives in the shared gate.
+      const gate = read("src/lib/auth/register-pin-rate-limit.ts");
+      expect(gate).toMatch(/checkDbRateLimit\([^)]*register-ip:/);
     });
 
     it("increments failed_pin_attempts on post-match validation fail", () => {

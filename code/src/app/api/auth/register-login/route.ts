@@ -1,11 +1,11 @@
-import { checkRateLimit } from "@/lib/auth/rate-limit";
 import { randomUUID } from "@/lib/uuid";
 import { addDays } from "@/lib/utils/date";
 import { hasPermission } from "@/lib/domain/permissions";
 import type { RoleKey } from "@/lib/domain/types";
 import { getPool } from "@/lib/supabase-rest";
-// R43-fix: static import so the bundler definitely includes the module.
-import { logRateLimited } from "@/lib/logging/rate-limit-log";
+// AUTH-AUDIT6-HIGH1: rate-limit stack + its telemetry now live in
+// `@/lib/auth/register-pin-rate-limit` (shared with the Server Action),
+// so `checkRateLimit` / `logRateLimited` are no longer imported here.
 
 // R41-2: opaque cookie name (see session.ts for rationale).
 const REGISTER_COOKIE = "bupos_r";
@@ -62,13 +62,16 @@ export async function POST(request: Request) {
     deviceId = randomUUID();
   }
 
-  // R27-H1: per-IP rate limit added. The existing per-PIN / per-location
-  // buckets are IP-independent — a 4-digit PIN space (10 000 values)
-  // against a 50-employee location, with the per-location cap of 30
-  // attempts per 5 min, was brute-forceable in ~33 minutes from a single
-  // IP (each attempt tests all 50 candidates). Per-IP caps the
-  // attacker's overall budget regardless of how many PIN values they
-  // cycle through.
+  // AUTH-AUDIT6-HIGH1: the full PIN-login rate-limit stack (in-mem
+  // per-PIN / per-location / per-IP, KV per-PIN, DB per-PIN, DB per-IP)
+  // now lives in the shared `enforceRegisterPinRateLimits` helper so
+  // THIS route and the production `registerLoginAction` Server Action
+  // (the path the PIN pad actually submits to) can never drift apart
+  // again — that drift is exactly what round 6 found: the Server Action
+  // was running in-memory-only, silently bypassing the KV/DB/per-IP
+  // layers built here. The credential-level `failed_pin_attempts`
+  // lockout stays inline below because it is post-match (needs the
+  // resolved employee_id).
   //
   // R28-M3: client IP with spoof-resistant defaults — cf-connecting-ip
   // always trusted, x-forwarded-for only when TRUST_FORWARDED_FOR=1
@@ -77,79 +80,10 @@ export async function POST(request: Request) {
   // per-request XFF rotation.
   const { clientIpFrom } = await import("@/lib/net/client-ip");
   const clientIp = clientIpFrom(request.headers);
-
-  // Two-tier rate limit:
-  //  • per-PIN bucket (strict): 5 attempts per 5 min for THIS specific
-  //    PIN value (hashed + truncated — NEVER the raw pin, and NEVER a
-  //    prefix-or-length derivation, which would leak length/first-digit
-  //    to a probing attacker via timing + bucket exhaustion).
-  //  • per-location bucket (generous): 30 attempts per 5 min total —
-  //    blocks mass PIN enumeration against the whole shop without
-  //    locking out legitimate cashiers who mistype occasionally.
-  //  • per-(IP, location) bucket (R27-H1): 10 attempts per 5 min from
-  //    any single IP against a given location. A legitimate cashier
-  //    behind a NAT shares the IP with 0 other logging-in employees at
-  //    that location (different physical locations have different IPs).
-  const pinFingerprint = crypto.subtle
-    ? await (async () => {
-        const enc = new TextEncoder().encode(`${locationId}:${pin}`);
-        const hash = await crypto.subtle.digest("SHA-256", enc);
-        return Array.from(new Uint8Array(hash)).slice(0, 8).map((b) => b.toString(16).padStart(2, "0")).join("");
-      })()
-    : pin; // Fallback for environments without WebCrypto — still better than prefix+length
-  const pinBucket = checkRateLimit(`register-pin:${pinFingerprint}`, { maxAttempts: 5, windowMs: 300_000 });
-  if (!pinBucket.allowed) {
-    logRateLimited({ bucket: "register-pin", layer: "mem", actor: pinFingerprint.slice(0, 6) });
-    return Response.json({ error: "Too many attempts for this PIN. Try again shortly." }, { status: 429 });
-  }
-  const locBucket = checkRateLimit(`register-loc:${locationId}`, { maxAttempts: 30, windowMs: 300_000 });
-  if (!locBucket.allowed) {
-    logRateLimited({ bucket: "register-loc", layer: "mem", actor: locationId.slice(0, 8) });
-    return Response.json({ error: "Too many attempts. Try again shortly." }, { status: 429 });
-  }
-  // R27-H1: per-IP bucket (in-memory, fast-fail path). The DB-layer
-  // per-IP bucket lives below with the other DB rate-limits.
-  const ipBucket = checkRateLimit(`register-ip:${clientIp}:${locationId}`, { maxAttempts: 10, windowMs: 300_000 });
-  if (!ipBucket.allowed) {
-    logRateLimited({ bucket: "register-ip", layer: "mem", actor: `${clientIp}|${locationId.slice(0, 8)}` });
-    return Response.json({ error: "Too many attempts from this device. Try again shortly." }, { status: 429 });
-  }
-
-  // R8-M-11: three-layer rate limit.
-  //   1. In-memory bucket above (per-isolate, 0ms) — catches per-isolate bursts.
-  //   2. KV bucket here (cross-region, ~10ms) — catches distributed attacks.
-  //   3. DB bucket below (strongly consistent, ~30-100ms) — last-resort
-  //      guarantee for the highest-value endpoint.
-  const { checkKvRateLimit } = await import("@/lib/auth/kv-rate-limit");
-  const kvPinBucket = await checkKvRateLimit(`register-pin:${pinFingerprint}`, { maxAttempts: 8, windowMs: 300_000 });
-  if (!kvPinBucket.allowed) {
-    logRateLimited({ bucket: "register-pin", layer: "kv", actor: pinFingerprint.slice(0, 6) });
-    return Response.json({ error: "Too many attempts for this PIN. Try again shortly." }, { status: 429 });
-  }
-
-  const { checkDbRateLimit } = await import("@/lib/auth/db-rate-limit");
-  // AUTH-MED4: tighten DB-layer per-PIN bucket from 10/10min to
-  // 5/30min. Combined with the mem(5/5min) + KV(8/5min) layers, the
-  // global per-PIN-fingerprint cap drops from ~23 attempts/5min to
-  // ~13/5min and ~5/30min absolute. For a 4-digit cashier PIN
-  // (10⁴ space) brute-force time goes from ~36h to ~167h. Owner/
-  // manager PINs are 6-digit (10⁶ space) so already safe; the bound
-  // exists to protect cashier PIN minimum length. 5 attempts per
-  // 30min still permits 6 honest typos before lockout (the PIN UI
-  // surfaces the failed-attempts count + countdown).
-  const dbPinBucket = await checkDbRateLimit(`register-pin:${pinFingerprint}`, { maxAttempts: 5, windowMs: 1_800_000 });
-  if (!dbPinBucket.allowed) {
-    logRateLimited({ bucket: "register-pin", layer: "db", actor: pinFingerprint.slice(0, 6) });
-    return Response.json({ error: "Too many attempts for this PIN. Try again later." }, { status: 429 });
-  }
-  // R27-H1: DB-layer per-IP bucket — cross-isolate coherent. Key on
-  // (IP, locationId) so multi-location tenants don't cross-lock, but
-  // so an attacker rotating through PIN values from one IP still
-  // hits a single cap.
-  const dbIpBucket = await checkDbRateLimit(`register-ip:${clientIp}:${locationId}`, { maxAttempts: 20, windowMs: 900_000 });
-  if (!dbIpBucket.allowed) {
-    logRateLimited({ bucket: "register-ip", layer: "db", actor: `${clientIp}|${locationId.slice(0, 8)}` });
-    return Response.json({ error: "Too many attempts from this device. Try again later." }, { status: 429 });
+  const { enforceRegisterPinRateLimits } = await import("@/lib/auth/register-pin-rate-limit");
+  const rl = await enforceRegisterPinRateLimits({ pin, locationId, clientIp });
+  if (!rl.allowed) {
+    return Response.json({ error: rl.message ?? "Too many attempts. Try again shortly." }, { status: 429 });
   }
 
   // Origin validation
