@@ -320,21 +320,34 @@ async function main() {
       await ownerLogin(jar, d);
     }
 
+    // Once a week, exercise the employee PIN clock-in path
+    // (/api/auth/register-login) on a THROWAWAY jar so it doesn't
+    // disturb the admin session. Verifies the round-6 shared PIN
+    // rate-limit gate + the device-bound register session flow.
+    if (locationId && d % 7 === 0) {
+      const pinJar = makeJar();
+      await pinLogin(pinJar, d, locationId);
+      await sleep(DELAY_MS);
+    }
+
     // Owner morning dashboard + reports scan
     await readDashboard(jar, d);
     await readReports(jar, d);
     await readCommonAdmin(jar, d);
     await sleep(DELAY_MS);
 
-    // Open 1-2 admin shifts per day
-    const shifts = 1 + (d % 2);
-    for (let s = 0; s < shifts; s++) {
-      await openAdminShift(jar, d, employeeId, locationId);
-      await sleep(DELAY_MS);
-    }
+    // Clock IN: open a shift for the employee (admin-initiated).
+    await openAdminShift(jar, d, employeeId, locationId);
+    await sleep(DELAY_MS);
 
     // Mid-day: dashboard re-check (no fresh login — same session)
     await readDashboard(jar, d);
+    await sleep(DELAY_MS);
+
+    // Clock OUT: close the open shift(s). Completes the clock in/out
+    // cycle each simulated day and stops the next day's open from
+    // piling up "already has an open shift" 409s.
+    await closeAllOpenShifts(jar, d);
     await sleep(DELAY_MS);
 
     process.stdout.write('· ');

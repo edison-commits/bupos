@@ -39,10 +39,32 @@ export const GET = withDualAuth("register.open", async (req, ctx) => {
     // bypass used to auto-pass these. Both count + list queries now
     // carry the static org predicate and the dynamic clause adds extra
     // ANDs.
+    // SHIFTS-LOC-FIX (surfaced by the month simulation): owners/managers
+    // now default to ALL org locations so an open shift at ANY location
+    // is visible — and therefore closable — from the Shifts list.
+    // Previously this query hard-scoped to the session's single location
+    // (`s.location_id = $2`) even for owners/managers, and the Shifts
+    // page has no location selector. So an open shift at another location
+    // was invisible here, while the GLOBAL one-open-shift-per-employee
+    // constraint still blocked that employee from clocking in anywhere
+    // else — a dead-end with no in-app way to find or close the shift
+    // (it required direct DB intervention). Managers may still narrow to
+    // a single location with `?location=<uuid>`. Non-managers keep the
+    // tight scope: their OWN shifts at their session location only.
     const isManager = ctx.employee.roleKey === "owner" || ctx.employee.roleKey === "manager";
-    const extra: string[] = ["s.location_id = $2"];
-    const params: unknown[] = [orgId, locationId];
-    if (!isManager) {
+    const extra: string[] = [];
+    const params: unknown[] = [orgId];
+    const locFilter = sp.get("location");
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (isManager) {
+      if (locFilter && UUID_RE.test(locFilter)) {
+        params.push(locFilter);
+        extra.push(`s.location_id = $${params.length}`);
+      }
+      // no valid `location` param → all locations in the org (org-only filter)
+    } else {
+      params.push(locationId);
+      extra.push(`s.location_id = $${params.length}`);
       params.push(ctx.employee.id);
       extra.push(`s.employee_id = $${params.length}`);
     }
@@ -89,7 +111,9 @@ export const GET = withDualAuth("register.open", async (req, ctx) => {
       `SELECT
          s.id,
          s.employee_id,
+         s.location_id,
          COALESCE(e.display_name, e.first_name || ' ' || e.last_name) AS employee_name,
+         l.name AS location_name,
          s.opened_at,
          s.closed_at,
          s.status,
@@ -99,6 +123,7 @@ export const GET = withDualAuth("register.open", async (req, ctx) => {
          s.closing_variance
        FROM shifts s
        LEFT JOIN employees e ON e.id = s.employee_id AND e.organization_id = $1
+       LEFT JOIN locations l ON l.id = s.location_id AND l.organization_id = $1
        WHERE s.organization_id = $1${andClause}
        ORDER BY s.opened_at DESC
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
@@ -109,6 +134,10 @@ export const GET = withDualAuth("register.open", async (req, ctx) => {
       id: row.id as string,
       employeeId: row.employee_id as string,
       employeeName: (row.employee_name as string) ?? "Unknown",
+      locationId: (row.location_id as string) ?? null,
+      // SHIFTS-LOC-FIX: surface which location each shift belongs to so
+      // the all-locations owner/manager view is unambiguous.
+      locationName: (row.location_name as string) || "—",
       openedAt: row.opened_at as string,
       closedAt: row.closed_at as string | null,
       status: row.status as string,

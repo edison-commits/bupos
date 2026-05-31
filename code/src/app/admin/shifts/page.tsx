@@ -13,6 +13,9 @@ interface ShiftSummary {
   id: string;
   employeeId: string;
   employeeName: string;
+  // SHIFTS-LOC-FIX: owners/managers now see shifts across ALL locations,
+  // so each row shows which location it belongs to.
+  locationName?: string;
   openedAt: string;
   closedAt: string | null;
   status: ShiftStatus;
@@ -171,6 +174,7 @@ export default function ShiftsPage() {
               <thead>
                 <tr className="border-b border-zinc-100 bg-zinc-50">
                   <th className="text-left px-4 py-3 font-semibold text-zinc-600 whitespace-nowrap">Employee</th>
+                  <th className="text-left px-4 py-3 font-semibold text-zinc-600 whitespace-nowrap">Location</th>
                   <th className="text-left px-4 py-3 font-semibold text-zinc-600 whitespace-nowrap">Opened</th>
                   <th className="text-left px-4 py-3 font-semibold text-zinc-600 whitespace-nowrap">Closed</th>
                   <th className="text-left px-4 py-3 font-semibold text-zinc-600 whitespace-nowrap">Status</th>
@@ -185,7 +189,7 @@ export default function ShiftsPage() {
                 {loading ? (
                   Array.from({ length: 5 }).map((_, i) => (
                     <tr key={i} className="border-b border-zinc-100 last:border-0">
-                      {Array.from({ length: 9 }).map((_, j) => (
+                      {Array.from({ length: 10 }).map((_, j) => (
                         <td key={j} className="px-4 py-3">
                           <div className="h-4 w-24 rounded bg-zinc-100 animate-pulse" />
                         </td>
@@ -194,7 +198,7 @@ export default function ShiftsPage() {
                   ))
                 ) : shifts.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-12 text-center text-zinc-400">
+                    <td colSpan={10} className="px-4 py-12 text-center text-zinc-400">
                       No shifts found
                     </td>
                   </tr>
@@ -206,6 +210,9 @@ export default function ShiftsPage() {
                     >
                       <td className="px-4 py-3 font-medium text-zinc-900 whitespace-nowrap">
                         {shift.employeeName}
+                      </td>
+                      <td className="px-4 py-3 text-zinc-600 whitespace-nowrap">
+                        {shift.locationName || "—"}
                       </td>
                       <td className="px-4 py-3 text-zinc-600 whitespace-nowrap">
                         {formatDateTime(shift.openedAt)}
