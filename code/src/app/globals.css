@@ -929,6 +929,26 @@ html.dark .bg-emerald-100 { background-color: rgba(40, 153, 245, 0.20) !importan
   --tw-gradient-to: var(--surface-accent-hover) !important;
 }
 
+/* ── Faint brand-tint GRADIENT cards (e.g. KPI tiles use
+   `bg-gradient-to-br from-emerald-50 to-teal-50`) ──
+   These compose a green-ish linear-gradient IMAGE at the -50/-100 stop
+   level that escapes the single-class from/to overrides above. Replace
+   the whole gradient image with a faint Fluent-blue wash so the tiles
+   match the rest of the blue system in BOTH light and dark. Any
+   gradient direction (to-br / to-r / …) is covered via [class*]. */
+[class*="bg-gradient"].from-emerald-50,
+[class*="bg-gradient"].from-emerald-100,
+[class*="bg-gradient"].from-teal-50,
+[class*="bg-gradient"].from-teal-100 {
+  background-image: linear-gradient(to bottom right, rgba(0, 120, 212, 0.10), rgba(0, 120, 212, 0.03)) !important;
+}
+html.dark [class*="bg-gradient"].from-emerald-50,
+html.dark [class*="bg-gradient"].from-emerald-100,
+html.dark [class*="bg-gradient"].from-teal-50,
+html.dark [class*="bg-gradient"].from-teal-100 {
+  background-image: linear-gradient(to bottom right, rgba(40, 153, 245, 0.14), rgba(40, 153, 245, 0.05)) !important;
+}
+
 /* ── Focus affordance: both families get the Fluent blue focus ── */
 .focus\:border-teal-500:focus, .focus\:border-emerald-500:focus,
 .focus\:border-teal-600:focus, .focus\:border-emerald-600:focus {
