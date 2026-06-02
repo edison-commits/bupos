@@ -123,6 +123,18 @@ describe("R22-H-3 regression: verify route releases client exactly once on 23505
         await p.catch(() => {});
       },
     }));
+    // AUTH-AUDIT6-MED2 added a per-IP rate-limit preamble (mem/KV/DB) to
+    // this route AFTER R22-H-3 was written. It runs BEFORE the transaction
+    // and starts with `clientIpFrom(req.headers)` — and the fake req here
+    // has no `.headers`, so without these mocks the route throws (or
+    // short-circuits) before ever reaching pool.connect(), giving 0
+    // releases. Stub the preamble to "allowed" so the test reaches the
+    // single-release transaction it actually guards.
+    vi.doMock("@/lib/net/client-ip", () => ({ clientIpFrom: () => "203.0.113.7" }));
+    vi.doMock("@/lib/auth/rate-limit", () => ({ checkRateLimit: () => ({ allowed: true }) }));
+    vi.doMock("@/lib/logging/rate-limit-log", () => ({ logRateLimited: () => {} }));
+    vi.doMock("@/lib/auth/kv-rate-limit", () => ({ checkKvRateLimit: async () => ({ allowed: true }) }));
+    vi.doMock("@/lib/auth/db-rate-limit", () => ({ checkDbRateLimit: async () => ({ allowed: true }) }));
     const { GET } = await import("@/app/api/auth/verify/route");
     const req = {
       nextUrl: {

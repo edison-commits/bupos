@@ -13,6 +13,14 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      // The `server-only` / `client-only` marker packages resolve their
+      // `default` export to a THROWING module unless the resolver sets the
+      // `react-server` condition (Next.js does; plain node/vitest doesn't).
+      // Alias them to an empty no-op so tests can import real
+      // server-component code without "cannot be imported from a Client
+      // Component" errors. The production build uses Next's own alias.
+      "server-only": path.resolve(__dirname, "./test-stubs/empty-module.ts"),
+      "client-only": path.resolve(__dirname, "./test-stubs/empty-module.ts"),
     },
   },
 });

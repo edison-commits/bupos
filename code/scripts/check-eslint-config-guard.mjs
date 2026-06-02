@@ -29,6 +29,44 @@ const REQUIRED_RULES = [
   "local/pg-helpers-require-org",
 ];
 
+// Core detection — shared by the live check AND selfTest(). Returns the
+// list of `rules` NOT pinned to `level` in `src`. A rule must appear as a
+// quoted key with `level` as the value; any "warn"/"off"/0/1/omission fails
+// (pattern: "rule": "level").
+function findUnpinnedRules(configSrc, rules, level) {
+  const failures = [];
+  for (const rule of rules) {
+    const pattern = new RegExp(
+      `"${rule.replace(/[/\\^$*+?.()|[\]{}]/g, "\\$&")}"\\s*:\\s*"${level}"`,
+    );
+    if (!pattern.test(configSrc)) failures.push(rule);
+  }
+  return failures;
+}
+
+// Self-test (required by check:selftest-coverage — a guardrail without one
+// is indistinguishable from a no-op). Proves the detector PASSES a fully
+// pinned config and CATCHES a downgraded ("warn") or omitted rule.
+function selfTest() {
+  const rules = ["local/a", "local/b"];
+  const cases = [
+    { name: "all pinned", src: `{ "local/a": "error", "local/b": "error" }`, expect: [] },
+    { name: "one downgraded", src: `{ "local/a": "error", "local/b": "warn" }`, expect: ["local/b"] },
+    { name: "one missing", src: `{ "local/a": "error" }`, expect: ["local/b"] },
+  ];
+  for (const c of cases) {
+    const got = findUnpinnedRules(c.src, rules, "error");
+    if (JSON.stringify(got) !== JSON.stringify(c.expect)) {
+      console.error(
+        `\n✗ eslint-config-guard self-test FAILED (${c.name}) — expected ${JSON.stringify(c.expect)}, got ${JSON.stringify(got)}\n`,
+      );
+      process.exit(2);
+    }
+  }
+}
+
+selfTest();
+
 let src;
 try {
   src = fs.readFileSync(CONFIG_PATH, "utf8");
@@ -37,18 +75,7 @@ try {
   process.exit(2);
 }
 
-const failures = [];
-for (const rule of REQUIRED_RULES) {
-  // The rule must appear as a quoted key with the REQUIRED_LEVEL as
-  // the value. Any "warn" / "off" / 0 / 1 / omission fails.
-  // Pattern: "local/rule": "error"
-  const pattern = new RegExp(
-    `"${rule.replace(/[/\\^$*+?.()|[\]{}]/g, "\\$&")}"\\s*:\\s*"${REQUIRED_LEVEL}"`,
-  );
-  if (!pattern.test(src)) {
-    failures.push(rule);
-  }
-}
+const failures = findUnpinnedRules(src, REQUIRED_RULES, REQUIRED_LEVEL);
 
 if (failures.length > 0) {
   console.error("✗ ESLint-config guardrail failed:");
