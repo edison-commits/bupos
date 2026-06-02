@@ -62,16 +62,16 @@ async function testAdminLogin(page) {
   log('✅', 'Admin login + page load OK');
 }
 
-async function testRegisterClockIn(page) {
-  // The register now uses a "tap your name" clock-in (store picker →
-  // roster), NOT a universal PIN pad. Cashiers clock in with no PIN;
-  // owner/manager names are gated behind a per-employee PIN keypad. This
-  // test verifies (1) the UI renders, (2) the manager/owner PIN gate
-  // renders, and (3) a real no-PIN cashier clock-in completes end-to-end.
-  // It degrades gracefully on data shape (e.g. a store with no cashier).
+async function testRegisterClockIn(page, registerPath) {
+  // The register uses a "tap your name" clock-in (store picker → roster).
+  // SEC-AUDIT7-CRIT1: /register is now gated by a signed per-store token, so
+  // we drive it via the `registerPath` (/register?store=<token>) the admin
+  // minted above. Verifies (1) the UI renders, (2) the manager/owner PIN gate
+  // renders, (3) a real no-PIN cashier clock-in completes end-to-end. It
+  // degrades gracefully on data shape (e.g. a store with no cashier).
   log('📋', 'Testing register clock-in (tap-your-name)...');
 
-  await page.goto(`${BASE}/register`, { waitUntil: 'domcontentloaded', timeout: 15000 });
+  await page.goto(`${BASE}${registerPath}`, { waitUntil: 'domcontentloaded', timeout: 15000 });
   await page.waitForTimeout(2000);
 
   const body0 = await page.textContent('body');
@@ -199,6 +199,27 @@ async function testHealthEndpoint() {
       log('⚠️', `Client error: ${err.message.split('\n')[0]}`);
     });
     await testAdminLogin(adminPage);
+    // SEC-AUDIT7-CRIT1: /register now requires a signed per-store token. Mint
+    // it with the admin session (employee.manage-gated), then drive /register
+    // through it. A bare /register (no token) intentionally shows a "terminal
+    // not set up" notice now.
+    let registerPath = '/register';
+    try {
+      const res = await adminPage.evaluate(async () => {
+        const r = await fetch('/api/register-terminal-link', { cache: 'no-store' });
+        return r.ok ? await r.json() : null;
+      });
+      if (res && typeof res.path === 'string') {
+        registerPath = res.path;
+        log('✅', 'Minted per-store register link');
+      } else {
+        log('❌', 'Could not mint register terminal link (admin lacks employee.manage?)');
+        failures++;
+      }
+    } catch (e) {
+      log('❌', `register-terminal-link fetch failed: ${(e.message || '').split('\n')[0]}`);
+      failures++;
+    }
     await adminContext.close();
 
     // Register flow
@@ -207,7 +228,7 @@ async function testHealthEndpoint() {
     regPage.on('pageerror', err => {
       log('⚠️', `Client error: ${err.message.split('\n')[0]}`);
     });
-    await testRegisterClockIn(regPage);
+    await testRegisterClockIn(regPage, registerPath);
     await regContext.close();
 
   } finally {
