@@ -4,6 +4,7 @@ import { AppNav } from "@/components/layout/app-nav";
 import { PosSidebar } from "@/components/layout/pos-sidebar";
 import { RegisterConsole } from "@/components/register/register-console";
 import { StoreClockIn } from "@/components/register/store-clock-in";
+import { TimezoneBootstrap } from "@/components/system/timezone-bootstrap";
 import { getRegisterSession } from "@/lib/auth/session";
 import { readStore } from "@/lib/persistence/store";
 import type { LocalStoreData } from "@/lib/persistence/types";
@@ -136,6 +137,18 @@ export default async function RegisterPage({
   const { runWithTimeZone } = await import("@/lib/format");
   return runWithTimeZone(orgTz, () => (
     <div className="pos-shell flex flex-col min-h-screen">
+      {/*
+        Sets the CLIENT default timezone to the org's value DURING render so
+        the very first client render (hydration) formats dates the same way
+        the server did inside runWithTimeZone(orgTz). Must sit above AppNav /
+        RegisterConsole — both format the shift-opened time via
+        formatDateTime, and without this the client fell back to the
+        hardcoded LA default (format.ts `_clientTz`), causing a React #418
+        hydration mismatch on /register?notice=Clocked+in whenever the org
+        TZ ≠ America/Los_Angeles. The admin console already does this
+        (admin-console.tsx); the register tree was missing it.
+      */}
+      <TimezoneBootstrap timezone={orgTz} />
       <AppNav session={headerSession} />
       <div className="flex flex-1 min-h-0">
         <PosSidebar {...sidebarProps} />

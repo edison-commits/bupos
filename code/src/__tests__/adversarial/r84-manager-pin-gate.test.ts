@@ -86,4 +86,18 @@ describe("R84 — manager/owner PIN gate on tap-your-name clock-in", () => {
       expect(src).toMatch(/Cashier — tap to clock in, no PIN\.[\s\S]*?<form key=\{e\.id\} action=\{clockInAction\}/);
     });
   });
+
+  describe("register/page.tsx renders TimezoneBootstrap (no #418 on clocked-in console)", () => {
+    // The authenticated register console formats the shift-opened time on
+    // the client (AppNav). Without setting the client TZ to the org's value
+    // during render, the client fell back to the LA default and mismatched
+    // the server's org-TZ render → React #418 at /register?notice=Clocked+in.
+    const src = read("src/app/register/page.tsx");
+    it("imports TimezoneBootstrap", () => {
+      expect(src).toMatch(/import \{ TimezoneBootstrap \} from "@\/components\/system\/timezone-bootstrap"/);
+    });
+    it("renders <TimezoneBootstrap timezone={orgTz}> above AppNav", () => {
+      expect(src).toMatch(/<TimezoneBootstrap timezone=\{orgTz\} \/>[\s\S]*?<AppNav/);
+    });
+  });
 });
