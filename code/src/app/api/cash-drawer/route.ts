@@ -268,9 +268,15 @@ async function handleOpenShift(
     let shiftRes;
     try {
       shiftRes = await client.query(
+        // SIM-AUDIT8: shifts.opened_at is NOT NULL with NO default (unlike
+        // created_at/updated_at). This INSERT omitted it, so EVERY drawer
+        // open via /api/cash-drawer (open_shift) threw a non-23505 NOT-NULL
+        // violation -> caught below -> 500. The canonical open path
+        // (postgres-store.ts, /api/shifts) always sets opened_at explicitly;
+        // match it here. Set to NOW() = the business open-time.
         `INSERT INTO shifts
-         (organization_id, location_id, employee_id, register_session_id, opening_float, opened_note, status)
-         VALUES ($1, $2, $3, $4, $5, $6, 'open')
+         (organization_id, location_id, employee_id, register_session_id, opening_float, opened_note, status, opened_at)
+         VALUES ($1, $2, $3, $4, $5, $6, 'open', NOW())
          RETURNING id, opened_at`,
         [
           orgId,
