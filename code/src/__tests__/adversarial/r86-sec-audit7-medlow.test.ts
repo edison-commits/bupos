@@ -71,6 +71,18 @@ describe("SEC-AUDIT7-LOW5: register_login_create_session org-consistency guard",
   });
 });
 
+describe("SEC-AUDIT7-LOW5b: migration 082 re-pins search_path after 081's CREATE OR REPLACE", () => {
+  // 081's CREATE OR REPLACE wiped the search_path proconfig that mig 052
+  // had ALTER'd onto this SECURITY DEFINER fn (CREATE OR REPLACE resets
+  // proconfig). 082 re-pins it the way 052 did, so the R21-H-3 integration
+  // gate (no SECDEF fn in public.* may lack search_path) stays green.
+  const src = read("supabase/migrations/082_register_login_create_session_search_path.sql");
+  it("ALTERs register_login_create_session to SET search_path = public", () => {
+    expect(src).toMatch(/ALTER FUNCTION public\.register_login_create_session\(text, text, text, text, text, text, timestamptz, timestamptz\)/);
+    expect(src).toMatch(/SET search_path = public/);
+  });
+});
+
 describe("SEC-AUDIT7-LOW6: gift-cards reads schema fields from validated v.data", () => {
   const src = read("src/app/api/gift-cards/route.ts");
   it("activate/reload/disable destructure from v.data (not raw body)", () => {
