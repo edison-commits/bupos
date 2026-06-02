@@ -86,6 +86,18 @@ export const POST = withDualAuth("register.open", async (request, ctx) => {
     // we only honor server-verified exceptions — matching the online checkout
     // validation path. Verification happens after sessionId is resolved below.
     let approvedExceptions: string[] = [];
+    // SEC-AUDIT7-HIGH1: also carry the manager-approved DOLLAR ceiling per
+    // exception code. R38 made approvals amount-scoped and online checkout
+    // enforces `applied <= approved`, but offline-sync only ever checked
+    // presence — so a $55 discount approval unlocked an unlimited offline
+    // discount / price-override / store-credit. Mirror the checkout-action
+    // amountApprovedFor() gate here. NULL approved_amount = legacy unbounded.
+    const approvedAmountByCode = new Map<string, number>();
+    const amountApprovedFor = (code: string, applied: number): boolean => {
+      const approved = approvedAmountByCode.get(code);
+      if (approved === undefined) return true; // NULL = unbounded (legacy)
+      return applied <= approved + 0.01; // epsilon for cent rounding
+    };
 
     // Clamp client-supplied timestamp to a reasonable window:
     //  - reject future timestamps (> now + 5min clock skew)
@@ -481,7 +493,7 @@ export const POST = withDualAuth("register.open", async (request, ctx) => {
           // sessionId is the authenticated register session id from
           // the session cookie — tenant-verified.
           const { rows: pendingRows } = await preClient.query(
-            `SELECT exception_code FROM register_session_exceptions
+            `SELECT exception_code, approved_amount FROM register_session_exceptions
              WHERE register_session_id = $1
                AND status = 'pending'
                AND exception_code = ANY($2::text[])
@@ -489,6 +501,15 @@ export const POST = withDualAuth("register.open", async (request, ctx) => {
             [sessionId, rawApprovedExceptions],
           );
           approvedExceptions = pendingRows.map((r: { exception_code: string }) => r.exception_code);
+          // SEC-AUDIT7-HIGH1: capture the approved dollar ceiling (MAX across
+          // any duplicate pending rows for the same code) for the gates below.
+          for (const r of pendingRows as Array<{ exception_code: string; approved_amount: number | null }>) {
+            if (r.approved_amount !== null && r.approved_amount !== undefined) {
+              const n = Number(r.approved_amount);
+              const prev = approvedAmountByCode.get(r.exception_code) ?? 0;
+              if (Number.isFinite(n) && n > prev) approvedAmountByCode.set(r.exception_code, n);
+            }
+          }
         }
         // Register config (approval thresholds, loyalty earn rate). On
         // Workers the per-isolate cache in getRegisterConfig is ~useless
@@ -630,7 +651,11 @@ export const POST = withDualAuth("register.open", async (request, ctx) => {
       if (item.overridePrice != null && item.overridePrice < 0) {
         return NextResponse.json({ error: "Invalid price override" }, { status: 400 });
       }
-      const hasApprovedOverride = item.overridePrice != null && approvedExceptions.includes("price_override");
+      // SEC-AUDIT7-HIGH1: honor the override only if it's approved AND the
+      // per-unit dollar impact is within the manager-approved ceiling.
+      const hasApprovedOverride = item.overridePrice != null
+        && approvedExceptions.includes("price_override")
+        && amountApprovedFor("price_override", Math.abs(serverPrice - item.overridePrice));
       if (item.unitPrice !== serverPrice && !hasApprovedOverride) {
         return NextResponse.json({ error: "Price tampering detected in offline cart" }, { status: 400 });
       }
@@ -729,13 +754,23 @@ export const POST = withDualAuth("register.open", async (request, ctx) => {
     // value:95}` off every line and the approval gate never fired.
     // R38-A-F7: use `>=` so a threshold set at $50 blocks an exactly-
     // $50 discount.
-    if (discountTotal >= thresholds.discountOver && !approvedExceptions.includes("discount_threshold")) {
+    // SEC-AUDIT7-HIGH1: require the approval AND that the discount is within
+    // the approved dollar ceiling.
+    if (
+      discountTotal >= thresholds.discountOver
+      && !(approvedExceptions.includes("discount_threshold") && amountApprovedFor("discount_threshold", discountTotal))
+    ) {
       return NextResponse.json({ error: "Cart discount exceeds threshold without manager approval" }, { status: 403 });
     }
     const storeCreditTendered = tenders
       .filter((t: { type: string }) => t.type === "store_credit")
       .reduce((sum: number, t: { amount: number }) => sum + t.amount, 0);
-    if (storeCreditTendered >= thresholds.storeCreditIssuanceOver && !approvedExceptions.includes("store_credit_threshold")) {
+    // SEC-AUDIT7-HIGH1: require the approval AND that the store-credit issued
+    // is within the approved dollar ceiling.
+    if (
+      storeCreditTendered >= thresholds.storeCreditIssuanceOver
+      && !(approvedExceptions.includes("store_credit_threshold") && amountApprovedFor("store_credit_threshold", storeCreditTendered))
+    ) {
       return NextResponse.json({ error: "Store credit issuance exceeds threshold without manager approval" }, { status: 403 });
     }
 

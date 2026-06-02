@@ -32,13 +32,16 @@ interface RosterStore {
  * (e.g. "Chris C."). Only employees whose role carries register
  * permissions are listed, and only stores with at least one such employee.
  */
-async function getStoresWithRoster(): Promise<RosterStore[]> {
+async function getStoresWithRoster(orgId: string): Promise<RosterStore[]> {
   try {
     const { getPool } = await import("@/lib/supabase-rest");
     const pool = await getPool();
-    // check-pool-org-filter: scoped-by-pre-login-store-roster
-    // Pre-authentication roster picker; no org is known yet (no session
-    // cookie). The JOIN ties each employee to its location's org.
+    // SEC-AUDIT7-CRIT1: scoped to the ONE org the terminal was provisioned
+    // for (resolved from the verified per-store token). This query used to
+    // have NO org filter, so the pre-auth /register roster exposed every
+    // tenant's stores + employees and enabled anonymous cross-tenant no-PIN
+    // cashier clock-in. The explicit `l.organization_id = $1` filter now
+    // satisfies the pool-org-filter guardrail without an escape comment.
     const { rows } = await pool.query(
       `SELECT l.id::text AS location_id,
               CASE WHEN COALESCE(l.name, '') = '' THEN 'Store' ELSE l.name END AS location_name,
@@ -51,7 +54,9 @@ async function getStoresWithRoster(): Promise<RosterStore[]> {
           AND l.id = ANY(e.location_ids)
           AND e.is_active = true
         WHERE l.is_active = true
+          AND l.organization_id = $1::uuid
         ORDER BY l.created_at ASC, employee_name ASC`,
+      [orgId],
     );
     const { hasPermission } = await import("@/lib/domain/permissions");
     const byLoc = new Map<string, RosterStore>();
@@ -106,9 +111,23 @@ export default async function RegisterPage({
     // stays request-scoped on Cloudflare Workers. Setting module-scope
     // state here leaked TZ across concurrent requests (R9-C-3).
   }
-  // Unauthenticated visitors get the store roster for the no-PIN
-  // "tap your name" clock-in. Logged-in users skip straight to the console.
-  const stores: RosterStore[] = session ? [] : await getStoresWithRoster();
+  // SEC-AUDIT7-CRIT1: unauthenticated visitors only get a roster if the
+  // terminal presents its signed per-store token (`/register?store=<token>`),
+  // and only for THAT org. No/invalid token → no roster (StoreClockIn shows
+  // a "terminal not set up" notice). This is what closes the cross-tenant
+  // exposure on the shared /register domain.
+  const storeToken = typeof params.store === "string" ? params.store : "";
+  let tokenOrgId: string | null = null;
+  if (!session && storeToken) {
+    try {
+      const { verifyRegisterStoreToken } = await import("@/lib/auth/device-cookie");
+      tokenOrgId = await verifyRegisterStoreToken(storeToken);
+    } catch (e: unknown) {
+      console.error("[register/page] store-token verify failed:", safeErr(e));
+    }
+  }
+  const stores: RosterStore[] = session || !tokenOrgId ? [] : await getStoresWithRoster(tokenOrgId);
+  const validStoreToken = tokenOrgId ? storeToken : "";
 
   const sidebarProps = session
     ? {
@@ -160,7 +179,7 @@ export default async function RegisterPage({
             <div className="h-full flex items-center justify-center p-6">
               <div className="w-full max-w-2xl">
                 <section className="card px-8 py-8">
-                  <StoreClockIn stores={stores} />
+                  <StoreClockIn stores={stores} storeToken={validStoreToken} />
                   {notice ? <p className="mt-4 rounded-2xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{notice}</p> : null}
                   {error ? <p className="mt-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p> : null}
                 </section>

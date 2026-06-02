@@ -786,6 +786,12 @@ export async function signInAdmin(email: string, password: string) {
 export async function signInRegisterByEmployee(
   employeeId: string,
   locationId: string,
+  // SEC-AUDIT7-CRIT1: REQUIRED. The org of the per-store register token
+  // the terminal was provisioned with (clockInAction verifies the token
+  // before calling). The resolved employee/location MUST belong to this
+  // org, so a forged employeeId/locationId from another tenant is rejected
+  // — closing the cross-tenant no-PIN takeover on the shared /register.
+  expectedOrgId: string,
   deviceId?: string,
   pin?: string,
 ) {
@@ -813,8 +819,13 @@ export async function signInRegisterByEmployee(
           AND l.id = $2::uuid
           AND l.is_active = true
           AND l.id = ANY(e.location_ids)
+          -- SEC-AUDIT7-CRIT1: bind to the provisioned terminal's org. A
+          -- forged employeeId/locationId from another tenant yields no row
+          -- (→ the !row redirect below), so the no-PIN clock-in can't cross
+          -- tenants on the shared /register surface.
+          AND e.organization_id = $3::uuid
         LIMIT 1`,
-      [employeeId, locationId],
+      [employeeId, locationId, expectedOrgId],
     );
     const row = rows[0] as { organization_id: string; role_key: string; pin_hash: string | null } | undefined;
     if (!row) redirect("/register?error=Could+not+clock+in.+Please+pick+your+store+and+name+again.");

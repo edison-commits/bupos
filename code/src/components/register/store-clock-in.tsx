@@ -45,7 +45,7 @@ function getDeviceId(): string {
   return generated;
 }
 
-export function StoreClockIn({ stores }: { stores: Store[] }) {
+export function StoreClockIn({ stores, storeToken }: { stores: Store[]; storeToken: string }) {
   const [deviceId, setDeviceId] = useState("");
   // Auto-select when there's only one store (skip the picker).
   const [selectedId, setSelectedId] = useState<string | null>(
@@ -60,11 +60,28 @@ export function StoreClockIn({ stores }: { stores: Store[] }) {
     setDeviceId(getDeviceId());
   }, []);
 
+  // SEC-AUDIT7-CRIT1: the terminal must be opened via its signed per-store
+  // link (`/register?store=<token>`). Without a valid token the page passes
+  // an empty string and we show a setup notice instead of any roster — this
+  // is what prevents the shared /register URL from listing every tenant.
+  if (!storeToken) {
+    return (
+      <div className="grid gap-2">
+        <h2 className="text-2xl font-semibold">This terminal isn&apos;t set up yet</h2>
+        <p className="text-sm text-zinc-600">
+          Open this register from your store&apos;s setup link (your manager can
+          copy it from Admin → Settings → Register terminal link), or sign in
+          from the admin area.
+        </p>
+      </div>
+    );
+  }
+
   if (stores.length === 0) {
     return (
       <p className="text-sm text-zinc-600">
-        No stores are set up yet. Add a location and employees in the admin
-        area first.
+        No one at this store can open a register yet. Add a location and
+        register-capable employees in the admin area first.
       </p>
     );
   }
@@ -144,6 +161,7 @@ export function StoreClockIn({ stores }: { stores: Store[] }) {
           <input type="hidden" name="locationId" value={store.id} />
           <input type="hidden" name="employeeId" value={pinFor.id} />
           <input type="hidden" name="deviceId" value={deviceId} />
+          <input type="hidden" name="storeToken" value={storeToken} />
           <input type="hidden" name="pin" value={pin} />
 
           <div className="grid grid-cols-3 gap-3">
@@ -239,6 +257,7 @@ export function StoreClockIn({ stores }: { stores: Store[] }) {
                 <input type="hidden" name="locationId" value={store.id} />
                 <input type="hidden" name="employeeId" value={e.id} />
                 <input type="hidden" name="deviceId" value={deviceId} />
+                <input type="hidden" name="storeToken" value={storeToken} />
                 <button
                   type="submit"
                   data-testid="clock-in-name"

@@ -62,7 +62,9 @@ describe("R84 — manager/owner PIN gate on tap-your-name clock-in", () => {
     });
 
     it("passes the pin through to signInRegisterByEmployee", () => {
-      expect(src).toMatch(/signInRegisterByEmployee\(employeeId, locationId, deviceId, pin \|\| undefined\)/);
+      // SEC-AUDIT7-CRIT1: now also passes the verified per-store token's org
+      // (tokenOrgId) so the clock-in is bound to the provisioned tenant.
+      expect(src).toMatch(/signInRegisterByEmployee\(employeeId, locationId, tokenOrgId, deviceId, pin \|\| undefined\)/);
     });
   });
 

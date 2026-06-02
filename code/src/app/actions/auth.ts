@@ -131,11 +131,19 @@ export async function loginAction(_prev: { error: string } | null, formData: For
           const reason = err instanceof Error && /Invalid admin credentials/.test(err.message)
             ? "invalid_credentials"
             : "internal_error";
-          insertAudit(
-            orgId, null, cred?.employeeId ?? null,
-            "session", null, "admin_login_failed",
-            { email_prefix: email.slice(0, 3) + "***", reason },
-          ).catch((auditErr) => console.error("[audit] Failed to insert audit event:", safeErr(auditErr)));
+          // SEC-AUDIT7-HIGH2: route through waitUntilOrAwait. A bare detached
+          // `insertAudit(...).catch()` is CANCELLED on Workers when the
+          // failure response returns, so the admin_login_failed row for a
+          // KNOWN org was silently lost — blinding password-spray detection
+          // on the highest-value (real-account) case. Mirrors the email path.
+          const { waitUntilOrAwait } = await import("@/lib/runtime/wait-until");
+          await waitUntilOrAwait(
+            insertAudit(
+              orgId, null, cred?.employeeId ?? null,
+              "session", null, "admin_login_failed",
+              { email_prefix: email.slice(0, 3) + "***", reason },
+            ).catch((auditErr) => console.error("[audit] Failed to insert audit event:", safeErr(auditErr))),
+          );
         } else {
           const reason = err instanceof Error && /Invalid admin credentials/.test(err.message)
             ? "invalid_credentials"

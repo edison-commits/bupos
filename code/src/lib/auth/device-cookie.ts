@@ -162,3 +162,42 @@ export async function verifyDeviceIdCookie(cookieValue: string): Promise<string 
     return null;
   }
 }
+
+// ── Per-store register-terminal token ──────────────────────────────────
+// SEC-AUDIT7-CRIT1: the "tap your name" /register roster has NO tenant
+// context pre-auth, so an unscoped query exposed EVERY org's roster +
+// allowed anonymous no-PIN cross-tenant cashier clock-in. The terminal is
+// now provisioned with a signed per-org token (`/register?store=<token>`):
+// the page scopes the roster to the token's org, and clockInAction binds
+// the clock-in to that org so a forged employeeId from another tenant is
+// rejected. The token is an HMAC over the org id with its OWN scope prefix
+// (cannot collide with device cookies even under the same secret). It does
+// not expire — it's a terminal provisioning key, like an API key; rotate
+// CUSTOMER_DISPLAY_SECRET to invalidate all of them.
+const STORE_PREFIX = "rs1.";
+const STORE_SCOPE = "bupos-register-store-v1\0";
+
+/** Mint a per-org register-terminal token for a `/register?store=` link. */
+export async function signRegisterStoreToken(orgId: string): Promise<string> {
+  const sig = await hmacSha256(getSecret(), STORE_SCOPE + orgId);
+  return `${STORE_PREFIX}${orgId}.${base64urlEncode(sig)}`;
+}
+
+/** Verify a store token; returns the org id, or null if malformed/forged. */
+export async function verifyRegisterStoreToken(token: string): Promise<string | null> {
+  try {
+    if (!token.startsWith(STORE_PREFIX)) return null;
+    const rest = token.slice(STORE_PREFIX.length);
+    const dot = rest.lastIndexOf(".");
+    if (dot < 1) return null;
+    const orgId = rest.slice(0, dot);
+    const sigB64 = rest.slice(dot + 1);
+    if (!orgId || !sigB64) return null;
+    const expected = await hmacSha256(getSecret(), STORE_SCOPE + orgId);
+    const provided = base64urlDecode(sigB64);
+    if (!constantTimeEq(expected, provided)) return null;
+    return orgId;
+  } catch {
+    return null;
+  }
+}

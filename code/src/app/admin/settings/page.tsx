@@ -963,9 +963,23 @@ export default function SettingsPage() {
     receipt: null,
   });
   const [promptPassword, passwordGate] = usePasswordGate();
+  // SEC-AUDIT7-CRIT1: the signed per-store /register terminal link.
+  const [terminalLink, setTerminalLink] = useState<string | null>(null);
+  const [terminalCopied, setTerminalCopied] = useState(false);
 
   useEffect(() => {
     fetchSettings();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    authFetch('/api/register-terminal-link', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { path?: string } | null) => {
+        if (!cancelled && d?.path) setTerminalLink(`${window.location.origin}${d.path}`);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
   }, []);
 
   const fetchSettings = async () => {
@@ -1157,6 +1171,40 @@ export default function SettingsPage() {
         )}
 
         <div className="space-y-6">
+          {/* SEC-AUDIT7-CRIT1: per-store register terminal link */}
+          <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+            <h2 className="text-lg font-bold text-gray-900">Register terminal link</h2>
+            <p className="mt-1 text-sm text-gray-600">
+              Open this link on each register device to enable the tap-your-name
+              clock-in for <strong>this store</strong>. Keep it private — anyone
+              with the link can see this store&apos;s roster and clock in a
+              cashier. It only ever works for your store, never another tenant.
+            </p>
+            {terminalLink ? (
+              <div className="mt-3 flex items-center gap-2">
+                <input
+                  readOnly
+                  value={terminalLink}
+                  onFocus={(e) => e.currentTarget.select()}
+                  className="flex-1 rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm text-gray-800"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard?.writeText(terminalLink);
+                    setTerminalCopied(true);
+                    setTimeout(() => setTerminalCopied(false), 2000);
+                  }}
+                  className="flex-shrink-0 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
+                >
+                  {terminalCopied ? "Copied!" : "Copy"}
+                </button>
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-gray-400">Loading…</p>
+            )}
+          </div>
+
           <StoreSection
             data={settings.store}
             isEditing={editingSection === 'store'}

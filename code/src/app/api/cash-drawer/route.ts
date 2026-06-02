@@ -494,18 +494,21 @@ async function handlePayIn(
       // A distinct `cash_payin` code would also work but reuses the
       // existing UI flow / step-up bucket for simplicity.
       // check-pool-org-filter: scoped-by-register-session-id-from-org-gated-shift
+      // SEC-AUDIT7-HIGH1: bind the consume to the approved dollar ceiling
+      // (same fix as handlePayOut). NULL approved_amount = legacy unbounded.
       const consume = await client.query(
         `UPDATE register_session_exceptions
            SET status = 'consumed'
          WHERE id = $1 AND register_session_id = $2 AND status = 'pending'
            AND exception_code = 'cash_payout'
            AND (expires_at IS NULL OR expires_at > now())
+           AND (approved_amount IS NULL OR $3::numeric <= approved_amount + 0.01)
          RETURNING id`,
-        [approval_id, shiftRegisterSessionId],
+        [approval_id, shiftRegisterSessionId, numericAmount],
       );
       if (consume.rows.length === 0) {
         await client.query('ROLLBACK');
-        return NextResponse.json({ error: 'Invalid, expired, or already-used approval' }, { status: 403 });
+        return NextResponse.json({ error: 'Invalid, expired, or over the approved amount' }, { status: 403 });
       }
     }
 
@@ -633,6 +636,12 @@ async function handlePayOut(orgId: string, locationId: string, actorEmployeeId: 
           // unrelated sale can't be hijacked into authorizing a drawer
           // pay-out (R9-H-1). approvalPermissionMap in approval-action.ts
           // gates who may create a cash_payout exception.
+          // SEC-AUDIT7-HIGH1: bind the consume to the manager-approved DOLLAR
+          // ceiling. R38 made cash_payout approvals amount-scoped, but this
+          // consume matched on code only — so a $55 approval authorized a
+          // pay-out up to the $10k cap. The amount predicate makes an
+          // over-ceiling pay-out match 0 rows → rejected below. NULL
+          // approved_amount = legacy unbounded.
           // check-pool-org-filter: scoped-by-register-session-id-from-org-gated-shift
           const consumeRes = await payoutClient.query(
             `UPDATE register_session_exceptions
@@ -642,12 +651,13 @@ async function handlePayOut(orgId: string, locationId: string, actorEmployeeId: 
                AND status = 'pending'
                AND exception_code = 'cash_payout'
                AND (expires_at IS NULL OR expires_at > now())
+               AND (approved_amount IS NULL OR $3::numeric <= approved_amount + 0.01)
              RETURNING id`,
-            [approval_id, shiftRegisterSessionId],
+            [approval_id, shiftRegisterSessionId, numericAmount],
           );
           if (consumeRes.rows.length === 0) {
             await payoutClient.query("ROLLBACK");
-            payoutResult = { kind: "error", status: 403, error: "Invalid, expired, or already-used approval" };
+            payoutResult = { kind: "error", status: 403, error: "Invalid, expired, or over the approved amount" };
           } else {
             const insertRes = await payoutClient.query(
               `INSERT INTO pay_in_outs (shift_id, location_id, employee_id, direction, amount, reason, note, organization_id)

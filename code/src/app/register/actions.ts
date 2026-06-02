@@ -229,6 +229,17 @@ export async function clockInAction(formData: FormData) {
   if (!locationId || !employeeId) {
     redirect("/register?error=Please+pick+your+store+and+name.");
   }
+  // SEC-AUDIT7-CRIT1: the terminal must present the signed per-store token
+  // it was provisioned with (`/register?store=<token>`). Verify it here and
+  // bind the clock-in to that org, so a forged POST with another tenant's
+  // employeeId/locationId is rejected (the roster on /register is already
+  // scoped to this org, but never trust the client to re-send it).
+  const storeToken = String(formData.get("storeToken") ?? "");
+  const { verifyRegisterStoreToken } = await import("@/lib/auth/device-cookie");
+  const tokenOrgId = storeToken ? await verifyRegisterStoreToken(storeToken) : null;
+  if (!tokenOrgId) {
+    redirect("/register?error=This+terminal+isn%27t+set+up.+Ask+your+manager+for+the+store+link.");
+  }
   // Brute-force gate ONLY when a PIN is actually being checked (the
   // manager/owner path). Cashiers have no secret, so no gate. Same shared
   // limiter (mem + KV + DB, per-PIN + per-IP) as registerLoginAction and
@@ -246,7 +257,7 @@ export async function clockInAction(formData: FormData) {
       redirect(`/register?error=${msg}+Try+again+in+${secs}+seconds`);
     }
   }
-  const loginResult = await signInRegisterByEmployee(employeeId, locationId, deviceId, pin || undefined);
+  const loginResult = await signInRegisterByEmployee(employeeId, locationId, tokenOrgId, deviceId, pin || undefined);
   if (!loginResult) redirect("/register?error=Could+not+clock+in.");
   const { employee, location, registerSession } = loginResult;
   await finishRegisterClockIn(employee, location, registerSession);
@@ -636,13 +647,20 @@ export async function registerLogoutAction() {
 
   await signOutRegister();
 
-  // Audit: log register logout (non-fatal — redirect still proceeds)
+  // Audit: log register logout (non-fatal — redirect still proceeds).
+  // SEC-AUDIT7-HIGH2: route through waitUntilOrAwait. A bare detached
+  // `rpcInsertAudit(...).catch()` is CANCELLED on Workers when the redirect
+  // seals the request (no_handle_cross_request_promise_resolution), so every
+  // register-logout silently recorded no audit row — unlike the login/
+  // shift-open audits in finishRegisterClockIn which already wrap it.
   if (isPg()) {
-    rpcInsertAudit(
-      employee.organizationId, location.id, employee.id,
-      "session", sessionId, "register_logout",
-      { register_session_id: registerSession.id },
-    ).catch((err) => console.error("[registerLogoutAction] audit failed:", safeErr(err)));
+    await waitUntilOrAwait(
+      rpcInsertAudit(
+        employee.organizationId, location.id, employee.id,
+        "session", sessionId, "register_logout",
+        { register_session_id: registerSession.id },
+      ).catch((err) => console.error("[registerLogoutAction] audit failed:", safeErr(err))),
+    );
   }
 
   invalidateStoreCache(employee.organizationId);
