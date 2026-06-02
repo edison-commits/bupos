@@ -54,17 +54,40 @@ BEGIN
   END IF;
 END $$;
 
+-- register_sessions ALREADY received a NON-cascade org FK in migration 014
+-- (`fk_register_sessions_organization`, default ON DELETE NO ACTION). A
+-- plain by-column "IF NOT EXISTS … ADD" guard would see that FK and skip —
+-- leaving this migration's ON DELETE CASCADE intent UNMET, and then the
+-- by-name verification at the end of the file would abort ("FK did not
+-- land"). So drop ANY pre-existing org FK whose name isn't our canonical
+-- one, then (re)create the canonical CASCADE FK. Idempotent: a second run
+-- finds the canonical FK already in place and no-ops.
 DO $$
+DECLARE
+  existing_name text;
 BEGIN
+  SELECT c.conname INTO existing_name
+  FROM pg_constraint c
+  JOIN pg_class t ON t.oid = c.conrelid
+  WHERE t.relname = 'register_sessions'
+    AND c.contype = 'f'
+    AND c.conkey = ARRAY[
+      (SELECT attnum FROM pg_attribute
+       WHERE attrelid = t.oid AND attname = 'organization_id')
+    ]
+  LIMIT 1;
+
+  IF existing_name IS NOT NULL
+     AND existing_name <> 'register_sessions_organization_id_fkey' THEN
+    EXECUTE format('ALTER TABLE register_sessions DROP CONSTRAINT %I', existing_name);
+    RAISE NOTICE 'SCH-H2: dropped non-canonical register_sessions org FK %', existing_name;
+  END IF;
+
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint c
     JOIN pg_class t ON t.oid = c.conrelid
     WHERE t.relname = 'register_sessions'
-      AND c.contype = 'f'
-      AND c.conkey = ARRAY[
-        (SELECT attnum FROM pg_attribute
-         WHERE attrelid = t.oid AND attname = 'organization_id')
-      ]
+      AND c.conname = 'register_sessions_organization_id_fkey'
   ) THEN
     ALTER TABLE register_sessions
       ADD CONSTRAINT register_sessions_organization_id_fkey
@@ -73,7 +96,7 @@ BEGIN
       ON DELETE CASCADE;
     RAISE NOTICE 'SCH-H2: added register_sessions_organization_id_fkey';
   ELSE
-    RAISE NOTICE 'SCH-H2: register_sessions.organization_id FK already present';
+    RAISE NOTICE 'SCH-H2: register_sessions.organization_id FK already canonical';
   END IF;
 END $$;
 

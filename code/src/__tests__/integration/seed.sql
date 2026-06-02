@@ -16,6 +16,16 @@
 
 BEGIN;
 
+-- The wipe below cascades into append-only tables (audit_events and the
+-- other tamper-protected ledgers hardened in migrations 061-076) whose
+-- triggers BLOCK TRUNCATE/UPDATE/DELETE — so `TRUNCATE organizations
+-- CASCADE` aborts with "audit_events is append-only". Disable triggers for
+-- the wipe via session_replication_role (the seed runs as the superuser),
+-- then restore DEFAULT before the fixture inserts so they run with normal
+-- FK + trigger behavior. (INSERTs into audit_events stay allowed — the
+-- guard only blocks mutation/deletion, not appends.)
+SET session_replication_role = replica;
+
 -- Tenanted tables: TRUNCATE organizations CASCADE wipes every row whose
 -- FK chain leads back to `organizations`. Explicit TRUNCATEs for the
 -- non-tenanted and SET-NULL-FK tables follow (R21-L-2).
@@ -38,6 +48,9 @@ DO $$ BEGIN
     EXECUTE 'TRUNCATE time_clock_entries CASCADE';
   END IF;
 END $$;
+
+-- Wipe complete — restore normal trigger + FK enforcement for the inserts.
+SET session_replication_role = DEFAULT;
 
 -- ── Org A ──
 INSERT INTO organizations (id, name, slug, legal_name, timezone, currency_code, plan, is_active)
