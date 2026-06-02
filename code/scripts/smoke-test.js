@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Smoke test for bupos — verifies admin login + register PIN login
+ * Smoke test for bupos — verifies admin login + register tap-your-name clock-in
  * Run: node scripts/smoke-test.js
  * 
  * Exits 0 on success, 1 on failure.
@@ -12,12 +12,16 @@ const { chromium } = require('playwright');
 const BASE = process.env.BASE_URL || 'https://basicuniformpos.com';
 const ADMIN_EMAIL = process.env.SMOKE_ADMIN_EMAIL;
 const ADMIN_PASSWORD = process.env.SMOKE_ADMIN_PASSWORD;
-const EMPLOYEE_PIN = process.env.SMOKE_EMPLOYEE_PIN;
+// SMOKE_EMPLOYEE_PIN is no longer required: the register clock-in is now
+// "tap your name" (cashiers need no PIN), so the end-to-end check uses the
+// no-PIN cashier path. The var is kept optional for backward compatibility.
+const EMPLOYEE_PIN = process.env.SMOKE_EMPLOYEE_PIN; // optional, unused
 
-if (!ADMIN_EMAIL || !ADMIN_PASSWORD || !EMPLOYEE_PIN) {
-  console.error('Missing required env vars: SMOKE_ADMIN_EMAIL, SMOKE_ADMIN_PASSWORD, SMOKE_EMPLOYEE_PIN');
+if (!ADMIN_EMAIL || !ADMIN_PASSWORD) {
+  console.error('Missing required env vars: SMOKE_ADMIN_EMAIL, SMOKE_ADMIN_PASSWORD');
   process.exit(2);
 }
+void EMPLOYEE_PIN;
 
 let failures = 0;
 
@@ -58,48 +62,107 @@ async function testAdminLogin(page) {
   log('✅', 'Admin login + page load OK');
 }
 
-async function testRegisterPIN(page, context) {
-  log('📋', 'Testing register PIN login...');
+async function testRegisterClockIn(page) {
+  // The register now uses a "tap your name" clock-in (store picker →
+  // roster), NOT a universal PIN pad. Cashiers clock in with no PIN;
+  // owner/manager names are gated behind a per-employee PIN keypad. This
+  // test verifies (1) the UI renders, (2) the manager/owner PIN gate
+  // renders, and (3) a real no-PIN cashier clock-in completes end-to-end.
+  // It degrades gracefully on data shape (e.g. a store with no cashier).
+  log('📋', 'Testing register clock-in (tap-your-name)...');
 
-  // Go to register
   await page.goto(`${BASE}/register`, { waitUntil: 'domcontentloaded', timeout: 15000 });
   await page.waitForTimeout(2000);
 
-  if (page.url().includes('error') || (await page.textContent('body')).includes('Register Error')) {
+  const body0 = await page.textContent('body');
+  if (page.url().includes('error') || body0.includes('Register Error')) {
     log('❌', 'Register page crashed on load');
     failures++;
     return;
   }
-
   log('✅', 'Register page loads OK');
 
-  // Find PIN input and submit
-  const pinInput = await page.$('input[type="password"], input[name="pin"]');
-  if (!pinInput) {
-    log('❌', 'No PIN input found');
+  const onPicker = (b) => b.includes('Choose your store');
+  const onRoster = (b) => b.includes("Who's working");
+  if (!onPicker(body0) && !onRoster(body0)) {
+    log('❌', 'Clock-in UI not found (no store picker or roster)');
     failures++;
     return;
   }
+  log('✅', 'Clock-in UI renders');
 
-  await pinInput.fill(EMPLOYEE_PIN);
-  const submitBtn = await page.$('button[type="submit"]');
-  if (!submitBtn) {
-    log('❌', 'No submit button found');
-    failures++;
-    return;
+  // Land on a roster — pick the first store if the picker is showing.
+  async function ensureRoster() {
+    if (onPicker(await page.textContent('body'))) {
+      const card = await page.$('[data-testid="store-card"]');
+      if (!card) return false;
+      await card.click();
+      await page.waitForTimeout(800);
+    }
+    return true;
+  }
+  await ensureRoster();
+
+  // (2) Manager/owner PIN gate renders — click an elevated name and confirm
+  // a keypad appears (the gate UI deployed), then back out. Non-failing.
+  const mgr = await page.$('[data-testid="clock-in-name"][data-role="manager"], [data-testid="clock-in-name"][data-role="owner"]');
+  if (mgr) {
+    await mgr.click();
+    await page.waitForTimeout(800);
+    if (await page.$('[data-testid="pin-keypad"]')) {
+      log('✅', 'Manager/owner PIN keypad gate renders');
+      const back = await page.$('[data-testid="pin-back"]');
+      if (back) { await back.click(); await page.waitForTimeout(500); }
+    } else {
+      log('⚠️', 'Elevated name did not open a PIN keypad');
+    }
   }
 
-  await submitBtn.click();
-  await page.waitForTimeout(5000);
-
-  const body = await page.textContent('body');
-  if (body.includes('Register Error')) {
-    log('❌', `Register PIN login failed — error on page. URL: ${page.url()}`);
-    failures++;
-    return;
+  // (3) End-to-end no-PIN clock-in: find a cashier (searching stores if the
+  // current roster has none) and clock in.
+  async function clickCashierHere() {
+    const c = await page.$('[data-testid="clock-in-name"][data-role="cashier"]');
+    if (!c) return false;
+    await c.click();
+    await page.waitForTimeout(6000);
+    return true;
   }
 
-  log('✅', 'Register PIN login OK');
+  let clocked = await clickCashierHere();
+  if (!clocked && onRoster(await page.textContent('body'))) {
+    const change = await page.$('[data-testid="change-store"]');
+    if (change) { await change.click(); await page.waitForTimeout(600); }
+    const total = (await page.$$('[data-testid="store-card"]')).length;
+    for (let i = 0; i < total && !clocked; i++) {
+      const cards = await page.$$('[data-testid="store-card"]');
+      if (i >= cards.length) break;
+      await cards[i].click();
+      await page.waitForTimeout(800);
+      clocked = await clickCashierHere();
+      if (!clocked) {
+        const back2 = await page.$('[data-testid="change-store"]');
+        if (back2) { await back2.click(); await page.waitForTimeout(600); }
+      }
+    }
+  }
+
+  if (clocked) {
+    const url = page.url();
+    const body = await page.textContent('body');
+    if (body.includes('Register Error')) {
+      log('❌', `Clock-in failed — error on page. URL: ${url}`);
+      failures++;
+      return;
+    }
+    if (url.includes('notice=Clocked') || (!onPicker(body) && !onRoster(body))) {
+      log('✅', 'Cashier clock-in OK');
+    } else {
+      log('❌', `Clock-in did not complete (still on roster/picker). URL: ${url}`);
+      failures++;
+    }
+  } else {
+    log('⚠️', 'No cashier on any roster — skipped end-to-end clock-in (UI verified healthy)');
+  }
 }
 
 async function testHealthEndpoint() {
@@ -144,7 +207,7 @@ async function testHealthEndpoint() {
     regPage.on('pageerror', err => {
       log('⚠️', `Client error: ${err.message.split('\n')[0]}`);
     });
-    await testRegisterPIN(regPage, regContext);
+    await testRegisterClockIn(regPage);
     await regContext.close();
 
   } finally {

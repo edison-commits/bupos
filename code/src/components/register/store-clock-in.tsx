@@ -84,6 +84,7 @@ export function StoreClockIn({ stores }: { stores: Store[] }) {
             <button
               key={s.id}
               type="button"
+              data-testid="store-card"
               onClick={() => setSelectedId(s.id)}
               className="touch-button rounded-2xl border border-zinc-200 bg-white px-5 py-6 text-left shadow-sm transition hover:border-[var(--surface-accent)] hover:shadow-md"
             >
@@ -116,6 +117,7 @@ export function StoreClockIn({ stores }: { stores: Store[] }) {
           </div>
           <button
             type="button"
+            data-testid="pin-back"
             onClick={() => {
               setPinFor(null);
               setPin("");
@@ -138,7 +140,7 @@ export function StoreClockIn({ stores }: { stores: Store[] }) {
           )}
         </div>
 
-        <form action={clockInAction} onSubmit={() => setSubmitting(true)} className="grid gap-4">
+        <form data-testid="pin-keypad" action={clockInAction} onSubmit={() => setSubmitting(true)} className="grid gap-4">
           <input type="hidden" name="locationId" value={store.id} />
           <input type="hidden" name="employeeId" value={pinFor.id} />
           <input type="hidden" name="deviceId" value={deviceId} />
@@ -146,14 +148,14 @@ export function StoreClockIn({ stores }: { stores: Store[] }) {
 
           <div className="grid grid-cols-3 gap-3">
             {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((d) => (
-              <button key={d} type="button" disabled={submitting} onClick={() => press(d)} className={keyClass}>
+              <button key={d} type="button" data-testid="pin-key" disabled={submitting} onClick={() => press(d)} className={keyClass}>
                 {d}
               </button>
             ))}
             <button type="button" disabled={submitting || pin.length === 0} onClick={backspace} className={keyClass} aria-label="Backspace">
               ⌫
             </button>
-            <button key="0" type="button" disabled={submitting} onClick={() => press("0")} className={keyClass}>
+            <button key="0" type="button" data-testid="pin-key" disabled={submitting} onClick={() => press("0")} className={keyClass}>
               0
             </button>
             <button type="button" disabled={submitting || pin.length === 0} onClick={clearPin} className={`${keyClass} text-base`}>
@@ -163,6 +165,7 @@ export function StoreClockIn({ stores }: { stores: Store[] }) {
 
           <button
             type="submit"
+            data-testid="pin-submit"
             disabled={submitting || pin.length === 0}
             className="touch-button w-full rounded-xl bg-[var(--surface-accent)] py-4 text-base font-semibold text-white shadow-sm transition hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
           >
@@ -191,6 +194,7 @@ export function StoreClockIn({ stores }: { stores: Store[] }) {
         {stores.length > 1 ? (
           <button
             type="button"
+            data-testid="change-store"
             onClick={() => {
               setSelectedId(null);
               setSubmitting(false);
@@ -212,6 +216,8 @@ export function StoreClockIn({ stores }: { stores: Store[] }) {
               <button
                 key={e.id}
                 type="button"
+                data-testid="clock-in-name"
+                data-role={e.role}
                 disabled={submitting}
                 onClick={() => {
                   setPin("");
@@ -235,6 +241,8 @@ export function StoreClockIn({ stores }: { stores: Store[] }) {
                 <input type="hidden" name="deviceId" value={deviceId} />
                 <button
                   type="submit"
+                  data-testid="clock-in-name"
+                  data-role={e.role}
                   disabled={submitting}
                   className="touch-button w-full rounded-2xl border border-zinc-200 bg-white px-5 py-5 text-left shadow-sm transition hover:border-[var(--surface-accent)] hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                 >
