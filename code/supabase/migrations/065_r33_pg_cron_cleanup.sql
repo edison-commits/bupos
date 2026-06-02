@@ -25,7 +25,23 @@ BEGIN;
 
 -- Install pg_cron if the Postgres instance allows it. On Supabase the
 -- extension lives in the `cron` schema. `IF NOT EXISTS` is idempotent.
-CREATE EXTENSION IF NOT EXISTS pg_cron;
+--
+-- GUARDED: `CREATE EXTENSION IF NOT EXISTS` still ERRORS when the extension
+-- is not AVAILABLE on the instance (missing control file on plain
+-- postgres:17-alpine in CI / any self-hosted box without pg_cron, or
+-- "can only be loaded via shared_preload_libraries"). `IF NOT EXISTS` only
+-- skips an already-INSTALLED extension; it does not tolerate an
+-- unavailable one. The bare statement therefore aborted the whole
+-- migration on every non-pg_cron Postgres — contradicting this file's own
+-- "fall back gracefully" promise and breaking CI migrate+seed. Wrap it so
+-- an unavailable pg_cron degrades to a warning. On Supabase (pg_cron
+-- preloaded) the body still succeeds exactly as before.
+DO $$
+BEGIN
+  CREATE EXTENSION IF NOT EXISTS pg_cron;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'pg_cron not available (%); nightly cleanup must be scheduled externally via run_nightly_cleanup().', SQLERRM;
+END$$;
 
 -- Drop any prior schedule of the same name so re-running this
 -- migration replaces rather than duplicates.

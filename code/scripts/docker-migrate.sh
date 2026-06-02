@@ -41,6 +41,19 @@ psql "$DB_URL" -c "
   END \$\$;
 " >/dev/null
 
+echo "→ Creating Supabase-compatibility 'extensions' schema (for pgcrypto)"
+# Migration 062 runs `CREATE EXTENSION pgcrypto WITH SCHEMA extensions`, and
+# token-hashing migrations call `extensions.digest(...)` (schema-qualified —
+# verified: there are no unqualified pgcrypto calls). Supabase ships this
+# schema by default; plain postgres:17-alpine does not, so 062 failed with
+# `schema "extensions" does not exist` and broke every migrate+seed run
+# (the integration + e2e jobs). Create it (+ grant usage to the
+# Supabase-compat roles) to mirror Supabase. Idempotent.
+psql "$DB_URL" -c "
+  CREATE SCHEMA IF NOT EXISTS extensions;
+  GRANT USAGE ON SCHEMA extensions TO anon, authenticated, service_role, app_user;
+" >/dev/null
+
 echo "→ Creating _migrations tracker"
 psql "$DB_URL" -c "
   CREATE TABLE IF NOT EXISTS _migrations (
