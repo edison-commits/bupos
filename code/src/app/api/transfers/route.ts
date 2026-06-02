@@ -580,7 +580,7 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
         );
 
         await client.query("COMMIT");
-        invalidateInventoryCache(orgId);
+        await invalidateInventoryCache(orgId);
         return NextResponse.json({ id: transferId, status: "in_transit" }, { status: 200 });
       } catch (e) {
         await client.query("ROLLBACK");
@@ -719,7 +719,7 @@ export const POST = withAdminAuth("catalog.manage", async (req, ctx) => {
         );
 
         await client.query("COMMIT");
-        invalidateInventoryCache(orgId);
+        await invalidateInventoryCache(orgId);
         return NextResponse.json({ id: transferId, status: "received" }, { status: 200 });
       } catch (e) {
         await client.query("ROLLBACK");

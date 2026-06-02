@@ -292,7 +292,7 @@ export const POST = withAdminAuth("catalog.manage", async (request, ctx) => {
     invalidateProductsCache(orgId);
     invalidateVariantsCache(orgId);
     invalidateInvCachePg(orgId);
-    invalidateInventoryCache(orgId);
+    await invalidateInventoryCache(orgId);
 
     return NextResponse.json({
       message: 'Product saved',

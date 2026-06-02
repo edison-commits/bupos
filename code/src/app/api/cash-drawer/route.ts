@@ -828,8 +828,18 @@ async function calculateExpectedCash(orgId: string, shiftId: string): Promise<nu
          WHERE t.register_session_id = s.register_session_id
            AND t.status = 'completed'
            AND tt.tender_type = 'cash'
-           AND tt.created_at >= s.opened_at
-           AND (s.closed_at IS NULL OR tt.created_at <= s.closed_at)
+           -- SEC-AUDIT7-MED1: scope by the TRANSACTION date (t.created_at),
+           -- not the tender date (tt.created_at). A cross-shift cash refund
+           -- writes a negative tender (created now, in this shift window) on
+           -- the ORIGINAL transaction AND a pay_out; the tender-date scope
+           -- counted it in BOTH cash_net and pay_outs (double-subtraction =>
+           -- phantom drawer overage). Transaction-date scope excludes the
+           -- negative tender here (its txn predates the shift) so the pay_out
+           -- is the single source. Matches cash_change below + the other
+           -- three close paths. (Layaway cash uses pay_in_outs, not tenders,
+           -- so no installment tender spans shifts here.)
+           AND t.created_at >= s.opened_at
+           AND (s.closed_at IS NULL OR t.created_at <= s.closed_at)
        ), 0)::numeric AS cash_net,
        COALESCE((
          SELECT SUM(t.change_due) FROM transactions t

@@ -11,10 +11,10 @@ export const _inventoryCache = new Map<string, { data: unknown; expiresAt: numbe
 export const INV_CACHE_TTL = 30_000;
 export const MAX_INV_CACHE_SIZE = 50;
 
-export function invalidateInventoryCache(orgId?: string) {
+export function invalidateInventoryCache(orgId?: string): Promise<void> {
   if (!orgId) {
     _inventoryCache.clear();
-    return;
+    return Promise.resolve();
   }
   const prefix = `${orgId}:`;
   for (const key of _inventoryCache.keys()) {
@@ -61,9 +61,18 @@ export function invalidateInventoryCache(orgId?: string) {
       // to keep the write path cheap.
     });
   // Adopt the cascade Promise via ExecutionContext.waitUntil so the
-  // Workers runtime keeps it alive past the response. The .catch()
-  // above swallows errors; this .catch() catches any waitUntilOrAwait
-  // bookkeeping error (cloudflare context lookup, etc.) so a stray
-  // throw from the runtime helper can't leak into the write path.
-  void waitUntilOrAwait(cascade).catch(() => { /* swallow — non-fatal */ });
+  // Workers runtime keeps it alive past the response.
+  //
+  // SEC-AUDIT7-MED3: RETURN the adoption promise instead of `void`-ing it.
+  // waitUntilOrAwait awaits the @opennextjs/cloudflare module load +
+  // getCloudflareContext BEFORE it calls ctx.waitUntil(cascade). When the
+  // caller fire-and-forgets this, that registration is deferred behind
+  // those awaits — and on a COLD isolate the response returns during the
+  // `import()` gap, so ctx.waitUntil never runs and the cascade is
+  // cancelled (30s stale on_hand). Callers that rely SOLELY on this cascade
+  // (transfers/receiving/PO/returns/barcode — no direct invalidateStoreCache
+  // backstop) must now `await invalidateInventoryCache(...)`, which guarantees
+  // the registration completes before they respond. Sync callers that ignore
+  // the return value are unchanged (they keep a backstop).
+  return waitUntilOrAwait(cascade).catch(() => { /* swallow — non-fatal */ });
 }

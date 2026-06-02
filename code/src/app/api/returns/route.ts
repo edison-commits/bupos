@@ -442,7 +442,7 @@ export const POST = withAdminAuth('employee.manage', async (request, ctx) => {
       client.release();
     }
 
-    invalidateInventoryCache(orgId);
+    await invalidateInventoryCache(orgId);
     return NextResponse.json({ return: retRowsTx[0], return_number: returnNumber }, { status: 201 });
   } catch (error) {
     console.error('Returns POST error:', safeErr(error));
@@ -989,7 +989,7 @@ export const PUT = withAdminAuth('approval.void_transaction', async (request, ct
         );
       }
       await client.query("COMMIT");
-      invalidateInventoryCache(orgId);
+      await invalidateInventoryCache(orgId);
       return NextResponse.json({ return: rows[0] }, { status: 200 });
     } catch (error) {
       await client.query("ROLLBACK");

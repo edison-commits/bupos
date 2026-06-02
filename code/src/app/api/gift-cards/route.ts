@@ -194,7 +194,9 @@ export const POST = withAdminAuth('catalog.manage', async (req, ctx) => {
           { status: 403 },
         );
       }
-      const { code, amount, customerId } = body;
+      // SEC-AUDIT7-LOW: read schema fields from the VALIDATED v.data (coerced
+      // + bounded), not the raw body — parity with the R30-L1 transfers fix.
+      const { code, amount, customerId } = v.data;
       if (!code || !amount || amount <= 0) {
         return NextResponse.json({ error: "Code and positive amount required" }, { status: 400 });
       }
@@ -363,7 +365,8 @@ export const POST = withAdminAuth('catalog.manage', async (req, ctx) => {
           { status: 403 },
         );
       }
-      const { giftCardId, amount } = body;
+      // SEC-AUDIT7-LOW: validated fields from v.data, not the raw body.
+      const { giftCardId, amount } = v.data;
       if (!giftCardId || !amount || amount <= 0) {
         return NextResponse.json({ error: "Gift card ID and positive amount required" }, { status: 400 });
       }
@@ -483,7 +486,11 @@ export const POST = withAdminAuth('catalog.manage', async (req, ctx) => {
     }
 
     if (action === "disable") {
-      const { giftCardId, actorPassword } = body;
+      // SEC-AUDIT7-LOW: giftCardId from validated v.data. actorPassword is a
+      // step-up field (not in giftCardSchema, never DB-written) — verified by
+      // requireStepUp below, so it stays read from the raw body.
+      const { giftCardId } = v.data;
+      const actorPassword = body?.actorPassword;
       if (!giftCardId) {
         return NextResponse.json({ error: "Gift card ID required" }, { status: 400 });
       }

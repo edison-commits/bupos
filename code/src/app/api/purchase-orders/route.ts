@@ -602,7 +602,7 @@ export const PATCH = withAdminAuth("inventory.adjust", async (request, ctx) => {
       );
 
       await client.query('COMMIT');
-      invalidateInventoryCache(orgId);
+      await invalidateInventoryCache(orgId);
       return NextResponse.json({ success: true, status: newStatus });
     } catch (e) {
       await client.query('ROLLBACK');

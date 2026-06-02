@@ -353,7 +353,7 @@ export const POST = withAdminAuth("inventory.adjust", async (request, ctx) => {
       );
 
       await client.query('COMMIT');
-      invalidateInventoryCache(orgId);
+      await invalidateInventoryCache(orgId);
       return NextResponse.json({
         success: true,
         message: `Successfully received ${items.length} item(s)`,

@@ -355,19 +355,28 @@ export const POST = withAdminAuth("register.open", async (req, ctx) => {
           }
         }
 
-        // Calculate expected cash
+        // Calculate expected cash.
+        // SEC-AUDIT7-MED2: scope by register_session_id, NOT location_id.
+        // Migration 045 intentionally allows multiple open shifts per
+        // location (one per physical register). Scoping cash by location
+        // summed EVERY register's sales at the store into this one shift's
+        // expected cash (and double-counted when the sibling register's
+        // shift closed) — wildly wrong variance. register_session_id is the
+        // correct boundary (matches the other close paths). An admin-opened
+        // shift with a NULL register_session has no register sales → 0, which
+        // is correct (its cash is opening_float + pay_in/outs only).
         const txns = await client.query(
           `SELECT COALESCE(SUM(tt.amount), 0)::numeric AS cash_in
            FROM transaction_tenders tt
            JOIN transactions t ON t.id = tt.transaction_id AND t.organization_id = $3
-           WHERE t.location_id = $1 AND t.created_at >= $2 AND t.status = 'completed' AND tt.tender_type = 'cash'`,
-          [s.location_id, s.opened_at, orgId],
+           WHERE t.register_session_id = $1 AND t.created_at >= $2 AND t.status = 'completed' AND tt.tender_type = 'cash'`,
+          [s.register_session_id, s.opened_at, orgId],
         );
         const changeDue = await client.query(
           `SELECT COALESCE(SUM(t.change_due), 0)::numeric AS total_change
            FROM transactions t
-           WHERE t.location_id = $1 AND t.created_at >= $2 AND t.status = 'completed' AND t.organization_id = $3`,
-          [s.location_id, s.opened_at, orgId],
+           WHERE t.register_session_id = $1 AND t.created_at >= $2 AND t.status = 'completed' AND t.organization_id = $3`,
+          [s.register_session_id, s.opened_at, orgId],
         );
         // check-pool-org-filter: scoped-by-shift-id-verified-in-tx
         const payInOuts = await client.query(
