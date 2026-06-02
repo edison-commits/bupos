@@ -43,3 +43,18 @@ describe("SIM-AUDIT8-B: migration 083 repairs returns-table drift", () => {
     expect(src).toMatch(/CREATE INDEX IF NOT EXISTS idx_returns_transaction_id ON returns\(transaction_id\)/);
   });
 });
+
+describe("SIM-AUDIT8-C: migration 084 repairs the remaining prod schema drift", () => {
+  // A prod-vs-migrations column diff found 4 more columns prod was missing:
+  // organizations.{approval_thresholds,loyalty_config} (register-config
+  // SELECTs them; missing -> per-org config silently inactive), auth_
+  // credentials.pin_hash_prefix (PIN pre-filter), transaction_tenders.
+  // is_refund. 084 re-adds them idempotently, mirroring migs 011/017/001.
+  const src = read("supabase/migrations/084_prod_schema_drift_repair.sql");
+  it("re-adds the four drifted columns idempotently", () => {
+    expect(src).toMatch(/ADD COLUMN IF NOT EXISTS approval_thresholds jsonb NOT NULL DEFAULT/);
+    expect(src).toMatch(/ADD COLUMN IF NOT EXISTS loyalty_config jsonb NOT NULL DEFAULT/);
+    expect(src).toMatch(/ALTER TABLE auth_credentials ADD COLUMN IF NOT EXISTS pin_hash_prefix TEXT/);
+    expect(src).toMatch(/ALTER TABLE transaction_tenders ADD COLUMN IF NOT EXISTS is_refund BOOLEAN NOT NULL DEFAULT false/);
+  });
+});
