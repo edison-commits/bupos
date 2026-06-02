@@ -18,6 +18,9 @@ export function PinLoginForm({ locationId }: { locationId: string }) {
   const [submitting, setSubmitting] = useState(false);
   // Stuck-submission recovery — see useEffect below.
   const [stuckHint, setStuckHint] = useState(false);
+  // Calm "signing you in" reassurance shown while the request is in
+  // flight, BEFORE the (now much later) stuck hint.
+  const [signingIn, setSigningIn] = useState(false);
 
   // R46-M2: double-submit guard. The PIN pad's OK button is the form's
   // submit control; a fast double-tap fires two concurrent
@@ -50,18 +53,31 @@ export function PinLoginForm({ locationId }: { locationId: string }) {
   // browser stays on /register with NO redirect, and the OK button
   // is stuck disabled forever.
   //
-  // After 5 s of `submitting=true`, surface a hint that the user can
-  // retry. After 30 s, force-reset `submitting=false` so the OK
-  // button is interactive again and the user can try a different PIN
-  // without reloading the page.
+  // PINLOGIN-LATENCY: a real PIN login does authentication (~2.5-3s) AND
+  // an auto-clock-in shift-open (~2-3.5s), so a perfectly-healthy login
+  // legitimately takes ~5-8s on a cold Worker. The old 5 s threshold
+  // fired the alarming "taking longer than usual / reload the page"
+  // hint on GOOD logins — and users, told to reload, abandoned the
+  // request BEFORE it finished, so it never completed (a self-inflicted
+  // "can't log in"). Now:
+  //   • a calm "Signing you in…" indicator appears at ~1.2 s,
+  //   • the alarming stuck hint only after 15 s (genuinely wrong),
+  //   • the OK button still hard-resets at 30 s as the final fallback.
   useEffect(() => {
-    if (!submitting) return;
-    const hintTimer = setTimeout(() => setStuckHint(true), 5_000);
+    if (!submitting) {
+      setSigningIn(false);
+      setStuckHint(false);
+      return;
+    }
+    const signingTimer = setTimeout(() => setSigningIn(true), 1_200);
+    const hintTimer = setTimeout(() => setStuckHint(true), 15_000);
     const resetTimer = setTimeout(() => {
       setSubmitting(false);
       setStuckHint(false);
+      setSigningIn(false);
     }, 30_000);
     return () => {
+      clearTimeout(signingTimer);
       clearTimeout(hintTimer);
       clearTimeout(resetTimer);
     };
@@ -102,11 +118,16 @@ export function PinLoginForm({ locationId }: { locationId: string }) {
           spellCheck={false}
         />
       </label>
+      {signingIn && !stuckHint ? (
+        <p className="flex items-center gap-2 rounded-2xl bg-zinc-100 px-4 py-3 text-sm text-zinc-600">
+          <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-zinc-400 border-t-transparent" />
+          Signing you in…
+        </p>
+      ) : null}
       {stuckHint ? (
         <p className="rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          The login request is taking longer than usual. The OK button will
-          re-enable in a few seconds — if it stays stuck, please reload the
-          page and try again.
+          This is taking longer than usual. If the OK button stays disabled,
+          please reload the page and try again.
         </p>
       ) : null}
       <div className="grid grid-cols-3 gap-3">

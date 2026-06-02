@@ -15,6 +15,10 @@ import { mutateStore } from "@/lib/persistence/store";
 import type { Customer } from "@/lib/domain/types";
 
 import { safeErr } from "@/lib/logging/safe-err";
+// PINLOGIN-LATENCY: audits run via waitUntilOrAwait so they don't block
+// the login redirect AND actually run on Workers (a bare fire-and-forget
+// promise is cancelled by `no_handle_cross_request_promise_resolution`).
+import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
 const isPg = () => !!process.env.USE_POSTGRES;
 
 // All register-scoped RPCs now run through the direct DB pool. Round 24
@@ -140,13 +144,17 @@ export async function registerLoginAction(formData: FormData) {
   if (!loginResult) redirect("/register?error=PIN+login+failed");
   const { employee, location, registerSession } = loginResult;
 
-  // Audit: log register login (non-fatal — shift open and redirect proceed regardless)
+  // Audit: log register login (non-fatal — runs in the background so it
+  // never adds to the login's critical-path latency, and via
+  // waitUntilOrAwait so it actually records on Workers).
   if (isPg()) {
-    rpcInsertAudit(
-      employee.organizationId, location.id, employee.id,
-      "session", registerSession.id, "register_login",
-      { location_id: location.id, register_session_id: registerSession.id },
-    ).catch((err) => console.error("[registerLoginAction] login audit failed:", safeErr(err)));
+    await waitUntilOrAwait(
+      rpcInsertAudit(
+        employee.organizationId, location.id, employee.id,
+        "session", registerSession.id, "register_login",
+        { location_id: location.id, register_session_id: registerSession.id },
+      ).catch((err) => console.error("[registerLoginAction] login audit failed:", safeErr(err))),
+    );
 
     // Auto-open shift on login — workers clock in by entering their PIN.
     //
@@ -186,11 +194,14 @@ export async function registerLoginAction(formData: FormData) {
       }
     }
     if (shiftOpened) {
-      await rpcInsertAudit(
-        employee.organizationId, location.id, employee.id,
-        "shift", shiftId, "shift_opened",
-        { register_session_id: registerSession.id, opening_float: "0.00" },
-      ).catch((err) => console.error("[registerLoginAction] shift-open audit failed:", safeErr(err)));
+      // Background the audit too — keep it off the login critical path.
+      await waitUntilOrAwait(
+        rpcInsertAudit(
+          employee.organizationId, location.id, employee.id,
+          "shift", shiftId, "shift_opened",
+          { register_session_id: registerSession.id, opening_float: "0.00" },
+        ).catch((err) => console.error("[registerLoginAction] shift-open audit failed:", safeErr(err))),
+      );
     }
   }
 
