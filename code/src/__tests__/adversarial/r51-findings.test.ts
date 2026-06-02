@@ -50,6 +50,24 @@ describe("R51 audit fixes: admin-console PasswordGate wiring", () => {
       // The invocation shape is still present; just wrapped.
       expect(src).toMatch(/shouldGate = gateCondition\(fd, form\)/);
     });
+    it("R84: supports SERIALIZABLE gate descriptors for Server-Component callers", () => {
+      // admin-console is a Server Component, so it can't pass a
+      // `gateCondition` FUNCTION across the RSC boundary. These data props
+      // are the server-safe equivalent, evaluated client-side here.
+      expect(src).toMatch(/gateOnChangedFields\?\: string\[\]/);
+      expect(src).toMatch(/gateOnThreshold\?\: \{ field: string; gt: number; abs\?: boolean \}/);
+      // changed-from-default check + numeric-threshold check
+      expect(src).toMatch(/el\.value !== el\.defaultValue/);
+      expect(src).toMatch(/\(gateOnThreshold\.abs \? Math\.abs\(n\) : n\) > gateOnThreshold\.gt/);
+    });
+    it("R84: admin-console uses the serializable descriptors (no server→client function)", () => {
+      const ac = read("src/components/admin/admin-console.tsx");
+      expect(ac).toMatch(/gateOnChangedFields=\{\["price", "cost"\]\}/);
+      expect(ac).toMatch(/gateOnChangedFields=\{\["taxRate"\]\}/);
+      expect(ac).toMatch(/gateOnThreshold=\{\{ field: "delta", gt: 500, abs: true \}\}/);
+      // The old server→client function predicates must be gone.
+      expect(ac).not.toMatch(/gateCondition=\{/);
+    });
     it("scrubs caught errors via safeErr before logging", () => {
       expect(src).toMatch(/import \{ safeErr \}/);
       expect(src).toMatch(/console\.error\([^)]*safeErr\(err\)/);
@@ -99,14 +117,17 @@ describe("R51 audit fixes: admin-console PasswordGate wiring", () => {
 
   describe("R51-4: editVariantAction gating is conditional on price/cost change", () => {
     const src = read("src/components/admin/admin-console.tsx");
-    it("passes a gateCondition predicate that checks .value !== .defaultValue on price/cost", () => {
-      // The gate fires when either price or cost actually changed
-      // from the form's initial defaultValue — mirroring the server-
-      // side snapshot-compare in src/app/admin/actions.ts.
-      expect(src).toMatch(/gateCondition=\{/);
-      expect(src).toMatch(/return priceChanged \|\| costChanged;?/);
-      expect(src).toMatch(/priceInp\.value !== priceInp\.defaultValue/);
-      expect(src).toMatch(/costInp\.value !== costInp\.defaultValue/);
+    it("expresses the price/cost-changed gate as a serializable descriptor (RSC-safe)", () => {
+      // R84: admin-console is a Server Component, so the gate moved from a
+      // `gateCondition` FUNCTION (which can't cross the RSC server→client
+      // boundary) to a serializable `gateOnChangedFields` descriptor. The
+      // `.value !== .defaultValue` change-detection now lives in
+      // PasswordGatedForm, still mirroring editVariantAction's
+      // snapshot-compare; the gate fires when price OR cost changed.
+      expect(src).toMatch(/gateOnChangedFields=\{\["price", "cost"\]\}/);
+      expect(src).not.toMatch(/gateCondition=\{/);
+      const pgf = read("src/components/shared/password-gated-form.tsx");
+      expect(pgf).toMatch(/el\.value !== el\.defaultValue/);
     });
   });
 });

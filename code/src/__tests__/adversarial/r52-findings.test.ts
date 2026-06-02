@@ -133,9 +133,14 @@ describe("R52 audit fixes", () => {
 
   describe("R52-H: adjustInventoryAction wrapped in <PasswordGatedForm>", () => {
     const src = read("src/components/admin/admin-console.tsx");
-    it("uses PasswordGatedForm and a delta-threshold gateCondition", () => {
+    it("uses PasswordGatedForm with a serializable delta-threshold gate", () => {
       expect(src).toMatch(/<PasswordGatedForm[\s\S]{0,1200}action=\{adjustInventoryAction\}/);
-      expect(src).toMatch(/Math\.abs\(delta\) > 500/);
+      // R84: the |delta|>500 predicate moved from a server→client
+      // `gateCondition` FUNCTION to a SERIALIZABLE descriptor — admin-console
+      // is a Server Component, and a function prop can't cross the RSC
+      // boundary ("Functions cannot be passed directly to Client Components").
+      // PasswordGatedForm now evaluates the threshold client-side.
+      expect(src).toMatch(/gateOnThreshold=\{\{ field: "delta", gt: 500, abs: true \}\}/);
     });
   });
 

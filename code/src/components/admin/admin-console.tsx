@@ -257,21 +257,15 @@ export function AdminConsole({
                                   confirmLabel: "Save variant",
                                   confirmVariant: "default",
                                 }}
-                                gateCondition={(_fd, form) => {
-                                  // R51: mirror the server-side snapshot-compare
-                                  // in editVariantAction (src/app/admin/actions.ts).
-                                  // Step-up fires only when price or cost actually
-                                  // changes vs. the pre-edit value. Checking
-                                  // `.value !== .defaultValue` at submit-time
-                                  // matches the server's `Math.abs(prior - new) > 0.005`
-                                  // rule for practical UI purposes: identical
-                                  // values don't prompt; any digit change does.
-                                  const priceInp = form.querySelector<HTMLInputElement>('input[name="price"]');
-                                  const costInp = form.querySelector<HTMLInputElement>('input[name="cost"]');
-                                  const priceChanged = priceInp ? priceInp.value !== priceInp.defaultValue : false;
-                                  const costChanged = costInp ? costInp.value !== costInp.defaultValue : false;
-                                  return priceChanged || costChanged;
-                                }}
+                                // R51 (RSC-safe): step-up fires only when price or
+                                // cost actually changes vs. the pre-edit value —
+                                // mirrors editVariantAction's snapshot-compare.
+                                // Expressed as a SERIALIZABLE descriptor because
+                                // admin-console is a SERVER component; a
+                                // `gateCondition` function can't cross the RSC
+                                // server→client boundary. PasswordGatedForm
+                                // evaluates `.value !== .defaultValue` client-side.
+                                gateOnChangedFields={["price", "cost"]}
                                 className="grid gap-2"
                               >
                                 <input type="hidden" name="variantId" value={variant.id} />
@@ -449,19 +443,13 @@ export function AdminConsole({
                 confirmLabel: "Record adjustment",
                 confirmVariant: "default",
               }}
-              gateCondition={(fd) => {
-                // R52-H: mirror server-side thresholds in
-                // adjustInventoryAction (actions.ts:347-362).
-                // |delta| > 5000 for owner/manager, > 500 for clerk.
-                // Use the permissive manager threshold client-side so
-                // the UI never prompts under it; the server re-
-                // evaluates with the actor's real role. Submissions
-                // that SHOULD gate (above threshold) get the prompt;
-                // ones under it skip it and submit straight through.
-                const delta = Number(fd.get("delta"));
-                if (!Number.isFinite(delta)) return false;
-                return Math.abs(delta) > 500;
-              }}
+              // R52-H (RSC-safe): mirror adjustInventoryAction's threshold
+              // (|delta| > 500). SERIALIZABLE descriptor — admin-console is
+              // a SERVER component, so a `gateCondition` function can't
+              // cross the RSC boundary; PasswordGatedForm evaluates the
+              // threshold client-side. The server re-evaluates with the
+              // actor's real role; sub-threshold deltas submit with no prompt.
+              gateOnThreshold={{ field: "delta", gt: 500, abs: true }}
               className="mt-5 grid gap-3 md:grid-cols-3"
             >
               <label className="grid gap-1 text-sm font-medium text-zinc-700 md:col-span-2">
@@ -900,19 +888,13 @@ export function AdminConsole({
                 confirmLabel: "Save location",
                 confirmVariant: "default",
               }}
-              gateCondition={(_fd, form) => {
-                // R52-G: step-up fires ONLY when the taxRate input was
-                // edited. Name/address/phone saves stay cookie-only.
-                // The server-side gate in updateLocationAction
-                // (actions.ts:934) ONLY checks `taxRate !== undefined`
-                // — the field is always posted (defaultValue), so
-                // every save used to trigger "password required" and
-                // leave users stuck. Mirror the R51 editVariant
-                // pattern: only prompt when the value actually
-                // changed from defaultValue.
-                const taxInp = form.querySelector<HTMLInputElement>('input[name="taxRate"]');
-                return !!taxInp && taxInp.value !== taxInp.defaultValue;
-              }}
+              // R52-G (RSC-safe): step-up fires ONLY when the taxRate input
+              // was edited; name/address/phone saves stay cookie-only.
+              // SERIALIZABLE descriptor — admin-console is a SERVER
+              // component, so a `gateCondition` function can't cross the RSC
+              // boundary. (updateLocationAction always posts taxRate, so the
+              // server gate alone would prompt on every location save.)
+              gateOnChangedFields={["taxRate"]}
               className="grid gap-3 md:grid-cols-2"
             >
               <input type="hidden" name="locationId" value={loc.id} />

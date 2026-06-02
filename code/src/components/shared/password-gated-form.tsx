@@ -81,6 +81,20 @@ export interface PasswordGatedFormProps
    * change in `editVariantAction`).
    */
   gateCondition?: (formData: FormData, form: HTMLFormElement) => boolean;
+  /**
+   * Serializable alternative to `gateCondition` for SERVER-rendered
+   * callers (e.g. admin-console.tsx). A function prop can't cross the RSC
+   * server→client boundary ("Functions cannot be passed directly to Client
+   * Components"), so server components express the predicate as data:
+   * prompt only if ANY listed field's current value differs from its
+   * defaultValue.
+   */
+  gateOnChangedFields?: string[];
+  /**
+   * Serializable alternative to `gateCondition`: prompt only when the
+   * named numeric field exceeds `gt` (by absolute value when `abs`).
+   */
+  gateOnThreshold?: { field: string; gt: number; abs?: boolean };
   children: ReactNode;
 }
 
@@ -88,6 +102,8 @@ export function PasswordGatedForm({
   action,
   prompt,
   gateCondition,
+  gateOnChangedFields,
+  gateOnThreshold,
   children,
   ...formProps
 }: PasswordGatedFormProps) {
@@ -133,6 +149,33 @@ export function PasswordGatedForm({
               } catch (predErr) {
                 console.error(
                   "[PasswordGatedForm] gateCondition threw; defaulting to gate:",
+                  safeErr(predErr),
+                );
+                shouldGate = true;
+              }
+            } else if (gateOnChangedFields || gateOnThreshold) {
+              // Serializable gate descriptors — used by SERVER components
+              // (admin-console) that can't pass a `gateCondition` function
+              // across the RSC boundary. Same fail-safe: default to gating
+              // on any error (safer to over-prompt than to skip a required
+              // step-up).
+              try {
+                if (gateOnChangedFields) {
+                  shouldGate = gateOnChangedFields.some((name) => {
+                    const el = form.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+                      `input[name="${name}"], textarea[name="${name}"]`,
+                    );
+                    return el ? el.value !== el.defaultValue : false;
+                  });
+                } else if (gateOnThreshold) {
+                  const n = Number(fd.get(gateOnThreshold.field));
+                  shouldGate =
+                    Number.isFinite(n) &&
+                    (gateOnThreshold.abs ? Math.abs(n) : n) > gateOnThreshold.gt;
+                }
+              } catch (predErr) {
+                console.error(
+                  "[PasswordGatedForm] gate descriptor threw; defaulting to gate:",
                   safeErr(predErr),
                 );
                 shouldGate = true;
