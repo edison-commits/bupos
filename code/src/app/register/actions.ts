@@ -148,21 +148,50 @@ export async function registerLoginAction(formData: FormData) {
       { location_id: location.id, register_session_id: registerSession.id },
     ).catch((err) => console.error("[registerLoginAction] login audit failed:", safeErr(err)));
 
-    // Auto-open shift on login — workers clock in by entering their PIN
+    // Auto-open shift on login — workers clock in by entering their PIN.
+    //
+    // PINLOGIN-FIX: this MUST NOT fail the login. If the employee already
+    // has an open shift (they're already clocked in — never clocked out,
+    // signing in again, or stranded by a stale shift), rpcOpenShift throws
+    // on the `idx_shifts_one_open_per_employee` unique index. The prior
+    // shape left this `await rpcOpenShift(...)` UNGUARDED, so that throw
+    // propagated out of the Server Action and the ENTIRE PIN login failed
+    // — even though authentication had already succeeded. Net effect: a
+    // worker with an open shift literally could not sign in at the PIN
+    // pad ("PIN login failed" / a thrown error), with no in-app way out.
+    // Authentication is the contract here; auto-clock-in is best-effort.
     const shiftId = randomUUID();
-    await rpcOpenShift({
-      id: shiftId,
-      organizationId: employee.organizationId,
-      locationId: location.id,
-      employeeId: employee.id,
-      registerSessionId: registerSession.id,
-      openingFloat: 0,
-    });
-    await rpcInsertAudit(
-      employee.organizationId, location.id, employee.id,
-      "shift", shiftId, "shift_opened",
-      { register_session_id: registerSession.id, opening_float: "0.00" },
-    );
+    let shiftOpened = false;
+    try {
+      await rpcOpenShift({
+        id: shiftId,
+        organizationId: employee.organizationId,
+        locationId: location.id,
+        employeeId: employee.id,
+        registerSessionId: registerSession.id,
+        openingFloat: 0,
+      });
+      shiftOpened = true;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const pgCode = (err as { code?: string })?.code;
+      if (/already has an open shift/i.test(msg) || pgCode === "23505") {
+        // Already clocked in — perfectly fine, the login still succeeds.
+        console.warn("[registerLoginAction] employee already clocked in; auto-open skipped");
+      } else {
+        // Any other failure must NOT strand the worker at the login
+        // screen — the session is valid and they can open a shift from
+        // the register UI. Log for triage; don't rethrow.
+        console.error("[registerLoginAction] auto-open shift failed (login still succeeds):", safeErr(err));
+      }
+    }
+    if (shiftOpened) {
+      await rpcInsertAudit(
+        employee.organizationId, location.id, employee.id,
+        "shift", shiftId, "shift_opened",
+        { register_session_id: registerSession.id, opening_float: "0.00" },
+      ).catch((err) => console.error("[registerLoginAction] shift-open audit failed:", safeErr(err)));
+    }
   }
 
   invalidateStoreCache(employee.organizationId);
