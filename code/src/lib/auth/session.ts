@@ -767,25 +767,27 @@ export async function signInAdmin(email: string, password: string) {
 }
 
 /**
- * No-PIN "tap your name" clock-in. The user picks a store, then taps an
- * employee from that store's roster — no PIN. This is the deliberate
- * convenience/accountability trade-off the operator chose: there is NO
- * secret, so anyone physically at the register can clock in as any
- * rostered employee. The register session is still device-bound, and the
+ * "Tap your name" register clock-in. The user picks a store, then taps an
+ * employee from that store's roster. CASHIERS clock in with NO PIN — the
+ * convenience trade-off the operator chose. OWNER/MANAGER names are still
+ * PIN-gated: tapping one requires that person's PIN (passed in `pin`), so
+ * a cashier can't silently assume manager privileges just by tapping a
+ * manager's name. The register session is device-bound, and the
  * (client-supplied) employeeId + locationId are RE-VALIDATED here against
- * the DB: the employee must exist, be active, be assigned to that
- * location, the location must be active + same org, and the role must
- * carry register permissions. Sensitive in-checkout actions (voids,
- * discounts, cash payouts) remain gated by the separate manager-approval
- * PIN flow, so a cashier still can't self-approve.
+ * the DB: the employee must exist, be active, be assigned to that active
+ * same-org location, and the role must carry register permissions.
+ * Sensitive in-checkout actions (voids, discounts, cash payouts) remain
+ * gated by the separate manager-approval PIN flow too.
  *
  * Mirrors signInRegister's session/cookie creation exactly — only the
- * PIN-verification step is replaced by the roster validation.
+ * candidate-scan PIN step is replaced by roster validation plus, for
+ * elevated roles, a targeted PIN verify against that one employee.
  */
 export async function signInRegisterByEmployee(
   employeeId: string,
   locationId: string,
   deviceId?: string,
+  pin?: string,
 ) {
   // AUTH-AUDIT4-HIGH1 parity: synthesize a deviceId when the client
   // didn't send one, so register_sessions.device_id is never NULL (a
@@ -802,9 +804,10 @@ export async function signInRegisterByEmployee(
     // and both rows must be active.
     // check-pool-org-filter: scoped-by-employee-and-location-id
     const { rows } = await pool.query(
-      `SELECT e.organization_id::text AS organization_id, e.role_key
+      `SELECT e.organization_id::text AS organization_id, e.role_key, ac.pin_hash
          FROM employees e
          JOIN locations l ON l.organization_id = e.organization_id
+         LEFT JOIN auth_credentials ac ON ac.employee_id = e.id
         WHERE e.id = $1::uuid
           AND e.is_active = true
           AND l.id = $2::uuid
@@ -813,11 +816,28 @@ export async function signInRegisterByEmployee(
         LIMIT 1`,
       [employeeId, locationId],
     );
-    const row = rows[0] as { organization_id: string; role_key: string } | undefined;
+    const row = rows[0] as { organization_id: string; role_key: string; pin_hash: string | null } | undefined;
     if (!row) redirect("/register?error=Could+not+clock+in.+Please+pick+your+store+and+name+again.");
     const roleKey = row.role_key as RoleKey;
     if (!hasPermission(roleKey, "register.pin_login") || !hasPermission(roleKey, "register.open")) {
       redirect("/register?error=That+employee+can%27t+open+a+register.");
+    }
+    // Owner/manager names are PIN-gated even in the tap-your-name flow
+    // (operator choice): tapping a cashier clocks in instantly, but
+    // elevating to a manager/owner session requires that person's PIN, so
+    // a cashier can't assume manager privileges by tapping a manager's
+    // name. clockInAction already ran the shared brute-force gate on this
+    // PIN before calling us. verifySecret is the PBKDF2 compare used
+    // everywhere else (statically imported, line 7). A wrong/empty PIN, or
+    // a manager with no PIN on file, fails closed back to the roster.
+    if (roleKey === "owner" || roleKey === "manager") {
+      const cleanPin = (pin ?? "").trim();
+      if (!cleanPin) {
+        redirect("/register?error=Enter+the+manager+PIN+to+clock+in.");
+      }
+      if (!row.pin_hash || !(await verifySecret(cleanPin, row.pin_hash))) {
+        redirect("/register?error=Incorrect+PIN.+Please+try+again.");
+      }
     }
     const organizationId = row.organization_id;
     const nextSession = buildSession("register", employeeId, organizationId, locationId);

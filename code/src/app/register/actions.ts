@@ -211,22 +211,42 @@ async function finishRegisterClockIn(
 }
 
 /**
- * No-PIN "tap your name" clock-in — the operator chose this over PIN
- * login. The /register page shows a store picker → an employee roster;
- * tapping a name posts {employeeId, locationId, deviceId} here. There is
- * no secret to brute-force, so there's no per-PIN rate-limit gate;
- * `signInRegisterByEmployee` re-validates the (employee, location) pair
- * server-side (active employee, assigned to an active location in the
- * same org, with register permissions).
+ * "Tap your name" register clock-in — the operator chose this over a
+ * universal PIN pad. The /register page shows a store picker → an employee
+ * roster; tapping a name posts {employeeId, locationId, deviceId} here.
+ * CASHIERS carry no PIN and clock in straight through. OWNER/MANAGER names
+ * are PIN-gated: the roster collects that person's PIN and posts it too,
+ * and `signInRegisterByEmployee` verifies it against that one employee.
+ * When a PIN is present this is a credential check, so it runs through the
+ * SAME shared brute-force gate as the PIN login / quick-switch — a cashier
+ * could otherwise probe a manager's PIN by tapping the manager's name.
  */
 export async function clockInAction(formData: FormData) {
   const locationId = String(formData.get("locationId") ?? "");
   const employeeId = String(formData.get("employeeId") ?? "");
   const deviceId = String(formData.get("deviceId") ?? "") || undefined;
+  const pin = String(formData.get("pin") ?? "").trim();
   if (!locationId || !employeeId) {
     redirect("/register?error=Please+pick+your+store+and+name.");
   }
-  const loginResult = await signInRegisterByEmployee(employeeId, locationId, deviceId);
+  // Brute-force gate ONLY when a PIN is actually being checked (the
+  // manager/owner path). Cashiers have no secret, so no gate. Same shared
+  // limiter (mem + KV + DB, per-PIN + per-IP) as registerLoginAction and
+  // quickSwitchAction, so probing a manager's PIN via the roster is capped
+  // identically regardless of entry point.
+  if (pin) {
+    const { headers } = await import("next/headers");
+    const { clientIpFrom } = await import("@/lib/net/client-ip");
+    const clientIp = clientIpFrom(await headers());
+    const { enforceRegisterPinRateLimits } = await import("@/lib/auth/register-pin-rate-limit");
+    const rl = await enforceRegisterPinRateLimits({ pin, locationId, clientIp });
+    if (!rl.allowed) {
+      const secs = Math.ceil((rl.retryAfterMs ?? 60_000) / 1000);
+      const msg = encodeURIComponent(rl.message ?? "Too many attempts. Try again shortly.");
+      redirect(`/register?error=${msg}+Try+again+in+${secs}+seconds`);
+    }
+  }
+  const loginResult = await signInRegisterByEmployee(employeeId, locationId, deviceId, pin || undefined);
   if (!loginResult) redirect("/register?error=Could+not+clock+in.");
   const { employee, location, registerSession } = loginResult;
   await finishRegisterClockIn(employee, location, registerSession);
