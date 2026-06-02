@@ -50,11 +50,17 @@ function assertSafeTargetDb(): void {
   }
 }
 
+// NOTE: these MUST be valid RFC-4122 UUIDs (version nibble 1-8, variant
+// nibble 8-b) — not just any 8-4-4-4-12 hex. Postgres's `uuid` type is
+// lenient, but the API input validators use zod `z.string().uuid()`
+// (strict), so an all-`3`s placeholder like e2e33333-3333-3333-3333-…
+// makes POST /api/products 400 on `category_id`. The 3rd group starts
+// with `4` (v4) and the 4th with `8` (variant) to satisfy that.
 export const SEED = {
-  orgId: "e2e11111-1111-1111-1111-111111111111",
-  locationId: "e2e22222-2222-2222-2222-222222222222",
-  categoryId: "e2e33333-3333-3333-3333-333333333333",
-  employeeId: "e2e44444-4444-4444-4444-444444444444",
+  orgId: "e2e11111-1111-4111-8111-111111111111",
+  locationId: "e2e22222-2222-4222-8222-222222222222",
+  categoryId: "e2e33333-3333-4333-8333-333333333333",
+  employeeId: "e2e44444-4444-4444-8444-444444444444",
   email: "e2e-admin@bupos.test",
   password: "P4ssword!e2e",
 };

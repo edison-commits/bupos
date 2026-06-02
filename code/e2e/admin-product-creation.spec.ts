@@ -1,28 +1,25 @@
 /**
- * R23-H-2 regression: end-to-end admin product creation.
+ * End-to-end admin product creation via the /admin/products page.
  *
- * R23 discovered that `createProductAction` had been silently failing
- * for an unknown number of audit rounds. The bug: the action inserted
- * a product with `default_variant_id = <variantId>` BEFORE the variant
- * existed, violating the non-deferrable FK
- * `fk_products_default_variant_id`. Every product-creation attempt
- * through the admin UI 500'd.
+ * History: R23-H-2 found that the OLD inline `createProductAction` form
+ * (rendered in admin-console.tsx on /admin) had been silently 500'ing —
+ * it inserted a product with `default_variant_id` before the variant
+ * existed, violating a non-deferrable FK. That exact regression is now
+ * pinned by the integration suite
+ * (src/__tests__/integration/admin-product-creation.test.ts).
  *
- * No test exercised this path. A unit test couldn't catch it because
- * unit tests mocked out the DB. The only reliable way to catch this
- * class of bug is end-to-end: log in, submit the form, verify the
- * product appears.
- *
- * This test does the minimum viable e2e flow:
+ * The admin Catalog UI has since MOVED: the inline /admin sections had
+ * production crashes, so Catalog/Inventory/Settings became dedicated
+ * routes (admin-sidebar.tsx). Product creation is now a MODAL on
+ * /admin/products that POSTs to /api/products. This e2e drives that real
+ * UI end-to-end:
  *   1. Log in as the seeded admin (see e2e/global-setup.ts).
- *   2. Navigate to /admin.
- *   3. Fill in the "Create product" form.
- *   4. Submit.
- *   5. Verify the product landed in the DB (and Playwright sees a
- *      success/redirect path).
+ *   2. Navigate to /admin/products.
+ *   3. Open the "Add Product" modal, fill it, Save.
+ *   4. Verify the product landed in the DB.
  *
- * If R23-H-2 or any similar orchestration regression ships, this test
- * fails.
+ * If the product-creation UI or its /api/products write regresses, this
+ * test fails.
  */
 import { test, expect } from "@playwright/test";
 import { Pool } from "pg";
@@ -36,15 +33,18 @@ async function loginAsAdmin(page: import("@playwright/test").Page) {
   await page.getByLabel(/email/i).fill(SEED.email);
   await page.getByLabel(/password/i).fill(SEED.password);
   await Promise.all([
-    page.waitForURL("**/admin", { timeout: 15_000 }),
+    // 30s (not 15s): /admin is a large page; its first cold compile under
+    // `next dev` can take 15-25s, and the login redirect lands there.
+    page.waitForURL("**/admin", { timeout: 30_000 }),
     page.getByRole("button", { name: /sign in/i }).click(),
   ]);
 }
 
-test.describe("admin product creation (R23-H-2 regression)", () => {
+test.describe("admin product creation", () => {
   test.beforeEach(async () => {
-    // Purge products from the seeded org so the test is deterministic
-    // across reruns.
+    // Purge e2e products from the seeded org so reruns are deterministic.
+    // The modal derives the slug from the name (lowercased, spaces→dashes),
+    // so an "E2E Test Product …" name yields an "e2e-test-…" slug.
     const pool = new Pool({ connectionString: DATABASE_URL, max: 1 });
     try {
       await pool.query(
@@ -56,73 +56,52 @@ test.describe("admin product creation (R23-H-2 regression)", () => {
     }
   });
 
-  test("form submission creates product + variant + inventory without FK violation", async ({
-    page,
-  }) => {
+  test("creating a product via the /admin/products modal persists it", async ({ page }) => {
+    // Cold-compile headroom: under `next dev` this test compiles two heavy
+    // pages on first hit (/admin during login + /admin/products), which can
+    // exceed the default 30s per-test budget on a cold runner.
+    test.setTimeout(90_000);
     await loginAsAdmin(page);
-    await page.goto("/admin");
+    await page.goto("/admin/products");
 
-    // The admin console starts on the Dashboard section; the Create-
-    // product form lives in the Catalog section. Click the sidebar
-    // button to switch.
-    await page.getByRole("button", { name: /^🏷️\s*Catalog$/i }).click();
-
-    // The form uses server-action `createProductAction`. Fill the
-    // required fields. Slug is derived from name — we pick a unique
-    // name per run so reruns don't collide with a leftover row.
     const suffix = Date.now().toString().slice(-6);
     const name = `E2E Test Product ${suffix}`;
-    const sku = `E2E-SKU-${suffix}`;
-    const variantName = "Default";
 
-    // Fill the Create-product form inside the Catalog section. Use
-    // name-attribute selectors (stable across UI changes) instead of
-    // placeholder text (brittle + some placeholders collide).
-    const createForm = page.locator("form").filter({ hasText: "Create product" });
-    await createForm.locator('input[name="name"]').fill(name);
-    await createForm.locator('input[name="sku"]').fill(sku);
-    await createForm.locator('input[name="variantName"]').fill(variantName);
-    await createForm.locator('input[name="price"]').fill("19.99");
-    await createForm.locator('input[name="openingStock"]').fill("10");
+    // Open the Add-Product modal. (The page also has "📥 Import CSV"; the
+    // /Add Product/ name only matches the "+ Add Product" trigger.)
+    await page.getByRole("button", { name: /Add Product/i }).click();
+    const modal = page.getByRole("dialog");
+    await expect(modal).toBeVisible();
 
-    // The Category <select> defaults to the first option — since the
-    // seed only creates one category, that's the one we want.
+    // Fill the name (the slug auto-derives) and pick the seeded category
+    // ("E2E Cat" — global-setup creates exactly one).
+    await modal.getByLabel("Product Name", { exact: true }).fill(name);
+    await modal.getByRole("combobox").selectOption({ label: "E2E Cat" });
 
-    // Submit. A 500 (R23-H-2) would manifest as an error toast or an
-    // error page. We assert BOTH that the page redirected/re-rendered
-    // AND that the product row exists in the DB.
+    // Save → POST /api/products. The modal closes on success.
     await Promise.all([
-      page.waitForLoadState("networkidle"),
-      createForm.getByRole("button", { name: /create product/i }).click(),
+      page.waitForResponse(
+        (r) => r.url().includes("/api/products") && r.request().method() === "POST" && r.ok(),
+        { timeout: 15_000 },
+      ),
+      modal.getByRole("button", { name: /^save$/i }).click(),
     ]);
+    await expect(modal).toBeHidden({ timeout: 10_000 });
 
-    // Verify in the DB: product + variant + inventory row.
+    // Verify the product row landed in the DB under the seeded org +
+    // category.
     const pool = new Pool({ connectionString: DATABASE_URL, max: 1 });
     try {
       const { rows: products } = await pool.query(
-        `SELECT id, default_variant_id FROM products WHERE organization_id = $1 AND name = $2`,
+        `SELECT id, category_id, slug FROM products WHERE organization_id = $1 AND name = $2`,
         [SEED.orgId, name],
       );
       expect(products.length, `product row should exist for name=${name}`).toBe(1);
       expect(
-        products[0].default_variant_id,
-        "default_variant_id should be populated (R23-H-2 regression: used to be missing/500)",
-      ).not.toBeNull();
-
-      const { rows: variants } = await pool.query(
-        `SELECT id, sku FROM product_variants WHERE product_id = $1`,
-        [products[0].id],
-      );
-      expect(variants.length).toBe(1);
-      expect(variants[0].sku).toBe(sku);
-      expect(variants[0].id).toBe(products[0].default_variant_id);
-
-      const { rows: inv } = await pool.query(
-        `SELECT on_hand FROM inventory_levels WHERE product_variant_id = $1 AND location_id = $2`,
-        [variants[0].id, SEED.locationId],
-      );
-      expect(inv.length).toBe(1);
-      expect(Number(inv[0].on_hand)).toBe(10);
+        products[0].category_id,
+        "category should be set to the seeded category",
+      ).toBe(SEED.categoryId);
+      expect(products[0].slug).toMatch(/^e2e-test-product-/);
     } finally {
       await pool.end();
     }
