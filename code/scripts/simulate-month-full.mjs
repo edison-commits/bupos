@@ -324,7 +324,7 @@ async function main() {
           const refund = r2(Math.min(line.unitPrice, 25));
           await req(regJar, 'POST', '/api/returns/process', {
             headers: { 'Idempotency-Key': `simret-${d}-${i}-${randomUUID()}` },
-            body: JSON.stringify({ transaction_id: txn.id, reason: pick(['damaged', 'wrong_item', 'other']), refund_method: pick(['store_credit', 'cash']), items: [{ variantId: line.productVariantId, quantity: 1, unitPrice: line.unitPrice, restock: chance(0.7) }], refund_amount: refund }),
+            body: JSON.stringify({ transaction_id: txn.id, customer_name: 'Sim', reason: pick(['defective', 'wrong_item', 'wrong_size', 'changed_mind', 'other']), refund_method: pick(['store_credit', 'cash']), items: [{ variantId: line.productVariantId, quantity: 1, unitPrice: line.unitPrice, restock: chance(0.7) }], refund_amount: refund, actorPassword: ADMIN_PASSWORD }),
             capture: true, scenario: 'return', day: d,
           }).then((r) => { if (r.status === 200 || r.status === 201) returnsOk++; });
         }

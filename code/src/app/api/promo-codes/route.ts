@@ -292,9 +292,15 @@ export const POST = withAdminAuth("pricing.manage", async (req, ctx) => {
           `INSERT INTO promo_codes (id, organization_id, code, description, type, value, minimum_purchase, max_redemptions, max_redemptions_per_customer, current_redemptions, status, starts_at, expires_at, free_variant_id, created_at, updated_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, 'active', $10, $11, $12, now(), now())`,
           [
+            // SIM-AUDIT8: max_redemptions and starts_at are NOT NULL with no
+            // column default, but both are schema-OPTIONAL. Omitting them (the
+            // common "unlimited, starts now" promo) passed NULL/undefined into
+            // a NOT-NULL column -> 500 "Failed to process promo code action".
+            // max_redemptions = 0 means unlimited (see the >0 redemption check
+            // above); starts_at defaults to now.
             promoId, orgId, code.toUpperCase(), description || null, type, value,
-            minimumPurchase || 0, maxRedemptions ?? null, maxRedemptionsPerCustomer ?? null,
-            startsAt, expiresAt || null,
+            minimumPurchase || 0, maxRedemptions ?? 0, maxRedemptionsPerCustomer ?? null,
+            startsAt ?? new Date().toISOString(), expiresAt || null,
             type === "free_item" ? freeVariantId : null,
           ],
         );
