@@ -766,6 +766,113 @@ export async function signInAdmin(email: string, password: string) {
   deleteLegacyCookie(jar, ADMIN_COOKIE);
 }
 
+/**
+ * No-PIN "tap your name" clock-in. The user picks a store, then taps an
+ * employee from that store's roster — no PIN. This is the deliberate
+ * convenience/accountability trade-off the operator chose: there is NO
+ * secret, so anyone physically at the register can clock in as any
+ * rostered employee. The register session is still device-bound, and the
+ * (client-supplied) employeeId + locationId are RE-VALIDATED here against
+ * the DB: the employee must exist, be active, be assigned to that
+ * location, the location must be active + same org, and the role must
+ * carry register permissions. Sensitive in-checkout actions (voids,
+ * discounts, cash payouts) remain gated by the separate manager-approval
+ * PIN flow, so a cashier still can't self-approve.
+ *
+ * Mirrors signInRegister's session/cookie creation exactly — only the
+ * PIN-verification step is replaced by the roster validation.
+ */
+export async function signInRegisterByEmployee(
+  employeeId: string,
+  locationId: string,
+  deviceId?: string,
+) {
+  // AUTH-AUDIT4-HIGH1 parity: synthesize a deviceId when the client
+  // didn't send one, so register_sessions.device_id is never NULL (a
+  // NULL disables the device-bind replay guard in resolveSession).
+  if (!deviceId) deviceId = randomUUID();
+  if (isPg()) {
+    const pool = await pgGetPool();
+    // Re-validate the client-supplied (employee, location) pair. This is
+    // the identity-resolution query for the no-PIN clock-in — the ORG is
+    // the OUTPUT (resolved from the employee), not an input to filter by,
+    // exactly like the PIN-candidate lookup. Scoped by the specific
+    // employee id ($1) + location id ($2); the JOIN on organization_id
+    // guarantees they share an org, ANY(location_ids) enforces assignment,
+    // and both rows must be active.
+    // check-pool-org-filter: scoped-by-employee-and-location-id
+    const { rows } = await pool.query(
+      `SELECT e.organization_id::text AS organization_id, e.role_key
+         FROM employees e
+         JOIN locations l ON l.organization_id = e.organization_id
+        WHERE e.id = $1::uuid
+          AND e.is_active = true
+          AND l.id = $2::uuid
+          AND l.is_active = true
+          AND l.id = ANY(e.location_ids)
+        LIMIT 1`,
+      [employeeId, locationId],
+    );
+    const row = rows[0] as { organization_id: string; role_key: string } | undefined;
+    if (!row) redirect("/register?error=Could+not+clock+in.+Please+pick+your+store+and+name+again.");
+    const roleKey = row.role_key as RoleKey;
+    if (!hasPermission(roleKey, "register.pin_login") || !hasPermission(roleKey, "register.open")) {
+      redirect("/register?error=That+employee+can%27t+open+a+register.");
+    }
+    const organizationId = row.organization_id;
+    const nextSession = buildSession("register", employeeId, organizationId, locationId);
+    const registerSessionId = randomUUID();
+
+    await pool.query(
+      `SELECT register_login_create_session($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::timestamptz, $8::timestamptz)`,
+      [
+        employeeId,
+        organizationId,
+        locationId,
+        deviceId ?? null,
+        nextSession.id,
+        registerSessionId,
+        nextSession.createdAt,
+        nextSession.expiresAt,
+      ],
+    );
+
+    invalidateStoreCache(organizationId);
+
+    const jar = await cookieStore();
+    jar.set(REGISTER_COOKIE, nextSession.id, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: shouldUseSecureCookie(),
+      path: "/",
+      expires: new Date(nextSession.expiresAt),
+    });
+    deleteLegacyCookie(jar, REGISTER_COOKIE);
+    if (deviceId) {
+      const signed = await signDeviceId(deviceId);
+      jar.set("bupos_register_device", signed, {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: shouldUseSecureCookie(),
+        path: "/",
+        expires: new Date(nextSession.expiresAt),
+      });
+    }
+
+    return {
+      employee: { id: employeeId, organizationId, roleKey },
+      location: { id: locationId, organizationId },
+      registerSession: { id: registerSessionId, deviceId },
+      authSessionId: nextSession.id,
+      authSessionExpiresAt: nextSession.expiresAt,
+      deviceId,
+    };
+  }
+
+  // JSON fallback (local dev only) — production runs the PG path above.
+  redirect("/register?error=Clock-in+is+not+available+in+this+mode.");
+}
+
 export async function signInRegister(pin: string, locationId: string, deviceId?: string) {
   const cleanPin = pin.trim();
 

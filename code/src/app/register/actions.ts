@@ -7,7 +7,7 @@ import { revalidatePath } from "next/cache";
 // Parity with R84-final admin-side fix + R84-hand checkout/return.
 import { invalidateStoreCache } from "@/lib/persistence/postgres-read-store";
 import { redirect } from "next/navigation";
-import { requireRegisterPermission, hasPermission } from "@/lib/authz";import { getRegisterSession, getAdminSession, signInRegister, signOutRegister } from "@/lib/auth/session";
+import { requireRegisterPermission, hasPermission } from "@/lib/authz";import { getRegisterSession, getAdminSession, signInRegister, signInRegisterByEmployee, signOutRegister } from "@/lib/auth/session";
 // AUTH-AUDIT6-HIGH1: PIN-login rate-limiting now goes through the shared
 // `enforceRegisterPinRateLimits` gate (imported inline at the call sites),
 // so the bare in-memory `checkRateLimit` is no longer used in this file.
@@ -143,31 +143,36 @@ export async function registerLoginAction(formData: FormData) {
   );
   if (!loginResult) redirect("/register?error=PIN+login+failed");
   const { employee, location, registerSession } = loginResult;
+  await finishRegisterClockIn(employee, location, registerSession);
+}
 
-  // Audit: log register login (non-fatal — runs in the background so it
-  // never adds to the login's critical-path latency, and via
-  // waitUntilOrAwait so it actually records on Workers).
+/**
+ * Shared post-authentication clock-in flow, used by BOTH the PIN path
+ * (registerLoginAction) and the no-PIN tap-your-name path (clockInAction):
+ * write the login audit, auto-open the worker's shift, and redirect into
+ * the register.
+ */
+async function finishRegisterClockIn(
+  employee: { id: string; organizationId: string },
+  location: { id: string },
+  registerSession: { id: string },
+) {
   if (isPg()) {
+    // Login audit — backgrounded (off the critical path; via
+    // waitUntilOrAwait so it actually records on Workers).
     await waitUntilOrAwait(
       rpcInsertAudit(
         employee.organizationId, location.id, employee.id,
         "session", registerSession.id, "register_login",
         { location_id: location.id, register_session_id: registerSession.id },
-      ).catch((err) => console.error("[registerLoginAction] login audit failed:", safeErr(err))),
+      ).catch((err) => console.error("[finishRegisterClockIn] login audit failed:", safeErr(err))),
     );
 
-    // Auto-open shift on login — workers clock in by entering their PIN.
-    //
-    // PINLOGIN-FIX: this MUST NOT fail the login. If the employee already
-    // has an open shift (they're already clocked in — never clocked out,
-    // signing in again, or stranded by a stale shift), rpcOpenShift throws
-    // on the `idx_shifts_one_open_per_employee` unique index. The prior
-    // shape left this `await rpcOpenShift(...)` UNGUARDED, so that throw
-    // propagated out of the Server Action and the ENTIRE PIN login failed
-    // — even though authentication had already succeeded. Net effect: a
-    // worker with an open shift literally could not sign in at the PIN
-    // pad ("PIN login failed" / a thrown error), with no in-app way out.
-    // Authentication is the contract here; auto-clock-in is best-effort.
+    // Auto-open the shift ("clock in"). MUST NOT fail the login: an
+    // employee who already has an open shift throws on the
+    // one-open-shift-per-employee index — treat that as "already clocked
+    // in" and proceed. Any other error is logged, never rethrown, so the
+    // worker is never stranded at the login screen.
     const shiftId = randomUUID();
     let shiftOpened = false;
     try {
@@ -184,23 +189,18 @@ export async function registerLoginAction(formData: FormData) {
       const msg = err instanceof Error ? err.message : String(err);
       const pgCode = (err as { code?: string })?.code;
       if (/already has an open shift/i.test(msg) || pgCode === "23505") {
-        // Already clocked in — perfectly fine, the login still succeeds.
-        console.warn("[registerLoginAction] employee already clocked in; auto-open skipped");
+        console.warn("[finishRegisterClockIn] employee already clocked in; auto-open skipped");
       } else {
-        // Any other failure must NOT strand the worker at the login
-        // screen — the session is valid and they can open a shift from
-        // the register UI. Log for triage; don't rethrow.
-        console.error("[registerLoginAction] auto-open shift failed (login still succeeds):", safeErr(err));
+        console.error("[finishRegisterClockIn] auto-open shift failed (login still succeeds):", safeErr(err));
       }
     }
     if (shiftOpened) {
-      // Background the audit too — keep it off the login critical path.
       await waitUntilOrAwait(
         rpcInsertAudit(
           employee.organizationId, location.id, employee.id,
           "shift", shiftId, "shift_opened",
           { register_session_id: registerSession.id, opening_float: "0.00" },
-        ).catch((err) => console.error("[registerLoginAction] shift-open audit failed:", safeErr(err))),
+        ).catch((err) => console.error("[finishRegisterClockIn] shift-open audit failed:", safeErr(err))),
       );
     }
   }
@@ -208,6 +208,28 @@ export async function registerLoginAction(formData: FormData) {
   invalidateStoreCache(employee.organizationId);
   revalidatePath("/register");
   redirect("/register?notice=Clocked+in");
+}
+
+/**
+ * No-PIN "tap your name" clock-in — the operator chose this over PIN
+ * login. The /register page shows a store picker → an employee roster;
+ * tapping a name posts {employeeId, locationId, deviceId} here. There is
+ * no secret to brute-force, so there's no per-PIN rate-limit gate;
+ * `signInRegisterByEmployee` re-validates the (employee, location) pair
+ * server-side (active employee, assigned to an active location in the
+ * same org, with register permissions).
+ */
+export async function clockInAction(formData: FormData) {
+  const locationId = String(formData.get("locationId") ?? "");
+  const employeeId = String(formData.get("employeeId") ?? "");
+  const deviceId = String(formData.get("deviceId") ?? "") || undefined;
+  if (!locationId || !employeeId) {
+    redirect("/register?error=Please+pick+your+store+and+name.");
+  }
+  const loginResult = await signInRegisterByEmployee(employeeId, locationId, deviceId);
+  if (!loginResult) redirect("/register?error=Could+not+clock+in.");
+  const { employee, location, registerSession } = loginResult;
+  await finishRegisterClockIn(employee, location, registerSession);
 }
 
 export async function openShiftAction(formData: FormData) {
