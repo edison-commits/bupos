@@ -19,6 +19,7 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { formatDateTime } from "@/lib/utils/date";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "..", "..", "..");
@@ -87,16 +88,41 @@ describe("R84 — manager/owner PIN gate on tap-your-name clock-in", () => {
     });
   });
 
-  describe("register/page.tsx renders TimezoneBootstrap (no #418 on clocked-in console)", () => {
-    // The authenticated register console formats the shift-opened time on
-    // the client (AppNav). Without setting the client TZ to the org's value
-    // during render, the client fell back to the LA default and mismatched
-    // the server's org-TZ render → React #418 at /register?notice=Clocked+in.
-    const src = read("src/app/register/page.tsx");
-    it("imports TimezoneBootstrap", () => {
-      expect(src).toMatch(/import \{ TimezoneBootstrap \} from "@\/components\/system\/timezone-bootstrap"/);
+  describe("register clocked-in console: no #418 timezone hydration mismatch", () => {
+    // Proven root cause (live Playwright probe): SSR rendered shift/session
+    // dates in UTC (runWithTimeZone's async-local scope doesn't reach the
+    // React render phase) while the client rendered org-local → React #418
+    // at /register?notice=Clocked+in. Fix: pass the org TZ explicitly to
+    // formatDateTime so SSR + client are identical.
+    it("formatDateTime honors an explicit timeZone arg (overrides ambient default)", () => {
+      const iso = "2026-06-02T04:21:00.000Z"; // 04:21 UTC
+      const la = formatDateTime(iso, "America/Los_Angeles");
+      const utc = formatDateTime(iso, "UTC");
+      expect(la).not.toBe(utc);
+      expect(la).toMatch(/Jun 1, 2026/); // 9:21 PM previous day in LA
+      expect(utc).toMatch(/Jun 2, 2026/);
     });
-    it("renders <TimezoneBootstrap timezone={orgTz}> above AppNav", () => {
+
+    it("register-console-client passes the org tz to every formatDateTime", () => {
+      const src = read("src/components/register/register-console-client.tsx");
+      expect(src).toMatch(/const tz = store\.organization\?\.timezone \|\| "UTC"/);
+      // No bare formatDateTime(...) call may remain (all must pass `tz`).
+      const bare = src.match(/formatDateTime\([^)]*\)/g) ?? [];
+      for (const call of bare) {
+        // The import line is `formatDateTime(value: string, timeZone?...` — skip non-calls.
+        if (call.includes("import")) continue;
+        expect(call).toMatch(/,\s*tz\)/);
+      }
+    });
+
+    it("app-nav formats the shift time with session.timezone", () => {
+      const src = read("src/components/layout/app-nav.tsx");
+      expect(src).toMatch(/formatDateTime\(session\.shiftOpenedAt, session\.timezone\)/);
+    });
+
+    it("register/page.tsx feeds the org tz into headerSession + TimezoneBootstrap", () => {
+      const src = read("src/app/register/page.tsx");
+      expect(src).toMatch(/timezone: store\.organization\?\.timezone \|\| "UTC"/);
       expect(src).toMatch(/<TimezoneBootstrap timezone=\{orgTz\} \/>[\s\S]*?<AppNav/);
     });
   });

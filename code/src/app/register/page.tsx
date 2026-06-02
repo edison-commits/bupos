@@ -123,6 +123,7 @@ export default async function RegisterPage({
         employeeName: `${session.employee.firstName} ${session.employee.lastName}`,
         locationName: session.location.name,
         shiftOpenedAt: session.activeShift.openedAt,
+        timezone: store.organization?.timezone || "UTC",
         openingFloat: session.activeShift.openingFloat,
         payInTotal: store.payInOuts.filter((p: { direction: string }) => p.direction === "pay_in").reduce((s: number, p: { amount: number }) => s + p.amount, 0),
         payOutTotal: store.payInOuts.filter((p: { direction: string }) => p.direction === "pay_out").reduce((s: number, p: { amount: number }) => s + p.amount, 0),

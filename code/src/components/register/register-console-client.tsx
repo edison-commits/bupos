@@ -143,6 +143,14 @@ export function RegisterConsoleClient({
       setDefaultTimeZone(store.organization.timezone);
     }
   }, [store.organization?.timezone]);
+  // Pass this org TZ EXPLICITLY to every formatDateTime call below. The
+  // server-side `runWithTimeZone(orgTz)` in register/page.tsx does not
+  // actually reach React's render phase (its async-local scope only wraps
+  // JSX construction), so during SSR the formatter fell back to UTC while
+  // the client rendered org-local — a React #418 hydration mismatch on
+  // /register?notice=Clocked+in. A definite string keeps SSR + client
+  // identical even when the org has no timezone configured.
+  const tz = store.organization?.timezone || "UTC";
   const _uid = useId();
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [showEODWizard, setShowEODWizard] = useState(false);
@@ -629,7 +637,7 @@ export function RegisterConsoleClient({
           </div>
           <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div className="text-base text-zinc-800">
-              Session opened {formatDateTime(context.session.createdAt)}
+              Session opened {formatDateTime(context.session.createdAt, tz)}
             </div>
             <form
               action={registerLogoutAction}
@@ -658,7 +666,7 @@ export function RegisterConsoleClient({
             <div className="grid gap-4">
               <div className="grid gap-3 md:grid-cols-2">
                 <Metric label="Opening float" value={`${formatCurrency(context.activeShift.openingFloat)}`} detail={context.activeShift.openedNote ?? "No opening note"} />
-                <Metric label="Shift state" value="Open" detail={`Opened ${formatDateTime(context.activeShift.openedAt)}`} />
+                <Metric label="Shift state" value="Open" detail={`Opened ${formatDateTime(context.activeShift.openedAt, tz)}`} />
               </div>
               <button
                 type="button"
@@ -716,7 +724,7 @@ export function RegisterConsoleClient({
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="font-medium">{shift.employee?.displayName ?? "Unknown"}</p>
-                      <p className="text-base text-zinc-700">Opened {formatDateTime(shift.openedAt)}</p>
+                      <p className="text-base text-zinc-700">Opened {formatDateTime(shift.openedAt, tz)}</p>
                     </div>
                     <span className={`rounded-full px-3 py-1 text-sm font-semibold ${shift.status === "open" ? "bg-emerald-100 text-emerald-800" : "bg-zinc-100 text-zinc-700"}`}>{shift.status}</span>
                   </div>

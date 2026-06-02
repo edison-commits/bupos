@@ -17,6 +17,10 @@ interface SessionInfo {
   employeeName: string;
   locationName: string;
   shiftOpenedAt: string;
+  // Org timezone, passed so the shift-opened time formats identically on
+  // server + client (see formatDateTime + register/page.tsx). Without it
+  // SSR renders UTC and the client renders org-local → React #418.
+  timezone?: string;
   openingFloat: number;
   payInTotal: number;
   payOutTotal: number;
@@ -67,7 +71,7 @@ export function AppNav({ session }: AppNavProps) {
             <span className="text-zinc-400">·</span>
             <span className="text-zinc-600">{session.locationName}</span>
             <span className="text-zinc-400">·</span>
-            <span className="text-zinc-500">Shift opened {formatDateTime(session.shiftOpenedAt)}</span>
+            <span className="text-zinc-500">Shift opened {formatDateTime(session.shiftOpenedAt, session.timezone)}</span>
             <span className="text-zinc-400">·</span>
             <span className="text-zinc-500">Float {formatCurrency(session.openingFloat)}</span>
             {(session.payInTotal > 0 || session.payOutTotal > 0) && (
