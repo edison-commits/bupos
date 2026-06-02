@@ -52,8 +52,11 @@ BEGIN
   ) THEN
     PERFORM cron.unschedule('bupos_nightly_cleanup');
   END IF;
-EXCEPTION WHEN undefined_table THEN
-  -- pg_cron not installed or accessible; skip silently.
+EXCEPTION WHEN OTHERS THEN
+  -- pg_cron not installed/accessible. When the extension never installed
+  -- there is no `cron` SCHEMA at all, so `cron.job` raises
+  -- invalid_schema_name (3F000) — NOT undefined_table — hence WHEN OTHERS
+  -- (consistent with the CREATE EXTENSION block above). Skip silently.
   NULL;
 END$$;
 
@@ -68,11 +71,13 @@ BEGIN
     '0 7 * * *',
     $cron$SELECT public.run_nightly_cleanup();$cron$
   );
-EXCEPTION WHEN undefined_function OR undefined_table THEN
-  -- pg_cron not installed or the env lacks cron schema access.
-  -- Migration commits anyway; operator can install pg_cron and
-  -- re-run this migration block, or configure an external scheduler.
-  RAISE WARNING 'pg_cron not available; nightly cleanup must be scheduled externally. Call run_nightly_cleanup() daily via another mechanism.';
+EXCEPTION WHEN OTHERS THEN
+  -- pg_cron not installed or the env lacks cron schema access. With the
+  -- extension absent there is no `cron` schema, so cron.schedule(...)
+  -- raises invalid_schema_name (3F000), not undefined_function/_table —
+  -- so catch WHEN OTHERS. Migration commits anyway; an operator can
+  -- install pg_cron and re-run this block, or use an external scheduler.
+  RAISE WARNING 'pg_cron not available (%); nightly cleanup must be scheduled externally. Call run_nightly_cleanup() daily via another mechanism.', SQLERRM;
 END$$;
 
 COMMIT;
