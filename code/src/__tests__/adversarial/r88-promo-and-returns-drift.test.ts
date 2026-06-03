@@ -96,6 +96,18 @@ describe("SIM-AUDIT8-F: return reason is enum-validated (clean 400, not a DB-CHE
   });
 });
 
+describe("SIM-AUDIT8-G: returns/process refund cap + rate-limit calibration", () => {
+  const src = read("src/app/api/returns/process/route.ts");
+  it("caps the refund at the server-computed amount instead of hard-rejecting on mismatch", () => {
+    expect(src).toMatch(/refund_amount = Math\.min\(refund_amount, computedRefundTotal\)/);
+    // the brittle exact-match reject is gone
+    expect(src).not.toMatch(/Refund amount mismatch: computed/);
+  });
+  it("uses a return-appropriate rate limit, not the PIN-brute-force default", () => {
+    expect(src).toMatch(/checkRateLimit\(`returns:\$\{employeeId\}`, \{ maxAttempts: 20, windowMs: 300_000 \}\)/);
+  });
+});
+
 describe("SIM-AUDIT8-E: the prod-drift guardrail itself", () => {
   it("findDrift separates missing columns from missing tables and is clean on parity", async () => {
     const { findDrift } = await import("../../../scripts/check-prod-drift.mjs");

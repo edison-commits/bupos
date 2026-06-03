@@ -45,7 +45,14 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
   const { orgId, employee, registerSession: _registerSession, locationId } = ctx;
   const employeeId = employee.id;
 
-  const rl = checkRateLimit(`returns:${employeeId}`);
+  // SIM-AUDIT8: returns is a normal business operation, not a credential
+  // endpoint — but this used checkRateLimit's DEFAULT config (3 attempts /
+  // 5 min), which is explicitly tuned for 4-digit-PIN brute-force. That
+  // throttled a cashier to 3 returns per 5 minutes (a busy post-holiday
+  // returns desk trivially exceeds it). Calibrate for legitimate return
+  // volume while still capping runaway/automated refund abuse (the
+  // manager-threshold + step-up gates are the primary money controls).
+  const rl = checkRateLimit(`returns:${employeeId}`, { maxAttempts: 20, windowMs: 300_000 });
   if (!rl.allowed) {
     return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
   }
@@ -92,8 +99,15 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
       notes,
       refund_method,
       items,
-      refund_amount,
+      refund_amount: requestedRefundAmount,
     } = v.data;
+    // SIM-AUDIT8: `refund_amount` becomes the AMOUNT ACTUALLY APPLIED. It
+    // starts as the client's request (so the manager-threshold + step-up
+    // gates below evaluate the client's claim — conservative), then is capped
+    // at the server-computed refundable amount once that's known (see the
+    // Math.min below). The cap can only REDUCE it, so the early gates remain
+    // sound and the money moved never exceeds the server's own computation.
+    let refund_amount = requestedRefundAmount;
 
     if (refund_amount < 0) {
       await client.query('ROLLBACK');
@@ -431,14 +445,16 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
       (computedRefundSubtotal * discountFactor * (1 + effectiveTaxRate)).toFixed(2),
     );
 
-    // If the client-supplied refund_amount differs by more than 1 cent, reject.
-    if (Math.abs(refund_amount - computedRefundTotal) > 0.01) {
-      await client.query('ROLLBACK');
-      return NextResponse.json(
-        { error: `Refund amount mismatch: computed ${computedRefundTotal.toFixed(2)}` },
-        { status: 400 }
-      );
-    }
+    // SIM-AUDIT8: cap the applied refund at the server-computed refundable
+    // amount instead of hard-rejecting on a >1-cent mismatch. The prior
+    // exact-match check 400'd any client whose tax rounding differed even by
+    // a cent (the register UI must pre-compute the identical tax-inclusive
+    // figure). Math.min() honors a smaller client request (a legitimate
+    // PARTIAL refund) and clamps an over-claim down to what's actually
+    // refundable — it can only REDUCE refund_amount, so the manager-threshold
+    // and step-up gates above (evaluated on the larger client-claimed value)
+    // remain sound, and the money moved never exceeds the server computation.
+    refund_amount = Math.min(refund_amount, computedRefundTotal);
 
     // Sum all prior refunds for this transaction so we don't over-refund.
     // Convention: refund tender rows are stored with negative amount (matching
