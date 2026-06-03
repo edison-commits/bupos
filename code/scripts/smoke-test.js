@@ -165,6 +165,49 @@ async function testRegisterClockIn(page, registerPath) {
   }
 }
 
+// SIM-AUDIT8: register money-path smoke. Runs against the live deploy with
+// the clocked-in register cookie (same-origin fetch → CSRF Origin passes,
+// HttpOnly cookie auto-attached). Asserts the cash-drawer shift lifecycle
+// never 5xx's — the class of regression that left open_shift / returns /
+// customer-display 100% broken in prod with nothing to catch it.
+//
+// A 5xx on any step fails the deploy. 400/403/409 are tolerated (step-up
+// nuances, an already-open shift from a prior run) — we only hard-fail on
+// server errors. Sale→return needs the register_sessions.id (not exposed to
+// a headless client); that path is covered by scripts/simulate-month-full.mjs.
+async function testShiftLifecycle(page) {
+  console.log('📋 Testing register money path (cash-drawer shift lifecycle)...');
+  const call = (path, opts) => page.evaluate(async ([p, o]) => {
+    const r = await fetch(p, o);
+    let body = ''; try { body = await r.text(); } catch { /* ignore */ }
+    return { status: r.status, body };
+  }, [path, opts]);
+  const post = (b) => call('/api/cash-drawer', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b),
+  });
+
+  const open = await post({ action: 'open_shift', opening_float: 100, note: 'smoke' });
+  if (open.status === 401) { log('⚠️', 'Register session absent — skipped shift lifecycle'); return; }
+  if (open.status >= 500) { log('❌', `open_shift ${open.status}: ${open.body.slice(0, 140)}`); failures++; return; }
+  log('✅', `Shift open OK (${open.status})`); // 201 opened, or 409 already-open — both prove no 500
+
+  const st = await call('/api/cash-drawer?action=status', {});
+  let shiftId = null;
+  try { shiftId = JSON.parse(st.body)?.shift?.id ?? null; } catch { /* ignore */ }
+  if (!shiftId) { log('⚠️', 'No open shift id returned — skipped pay/close'); return; }
+
+  const payIn = await post({ action: 'pay_in', shift_id: shiftId, amount: 10, reason: 'smoke', note: 'smoke' });
+  const payOut = await post({ action: 'pay_out', shift_id: shiftId, amount: 5, reason: 'smoke', note: 'smoke' });
+  for (const [name, r] of [['pay_in', payIn], ['pay_out', payOut]]) {
+    if (r.status >= 500) { log('❌', `${name} ${r.status}: ${r.body.slice(0, 120)}`); failures++; }
+  }
+  if (payIn.status < 500 && payOut.status < 500) log('✅', `Pay-in/out OK (${payIn.status}/${payOut.status})`);
+
+  const close = await post({ action: 'close_shift', shift_id: shiftId, declared_cash: 105, note: 'smoke' });
+  if (close.status >= 500) { log('❌', `close_shift ${close.status}: ${close.body.slice(0, 140)}`); failures++; }
+  else log('✅', `Shift close OK (${close.status})`);
+}
+
 async function testHealthEndpoint() {
   log('📋', 'Testing health endpoint...');
   const resp = await fetch(`${BASE}/api/health`);
@@ -229,6 +272,12 @@ async function testHealthEndpoint() {
       log('⚠️', `Client error: ${err.message.split('\n')[0]}`);
     });
     await testRegisterClockIn(regPage, registerPath);
+    // SIM-AUDIT8: exercise the register MONEY path on each deploy. The
+    // opened_at 500 (and the returns/customer-display drift) shipped because
+    // NO smoke touched money movement. This drives the full cash-drawer shift
+    // lifecycle (open → pay-in → pay-out → close) with the clocked-in
+    // register cookie — a 5xx on any of them fails the deploy.
+    await testShiftLifecycle(regPage);
     await regContext.close();
 
   } finally {
