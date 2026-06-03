@@ -75,7 +75,7 @@ export default function ReturnsPage() {
   const [searchResults, setSearchResults] = useState<SearchResult | null>(null);
   const [selectedItems, setSelectedItems] = useState<ReturnItem[]>([]);
   const [refundMethod, setRefundMethod] = useState('original_tender');
-  const [returnReason, setReturnReason] = useState('damaged');
+  const [returnReason, setReturnReason] = useState('defective');
   const [notes, setNotes] = useState('');
   const [processing, setProcessing] = useState(false);
   const [promptPassword, passwordGate] = usePasswordGate();
@@ -508,11 +508,15 @@ export default function ReturnsPage() {
                       onChange={(e) => setReturnReason(e.target.value)}
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                     >
-                      <option value="damaged">Damaged/Defective</option>
+                      {/* SIM-AUDIT8: values MUST match the returns.reason DB
+                          CHECK (defective/wrong_size/wrong_item/changed_mind/
+                          other) — the prior list sent 'damaged',
+                          'not_as_described', 'customer_request', 'sizing',
+                          none of which are valid, so a real return 500'd. */}
+                      <option value="defective">Damaged/Defective</option>
+                      <option value="wrong_size">Sizing/Fit Issue</option>
                       <option value="wrong_item">Wrong Item</option>
-                      <option value="not_as_described">Not as Described</option>
-                      <option value="customer_request">Customer Request</option>
-                      <option value="sizing">Sizing/Fit Issue</option>
+                      <option value="changed_mind">Customer Request / Changed Mind</option>
                       <option value="other">Other</option>
                     </select>
                   </div>

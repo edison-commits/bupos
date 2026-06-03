@@ -72,6 +72,14 @@ const refundMethodEnum = z.enum([
   "original_tender", "cash", "store_credit", "gift_card", "credit_card", "debit_card", "exchange",
 ]);
 
+// SIM-AUDIT8: the `returns.reason` column has a DB CHECK constraint. The
+// schemas typed `reason` as a free string, so any value outside this set
+// (e.g. the admin returns UI's 'damaged') passed validation and 500'd at the
+// CHECK instead of failing as a clean 400. Mirror the DB CHECK here.
+const returnReasonEnum = z.enum([
+  "defective", "wrong_size", "wrong_item", "changed_mind", "other",
+]);
+
 // ---------------------------------------------------------------------------
 // Customers
 // ---------------------------------------------------------------------------
@@ -644,7 +652,7 @@ export const returnCreateSchema = z.object({
   // an admin can mint arbitrary refunds for items never sold.
   transaction_id: uuid,
   customer_name: optionalString,
-  reason: optionalString,
+  reason: returnReasonEnum.optional(),
   notes: optionalString,
   refund_method: refundMethodEnum.optional(),
   // R18-LOW-3
@@ -667,7 +675,7 @@ const returnProcessItemSchema = z.object({
 export const returnProcessSchema = z.object({
   transaction_id: uuid,
   customer_name: optionalString,
-  reason: optionalString,
+  reason: returnReasonEnum.optional(),
   notes: optionalString,
   refund_method: refundMethodEnum.optional(),
   // R18-LOW-3

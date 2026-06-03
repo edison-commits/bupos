@@ -71,6 +71,31 @@ describe("SIM-AUDIT8-D: migration 085 re-creates the missing customer_display_st
   });
 });
 
+describe("SIM-AUDIT8-F: return reason is enum-validated (clean 400, not a DB-CHECK 500)", () => {
+  it("rejects a reason outside the DB CHECK set and accepts a valid one", async () => {
+    const { returnProcessSchema } = await import("@/lib/validation/schemas");
+    const base = {
+      transaction_id: "11111111-1111-4111-8111-111111111111",
+      items: [{ variantId: "22222222-2222-4222-8222-222222222222", quantity: 1, unitPrice: 10 }],
+      refund_amount: 10,
+    };
+    // 'damaged' was the admin UI's value — not in the DB CHECK -> must 400 now
+    expect(returnProcessSchema.safeParse({ ...base, reason: "damaged" }).success).toBe(false);
+    expect(returnProcessSchema.safeParse({ ...base, reason: "defective" }).success).toBe(true);
+    expect(returnProcessSchema.safeParse({ ...base, reason: "changed_mind" }).success).toBe(true);
+    // reason is still optional (handler defaults to 'other')
+    expect(returnProcessSchema.safeParse(base).success).toBe(true);
+  });
+
+  it("admin/returns page no longer offers invalid reason values", () => {
+    const src = read("src/app/admin/returns/page.tsx");
+    for (const bad of ['value="damaged"', 'value="not_as_described"', 'value="customer_request"', 'value="sizing"']) {
+      expect(src, `stale option ${bad} must be gone`).not.toContain(bad);
+    }
+    expect(src).toContain('value="defective"');
+  });
+});
+
 describe("SIM-AUDIT8-E: the prod-drift guardrail itself", () => {
   it("findDrift separates missing columns from missing tables and is clean on parity", async () => {
     const { findDrift } = await import("../../../scripts/check-prod-drift.mjs");
