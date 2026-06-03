@@ -58,3 +58,30 @@ describe("SIM-AUDIT8-C: migration 084 repairs the remaining prod schema drift", 
     expect(src).toMatch(/ALTER TABLE transaction_tenders ADD COLUMN IF NOT EXISTS is_refund BOOLEAN NOT NULL DEFAULT false/);
   });
 });
+
+describe("SIM-AUDIT8-D: migration 085 re-creates the missing customer_display_state table", () => {
+  // The prod-drift guardrail (check:prod-drift) found customer_display_state
+  // — read/written by /api/customer-display — entirely absent in prod, 500ing
+  // the customer display feature. 085 re-creates it idempotently.
+  const src = read("supabase/migrations/085_customer_display_state_drift_repair.sql");
+  it("creates the table idempotently with its 010 columns", () => {
+    expect(src).toMatch(/CREATE TABLE IF NOT EXISTS customer_display_state/);
+    expect(src).toMatch(/register_session_id UUID PRIMARY KEY/);
+    expect(src).toMatch(/payment_status TEXT CHECK/);
+  });
+});
+
+describe("SIM-AUDIT8-E: the prod-drift guardrail itself", () => {
+  it("findDrift separates missing columns from missing tables and is clean on parity", async () => {
+    const { findDrift } = await import("../../../scripts/check-prod-drift.mjs");
+    const ref = new Set(["t.a", "t.b", "gone_table.x"]);
+    const prod = new Set(["t.a"]);
+    const prodTables = new Set(["t"]);
+    const { missingColumns, missingTables } = findDrift(ref, prod, prodTables);
+    expect(missingColumns).toEqual(["t.b"]);          // column missing on an existing table
+    expect(missingTables).toEqual(["gone_table"]);    // whole table absent
+    const clean = findDrift(new Set(["t.a"]), new Set(["t.a"]), new Set(["t"]));
+    expect(clean.missingColumns).toEqual([]);
+    expect(clean.missingTables).toEqual([]);
+  });
+});

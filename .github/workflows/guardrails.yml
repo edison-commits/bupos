@@ -127,6 +127,15 @@ jobs:
       - name: Self-test coverage meta-check
         run: npm run check:selftest-coverage
 
+      # SIM-AUDIT8: prod schema-drift guardrail. Here it runs SELF-TEST
+      # ONLY (no PROD_DATABASE_URL secret in this job) — validating the
+      # diff logic on fixtures. The REAL prod comparison runs in the
+      # `drift-check` job of deploy.yml, AFTER migrations apply to prod
+      # (running it pre-deploy would false-positive on any PR that adds
+      # a column, since the reference would legitimately lead prod).
+      - name: Prod schema-drift check (self-test)
+        run: npm run check:prod-drift
+
       # Workers-runtime smoke tests (R22-M-3 / R23-H-1 prevention).
       # Validates that waitUntilOrAwait invokes ExecutionContext.
       # waitUntil AS A METHOD (detached calls throw on Workers); that

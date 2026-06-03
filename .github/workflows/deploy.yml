@@ -248,3 +248,59 @@ jobs:
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             -d chat_id="7547010501" \
             -d text="❌ bupos deploy FAILED (${{ github.sha }}) — check https://github.com/edison-commits/bupos/actions"
+
+  # SIM-AUDIT8: production schema-drift monitor. Runs AFTER `deploy` (so the
+  # commit's migrations have already been applied to prod), spins up a fresh
+  # Postgres, migrates it as the SOURCE-OF-TRUTH reference, and diffs prod's
+  # columns against it. Catches the silent CREATE/ALTER-IF-NOT-EXISTS drift
+  # class that left `returns` (transaction_id, updated_at) + `organizations`
+  # (approval_thresholds, loyalty_config) missing in prod while check:schema
+  # — which models the migrations, not the live DB — stayed green. Pages on
+  # drift so it's a "fix-forward with a repair migration" alarm, not a silent
+  # 100%-broken feature.
+  drift-check:
+    name: Prod schema-drift
+    needs: deploy
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: bupos_test
+        ports:
+          - 54329:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d bupos_test"
+          --health-interval 1s
+          --health-timeout 3s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: code/package-lock.json
+      - name: Install deps
+        run: npm ci
+      - name: Migrate the reference DB (source of truth)
+        run: bash scripts/docker-migrate.sh
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:54329/bupos_test
+      - name: Compare prod against the migrated reference
+        run: npm run check:prod-drift
+        env:
+          REFERENCE_DATABASE_URL: postgresql://postgres:postgres@localhost:54329/bupos_test
+          PROD_DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      - name: Page on drift
+        if: failure()
+        working-directory: .
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="7547010501" \
+            -d text="⚠️ bupos PROD SCHEMA DRIFT detected (${{ github.sha }}) — a migration column is missing in prod. See the drift-check job: https://github.com/edison-commits/bupos/actions"
