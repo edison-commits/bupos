@@ -483,6 +483,7 @@ export async function checkoutAction(
       }
 
       // Validate regular lines: variant exists + price matches DB.
+      let totalOverrideImpact = 0;
       for (const item of regularLines) {
         const dbPrice = dbPriceByVariant[item.productVariantId];
         if (dbPrice === undefined) {
@@ -509,16 +510,19 @@ export async function checkoutAction(
           redirect(`/register?error=Invalid+price+override`);
         }
         if (item.overridePrice !== undefined && item.overridePrice !== dbPrice) {
-          // R38-A-F2: verify the approved price-override amount covers
-          // the DOLLAR IMPACT of this override (dbPrice - overridePrice,
-          // absolute value because overrides can go up or down). A
-          // manager's $5 override approval shouldn't unlock a $500
-          // override on the same line.
-          const overrideDollarImpact = Math.abs(dbPrice - item.overridePrice);
-          if (!amountApprovedFor("price_override", overrideDollarImpact)) {
-            redirect(`/register?error=Price+override+exceeds+approved+amount`);
-          }
+          // R38-A-F2 / AUDIT9: accumulate the DOLLAR IMPACT of this override
+          // (|dbPrice - overridePrice|, abs because overrides go up or down)
+          // and gate the CART AGGREGATE below — not per line.
+          totalOverrideImpact += Math.abs(dbPrice - item.overridePrice);
         }
+      }
+      // AUDIT9: price-override approval is amount-scoped and MUST be checked
+      // in aggregate across the cart, mirroring discount_threshold. The prior
+      // per-line check authorized up to the approved amount on EACH line, so a
+      // single $X override approval unlocked $X of markdown on every regular
+      // line (N lines = N x the approved amount of unapproved markdown).
+      if (totalOverrideImpact > 0 && !amountApprovedFor("price_override", Number(totalOverrideImpact.toFixed(2)))) {
+        redirect(`/register?error=Price+override+exceeds+approved+amount`);
       }
 
       // Validate free-item promo lines. Every check sources from the DB —

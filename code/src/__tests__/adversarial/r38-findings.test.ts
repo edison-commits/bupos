@@ -48,7 +48,9 @@ describe("R38 findings", () => {
     it("gate uses amountApprovedFor for discount, store_credit, price_override", () => {
       expect(checkout).toMatch(/amountApprovedFor\("discount_threshold", totalDiscountEffective\)/);
       expect(checkout).toMatch(/amountApprovedFor\("store_credit_threshold", baseStoreCreditTendered\)/);
-      expect(checkout).toMatch(/amountApprovedFor\("price_override", overrideDollarImpact\)/);
+      // AUDIT9: price_override is now gated in AGGREGATE across the cart
+      // (totalOverrideImpact), not per-line — see r89-deep-audit.test.ts.
+      expect(checkout).toMatch(/amountApprovedFor\("price_override", Number\(totalOverrideImpact/);
     });
   });
 

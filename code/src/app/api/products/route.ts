@@ -473,15 +473,27 @@ export const POST = withAdminAuth("catalog.manage", async (request, ctx) => {
       await client.query('ROLLBACK');
       return NextResponse.json({ error: pv.error }, { status: 400 });
     }
-    const { name, slug, category_id, description, image_url, is_active = true } = body;
-    const is_touch_favorite = body.is_touch_favorite ?? false;
+    const { name, slug, category_id, description, image_url, is_active = true } = pv.data;
+    const is_touch_favorite = pv.data.is_touch_favorite ?? false;
+    // AUDIT9: products.category_id + slug are NOT NULL with no default (mig
+    // 001), but productCreateSchema makes both optional — so omitting them
+    // passed zod and 23502'd at the INSERT (guaranteed 500). Mirror the
+    // category (R68-H6) and bundle create branches: require category_id and
+    // derive slug from name when absent. Reading pv.data (not raw body) also
+    // applies imageUrlField's trim/sanitize.
+    if (!category_id) {
+      return NextResponse.json({ error: "category_id is required" }, { status: 400 });
+    }
+    const finalSlug = slug && slug.length > 0
+      ? slug
+      : name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
     let result;
     try {
       result = await client.query(
         `INSERT INTO products (id, organization_id, category_id, name, slug, description, image_url, is_active, is_touch_favorite, created_at, updated_at)
          VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
          RETURNING id, name, slug, category_id, description, image_url, is_active, is_touch_favorite`,
-        [orgId, category_id || null, name, slug, description || null, image_url || null, is_active, is_touch_favorite]
+        [orgId, category_id, name, finalSlug, description || null, image_url || null, is_active, is_touch_favorite]
       );
     } catch (err) {
       // R72-A: friendly 409 on `uniq_products_org_slug` collision.
@@ -537,7 +549,7 @@ export const PUT = withAdminAuth("catalog.manage", async (request, ctx) => {
     const pv = validateBody(productUpdateSchema, body);
     if (!pv.success) return NextResponse.json({ error: pv.error }, { status: 400 });
     const id = pv.data.product_id;
-    const updates = body;
+    const updates = pv.data; // AUDIT9: use validated/sanitized data, not raw body
 
     // R64-C1: schema makes `product_id` optional so a variant-only
     // update (with just variant_id + price/cost) passes Zod. But

@@ -553,6 +553,7 @@ export const POST = withDualAuth("register.open", async (request, ctx) => {
 
     let discountTotal = 0;
     let modifiersTotal = 0;
+    let totalOverrideImpact = 0;
 
     for (const item of items) {
       // Bundle lines: validated against product_bundles, no modifiers, no
@@ -659,6 +660,10 @@ export const POST = withDualAuth("register.open", async (request, ctx) => {
       if (item.unitPrice !== serverPrice && !hasApprovedOverride) {
         return NextResponse.json({ error: "Price tampering detected in offline cart" }, { status: 400 });
       }
+      // AUDIT9: accumulate the override impact so the CART AGGREGATE is gated
+      // after the loop (mirror checkout-action) — the per-line amountApprovedFor
+      // above otherwise lets one $X approval unlock $X of override on each line.
+      if (hasApprovedOverride) totalOverrideImpact += Math.abs(serverPrice - item.overridePrice!);
       const effectivePrice = hasApprovedOverride ? item.overridePrice! : serverPrice;
       const lineBase = m(effectivePrice * item.quantity);
       // Server-side modifier pricing: sum the authoritative `price` from modifiers
@@ -690,6 +695,13 @@ export const POST = withDualAuth("register.open", async (request, ctx) => {
       subtotal = m(subtotal + lineBase);
       modifiersTotal = m(modifiersTotal + lineMods);
       discountTotal = m(discountTotal + lineDiscount);
+    }
+
+    // AUDIT9: aggregate price-override gate (mirror checkout-action + the
+    // discount_threshold aggregate). A single amount-scoped approval must not
+    // authorize an override on every line of the offline cart.
+    if (totalOverrideImpact > 0 && !amountApprovedFor("price_override", Number(totalOverrideImpact.toFixed(2)))) {
+      return NextResponse.json({ error: "Price override exceeds approved amount" }, { status: 400 });
     }
 
     // Free-item promo: minimum_purchase check must use the NON-FREE
@@ -954,7 +966,10 @@ export const POST = withDualAuth("register.open", async (request, ctx) => {
         // and a second application would double-decrement everything.
         if (!inserted) {
           await syncClient.query("COMMIT");
-          invalidateInventoryCache(orgId);
+          // AUDIT9: await — this early-return branch is NOT covered by the
+          // synchronous invalidateStoreCache backstop on the normal-insert
+          // path below, so the readStore cascade is dropped on a cold isolate.
+          await invalidateInventoryCache(orgId);
           return NextResponse.json({ success: true, transactionId, inserted: false, _alreadyPersisted: true });
         }
 

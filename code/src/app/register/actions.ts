@@ -740,6 +740,13 @@ export async function quickSwitchAction(pin: string): Promise<{ success: boolean
     if (!newEmployee || !newEmployee.locationIds.includes(locationId)) {
       return { success: false, error: "Employee not found or not assigned to this location" };
     }
+    // AUDIT9: the TARGET role must itself hold register perms — mirror
+    // signInRegister (session.ts). Without this a register session could be
+    // quick-switched into a support/inventory_clerk identity (roles lacking
+    // register.pin_login/register.open). Generic error = no role oracle.
+    if (!hasPermission(newEmployee.roleKey, "register.pin_login") || !hasPermission(newEmployee.roleKey, "register.open")) {
+      return { success: false, error: "Employee not found or not assigned to this location" };
+    }
 
     if (newEmployee.id === context.employee.id) {
       return { success: false, error: "Already signed in as this employee" };
@@ -854,6 +861,10 @@ export async function quickSwitchAction(pin: string): Promise<{ success: boolean
 
   const newEmployee = store.employees.find((e) => e.id === credential.employeeId && e.isActive);
   if (!newEmployee || !newEmployee.locationIds.includes(locationId)) {
+    return { success: false, error: "Employee not found" };
+  }
+  // AUDIT9: target must hold register perms (parity with the PG branch above).
+  if (!hasPermission(newEmployee.roleKey, "register.pin_login") || !hasPermission(newEmployee.roleKey, "register.open")) {
     return { success: false, error: "Employee not found" };
   }
   if (newEmployee.id === context.employee.id) {

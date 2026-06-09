@@ -1039,7 +1039,11 @@ export const POST = withDualAuth('register.open', async (request, ctx) => {
     );
 
     await client.query('COMMIT');
-    invalidateInventoryCache(orgId);
+    // AUDIT9: await — this file has NO synchronous invalidateStoreCache
+    // backstop, so a fire-and-forget cascade is cancelled on a cold isolate
+    // (response returns during the getCloudflareContext import gap) -> up to
+    // 30s of stale admin on_hand/refund data after every processed return.
+    await invalidateInventoryCache(orgId);
     return NextResponse.json({
       return_id: returnId,
       return_number: returnNumber,

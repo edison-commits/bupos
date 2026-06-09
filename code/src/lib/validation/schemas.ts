@@ -326,12 +326,18 @@ export const purchaseOrderReceiveSchema = z.object({
 // ---------------------------------------------------------------------------
 
 export const expenseCreateSchema = z.object({
-  category: requiredString,
+  // AUDIT9: mirror the expenses_category_check / _recurrence_period_check DB
+  // CHECKs (migration 041) so an off-list value is a clean 400, not a 23514
+  // 500. The admin UI's <select> already constrains to these.
+  category: z.enum([
+    "rent", "utilities", "payroll", "supplies", "marketing",
+    "insurance", "maintenance", "shipping", "taxes", "other",
+  ]),
   description: requiredString,
   amount: nonnegativeNumber,
   expense_date: optionalString,
   is_recurring: z.boolean().optional(),
-  recurrence_period: optionalString,
+  recurrence_period: z.enum(["weekly", "biweekly", "monthly", "quarterly", "yearly"]).optional(),
   notes: optionalString,
 });
 
@@ -736,7 +742,12 @@ export const customerDisplaySchema = z.object({
     customerName: z.string().max(500).optional(),
   }).strict(),
   totals: displayTotals,
-  paymentStatus: z.enum(["idle", "selecting", "processing", "complete", "error"]).optional(),
+  // AUDIT9: mirror the customer_display_state.payment_status DB CHECK
+  // (migration 035: pending/processing/complete/failed/cancelled). The prior
+  // enum allowed idle/selecting/error — none valid at the DB, so any such
+  // value would 23514 -> 500 instead of a clean 400. Migration 086 reconciles
+  // prod's CHECK (which mig 085 re-created at the narrower 010 set) to match.
+  paymentStatus: z.enum(["pending", "processing", "complete", "failed", "cancelled"]).optional(),
   amountTendered: nonnegativeNumber.optional(),
   changeDue: nonnegativeNumber.optional(),
 });
