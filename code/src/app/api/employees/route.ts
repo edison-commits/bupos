@@ -4,7 +4,7 @@
  */
 import { NextResponse } from 'next/server';
 import { orgQuery, getPool } from '@/lib/supabase-rest';
-import { hashSecret, verifySecret } from '@/lib/auth/crypto';
+import { hashSecret, hashPin, verifySecret } from '@/lib/auth/crypto';
 import { randomUUID } from '@/lib/uuid';
 import { canManageEmployeeRole } from '@/lib/authz';
 import { checkRateLimit } from '@/lib/auth/rate-limit';
@@ -155,7 +155,7 @@ export const POST = withAdminAuth('employee.manage', async (request, ctx) => {
     }
 
     const employeeId = randomUUID();
-    const pinHash = await hashSecret(pin);
+    const pinHash = await hashPin(pin);
     const now = new Date().toISOString();
 
     // Stored PIN hashes are salted, so detect collisions by verifying against each stored hash.
@@ -820,7 +820,7 @@ export const PATCH = withAdminAuth('employee.manage', async (request, ctx) => {
       // actions. The per-branch step-up block that previously lived
       // here is consolidated there. Proceed with the PIN reset.
 
-      const pinHash = await hashSecret(pin);
+      const pinHash = await hashPin(pin);
       const now = new Date().toISOString();
 
       // Stored PIN hashes are salted, so detect collisions by verifying against each stored hash.

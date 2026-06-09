@@ -9,7 +9,7 @@ import { revalidatePath } from "next/cache";
 // side fix.
 import { invalidateStoreCache } from "@/lib/persistence/postgres-read-store";
 import { redirect } from "next/navigation";
-import { hashSecret } from "@/lib/auth/crypto";
+import { hashSecret, hashPin } from "@/lib/auth/crypto";
 import { canManageEmployeeRole, requireAdminPermission } from "@/lib/authz";
 // SEC-AUDIT5-HIGH1: `signInAdmin` + `checkRateLimit` (top-level) +
 // `pgFindCredentialByEmail` were used only by the deleted
@@ -567,7 +567,7 @@ export async function createEmployeeAction(formData: FormData) {
     // Pulled hashes are salted so the compare is per-row.
     const { orgQuery } = await import("@/lib/supabase-rest");
     const { verifySecret: verify } = await import("@/lib/auth/crypto");
-    const pinHash = await hashSecret(pin);
+    const pinHash = await hashPin(pin);
     const { rows: existingCreds } = await orgQuery(
       orgId,
       `SELECT ac.pin_hash FROM auth_credentials ac
@@ -633,7 +633,7 @@ export async function createEmployeeAction(formData: FormData) {
     invalidateEmployeesCache(orgId);
   } else {
     const timestamp = now();
-    const pinHashVal = await hashSecret(pin);
+    const pinHashVal = await hashPin(pin);
     const passwordHashVal = password ? await hashSecret(password) : undefined;
     await mutateStore((store) => {
       const employeeId = randomUUID();

@@ -1,4 +1,4 @@
-import { hashSecret } from "@/lib/auth/crypto";
+import { hashSecret, hashPin } from "@/lib/auth/crypto";
 import { seedBundle } from "@/lib/data/mock-data";
 import type { LocalStoreData } from "@/lib/persistence/types";
 
@@ -53,7 +53,7 @@ export async function createSeedStore(): Promise<LocalStoreData> {
         employeeId: seedBundle.employees[0].id,
         email: "owner@basicuniformpos.local",
         passwordHash: await hashSecret("ownerpass"),
-        pinHash: await hashSecret("1111"),
+        pinHash: await hashPin("1111"),
         passwordLastRotatedAt: now,
         pinLastRotatedAt: now,
       },
@@ -61,13 +61,13 @@ export async function createSeedStore(): Promise<LocalStoreData> {
         employeeId: seedBundle.employees[1].id,
         email: "manager@basicuniformpos.local",
         passwordHash: await hashSecret("managerpass"),
-        pinHash: await hashSecret("2222"),
+        pinHash: await hashPin("2222"),
         passwordLastRotatedAt: now,
         pinLastRotatedAt: now,
       },
       {
         employeeId: seedBundle.employees[2].id,
-        pinHash: await hashSecret("3333"),
+        pinHash: await hashPin("3333"),
         pinLastRotatedAt: now,
       },
     ],

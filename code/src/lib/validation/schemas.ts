@@ -36,7 +36,11 @@ const imageUrlField = z.preprocess(
   (v) => (v === "" ? undefined : v),
   z.string().trim().max(2000)
     .refine(
-      (s) => /^https:\/\//i.test(s) || s.startsWith('/'),
+      // SEC-AUDIT10: a relative path must be `/path`, NOT `//evil.com`
+      // (protocol-relative). Today imageUrl only renders in <img src>, but if
+      // it ever reaches an <a href>/CSS url() a `//host` becomes a redirect/
+      // exfil vector — reject it at the boundary.
+      (s) => /^https:\/\//i.test(s) || (s.startsWith('/') && !s.startsWith('//')),
       "imageUrl must be an https URL or a relative path",
     )
     .refine(

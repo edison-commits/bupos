@@ -1,3 +1,4 @@
+import "server-only"; // SEC-AUDIT10: never bundle the HMAC signer into client code
 /**
  * R8-H-4 closed: HMAC-signed short-lived tokens for the customer-display
  * device. Previously the display had to share browser state (cookie) with

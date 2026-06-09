@@ -692,36 +692,23 @@ export async function pgFindCredentialByEmail(email: string): Promise<(AuthCrede
 }
 
 export async function pgFindCredentialByPin(pin: string, orgId?: string): Promise<AuthCredentialRecord | null> {
-  // Compute SHA-256 prefix of the raw PIN for fast pre-filtering via indexed column.
-  // This narrows candidates from N employees to typically 1 before running expensive scrypt.
-  let pinPrefix: string | null = null;
-  try {
-    const { createHash } = await import("node:crypto");
-    pinPrefix = createHash("sha256").update(pin).digest("hex").slice(0, 8);
-  } catch {
-    // Fallback: no prefix filtering (scan all employees)
-  }
-
-  // Fetch pin_hash rows scoped to org with current failed-attempt state.
-  // NB: `pin_hash_prefix` was added by migration 017 as an index-friendly
-  // fast-path filter, but no code path writes it on INSERT/UPDATE, so
-  // existing rows have pin_hash_prefix IS NULL. Apply the filter as
-  // `(prefix = $N OR prefix IS NULL)` so we match both backfilled rows and
-  // legacy rows. Once a row matches and the real scrypt verify passes, the
-  // caller can optionally backfill on next password/PIN rotation.
-  const prefixFilter = pinPrefix
-    ? ` AND (ac.pin_hash_prefix = $${orgId ? '2' : '1'} OR ac.pin_hash_prefix IS NULL)`
-    : '';
+  // SEC-AUDIT10: removed the `pin_hash_prefix` fast-filter (column + index
+  // dropped in migration 087). It computed sha256(rawPin) and matched an
+  // indexed column that NO code path ever wrote — so the filter was a no-op
+  // (every row is NULL). Worse, it was a latent landmine: an unsalted SHA-256
+  // prefix of a 4-digit PIN is trivially reversible, so backfilling the column
+  // (as the old comment invited) would have created a plaintext-equivalent PIN
+  // oracle in the DB, defeating the PBKDF2 hash on a read-only leak. Candidates
+  // are already bounded to one org's active employees and verified serially
+  // with early-exit (R15-M-1, DoS-safe), so the prefilter bought nothing.
   const params: unknown[] = orgId ? [orgId] : [];
-  if (pinPrefix) params.push(pinPrefix);
-
   const { rows } = await pool.query(
     `SELECT ac.employee_id, ac.email, ac.pin_hash, ac.pin_last_rotated_at,
             ac.failed_pin_attempts, ac.last_failed_pin_at
      FROM auth_credentials ac
      JOIN employees e ON ac.employee_id = e.id
      WHERE e.is_active = true AND ac.pin_hash IS NOT NULL
-       ${orgId ? 'AND e.organization_id = $1' : ''}${prefixFilter}`,
+       ${orgId ? 'AND e.organization_id = $1' : ''}`,
     params,
   );
 

@@ -1,3 +1,4 @@
+import "server-only"; // SEC-AUDIT10: never bundle the HMAC signer into client code
 /**
  * R29-M3: HMAC-signed wrapper around the `bupos_register_device` cookie
  * value.
