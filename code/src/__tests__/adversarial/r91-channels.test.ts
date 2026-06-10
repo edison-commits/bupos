@@ -2,7 +2,7 @@
  * R91 — Online Selling (Shopify channel) security invariants (source-grep,
  * matching the existing rNN-findings style). These guard the design the
  * security patterns depend on; the runtime crypto/HMAC/parse logic is covered
- * by src/__tests__/channels/shopify-channel.test.ts.
+ * by src/__tests__/runtime/shopify-channel.test.ts.
  */
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
@@ -91,6 +91,33 @@ describe("R91-P2: price sync (POS authoritative)", () => {
     expect(src).toMatch(/ADD COLUMN IF NOT EXISTS sync_prices boolean NOT NULL DEFAULT true/);
     expect(src).toMatch(/last_pushed_price numeric/);
     expect(src).toMatch(/external_product_id text/);
+  });
+});
+
+describe("R91-P3a: refund restock / cancel / uninstall", () => {
+  it("the provider registers all four webhook topics", () => {
+    const src = read("src/lib/channels/shopify.ts");
+    expect(src).toMatch(/ORDERS_CREATE/);
+    expect(src).toMatch(/REFUNDS_CREATE/);
+    expect(src).toMatch(/ORDERS_CANCELLED/);
+    expect(src).toMatch(/APP_UNINSTALLED/);
+  });
+  it("parseRefundPayload restocks only what Shopify restocked (skips no_restock)", () => {
+    expect(read("src/lib/channels/shopify.ts")).toMatch(/restock_type !== "no_restock"/);
+  });
+  it("the restock helper uses a positive delta with reason online_refund", () => {
+    const src = read("src/lib/channels/repo.ts");
+    expect(src).toMatch(/export async function applyOnlineRestock/);
+    expect(src).toMatch(/'online_refund'/);
+    expect(src).toMatch(/il\.on_hand \+ delta\.qty/); // additive, not GREATEST(0, …) decrement
+  });
+  it("the webhook route branches on topic and disconnects on app/uninstalled", () => {
+    const src = read("src/app/api/channels/shopify/webhook/route.ts");
+    expect(src).toMatch(/x-shopify-topic/);
+    expect(src).toMatch(/app\/uninstalled/);
+    expect(src).toMatch(/status = 'disconnected'/);
+    expect(src).toMatch(/applyOnlineRestock/);
+    expect(src).toMatch(/orders\/cancelled/);
   });
 });
 

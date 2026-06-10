@@ -7,8 +7,9 @@ import { loadIntegration, decryptCreds } from "@/lib/channels/repo";
 
 /**
  * POST: validate the stored token against Shopify, capture the shop's identity
- * + locations, register the orders/create webhook, and mark the integration
- * connected. Idempotent — safe to re-run.
+ * + locations, register all webhooks (orders/create, refunds/create,
+ * orders/cancelled, app/uninstalled), and mark the integration connected.
+ * Idempotent — safe to re-run.
  */
 export const POST = withAdminAuth("online.manage", async (req, ctx) => {
   const { orgId } = ctx;
@@ -28,7 +29,7 @@ export const POST = withAdminAuth("online.manage", async (req, ctx) => {
     }
 
     const callbackUrl = `${new URL(req.url).origin}/api/channels/shopify/webhook`;
-    const hook = await provider.registerOrderWebhook(creds, callbackUrl);
+    const hook = await provider.registerWebhooks(creds, callbackUrl);
 
     await orgQuery(
       orgId,

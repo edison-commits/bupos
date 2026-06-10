@@ -55,12 +55,13 @@ export const mockProvider: ChannelProvider = {
     mockPriceSetCalls.push({ productId, variantId, price, compareAt });
     return { ok: true };
   },
-  async registerOrderWebhook() {
+  async registerWebhooks() {
     return { ok: true };
   },
   // Real crypto + parsing — so tests exercise production code.
   verifyWebhookHmac: shopifyProvider.verifyWebhookHmac,
   parseOrderPayload: shopifyProvider.parseOrderPayload,
+  parseRefundPayload: shopifyProvider.parseRefundPayload,
 };
 
 /** Test helper: produce a valid Shopify X-Shopify-Hmac-Sha256 (base64) for a body+secret. */

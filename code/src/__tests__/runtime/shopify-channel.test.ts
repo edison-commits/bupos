@@ -75,6 +75,36 @@ describe("channels/shopify: order payload parsing", () => {
   });
 });
 
+describe("channels/shopify: refund payload parsing (P3a)", () => {
+  it("restocks ONLY lines Shopify itself restocked (restock_type != no_restock)", () => {
+    const refund = shopifyProvider.parseRefundPayload(JSON.stringify({
+      order_id: 55,
+      refund_line_items: [
+        { quantity: 2, restock_type: "return", line_item: { sku: "SKU-1" } },
+        { quantity: 1, restock_type: "no_restock", line_item: { sku: "SKU-2" } }, // NOT restocked by Shopify
+        { quantity: 1, restock_type: "cancel", line_item: { sku: "SKU-3" } },
+      ],
+    }));
+    expect(refund?.externalOrderId).toBe("gid://shopify/Order/55");
+    expect(refund?.restockLines).toEqual([
+      { sku: "SKU-1", quantity: 2 },
+      { sku: "SKU-3", quantity: 1 },
+    ]);
+  });
+  it("drops zero-qty / sku-less lines and returns null without an order_id", () => {
+    const refund = shopifyProvider.parseRefundPayload(JSON.stringify({
+      order_id: 7,
+      refund_line_items: [
+        { quantity: 0, restock_type: "return", line_item: { sku: "SKU-1" } },
+        { quantity: 3, restock_type: "return", line_item: { sku: "" } },
+      ],
+    }));
+    expect(refund?.restockLines).toEqual([]);
+    expect(shopifyProvider.parseRefundPayload(JSON.stringify({ refund_line_items: [] }))).toBeNull();
+    expect(shopifyProvider.parseRefundPayload("not json")).toBeNull();
+  });
+});
+
 describe("channels mock provider (P2): records push calls + product GID", () => {
   const creds = { shopDomain: "x.myshopify.com", accessToken: "t" };
   it("findVariantBySku returns the external product id for price updates", async () => {

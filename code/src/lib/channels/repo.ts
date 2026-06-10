@@ -109,6 +109,41 @@ export async function applyOnlineDecrement(
   };
 }
 
+/**
+ * Restock on_hand at the fulfillment location (positive delta) for refunded/
+ * restocked online-order lines, with an inventory_adjustments row per variant
+ * (reason 'online_refund'). Mirror of applyOnlineDecrement. Inside an orgTx.
+ */
+export async function applyOnlineRestock(
+  client: { query: (text: string, values?: unknown[]) => Promise<{ rows: unknown[] }> },
+  orgId: string,
+  fulfillmentLocationId: string,
+  actorEmployeeId: string,
+  lines: { variantId: string; qty: number }[],
+): Promise<string[]> {
+  if (lines.length === 0) return [];
+  const variantIds = lines.map((l) => l.variantId);
+  const increments = lines.map((l) => Math.abs(Math.floor(l.qty))); // positive deltas
+  const { rows } = await client.query(
+    `WITH updated AS (
+       UPDATE inventory_levels il
+       SET on_hand = il.on_hand + delta.qty, updated_at = now()
+       FROM (SELECT unnest($1::uuid[]) AS variant_id, unnest($2::int[]) AS qty) AS delta
+       WHERE il.product_variant_id = delta.variant_id
+         AND il.location_id = $3
+         AND il.organization_id = $5
+       RETURNING il.id AS inventory_level_id, il.product_variant_id, il.on_hand, delta.qty AS delta_qty
+     )
+     INSERT INTO inventory_adjustments
+       (organization_id, inventory_level_id, product_variant_id, location_id, employee_id, reason, delta, resulting_on_hand)
+     SELECT $5, inventory_level_id, product_variant_id, $3, $4, 'online_refund', delta_qty, on_hand
+     FROM updated
+     RETURNING product_variant_id`,
+    [variantIds, increments, fulfillmentLocationId, actorEmployeeId, orgId],
+  );
+  return (rows as { product_variant_id: string }[]).map((r) => r.product_variant_id);
+}
+
 /** Resolve order line SKUs → active BuPOS variants (is_active only — SKU uniqueness is active-only). */
 export async function resolveSkus(
   orgId: string,

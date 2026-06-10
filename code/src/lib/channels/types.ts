@@ -53,6 +53,12 @@ export interface ParsedOrder {
   lines: OrderLine[];
 }
 
+export interface ParsedRefund {
+  externalOrderId: string; // the parent order GID
+  /** Lines Shopify restocked (restock_type != no_restock) → restock in BuPOS. */
+  restockLines: { sku: string; quantity: number }[];
+}
+
 export interface OpResult {
   ok: boolean;
   error?: string;
@@ -78,10 +84,12 @@ export interface ChannelProvider {
     price: number,
     compareAtPrice: number | null,
   ): Promise<OpResult>;
-  /** Register the orders/create webhook pointing at our public endpoint. */
-  registerOrderWebhook(creds: ChannelCredentials, callbackUrl: string): Promise<OpResult>;
+  /** Register all needed webhooks (orders/create, refunds/create, orders/cancelled, app/uninstalled). */
+  registerWebhooks(creds: ChannelCredentials, callbackUrl: string): Promise<OpResult>;
   /** Constant-time verify a webhook HMAC computed over the RAW request body. */
   verifyWebhookHmac(rawBody: string, hmacHeader: string | null, webhookSecret: string): Promise<boolean>;
   /** Parse an orders/create payload into normalized line items. */
   parseOrderPayload(rawBody: string): ParsedOrder | null;
+  /** Parse a refunds/create payload into the lines Shopify restocked. */
+  parseRefundPayload(rawBody: string): ParsedRefund | null;
 }

@@ -6,6 +6,7 @@ import type {
   ChannelLocation,
   OpResult,
   ParsedOrder,
+  ParsedRefund,
   ShopInfo,
   VariantLookup,
 } from "./types";
@@ -144,22 +145,27 @@ export const shopifyProvider: ChannelProvider = {
     return { ok: true };
   },
 
-  async registerOrderWebhook(creds, callbackUrl): Promise<OpResult> {
+  async registerWebhooks(creds, callbackUrl): Promise<OpResult> {
     const m = `mutation($topic: WebhookSubscriptionTopic!, $sub: WebhookSubscriptionInput!) {
       webhookSubscriptionCreate(topic: $topic, webhookSubscription: $sub) {
         webhookSubscription { id }
         userErrors { field message }
       }
     }`;
-    const r = await gql<{ webhookSubscriptionCreate: { userErrors: { message: string }[] } }>(creds, m, {
-      topic: "ORDERS_CREATE",
-      sub: { callbackUrl, format: "JSON" },
-    });
-    if (r.errors) return { ok: false, error: typeof r.errors === "string" ? r.errors : "graphql error" };
-    const ue = r.data?.webhookSubscriptionCreate?.userErrors ?? [];
-    // A duplicate subscription is not an error for our purposes.
-    const fatal = ue.filter((e) => !/already (been )?taken|exists/i.test(e.message));
-    if (fatal.length) return { ok: false, error: fatal.map((e) => e.message).join("; ") };
+    const topics = ["ORDERS_CREATE", "REFUNDS_CREATE", "ORDERS_CANCELLED", "APP_UNINSTALLED"];
+    const errors: string[] = [];
+    for (const topic of topics) {
+      const r = await gql<{ webhookSubscriptionCreate: { userErrors: { message: string }[] } }>(creds, m, {
+        topic,
+        sub: { callbackUrl, format: "JSON" },
+      });
+      if (r.errors) { errors.push(`${topic}: ${typeof r.errors === "string" ? r.errors : "graphql error"}`); continue; }
+      const ue = r.data?.webhookSubscriptionCreate?.userErrors ?? [];
+      // A duplicate subscription is not an error for our purposes.
+      const fatal = ue.filter((e) => !/already (been )?taken|exists/i.test(e.message));
+      if (fatal.length) errors.push(`${topic}: ${fatal.map((e) => e.message).join("; ")}`);
+    }
+    if (errors.length) return { ok: false, error: errors.join(" | ") };
     return { ok: true };
   },
 
@@ -202,6 +208,29 @@ export const shopifyProvider: ChannelProvider = {
           price: l.price != null ? Number(l.price) : null,
         })),
       };
+    } catch {
+      return null;
+    }
+  },
+
+  parseRefundPayload(rawBody): ParsedRefund | null {
+    try {
+      const o = JSON.parse(rawBody) as {
+        order_id?: number | string;
+        refund_line_items?: { quantity?: number; restock_type?: string; line_item?: { sku?: string } }[];
+      };
+      if (o.order_id == null) return null;
+      const restockLines: { sku: string; quantity: number }[] = [];
+      for (const rli of o.refund_line_items ?? []) {
+        const sku = rli.line_item?.sku?.trim();
+        const qty = Number(rli.quantity ?? 0);
+        // Only restock what Shopify itself restocked — mirrors Shopify's
+        // inventory so we never double-count against its own restock.
+        if (sku && qty > 0 && rli.restock_type && rli.restock_type !== "no_restock") {
+          restockLines.push({ sku, quantity: qty });
+        }
+      }
+      return { externalOrderId: `gid://shopify/Order/${o.order_id}`, restockLines };
     } catch {
       return null;
     }
