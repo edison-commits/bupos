@@ -10,8 +10,11 @@ on:
 # include write on contents + pull-requests; this workflow only needs
 # to read the repo. A compromised dependency running during `npm ci`
 # lifecycle scripts is limited to what the token can touch.
+# `actions: read` added for the wait-for-Guardrails gate (lists this
+# repo's workflow runs; still read-only).
 permissions:
   contents: read
+  actions: read
 
 defaults:
   run:
@@ -120,6 +123,58 @@ jobs:
       # Safety: `ON_ERROR_STOP=1` ensures a genuine migration failure
       # aborts the deploy (prior inline approach silently continued
       # past failures).
+      # PKG2-postmortem: Deploy previously ran in PARALLEL with the
+      # Guardrails workflow, so a commit whose Playwright e2e FAILED
+      # could still ship (44992c2: a circular import crashed every
+      # /admin page — the e2e caught it, but the deploy didn't wait for
+      # the answer). This step blocks every prod-mutating step below
+      # (migrations, worker publish) until the Guardrails run for THIS
+      # commit concludes successfully. Checkout/install above still
+      # overlap with Guardrails, so the added wall time is only the
+      # residual. FAIL-CLOSED: a failed, missing, or timed-out
+      # Guardrails run blocks the deploy — fix (or re-run Guardrails),
+      # then re-run this workflow.
+      - name: Wait for Guardrails (incl. e2e) on this commit
+        if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SHA="${{ github.sha }}"
+          REPO="${{ github.repository }}"
+          DEADLINE=$(( $(date +%s) + 1500 ))   # 25-min hard cap
+          FOUND_BY=$(( $(date +%s) + 180 ))    # the run must EXIST within 3 min
+          echo "→ Waiting for the Guardrails workflow on $SHA"
+          while true; do
+            RUN=$(gh api "repos/$REPO/actions/runs?head_sha=$SHA&per_page=100" \
+              --jq '[.workflow_runs[] | select(.name == "Guardrails")] | sort_by(.run_started_at) | last // empty')
+            if [ -z "$RUN" ]; then
+              if [ "$(date +%s)" -gt "$FOUND_BY" ]; then
+                echo "::error::No Guardrails run found for $SHA — failing closed (was the workflow renamed?)."
+                exit 1
+              fi
+              echo "   Guardrails run not visible yet…"
+            else
+              STATUS=$(echo "$RUN" | jq -r '.status')
+              CONCLUSION=$(echo "$RUN" | jq -r '.conclusion // empty')
+              if [ "$STATUS" = "completed" ]; then
+                if [ "$CONCLUSION" = "success" ]; then
+                  echo "✓ Guardrails succeeded — proceeding with deploy."
+                  exit 0
+                fi
+                echo "::error::Guardrails concluded '$CONCLUSION' for $SHA — blocking deploy."
+                exit 1
+              fi
+              echo "   Guardrails: $STATUS…"
+            fi
+            if [ "$(date +%s)" -gt "$DEADLINE" ]; then
+              echo "::error::Timed out (25m) waiting for Guardrails — blocking deploy."
+              exit 1
+            fi
+            sleep 20
+          done
+
       - name: Run DB migrations
         if: github.ref == 'refs/heads/master' && github.event_name == 'push'
         working-directory: .
