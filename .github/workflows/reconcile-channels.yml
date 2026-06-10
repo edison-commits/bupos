@@ -1,0 +1,50 @@
+name: Reconcile sales channels
+
+# Online Selling (Shopify) inventory reconcile. Pushes the fulfillment
+# location's on_hand to Shopify for variants changed since last sync, so
+# IN-STORE sales propagate online. Cloudflare Worker cron can't be used with
+# OpenNext (it only synthesizes a fetch handler), so this GitHub-Actions cron
+# drives the Bearer-gated /api/internal/reconcile-channels endpoint — same
+# pattern as the nightly pg_cron cleanup + the synthetic-health probe.
+#
+# DISABLED-BY-DEFAULT until the operator provisions the secret:
+#   1. `wrangler secret put CHANNEL_RECONCILE_SECRET`  (≥32 chars; the Worker
+#      endpoint fails closed without it)
+#   2. add the SAME value as the GitHub Actions secret CHANNEL_RECONCILE_SECRET
+#   3. uncomment the `schedule:` block below to enable the 15-minute cadence.
+# Until then it only runs on manual dispatch and is a no-op (401/503).
+
+on:
+  # schedule:
+  #   - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Push changed inventory to connected channels
+        env:
+          RECONCILE_URL: ${{ vars.RECONCILE_URL || 'https://basicuniformpos.com/api/internal/reconcile-channels' }}
+          CHANNEL_RECONCILE_SECRET: ${{ secrets.CHANNEL_RECONCILE_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CHANNEL_RECONCILE_SECRET:-}" ]; then
+            echo "CHANNEL_RECONCILE_SECRET not set — skipping (see workflow header)."
+            exit 0
+          fi
+          echo "→ Reconciling channels via $RECONCILE_URL"
+          curl -fsS --max-time 120 -X POST "$RECONCILE_URL" \
+            -H "Authorization: Bearer ${CHANNEL_RECONCILE_SECRET}"
+
+      - name: Notify on failure
+        if: failure()
+        working-directory: .
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          [ -z "${TELEGRAM_BOT_TOKEN:-}" ] && exit 0
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="7547010501" \
+            -d text="⚠️ bupos channel reconcile FAILED — see https://github.com/edison-commits/bupos/actions"

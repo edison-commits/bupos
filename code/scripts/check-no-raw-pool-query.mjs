@@ -95,6 +95,15 @@ const ALLOWLIST = {
   // cleanup is scoped INSIDE the function, not the caller.
   "src/app/api/internal/run-cleanup/route.ts":
     "ops cleanup endpoint; SECDEF fn scopes tenanted deletes internally",
+  // SEC: Shopify webhook is pre-auth (no session); resolves the tenant by shop
+  // domain via the resolve_channel_by_shop_domain SECDEF RPC, then uses orgTx
+  // for all writes. The single getPool call is the SECDEF RPC.
+  "src/app/api/channels/shopify/webhook/route.ts":
+    "pre-auth webhook; tenant resolved via resolve_channel_by_shop_domain SECDEF RPC",
+  // Bearer-gated cross-org reconcile job (like run-cleanup); the single getPool
+  // call invokes the list_connected_channels SECDEF RPC, then per-org orgQuery.
+  "src/app/api/internal/reconcile-channels/route.ts":
+    "Bearer-gated reconcile; lists tenants via list_connected_channels SECDEF RPC",
   // R23-L-3: admin-gated variant. Same shape as /api/health; gated by
   // `audit.view` permission and only executes a `SELECT 1 + now() +
   // version()` probe with no tenant scope.

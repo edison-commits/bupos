@@ -18,6 +18,7 @@ const adminLinks = [
   { href: "/admin/clock-in", label: "Clock In" },
   { href: "/admin/cash-drawer", label: "Cash Drawer" },
   { href: "/admin/receiving", label: "Receiving" },
+  { href: "/admin/online-selling", label: "Online Selling" },
   { href: "/admin/settings", label: "Settings" },
 ];
 

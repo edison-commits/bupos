@@ -184,6 +184,10 @@ const noHandRolledCurrency = {
 
 const MODULE_STATE_ALLOWLIST = new Set([
   "src/lib/auth/rate-limit.ts",
+  // Test-only Shopify mock — lazy-required ONLY under CHANNEL_PROVIDER_MOCK=1
+  // (never in the production request path). Its module-scope Sets/array are
+  // deliberate assertion hooks for tests, reset via resetMock().
+  "src/lib/channels/shopify.mock.ts",
   "src/lib/persistence/postgres-store.ts", // caches are well-understood + per-org keyed
   "src/lib/persistence/postgres-read-store.ts",
   "src/lib/persistence/postgres-phase3.ts",

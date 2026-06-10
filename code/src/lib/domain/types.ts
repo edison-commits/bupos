@@ -21,6 +21,10 @@ export type PermissionKey =
   // product metadata) can't silently reprice a bundle from $99 → $0.01,
   // check it out, and raise the price back. Owner + manager only.
   | "pricing.manage"
+  // Manage the Online Selling (sales-channel) integration: connect a Shopify
+  // store, push inventory, view online orders. Owner + manager only — it holds
+  // a powerful external API token.
+  | "online.manage"
   | "approval.discount"
   | "approval.void_item"
   | "approval.void_transaction"

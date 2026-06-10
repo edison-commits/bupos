@@ -861,6 +861,24 @@ export const bundleDeleteSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// Online Selling (Shopify channel integration)
+// ---------------------------------------------------------------------------
+export const shopifyConfigSchema = z.object({
+  shop_domain: z.string().trim().toLowerCase()
+    .regex(/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/, "shop_domain must be a <store>.myshopify.com domain")
+    .max(200),
+  fulfillment_location_id: uuid,
+  // Sensitive — only sent when (re)setting; omitted means "keep the existing
+  // encrypted value". The token is write-only and never returned by any API.
+  access_token: z.string().min(1).max(2000).optional(),
+  webhook_secret: z.string().min(1).max(2000).optional(),
+  // Optional explicit Shopify location GID; otherwise resolved on test-connection.
+  shopify_location_id: z.string().max(200).optional(),
+  // Step-up password for writing/rotating the token (a powerful credential).
+  actorPassword: z.string().max(200).optional(),
+}).strict();
+
+// ---------------------------------------------------------------------------
 // Generic validate helper
 // ---------------------------------------------------------------------------
 

@@ -1,0 +1,76 @@
+/**
+ * Online Selling (Shopify channel) — pure-logic unit tests (no DB):
+ * AES-GCM secret encryption, webhook HMAC verification, and order parsing.
+ */
+import { describe, it, expect } from "vitest";
+import { encryptSecret, decryptSecret } from "@/lib/channels/crypto";
+import { shopifyProvider } from "@/lib/channels/shopify";
+import { signWebhookBody } from "@/lib/channels/shopify.mock";
+
+describe("channels/crypto: AES-256-GCM secret storage", () => {
+  it("round-trips a token and uses the versioned format", async () => {
+    const enc = await encryptSecret("shpat_supersecrettoken");
+    expect(enc.startsWith("gcm1.")).toBe(true);
+    expect(enc).not.toContain("shpat_supersecrettoken"); // ciphertext, not plaintext
+    expect(await decryptSecret(enc)).toBe("shpat_supersecrettoken");
+  });
+  it("uses a random IV (two encryptions of the same value differ)", async () => {
+    const a = await encryptSecret("same");
+    const b = await encryptSecret("same");
+    expect(a).not.toBe(b);
+    expect(await decryptSecret(a)).toBe("same");
+    expect(await decryptSecret(b)).toBe("same");
+  });
+  it("returns null on tampered / malformed / missing input", async () => {
+    const enc = await encryptSecret("x");
+    expect(await decryptSecret(enc.slice(0, -2) + "zz")).toBeNull(); // tampered tag
+    expect(await decryptSecret("gcm1.notbase64!!")).toBeNull();
+    expect(await decryptSecret("plain:text")).toBeNull(); // wrong format
+    expect(await decryptSecret(null)).toBeNull();
+  });
+});
+
+describe("channels/shopify: webhook HMAC verification", () => {
+  const secret = "shopify-app-api-secret";
+  const body = JSON.stringify({ id: 123, line_items: [{ sku: "ABC", quantity: 1 }] });
+
+  it("accepts a correctly-signed body", async () => {
+    const sig = await signWebhookBody(body, secret);
+    expect(await shopifyProvider.verifyWebhookHmac(body, sig, secret)).toBe(true);
+  });
+  it("rejects a flipped signature, wrong secret, tampered body, and missing header", async () => {
+    const sig = await signWebhookBody(body, secret);
+    const flipped = sig.slice(0, -2) + (sig.endsWith("A") ? "BB" : "AA");
+    expect(await shopifyProvider.verifyWebhookHmac(body, flipped, secret)).toBe(false);
+    expect(await shopifyProvider.verifyWebhookHmac(body, sig, "wrong-secret")).toBe(false);
+    expect(await shopifyProvider.verifyWebhookHmac(body + " ", sig, secret)).toBe(false);
+    expect(await shopifyProvider.verifyWebhookHmac(body, null, secret)).toBe(false);
+  });
+});
+
+describe("channels/shopify: order payload parsing", () => {
+  it("extracts order id, number, and line items by SKU/qty", () => {
+    const order = shopifyProvider.parseOrderPayload(JSON.stringify({
+      admin_graphql_api_id: "gid://shopify/Order/55",
+      name: "#1001",
+      financial_status: "paid",
+      currency: "USD",
+      subtotal_price: "20.00",
+      total_price: "22.00",
+      line_items: [
+        { sku: "SKU-1", quantity: 2, title: "Tee", variant_id: 9, price: "10.00" },
+        { sku: "", quantity: 1, title: "No SKU", variant_id: 10, price: "5.00" },
+      ],
+    }));
+    expect(order?.externalOrderId).toBe("gid://shopify/Order/55");
+    expect(order?.orderNumber).toBe("#1001");
+    expect(order?.financialStatus).toBe("paid");
+    expect(order?.lines).toHaveLength(2);
+    expect(order?.lines[0]).toMatchObject({ sku: "SKU-1", quantity: 2 });
+    expect(order?.lines[1].sku).toBeNull(); // empty SKU normalized to null (unresolved)
+  });
+  it("returns null on unparseable / id-less payloads", () => {
+    expect(shopifyProvider.parseOrderPayload("not json")).toBeNull();
+    expect(shopifyProvider.parseOrderPayload(JSON.stringify({ line_items: [] }))).toBeNull();
+  });
+});
