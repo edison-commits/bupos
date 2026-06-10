@@ -330,6 +330,78 @@ export async function pushPrices(
   return summary;
 }
 
+export interface OnlineOrderRow {
+  externalOrderNumber: string | null;
+  financialStatus: string | null;
+  total: number | null;
+  currency: string | null;
+  decrementStatus: string;
+  unresolvedCount: number;
+  createdAt: string;
+}
+export interface OnlineSalesReport {
+  summary: { orderCount: number; revenue: number; refundedCount: number; needsAttention: number; currency: string | null };
+  orders: OnlineOrderRow[];
+}
+
+/**
+ * Dedicated "Online Sales" report, fed from online_orders only — deliberately
+ * separate from the in-store `transactions` table so online revenue never
+ * lands in a cashier's drawer/shift reconciliation (online has no cash drawer).
+ * Org-scoped + date-ranged. `revenue` excludes cancelled orders; needsAttention
+ * counts orders with an unmatched SKU or a partial inventory decrement.
+ */
+export async function getOnlineSalesReport(orgId: string, sinceIso: string, limit = 100): Promise<OnlineSalesReport> {
+  const s = await orgQuery(
+    orgId,
+    `SELECT
+        count(*)::int AS order_count,
+        COALESCE(SUM(total) FILTER (WHERE financial_status IS DISTINCT FROM 'cancelled'), 0)::float8 AS revenue,
+        count(*) FILTER (WHERE financial_status = 'refunded')::int AS refunded_count,
+        count(*) FILTER (WHERE decrement_status = 'partial' OR jsonb_array_length(unresolved_skus) > 0)::int AS needs_attention,
+        (SELECT currency FROM online_orders
+          WHERE organization_id = $1 AND created_at >= $2::timestamptz AND currency IS NOT NULL
+          ORDER BY created_at DESC LIMIT 1) AS currency
+      FROM online_orders
+      WHERE organization_id = $1 AND created_at >= $2::timestamptz`,
+    [orgId, sinceIso],
+  );
+  const sum = (s.rows[0] as { order_count: number; revenue: number; refunded_count: number; needs_attention: number; currency: string | null })
+    ?? { order_count: 0, revenue: 0, refunded_count: 0, needs_attention: 0, currency: null };
+
+  const o = await orgQuery(
+    orgId,
+    `SELECT external_order_number, financial_status, total::float8 AS total, currency, decrement_status,
+            jsonb_array_length(unresolved_skus)::int AS unresolved_count, created_at
+       FROM online_orders
+      WHERE organization_id = $1 AND created_at >= $2::timestamptz
+      ORDER BY created_at DESC
+      LIMIT $3`,
+    [orgId, sinceIso, limit],
+  );
+  return {
+    summary: {
+      orderCount: sum.order_count,
+      revenue: Number(sum.revenue),
+      refundedCount: sum.refunded_count,
+      needsAttention: sum.needs_attention,
+      currency: sum.currency,
+    },
+    orders: (o.rows as {
+      external_order_number: string | null; financial_status: string | null; total: number | null;
+      currency: string | null; decrement_status: string; unresolved_count: number; created_at: string;
+    }[]).map((r) => ({
+      externalOrderNumber: r.external_order_number,
+      financialStatus: r.financial_status,
+      total: r.total != null ? Number(r.total) : null,
+      currency: r.currency,
+      decrementStatus: r.decrement_status,
+      unresolvedCount: r.unresolved_count,
+      createdAt: r.created_at,
+    })),
+  };
+}
+
 /** Variants (mapped) whose on_hand OR price changed since last_sync, for the reconcile cron. */
 export async function changedSinceLastSync(row: IntegrationRow): Promise<string[]> {
   const since = row.last_sync_at ?? "epoch";

@@ -121,6 +121,21 @@ describe("R91-P3a: refund restock / cancel / uninstall", () => {
   });
 });
 
+describe("R91-P3b: online sales report stays separate from in-store transactions", () => {
+  it("the report query reads online_orders (not the transactions table)", () => {
+    const src = read("src/lib/channels/repo.ts");
+    expect(src).toMatch(/export async function getOnlineSalesReport/);
+    expect(src).toMatch(/FROM online_orders/);
+    // The channel repo must never reach into the in-store money table.
+    expect(src).not.toMatch(/FROM transactions\b/);
+  });
+  it("the orders route is permission-gated and org-scoped", () => {
+    const src = read("src/app/api/channels/shopify/orders/route.ts");
+    expect(src).toMatch(/withAdminAuth\("online\.manage"/);
+    expect(src).toMatch(/getOnlineSalesReport/);
+  });
+});
+
 describe("R91: migration 088 hardening", () => {
   const src = read("supabase/migrations/088_channel_integrations.sql");
   it("forces RLS on the new tables and ships the SECDEF resolver RPCs", () => {
