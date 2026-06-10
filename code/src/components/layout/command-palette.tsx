@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ComponentType } from "react"
 import { useRouter } from "next/navigation";
 import { authFetch } from "@/lib/api/client";
 import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
-import { NAV_GROUPS } from "./admin-shell";
+import { NAV_GROUPS } from "./admin-nav";
 import { CornerDownLeft, Package, Search, User } from "lucide-react";
 
 /**
