@@ -3,6 +3,7 @@
 import { AdminTopNav } from "@/components/layout/admin-top-nav";
 import { ShopifyConnectPanel } from "@/components/admin/online-selling/ShopifyConnectPanel";
 import { OnlineSalesPanel } from "@/components/admin/online-selling/OnlineSalesPanel";
+import { PublishPanel } from "@/components/admin/online-selling/PublishPanel";
 
 export default function OnlineSellingPage() {
   return (
@@ -17,6 +18,7 @@ export default function OnlineSellingPage() {
           </p>
         </div>
         <OnlineSalesPanel />
+        <PublishPanel />
         <ShopifyConnectPanel />
       </main>
     </div>

@@ -18,7 +18,7 @@ interface ConfigStatus {
 }
 interface LocationOpt { id: string; name: string }
 
-const REQUIRED_SCOPES = 'read_products, write_products, read_inventory, write_inventory, read_locations, read_orders';
+const REQUIRED_SCOPES = 'read_products, write_products, read_inventory, write_inventory, read_locations, read_orders, read_publications, write_publications';
 
 export function ShopifyConnectPanel() {
   const [cfg, setCfg] = useState<ConfigStatus | null>(null);

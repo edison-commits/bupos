@@ -5,7 +5,8 @@
 import { describe, it, expect } from "vitest";
 import { encryptSecret, decryptSecret } from "@/lib/channels/crypto";
 import { shopifyProvider } from "@/lib/channels/shopify";
-import { signWebhookBody, mockProvider, mockPriceSetCalls, mockInventorySetCalls, resetMock } from "@/lib/channels/shopify.mock";
+import { signWebhookBody, mockProvider, mockPriceSetCalls, mockInventorySetCalls, mockPublishCalls, resetMock } from "@/lib/channels/shopify.mock";
+import { buildPublishInput, type PublishCandidateVariant } from "@/lib/channels/publish-mapping";
 
 describe("channels/crypto: AES-256-GCM secret storage", () => {
   it("round-trips a token and uses the versioned format", async () => {
@@ -102,6 +103,77 @@ describe("channels/shopify: refund payload parsing (P3a)", () => {
     expect(refund?.restockLines).toEqual([]);
     expect(shopifyProvider.parseRefundPayload(JSON.stringify({ refund_line_items: [] }))).toBeNull();
     expect(shopifyProvider.parseRefundPayload("not json")).toBeNull();
+  });
+});
+
+describe("channels/publish-mapping: BuPOS product → Shopify options (P3c)", () => {
+  const v = (over: Partial<PublishCandidateVariant>): PublishCandidateVariant => ({
+    variantId: "id", sku: "SKU", price: 10, compareAtPrice: null, name: "V", sizeLabel: null, colorLabel: null, onHand: 0, ...over,
+  });
+
+  it("a single label-less variant uses Shopify's default Title option", () => {
+    const input = buildPublishInput({ name: "Plain Tee", description: null }, [v({ sku: "TEE-1", price: 12.5 })], "gid://shopify/Location/1");
+    expect(input.title).toBe("Plain Tee");
+    expect(input.status).toBe("ACTIVE");
+    expect(input.options).toEqual([{ name: "Title", values: ["Default Title"] }]);
+    expect(input.variants).toHaveLength(1);
+    expect(input.variants[0]).toMatchObject({ sku: "TEE-1", price: 12.5, optionValues: [{ optionName: "Title", name: "Default Title" }] });
+    expect(input.shopifyLocationId).toBe("gid://shopify/Location/1");
+  });
+
+  it("builds Size + Color options from labels with distinct values + per-variant coordinates", () => {
+    const input = buildPublishInput({ name: "Polo", description: "desc" }, [
+      v({ sku: "P-S-RED", sizeLabel: "S", colorLabel: "Red", price: 20, compareAtPrice: 25, onHand: 3 }),
+      v({ sku: "P-M-RED", sizeLabel: "M", colorLabel: "Red", price: 20 }),
+      v({ sku: "P-S-BLU", sizeLabel: "S", colorLabel: "Blue", price: 22 }),
+    ], "loc");
+    expect(input.descriptionHtml).toBe("desc");
+    expect(input.options).toEqual([
+      { name: "Size", values: ["S", "M"] },
+      { name: "Color", values: ["Red", "Blue"] },
+    ]);
+    expect(input.variants[0].optionValues).toEqual([{ optionName: "Size", name: "S" }, { optionName: "Color", name: "Red" }]);
+    expect(input.variants[0]).toMatchObject({ compareAtPrice: 25, onHand: 3 });
+    expect(input.variants.map((x) => x.sku)).toEqual(["P-S-RED", "P-M-RED", "P-S-BLU"]);
+  });
+
+  it("a single-dimension product yields just that option", () => {
+    const input = buildPublishInput({ name: "Cap", description: null }, [v({ sku: "C-S", sizeLabel: "S" }), v({ sku: "C-L", sizeLabel: "L" })], "loc");
+    expect(input.options).toEqual([{ name: "Size", values: ["S", "L"] }]);
+    expect(input.variants[1].optionValues).toEqual([{ optionName: "Size", name: "L" }]);
+  });
+
+  it("multiple label-less variants fall back to a Title option keyed by name", () => {
+    const input = buildPublishInput({ name: "Bundle", description: null }, [v({ sku: "B1", name: "Small Bundle" }), v({ sku: "B2", name: "Large Bundle" })], "loc");
+    expect(input.options).toEqual([{ name: "Title", values: ["Small Bundle", "Large Bundle"] }]);
+    expect(input.variants[0].optionValues).toEqual([{ optionName: "Title", name: "Small Bundle" }]);
+  });
+
+  it("a variant missing a label its siblings have gets a 'Default' coordinate", () => {
+    const input = buildPublishInput({ name: "Mixed", description: null }, [v({ sku: "M1", sizeLabel: "S" }), v({ sku: "M2", sizeLabel: null })], "loc");
+    expect(input.options).toEqual([{ name: "Size", values: ["S", "Default"] }]);
+    expect(input.variants[1].optionValues).toEqual([{ optionName: "Size", name: "Default" }]);
+  });
+});
+
+describe("channels mock (P3c): publishProduct records the call + maps variants by SKU", () => {
+  it("returns a sku-keyed variant mapping and records the publish", async () => {
+    resetMock();
+    const creds = { shopDomain: "x.myshopify.com", accessToken: "t" };
+    const res = await mockProvider.publishProduct(creds, {
+      title: "Polo", descriptionHtml: null, status: "ACTIVE",
+      options: [{ name: "Size", values: ["S", "M"] }],
+      variants: [
+        { sku: "P-S", price: 20, compareAtPrice: null, optionValues: [{ optionName: "Size", name: "S" }], onHand: 4 },
+        { sku: "P-M", price: 20, compareAtPrice: null, optionValues: [{ optionName: "Size", name: "M" }], onHand: 2 },
+      ],
+      shopifyLocationId: "gid://shopify/Location/1",
+    });
+    expect(res.ok).toBe(true);
+    expect(res.externalProductId).toContain("Product/Polo");
+    expect(res.variants?.map((x) => x.sku)).toEqual(["P-S", "P-M"]);
+    expect(res.variants?.[0].externalVariantId).toContain("ProductVariant/P-S");
+    expect(mockPublishCalls[0]).toMatchObject({ title: "Polo", optionNames: ["Size"], skus: ["P-S", "P-M"], status: "ACTIVE" });
   });
 });
 

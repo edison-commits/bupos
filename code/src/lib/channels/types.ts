@@ -64,6 +64,40 @@ export interface OpResult {
   error?: string;
 }
 
+/** One variant to publish: SKU, pricing, its option coordinates, and seed stock. */
+export interface PublishVariantInput {
+  sku: string;
+  price: number;
+  compareAtPrice: number | null;
+  /** Maps this variant to the product's options, e.g. [{optionName:"Size", name:"M"}]. */
+  optionValues: { optionName: string; name: string }[];
+  onHand: number;
+}
+/** A whole BuPOS product to create on Shopify as one product with its variants. */
+export interface PublishProductInput {
+  title: string;
+  descriptionHtml: string | null;
+  status: "ACTIVE" | "DRAFT";
+  /** Product options (e.g. Size, Color) with their full value lists. */
+  options: { name: string; values: string[] }[];
+  variants: PublishVariantInput[];
+  shopifyLocationId: string;
+}
+export interface PublishedVariant {
+  sku: string;
+  externalVariantId: string;
+  externalInventoryItemId: string;
+  externalProductId: string;
+}
+export interface PublishResult {
+  ok: boolean;
+  error?: string;
+  externalProductId?: string;
+  variants?: PublishedVariant[];
+  /** Non-fatal issues (e.g. couldn't publish to the Online Store channel). */
+  warnings?: string[];
+}
+
 export interface ChannelProvider {
   /** Validate the token + return shop identity and the shop's locations. */
   validate(creds: ChannelCredentials): Promise<{ shop: ShopInfo; locations: ChannelLocation[] }>;
@@ -84,6 +118,8 @@ export interface ChannelProvider {
     price: number,
     compareAtPrice: number | null,
   ): Promise<OpResult>;
+  /** Create a BuPOS product on the channel as a product with all its variants. */
+  publishProduct(creds: ChannelCredentials, input: PublishProductInput): Promise<PublishResult>;
   /** Register all needed webhooks (orders/create, refunds/create, orders/cancelled, app/uninstalled). */
   registerWebhooks(creds: ChannelCredentials, callbackUrl: string): Promise<OpResult>;
   /** Constant-time verify a webhook HMAC computed over the RAW request body. */

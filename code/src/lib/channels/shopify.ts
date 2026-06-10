@@ -7,6 +7,8 @@ import type {
   OpResult,
   ParsedOrder,
   ParsedRefund,
+  PublishResult,
+  PublishedVariant,
   ShopInfo,
   VariantLookup,
 } from "./types";
@@ -16,11 +18,13 @@ const API_VERSION = "2025-01";
 // Scopes the custom-app token must be granted (surfaced in the connect UI).
 export const REQUIRED_SHOPIFY_SCOPES = [
   "read_products",
-  "write_products", // Phase 2: push prices
+  "write_products", // Phase 2: push prices; Phase 3c: create products
   "read_inventory",
   "write_inventory",
   "read_locations",
   "read_orders",
+  "read_publications", // Phase 3c: find the Online Store sales channel
+  "write_publications", // Phase 3c: publish created products to it
 ];
 
 function endpoint(shopDomain: string): string {
@@ -63,6 +67,33 @@ function constantTimeEqStr(a: string, b: string): boolean {
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;
+}
+
+/**
+ * Best-effort publish of a created product to the Online Store sales channel.
+ * Non-fatal: a product can exist (status ACTIVE) without being on a channel,
+ * and the merchant can publish it by hand. Returns the error as a warning.
+ */
+async function publishToOnlineStore(creds: ChannelCredentials, productId: string): Promise<OpResult> {
+  const r = await gql<{ publications: { edges: { node: { id: string; name: string } }[] } }>(
+    creds,
+    `query { publications(first: 20) { edges { node { id name } } } }`,
+  );
+  if (r.errors) return { ok: false, error: typeof r.errors === "string" ? r.errors : "publications query failed" };
+  const edges = r.data?.publications?.edges ?? [];
+  const target = edges.find((e) => /online store/i.test(e.node.name)) ?? edges[0];
+  if (!target) return { ok: false, error: "no sales channel found to publish to" };
+  const pr = await gql<{ publishablePublish: { userErrors: { message: string }[] } }>(
+    creds,
+    `mutation($id: ID!, $input: [PublicationInput!]!) {
+      publishablePublish(id: $id, input: $input) { userErrors { field message } }
+    }`,
+    { id: productId, input: [{ publicationId: target.node.id }] },
+  );
+  if (pr.errors) return { ok: false, error: typeof pr.errors === "string" ? pr.errors : "publish failed" };
+  const ue = pr.data?.publishablePublish?.userErrors ?? [];
+  if (ue.length) return { ok: false, error: ue.map((e) => e.message).join("; ") };
+  return { ok: true };
 }
 
 export const shopifyProvider: ChannelProvider = {
@@ -143,6 +174,58 @@ export const shopifyProvider: ChannelProvider = {
     const ue = r.data?.productVariantsBulkUpdate?.userErrors ?? [];
     if (ue.length) return { ok: false, error: ue.map((e) => e.message).join("; ") };
     return { ok: true };
+  },
+
+  async publishProduct(creds, input): Promise<PublishResult> {
+    const warnings: string[] = [];
+    // 1. Create the product shell + its option definitions.
+    const createM = `mutation($product: ProductCreateInput!) {
+      productCreate(product: $product) { product { id } userErrors { field message } }
+    }`;
+    const cr = await gql<{ productCreate: { product: { id: string } | null; userErrors: { message: string }[] } }>(creds, createM, {
+      product: {
+        title: input.title,
+        descriptionHtml: input.descriptionHtml ?? undefined,
+        status: input.status,
+        productOptions: input.options.map((o) => ({ name: o.name, values: o.values.map((v) => ({ name: v })) })),
+      },
+    });
+    if (cr.errors) return { ok: false, error: typeof cr.errors === "string" ? cr.errors : "graphql error" };
+    const ue1 = cr.data?.productCreate?.userErrors ?? [];
+    const productId = cr.data?.productCreate?.product?.id;
+    if (ue1.length || !productId) return { ok: false, error: ue1.map((e) => e.message).join("; ") || "productCreate failed" };
+
+    // 2. Create the real variants (replacing the default standalone variant),
+    //    setting SKU/price/compare-at and seeding stock at the fulfillment location.
+    const bulkM = `mutation($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+      productVariantsBulkCreate(productId: $productId, strategy: REMOVE_STANDALONE_VARIANT, variants: $variants) {
+        productVariants { id sku inventoryItem { id } }
+        userErrors { field message }
+      }
+    }`;
+    const br = await gql<{ productVariantsBulkCreate: { productVariants: { id: string; sku: string; inventoryItem: { id: string } }[]; userErrors: { message: string }[] } }>(creds, bulkM, {
+      productId,
+      variants: input.variants.map((v) => ({
+        optionValues: v.optionValues.map((o) => ({ optionName: o.optionName, name: o.name })),
+        price: v.price.toFixed(2),
+        compareAtPrice: v.compareAtPrice != null ? v.compareAtPrice.toFixed(2) : null,
+        inventoryItem: { sku: v.sku, tracked: true },
+        inventoryQuantities: [{ locationId: input.shopifyLocationId, name: "available", quantity: Math.max(0, Math.floor(v.onHand)) }],
+      })),
+    });
+    if (br.errors) return { ok: false, error: typeof br.errors === "string" ? br.errors : "graphql error", externalProductId: productId };
+    const ue2 = br.data?.productVariantsBulkCreate?.userErrors ?? [];
+    if (ue2.length) return { ok: false, error: ue2.map((e) => e.message).join("; "), externalProductId: productId };
+    const created = br.data?.productVariantsBulkCreate?.productVariants ?? [];
+    const variants: PublishedVariant[] = created.map((pv) => ({
+      sku: pv.sku, externalVariantId: pv.id, externalInventoryItemId: pv.inventoryItem.id, externalProductId: productId,
+    }));
+
+    // 3. Best-effort: list it on the Online Store sales channel.
+    const pub = await publishToOnlineStore(creds, productId);
+    if (!pub.ok && pub.error) warnings.push(`publish: ${pub.error}`);
+
+    return { ok: true, externalProductId: productId, variants, warnings };
   },
 
   async registerWebhooks(creds, callbackUrl): Promise<OpResult> {

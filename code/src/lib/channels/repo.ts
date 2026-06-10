@@ -3,6 +3,7 @@ import { orgQuery, orgTx } from "@/lib/supabase-rest";
 import { decryptSecret } from "./crypto";
 import { getChannelProvider } from "./index";
 import type { ChannelCredentials, OrderLine } from "./types";
+import { buildPublishInput, type PublishCandidateVariant } from "./publish-mapping";
 
 export interface IntegrationRow {
   id: string;
@@ -420,6 +421,122 @@ export async function changedSinceLastSync(row: IntegrationRow): Promise<string[
     [row.organization_id, row.id, row.fulfillment_location_id, since],
   );
   return (rows as { product_variant_id: string }[]).map((r) => r.product_variant_id);
+}
+
+// ─────────────────────────── Phase 3c: product publishing ───────────────────────────
+
+export interface PublishableProduct {
+  productId: string;
+  name: string;
+  variantCount: number;
+  hasImage: boolean;
+  minPrice: number;
+  maxPrice: number;
+}
+
+/** Active products with ≥1 active SKU'd variant that aren't on the channel yet. */
+export async function listPublishableProducts(row: IntegrationRow, limit = 200): Promise<PublishableProduct[]> {
+  const { rows } = await orgQuery(
+    row.organization_id,
+    `SELECT p.id, p.name, (p.image_url IS NOT NULL AND p.image_url <> '') AS has_image,
+            count(pv.id)::int AS variant_count,
+            min(pv.price)::float8 AS min_price, max(pv.price)::float8 AS max_price
+       FROM products p
+       JOIN product_variants pv
+         ON pv.product_id = p.id AND pv.organization_id = $1 AND pv.is_active = true AND pv.sku <> ''
+      WHERE p.organization_id = $1 AND p.is_active = true
+        AND NOT EXISTS (
+          SELECT 1 FROM channel_product_map m
+            JOIN product_variants pv2 ON pv2.id = m.product_variant_id AND pv2.organization_id = $1
+           WHERE m.channel_integration_id = $2 AND pv2.product_id = p.id
+        )
+      GROUP BY p.id, p.name, p.image_url
+      ORDER BY p.name ASC
+      LIMIT $3`,
+    [row.organization_id, row.id, limit],
+  );
+  return (rows as { id: string; name: string; has_image: boolean; variant_count: number; min_price: number; max_price: number }[]).map((r) => ({
+    productId: r.id,
+    name: r.name,
+    variantCount: r.variant_count,
+    hasImage: r.has_image,
+    minPrice: Number(r.min_price),
+    maxPrice: Number(r.max_price),
+  }));
+}
+
+export interface PublishProductsSummary {
+  published: { productId: string; name: string; variants: number; warnings: string[] }[];
+  failed: { productId: string; name: string; error: string }[];
+}
+
+/**
+ * Publish selected BuPOS products to the channel, then map each created variant
+ * back into channel_product_map (so inventory/price sync flows thereafter). The
+ * seeded on_hand becomes last_pushed_on_hand to avoid an immediate redundant push.
+ */
+export async function publishProducts(row: IntegrationRow, creds: ChannelCredentials, productIds: string[]): Promise<PublishProductsSummary> {
+  const summary: PublishProductsSummary = { published: [], failed: [] };
+  if (!row.fulfillment_location_id || !row.shopify_location_id) return summary;
+  const provider = getChannelProvider(row.provider);
+
+  for (const productId of productIds) {
+    const pr = await orgQuery(
+      row.organization_id,
+      `SELECT name, description FROM products WHERE id = $1 AND organization_id = $2 AND is_active = true LIMIT 1`,
+      [productId, row.organization_id],
+    );
+    const product = pr.rows[0] as { name: string; description: string | null } | undefined;
+    if (!product) { summary.failed.push({ productId, name: "(unknown)", error: "product not found" }); continue; }
+
+    const vr = await orgQuery(
+      row.organization_id,
+      `SELECT pv.id, pv.sku, pv.price::float8 AS price, pv.compare_at_price::float8 AS compare_at_price,
+              pv.name, pv.size_label, pv.color_label, COALESCE(il.on_hand, 0) AS on_hand
+         FROM product_variants pv
+         LEFT JOIN inventory_levels il
+           ON il.product_variant_id = pv.id AND il.location_id = $3 AND il.organization_id = $1
+        WHERE pv.organization_id = $1 AND pv.product_id = $2 AND pv.is_active = true AND pv.sku <> ''
+        ORDER BY pv.created_at ASC`,
+      [row.organization_id, productId, row.fulfillment_location_id],
+    );
+    const candidates: PublishCandidateVariant[] = (vr.rows as { id: string; sku: string; price: number; compare_at_price: number | null; name: string; size_label: string | null; color_label: string | null; on_hand: number }[]).map((r) => ({
+      variantId: r.id,
+      sku: r.sku,
+      price: Number(r.price),
+      compareAtPrice: r.compare_at_price != null ? Number(r.compare_at_price) : null,
+      name: r.name,
+      sizeLabel: r.size_label,
+      colorLabel: r.color_label,
+      onHand: Number(r.on_hand),
+    }));
+    if (candidates.length === 0) { summary.failed.push({ productId, name: product.name, error: "no active variants with a SKU" }); continue; }
+
+    const input = buildPublishInput(product, candidates, row.shopify_location_id);
+    const res = await provider.publishProduct(creds, input);
+    if (!res.ok || !res.variants) { summary.failed.push({ productId, name: product.name, error: res.error ?? "publish failed" }); continue; }
+
+    const bySku = new Map(candidates.map((c) => [c.sku, c]));
+    for (const pubVar of res.variants) {
+      const cand = bySku.get(pubVar.sku);
+      if (!cand) continue;
+      await orgQuery(
+        row.organization_id,
+        `INSERT INTO channel_product_map
+           (organization_id, channel_integration_id, product_variant_id, sku, external_variant_id, external_inventory_item_id, external_product_id, shopify_location_id, last_pushed_on_hand, last_pushed_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+         ON CONFLICT (channel_integration_id, product_variant_id) DO UPDATE SET
+           external_variant_id = EXCLUDED.external_variant_id,
+           external_inventory_item_id = EXCLUDED.external_inventory_item_id,
+           external_product_id = EXCLUDED.external_product_id,
+           shopify_location_id = EXCLUDED.shopify_location_id,
+           sku = EXCLUDED.sku, last_pushed_on_hand = EXCLUDED.last_pushed_on_hand, updated_at = now()`,
+        [row.organization_id, row.id, cand.variantId, cand.sku, pubVar.externalVariantId, pubVar.externalInventoryItemId, pubVar.externalProductId, row.shopify_location_id, cand.onHand],
+      );
+    }
+    summary.published.push({ productId, name: product.name, variants: res.variants.length, warnings: res.warnings ?? [] });
+  }
+  return summary;
 }
 
 export { orgTx };

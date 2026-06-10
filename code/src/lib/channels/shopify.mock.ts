@@ -1,5 +1,5 @@
 import "server-only";
-import type { ChannelProvider, VariantLookup } from "./types";
+import type { ChannelProvider, VariantLookup, PublishResult } from "./types";
 import { shopifyProvider } from "./shopify";
 
 /**
@@ -15,6 +15,8 @@ export const MOCK_LOCATION_ID = "gid://shopify/Location/1";
 export const mockInventorySetCalls: { inventoryItemId: string; locationId: string; onHand: number }[] = [];
 /** Recorded price pushes — test assertion hook. */
 export const mockPriceSetCalls: { productId: string; variantId: string; price: number; compareAt: number | null }[] = [];
+/** Recorded product publishes — test assertion hook. */
+export const mockPublishCalls: { title: string; optionNames: string[]; skus: string[]; status: string }[] = [];
 /** SKUs the mock should report as not-found (test the unresolved path). */
 export const mockUnresolvedSkus = new Set<string>();
 /** SKUs the mock should report as ambiguous. */
@@ -23,6 +25,7 @@ export const mockAmbiguousSkus = new Set<string>();
 export function resetMock(): void {
   mockInventorySetCalls.length = 0;
   mockPriceSetCalls.length = 0;
+  mockPublishCalls.length = 0;
   mockUnresolvedSkus.clear();
   mockAmbiguousSkus.clear();
 }
@@ -54,6 +57,25 @@ export const mockProvider: ChannelProvider = {
   async setVariantPrice(_creds, productId, variantId, price, compareAt) {
     mockPriceSetCalls.push({ productId, variantId, price, compareAt });
     return { ok: true };
+  },
+  async publishProduct(_creds, input): Promise<PublishResult> {
+    mockPublishCalls.push({
+      title: input.title,
+      optionNames: input.options.map((o) => o.name),
+      skus: input.variants.map((v) => v.sku),
+      status: input.status,
+    });
+    return {
+      ok: true,
+      externalProductId: `gid://shopify/Product/${input.title}`,
+      variants: input.variants.map((v) => ({
+        sku: v.sku,
+        externalVariantId: `gid://shopify/ProductVariant/${v.sku}`,
+        externalInventoryItemId: `gid://shopify/InventoryItem/${v.sku}`,
+        externalProductId: `gid://shopify/Product/${input.title}`,
+      })),
+      warnings: [],
+    };
   },
   async registerWebhooks() {
     return { ok: true };

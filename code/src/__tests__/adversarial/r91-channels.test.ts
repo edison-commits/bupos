@@ -136,6 +136,31 @@ describe("R91-P3b: online sales report stays separate from in-store transactions
   });
 });
 
+describe("R91-P3c: product publishing", () => {
+  it("the provider creates products via productCreate + productVariantsBulkCreate", () => {
+    const src = read("src/lib/channels/shopify.ts");
+    expect(src).toMatch(/productCreate/);
+    expect(src).toMatch(/productVariantsBulkCreate/);
+  });
+  it("publishing requires read/write_publications scopes (publish to Online Store)", () => {
+    const src = read("src/lib/channels/shopify.ts");
+    expect(src).toMatch(/read_publications/);
+    expect(src).toMatch(/write_publications/);
+  });
+  it("publishProducts maps created variants back into channel_product_map", () => {
+    const src = read("src/lib/channels/repo.ts");
+    expect(src).toMatch(/export async function publishProducts/);
+    expect(src).toMatch(/INSERT INTO channel_product_map/);
+    expect(src).toMatch(/export async function listPublishableProducts/);
+  });
+  it("the publish route is permission-gated, rate-limited, and validates product ids", () => {
+    const src = read("src/app/api/channels/shopify/publish/route.ts");
+    expect(src).toMatch(/withAdminAuth\("online\.manage"/);
+    expect(src).toMatch(/checkRateLimit/);
+    expect(src).toMatch(/UUID_RE/);
+  });
+});
+
 describe("R91: migration 088 hardening", () => {
   const src = read("supabase/migrations/088_channel_integrations.sql");
   it("forces RLS on the new tables and ships the SECDEF resolver RPCs", () => {
