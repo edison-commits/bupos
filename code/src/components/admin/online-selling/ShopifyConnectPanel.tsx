@@ -10,6 +10,7 @@ interface ConfigStatus {
   shop_domain?: string | null;
   fulfillment_location_id?: string | null;
   shopify_location_id?: string | null;
+  sync_prices?: boolean;
   last_sync_at?: string | null;
   last_error?: string | null;
   has_token?: boolean;
@@ -17,7 +18,7 @@ interface ConfigStatus {
 }
 interface LocationOpt { id: string; name: string }
 
-const REQUIRED_SCOPES = 'read_products, read_inventory, write_inventory, read_locations, read_orders';
+const REQUIRED_SCOPES = 'read_products, write_products, read_inventory, write_inventory, read_locations, read_orders';
 
 export function ShopifyConnectPanel() {
   const [cfg, setCfg] = useState<ConfigStatus | null>(null);
@@ -26,6 +27,7 @@ export function ShopifyConnectPanel() {
   const [token, setToken] = useState('');
   const [webhookSecret, setWebhookSecret] = useState('');
   const [fulfillmentLocationId, setFulfillmentLocationId] = useState('');
+  const [syncPrices, setSyncPrices] = useState(true);
   const [actorPassword, setActorPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
@@ -38,6 +40,7 @@ export function ShopifyConnectPanel() {
         setCfg(data);
         if (data.shop_domain) setShopDomain(data.shop_domain);
         if (data.fulfillment_location_id) setFulfillmentLocationId(data.fulfillment_location_id);
+        if (typeof data.sync_prices === 'boolean') setSyncPrices(data.sync_prices);
       }
     } catch { /* ignore */ }
   }, []);
@@ -54,7 +57,7 @@ export function ShopifyConnectPanel() {
   async function save() {
     setBusy(true); setMsg(null);
     try {
-      const body: Record<string, unknown> = { shop_domain: shopDomain.trim().toLowerCase(), fulfillment_location_id: fulfillmentLocationId };
+      const body: Record<string, unknown> = { shop_domain: shopDomain.trim().toLowerCase(), fulfillment_location_id: fulfillmentLocationId, sync_prices: syncPrices };
       if (token.trim()) body.access_token = token.trim();
       if (webhookSecret.trim()) body.webhook_secret = webhookSecret.trim();
       if (actorPassword) body.actorPassword = actorPassword;
@@ -98,7 +101,8 @@ export function ShopifyConnectPanel() {
               className="px-3 py-1.5 text-sm rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-50">Test connection</button>
             <button onClick={() => act('/api/channels/shopify/sync-inventory', (d) => {
               const p = (d.push as { pushed?: number }) ?? {}; const m = (d.map as { mapped?: number; unresolved?: number }) ?? {};
-              return `Synced. Pushed ${p.pushed ?? 0}, newly mapped ${m.mapped ?? 0}, unresolved ${m.unresolved ?? 0}.`;
+              const pr = (d.price as { pushed?: number } | null);
+              return `Synced. Inventory ${p.pushed ?? 0}${pr ? `, prices ${pr.pushed ?? 0}` : ''}, newly mapped ${m.mapped ?? 0}, unresolved ${m.unresolved ?? 0}.`;
             })} disabled={busy}
               className="px-3 py-1.5 text-sm rounded bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-50">Sync inventory now</button>
           </div>
@@ -134,6 +138,10 @@ export function ShopifyConnectPanel() {
             <option value="">Select a location…</option>
             {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
           </select>
+        </label>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={syncPrices} onChange={(e) => setSyncPrices(e.target.checked)} className="rounded" />
+          <span className="text-gray-700">Push prices to Shopify (BuPOS is authoritative)</span>
         </label>
         {(token.trim() || webhookSecret.trim()) && (
           <label className="block text-sm">

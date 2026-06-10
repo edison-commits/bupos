@@ -5,7 +5,7 @@
 import { describe, it, expect } from "vitest";
 import { encryptSecret, decryptSecret } from "@/lib/channels/crypto";
 import { shopifyProvider } from "@/lib/channels/shopify";
-import { signWebhookBody } from "@/lib/channels/shopify.mock";
+import { signWebhookBody, mockProvider, mockPriceSetCalls, mockInventorySetCalls, resetMock } from "@/lib/channels/shopify.mock";
 
 describe("channels/crypto: AES-256-GCM secret storage", () => {
   it("round-trips a token and uses the versioned format", async () => {
@@ -72,5 +72,22 @@ describe("channels/shopify: order payload parsing", () => {
   it("returns null on unparseable / id-less payloads", () => {
     expect(shopifyProvider.parseOrderPayload("not json")).toBeNull();
     expect(shopifyProvider.parseOrderPayload(JSON.stringify({ line_items: [] }))).toBeNull();
+  });
+});
+
+describe("channels mock provider (P2): records push calls + product GID", () => {
+  const creds = { shopDomain: "x.myshopify.com", accessToken: "t" };
+  it("findVariantBySku returns the external product id for price updates", async () => {
+    resetMock();
+    const lookup = await mockProvider.findVariantBySku(creds, "SKU-9");
+    expect(lookup.kind).toBe("unique");
+    if (lookup.kind === "unique") expect(lookup.match.externalProductId).toContain("Product/SKU-9");
+  });
+  it("setVariantPrice + setInventory record their calls", async () => {
+    resetMock();
+    await mockProvider.setVariantPrice(creds, "gid://Product/1", "gid://Variant/1", 19.99, 24.99);
+    await mockProvider.setInventory(creds, "gid://Item/1", "gid://Location/1", 7);
+    expect(mockPriceSetCalls[0]).toMatchObject({ price: 19.99, compareAt: 24.99 });
+    expect(mockInventorySetCalls[0]).toMatchObject({ onHand: 7 });
   });
 });

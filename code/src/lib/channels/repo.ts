@@ -17,6 +17,7 @@ export interface IntegrationRow {
   last_sync_at: string | null;
   last_error: string | null;
   connected_by_employee_id: string | null;
+  sync_prices: boolean;
 }
 
 /** Load the org's (single) channel integration row, or null. */
@@ -164,14 +165,15 @@ export async function ensureMapped(row: IntegrationRow, creds: ChannelCredential
     await orgQuery(
       row.organization_id,
       `INSERT INTO channel_product_map
-         (organization_id, channel_integration_id, product_variant_id, sku, external_variant_id, external_inventory_item_id, shopify_location_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+         (organization_id, channel_integration_id, product_variant_id, sku, external_variant_id, external_inventory_item_id, external_product_id, shopify_location_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (channel_integration_id, product_variant_id) DO UPDATE SET
          external_variant_id = EXCLUDED.external_variant_id,
          external_inventory_item_id = EXCLUDED.external_inventory_item_id,
+         external_product_id = EXCLUDED.external_product_id,
          shopify_location_id = EXCLUDED.shopify_location_id,
          sku = EXCLUDED.sku, updated_at = now()`,
-      [row.organization_id, row.id, r.id, r.sku, lookup.match.externalVariantId, lookup.match.externalInventoryItemId, row.shopify_location_id],
+      [row.organization_id, row.id, r.id, r.sku, lookup.match.externalVariantId, lookup.match.externalInventoryItemId, lookup.match.externalProductId, row.shopify_location_id],
     );
     summary.mapped++;
   }
@@ -234,20 +236,80 @@ export async function pushInventory(
   return summary;
 }
 
-/** Variants (mapped) whose on_hand changed since last_sync, for the reconcile cron. */
+/**
+ * Push variant prices (+ compare-at) to Shopify for mapped variants whose price
+ * changed since the last push. POS-authoritative. `onlyVariantIds` limits the
+ * set; null = all mapped. Backfills external_product_id for any pre-Phase-2 map
+ * rows (productVariantsBulkUpdate needs the product GID).
+ */
+export async function pushPrices(
+  row: IntegrationRow,
+  creds: ChannelCredentials,
+  onlyVariantIds: string[] | null,
+): Promise<PushSummary> {
+  const summary: PushSummary = { pushed: 0, skipped: 0, failed: 0, errors: [] };
+  const provider = getChannelProvider(row.provider);
+
+  const params: unknown[] = [row.organization_id, row.id];
+  let filter = "";
+  if (onlyVariantIds && onlyVariantIds.length) {
+    params.push(onlyVariantIds);
+    filter = ` AND m.product_variant_id = ANY($3::uuid[])`;
+  }
+  const { rows } = await orgQuery(
+    row.organization_id,
+    `SELECT m.id AS map_id, m.product_variant_id, m.external_product_id, m.external_variant_id, m.sku,
+            m.last_pushed_price, m.last_pushed_compare_at,
+            pv.price::numeric AS price, pv.compare_at_price::numeric AS compare_at
+       FROM channel_product_map m
+       JOIN product_variants pv ON pv.id = m.product_variant_id AND pv.organization_id = $1
+      WHERE m.organization_id = $1 AND m.channel_integration_id = $2${filter}`,
+    params,
+  );
+
+  for (const r of rows as { map_id: string; sku: string; external_product_id: string | null; external_variant_id: string; last_pushed_price: number | null; last_pushed_compare_at: number | null; price: number; compare_at: number | null }[]) {
+    const price = Number(r.price);
+    const compareAt = r.compare_at != null ? Number(r.compare_at) : null;
+    if (r.last_pushed_price !== null && Number(r.last_pushed_price) === price
+        && Number(r.last_pushed_compare_at ?? NaN) === Number(compareAt ?? NaN)) {
+      summary.skipped++;
+      continue;
+    }
+    let productId = r.external_product_id;
+    if (!productId) {
+      // Backfill the product GID for a pre-Phase-2 map row.
+      const lookup = await provider.findVariantBySku(creds, r.sku);
+      if (lookup.kind !== "unique") { summary.failed++; continue; }
+      productId = lookup.match.externalProductId;
+      await orgQuery(row.organization_id, `UPDATE channel_product_map SET external_product_id=$1, updated_at=now() WHERE id=$2 AND organization_id=$3`, [productId, r.map_id, row.organization_id]);
+    }
+    const res = await provider.setVariantPrice(creds, productId, r.external_variant_id, price, compareAt);
+    if (res.ok) {
+      summary.pushed++;
+      await orgQuery(row.organization_id, `UPDATE channel_product_map SET last_pushed_price=$1, last_pushed_compare_at=$2, updated_at=now() WHERE id=$3 AND organization_id=$4`, [price, compareAt, r.map_id, row.organization_id]);
+    } else {
+      summary.failed++;
+      if (res.error) summary.errors.push(res.error);
+    }
+  }
+  return summary;
+}
+
+/** Variants (mapped) whose on_hand OR price changed since last_sync, for the reconcile cron. */
 export async function changedSinceLastSync(row: IntegrationRow): Promise<string[]> {
-  if (!row.fulfillment_location_id) return [];
   const since = row.last_sync_at ?? "epoch";
   const { rows } = await orgQuery(
     row.organization_id,
-    `SELECT m.product_variant_id
+    `SELECT DISTINCT m.product_variant_id
        FROM channel_product_map m
-       JOIN inventory_levels il
+       JOIN product_variants pv ON pv.id = m.product_variant_id AND pv.organization_id = $1
+       LEFT JOIN inventory_levels il
          ON il.product_variant_id = m.product_variant_id
         AND il.location_id = $3
         AND il.organization_id = $1
       WHERE m.organization_id = $1 AND m.channel_integration_id = $2
-        AND il.updated_at > $4::timestamptz`,
+        AND ( (il.updated_at IS NOT NULL AND il.updated_at > $4::timestamptz)
+              OR pv.updated_at > $4::timestamptz )`,
     [row.organization_id, row.id, row.fulfillment_location_id, since],
   );
   return (rows as { product_variant_id: string }[]).map((r) => r.product_variant_id);

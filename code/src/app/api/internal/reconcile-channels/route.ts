@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { getPool, orgQuery } from "@/lib/supabase-rest";
 import { safeErr } from "@/lib/logging/safe-err";
-import { loadIntegration, decryptCreds, changedSinceLastSync, pushInventory } from "@/lib/channels/repo";
+import { loadIntegration, decryptCreds, changedSinceLastSync, pushInventory, pushPrices } from "@/lib/channels/repo";
 
 /**
  * Bearer-gated periodic reconcile: pushes the fulfillment location's on_hand to
@@ -51,9 +51,11 @@ export async function POST(req: NextRequest) {
       const changed = await changedSinceLastSync(row);
       if (changed.length === 0) { orgsProcessed++; continue; }
       const push = await pushInventory(row, creds, changed);
-      totalPushed += push.pushed;
-      totalFailed += push.failed;
-      if (push.failed === 0) {
+      const pricePush = row.sync_prices ? await pushPrices(row, creds, changed) : null;
+      const failed = push.failed + (pricePush?.failed ?? 0);
+      totalPushed += push.pushed + (pricePush?.pushed ?? 0);
+      totalFailed += failed;
+      if (failed === 0) {
         await orgQuery(c.organization_id, `UPDATE channel_integrations SET last_sync_at=now(), updated_at=now() WHERE id=$1 AND organization_id=$2`, [row.id, c.organization_id]);
       }
       orgsProcessed++;

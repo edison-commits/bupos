@@ -70,6 +70,30 @@ describe("R91: the reconcile endpoint is Bearer-gated, fail-closed, constant-tim
   });
 });
 
+describe("R91-P2: price sync (POS authoritative)", () => {
+  it("the provider sets prices via productVariantsBulkUpdate + requires write_products", () => {
+    const src = read("src/lib/channels/shopify.ts");
+    expect(src).toMatch(/setVariantPrice/);
+    expect(src).toMatch(/productVariantsBulkUpdate/);
+    expect(src).toMatch(/write_products/);
+  });
+  it("pushPrices skips no-ops, tracks last_pushed_price, and backfills the product GID", () => {
+    const src = read("src/lib/channels/repo.ts");
+    expect(src).toMatch(/export async function pushPrices/);
+    expect(src).toMatch(/last_pushed_price/);
+    expect(src).toMatch(/Backfill the product GID/);
+  });
+  it("the reconcile diff also catches price edits (product_variants.updated_at)", () => {
+    expect(read("src/lib/channels/repo.ts")).toMatch(/pv\.updated_at > \$4::timestamptz/);
+  });
+  it("migration 089 adds sync_prices + the price/product columns", () => {
+    const src = read("supabase/migrations/089_channel_price_sync.sql");
+    expect(src).toMatch(/ADD COLUMN IF NOT EXISTS sync_prices boolean NOT NULL DEFAULT true/);
+    expect(src).toMatch(/last_pushed_price numeric/);
+    expect(src).toMatch(/external_product_id text/);
+  });
+});
+
 describe("R91: migration 088 hardening", () => {
   const src = read("supabase/migrations/088_channel_integrations.sql");
   it("forces RLS on the new tables and ships the SECDEF resolver RPCs", () => {

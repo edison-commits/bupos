@@ -874,6 +874,8 @@ export const shopifyConfigSchema = z.object({
   webhook_secret: z.string().min(1).max(2000).optional(),
   // Optional explicit Shopify location GID; otherwise resolved on test-connection.
   shopify_location_id: z.string().max(200).optional(),
+  // Phase 2: whether to push BuPOS prices to Shopify (POS-authoritative).
+  sync_prices: z.boolean().optional(),
   // Step-up password for writing/rotating the token (a powerful credential).
   actorPassword: z.string().max(200).optional(),
 }).strict();

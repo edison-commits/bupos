@@ -25,6 +25,7 @@ export interface ChannelLocation {
 export interface VariantMatch {
   externalVariantId: string;
   externalInventoryItemId: string;
+  externalProductId: string; // productVariantsBulkUpdate needs the product GID
   sku: string;
 }
 
@@ -68,6 +69,14 @@ export interface ChannelProvider {
     inventoryItemId: string,
     shopifyLocationId: string,
     onHand: number,
+  ): Promise<OpResult>;
+  /** Set a variant's price (+ optional compare-at) — POS is authoritative. */
+  setVariantPrice(
+    creds: ChannelCredentials,
+    externalProductId: string,
+    externalVariantId: string,
+    price: number,
+    compareAtPrice: number | null,
   ): Promise<OpResult>;
   /** Register the orders/create webhook pointing at our public endpoint. */
   registerOrderWebhook(creds: ChannelCredentials, callbackUrl: string): Promise<OpResult>;

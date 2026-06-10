@@ -15,6 +15,7 @@ const API_VERSION = "2025-01";
 // Scopes the custom-app token must be granted (surfaced in the connect UI).
 export const REQUIRED_SHOPIFY_SCOPES = [
   "read_products",
+  "write_products", // Phase 2: push prices
   "read_inventory",
   "write_inventory",
   "read_locations",
@@ -87,11 +88,11 @@ export const shopifyProvider: ChannelProvider = {
   async findVariantBySku(creds, sku): Promise<VariantLookup> {
     const q = `query($q: String!) {
       productVariants(first: 5, query: $q) {
-        edges { node { id sku inventoryItem { id } } }
+        edges { node { id sku product { id } inventoryItem { id } } }
       }
     }`;
     // Quote the SKU to avoid query-syntax surprises with special chars.
-    const r = await gql<{ productVariants: { edges: { node: { id: string; sku: string; inventoryItem: { id: string } } }[] } }>(
+    const r = await gql<{ productVariants: { edges: { node: { id: string; sku: string; product: { id: string }; inventoryItem: { id: string } } }[] } }>(
       creds,
       q,
       { q: `sku:'${sku.replace(/'/g, "")}'` },
@@ -102,7 +103,7 @@ export const shopifyProvider: ChannelProvider = {
     const node = edges[0].node;
     return {
       kind: "unique",
-      match: { externalVariantId: node.id, externalInventoryItemId: node.inventoryItem.id, sku: node.sku },
+      match: { externalVariantId: node.id, externalInventoryItemId: node.inventoryItem.id, externalProductId: node.product.id, sku: node.sku },
     };
   },
 
@@ -121,6 +122,24 @@ export const shopifyProvider: ChannelProvider = {
     });
     if (r.errors) return { ok: false, error: typeof r.errors === "string" ? r.errors : "graphql error" };
     const ue = r.data?.inventorySetQuantities?.userErrors ?? [];
+    if (ue.length) return { ok: false, error: ue.map((e) => e.message).join("; ") };
+    return { ok: true };
+  },
+
+  async setVariantPrice(creds, externalProductId, externalVariantId, price, compareAtPrice): Promise<OpResult> {
+    const m = `mutation($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+      productVariantsBulkUpdate(productId: $productId, variants: $variants) { userErrors { field message } }
+    }`;
+    const r = await gql<{ productVariantsBulkUpdate: { userErrors: { message: string }[] } }>(creds, m, {
+      productId: externalProductId,
+      variants: [{
+        id: externalVariantId,
+        price: price.toFixed(2),
+        compareAtPrice: compareAtPrice != null ? compareAtPrice.toFixed(2) : null,
+      }],
+    });
+    if (r.errors) return { ok: false, error: typeof r.errors === "string" ? r.errors : "graphql error" };
+    const ue = r.data?.productVariantsBulkUpdate?.userErrors ?? [];
     if (ue.length) return { ok: false, error: ue.map((e) => e.message).join("; ") };
     return { ok: true };
   },

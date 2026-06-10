@@ -13,6 +13,8 @@ export const MOCK_LOCATION_ID = "gid://shopify/Location/1";
 
 /** Recorded inventory pushes — test assertion hook. Reset between tests. */
 export const mockInventorySetCalls: { inventoryItemId: string; locationId: string; onHand: number }[] = [];
+/** Recorded price pushes — test assertion hook. */
+export const mockPriceSetCalls: { productId: string; variantId: string; price: number; compareAt: number | null }[] = [];
 /** SKUs the mock should report as not-found (test the unresolved path). */
 export const mockUnresolvedSkus = new Set<string>();
 /** SKUs the mock should report as ambiguous. */
@@ -20,6 +22,7 @@ export const mockAmbiguousSkus = new Set<string>();
 
 export function resetMock(): void {
   mockInventorySetCalls.length = 0;
+  mockPriceSetCalls.length = 0;
   mockUnresolvedSkus.clear();
   mockAmbiguousSkus.clear();
 }
@@ -36,11 +39,20 @@ export const mockProvider: ChannelProvider = {
     if (mockAmbiguousSkus.has(sku)) return { kind: "ambiguous", count: 2 };
     return {
       kind: "unique",
-      match: { externalVariantId: `gid://shopify/ProductVariant/${sku}`, externalInventoryItemId: `gid://shopify/InventoryItem/${sku}`, sku },
+      match: {
+        externalVariantId: `gid://shopify/ProductVariant/${sku}`,
+        externalInventoryItemId: `gid://shopify/InventoryItem/${sku}`,
+        externalProductId: `gid://shopify/Product/${sku}`,
+        sku,
+      },
     };
   },
   async setInventory(_creds, inventoryItemId, locationId, onHand) {
     mockInventorySetCalls.push({ inventoryItemId, locationId, onHand });
+    return { ok: true };
+  },
+  async setVariantPrice(_creds, productId, variantId, price, compareAt) {
+    mockPriceSetCalls.push({ productId, variantId, price, compareAt });
     return { ok: true };
   },
   async registerOrderWebhook() {
