@@ -1,15 +1,25 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { LocalStoreData } from '@/lib/persistence/types';
 import { Mail, Clock, CheckCircle2, AlertCircle } from 'lucide-react';
 import { formatCurrency } from "@/lib/format";
+import { authFetch } from '@/lib/api/client';
 
 interface DigestSettings {
   dailyEnabled: boolean;
   weeklyEnabled: boolean;
   recipientEmails: string;
   sendTime: string;
+}
+
+interface ApiDigestConfig {
+  dailyEnabled: boolean;
+  weeklyEnabled: boolean;
+  recipients: string[];
+  sendHour: number;
+  lastDailySentOn: string | null;
+  lastWeeklySentOn: string | null;
 }
 
 interface SalesMetrics {
@@ -39,6 +49,28 @@ export function SalesDigestSettings({ store }: { store: LocalStoreData }) {
 
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
   const [testEmailStatus, setTestEmailStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
+  const [errorText, setErrorText] = useState<string | null>(null);
+  const [lastSent, setLastSent] = useState<{ daily: string | null; weekly: string | null }>({ daily: null, weekly: null });
+
+  // Load the persisted config (P3.2 — this panel was a stub until the
+  // /api/sales-digest backend existed).
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await authFetch('/api/sales-digest');
+        if (!r.ok) return;
+        const d = (await r.json()) as { config?: ApiDigestConfig };
+        if (!d.config) return;
+        setSettings({
+          dailyEnabled: d.config.dailyEnabled,
+          weeklyEnabled: d.config.weeklyEnabled,
+          recipientEmails: (d.config.recipients ?? []).join(', '),
+          sendTime: `${String(d.config.sendHour ?? 8).padStart(2, '0')}:00`,
+        });
+        setLastSent({ daily: d.config.lastDailySentOn, weekly: d.config.lastWeeklySentOn });
+      } catch { /* ignore — panel still usable */ }
+    })();
+  }, []);
 
   // Calculate sales metrics from store data
   const metrics = useMemo((): SalesMetrics => {
@@ -129,22 +161,71 @@ export function SalesDigestSettings({ store }: { store: LocalStoreData }) {
     }));
   };
 
-  // NOTE: the sales-digest backend is not yet implemented. These handlers
-  // previously faked a save via setTimeout, misleading users into thinking
-  // their settings were persisted. Until a real /api/sales-digest endpoint
-  // exists, set the status to 'error' so users know the setting isn't saved.
-  const handleSaveSettings = () => {
-    setSaveStatus('error');
+  const toPayload = () => ({
+    dailyEnabled: settings.dailyEnabled,
+    weeklyEnabled: settings.weeklyEnabled,
+    recipients: settings.recipientEmails.split(',').map((e) => e.trim()).filter(Boolean),
+    sendHour: Math.min(23, Math.max(0, parseInt(settings.sendTime.split(':')[0] ?? '8', 10) || 8)),
+  });
+
+  const handleSaveSettings = async () => {
+    setSaveStatus('saving');
+    setErrorText(null);
+    try {
+      const r = await authFetch('/api/sales-digest', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(toPayload()),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) {
+        setSaveStatus('success');
+      } else {
+        setErrorText((d as { error?: string }).error ?? 'Save failed');
+        setSaveStatus('error');
+      }
+    } catch {
+      setErrorText('Save failed — network error');
+      setSaveStatus('error');
+    }
     setTimeout(() => setSaveStatus('idle'), 4000);
   };
 
-  const handleSendTestEmail = () => {
+  const handleSendTestEmail = async () => {
     if (!settings.recipientEmails.trim()) {
+      setErrorText('Add at least one recipient first');
       setTestEmailStatus('error');
       setTimeout(() => setTestEmailStatus('idle'), 3000);
       return;
     }
-    setTestEmailStatus('error');
+    setTestEmailStatus('sending');
+    setErrorText(null);
+    try {
+      // Save first so the test goes to exactly what's persisted.
+      const save = await authFetch('/api/sales-digest', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(toPayload()),
+      });
+      if (!save.ok) {
+        const d = await save.json().catch(() => ({}));
+        setErrorText((d as { error?: string }).error ?? 'Save failed');
+        setTestEmailStatus('error');
+        setTimeout(() => setTestEmailStatus('idle'), 4000);
+        return;
+      }
+      const r = await authFetch('/api/sales-digest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) {
+        setTestEmailStatus('success');
+      } else {
+        setErrorText((d as { error?: string }).error ?? 'Test send failed');
+        setTestEmailStatus('error');
+      }
+    } catch {
+      setErrorText('Test send failed — network error');
+      setTestEmailStatus('error');
+    }
     setTimeout(() => setTestEmailStatus('idle'), 4000);
   };
 
@@ -254,23 +335,33 @@ export function SalesDigestSettings({ store }: { store: LocalStoreData }) {
             </p>
           </div>
 
-          {/* Save Status */}
-          {saveStatus !== 'idle' && (
+          {/* Last-sent info */}
+          {(lastSent.daily || lastSent.weekly) && (
+            <p className="text-sm text-zinc-500">
+              {lastSent.daily && <>Last daily digest covered <span className="font-medium text-zinc-700">{lastSent.daily}</span>. </>}
+              {lastSent.weekly && <>Last weekly digest covered the week ending <span className="font-medium text-zinc-700">{lastSent.weekly}</span>.</>}
+            </p>
+          )}
+
+          {/* Save / test status */}
+          {(saveStatus !== 'idle' || testEmailStatus !== 'idle') && (
             <div
               className={`flex items-center gap-3 p-4 rounded-xl ${
-                saveStatus === 'success'
+                saveStatus === 'success' || testEmailStatus === 'success'
                   ? 'bg-green-50 text-green-700 border border-green-200'
-                  : saveStatus === 'error'
+                  : saveStatus === 'error' || testEmailStatus === 'error'
                     ? 'bg-red-50 text-red-700 border border-red-200'
                     : 'bg-blue-50 text-blue-700 border border-blue-200'
               }`}
             >
-              {saveStatus === 'success' && <CheckCircle2 className="w-5 h-5 flex-shrink-0" />}
-              {saveStatus === 'error' && <AlertCircle className="w-5 h-5 flex-shrink-0" />}
+              {(saveStatus === 'success' || testEmailStatus === 'success') && <CheckCircle2 className="w-5 h-5 flex-shrink-0" />}
+              {(saveStatus === 'error' || testEmailStatus === 'error') && <AlertCircle className="w-5 h-5 flex-shrink-0" />}
               <span className="text-sm font-medium">
-                {saveStatus === 'success' && 'Settings saved successfully'}
-                {saveStatus === 'saving' && 'Saving settings...'}
-                {saveStatus === 'error' && 'Sales digest is not yet implemented — settings are not saved.'}
+                {saveStatus === 'saving' && 'Saving settings…'}
+                {testEmailStatus === 'sending' && 'Sending test digest…'}
+                {saveStatus === 'success' && 'Settings saved.'}
+                {testEmailStatus === 'success' && 'Test digest sent — check your inbox.'}
+                {(saveStatus === 'error' || testEmailStatus === 'error') && (errorText ?? 'Something went wrong.')}
               </span>
             </div>
           )}

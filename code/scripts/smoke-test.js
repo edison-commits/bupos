@@ -128,40 +128,59 @@ async function testRegisterClockIn(page, registerPath) {
     return true;
   }
 
-  let clocked = await clickCashierHere();
-  if (!clocked && onRoster(await page.textContent('body'))) {
-    const change = await page.$('[data-testid="change-store"]');
-    if (change) { await change.click(); await page.waitForTimeout(600); }
-    const total = (await page.$$('[data-testid="store-card"]')).length;
-    for (let i = 0; i < total && !clocked; i++) {
-      const cards = await page.$$('[data-testid="store-card"]');
-      if (i >= cards.length) break;
-      await cards[i].click();
-      await page.waitForTimeout(800);
-      clocked = await clickCashierHere();
-      if (!clocked) {
-        const back2 = await page.$('[data-testid="change-store"]');
+  async function attemptClockIn() {
+    let clocked = await clickCashierHere();
+    if (!clocked && onRoster(await page.textContent('body'))) {
+      const change = await page.$('[data-testid="change-store"]');
+      if (change) { await change.click(); await page.waitForTimeout(600); }
+      const total = (await page.$$('[data-testid="store-card"]')).length;
+      for (let i = 0; i < total && !clocked; i++) {
+        const cards = await page.$$('[data-testid="store-card"]');
+        if (i >= cards.length) break;
+        await cards[i].click();
+        await page.waitForTimeout(800);
+        clocked = await clickCashierHere();
+        if (!clocked) {
+          const back2 = await page.$('[data-testid="change-store"]');
         if (back2) { await back2.click(); await page.waitForTimeout(600); }
+        }
       }
     }
+    return clocked;
   }
 
-  if (clocked) {
+  // One retry on a transient error page: a one-off infra blip during the
+  // clock-in action (e.g. a dropped DB connection) renders 'Register Error'
+  // and previously failed the whole deploy — while the very next run with
+  // the identical bundle passed. Persistent breakage still fails: two
+  // consecutive error pages are required.
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const clocked = await attemptClockIn();
+    if (!clocked) {
+      log('⚠️', 'No cashier on any roster — skipped end-to-end clock-in (UI verified healthy)');
+      return;
+    }
     const url = page.url();
     const body = await page.textContent('body');
     if (body.includes('Register Error')) {
-      log('❌', `Clock-in failed — error on page. URL: ${url}`);
+      if (attempt === 1) {
+        log('⚠️', 'Clock-in hit an error page — retrying once (transient tolerance)…');
+        await page.goto(`${BASE}${registerPath}`, { waitUntil: 'domcontentloaded', timeout: 15000 });
+        await page.waitForTimeout(2000);
+        await ensureRoster();
+        continue;
+      }
+      log('❌', `Clock-in failed — error on page after retry. URL: ${url}`);
       failures++;
       return;
     }
     if (url.includes('notice=Clocked') || (!onPicker(body) && !onRoster(body))) {
-      log('✅', 'Cashier clock-in OK');
+      log('✅', `Cashier clock-in OK${attempt > 1 ? ' (after retry)' : ''}`);
     } else {
       log('❌', `Clock-in did not complete (still on roster/picker). URL: ${url}`);
       failures++;
     }
-  } else {
-    log('⚠️', 'No cashier on any roster — skipped end-to-end clock-in (UI verified healthy)');
+    return;
   }
 }
 

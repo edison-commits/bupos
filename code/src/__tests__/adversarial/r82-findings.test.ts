@@ -73,7 +73,10 @@ describe("R82 audit fixes — round 26", () => {
   });
 
   describe("R82-DB-H3 HIGH: /api/eod-report sign-based filters", () => {
-    const src = read("src/app/api/eod-report/route.ts");
+    // P3.2: the report SQL moved verbatim from the route into
+    // src/lib/reports/eod.ts (shared with the sales-digest sender).
+    // The invariant lives in the SQL, wherever the SQL lives.
+    const src = read("src/lib/reports/eod.ts");
     it("total_returns_count filters on status=completed + grand_total<0", () => {
       expect(src).toMatch(/total_returns_count[\s\S]{0,100}status = 'completed' AND grand_total < 0/);
     });

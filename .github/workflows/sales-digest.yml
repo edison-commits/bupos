@@ -1,0 +1,37 @@
+name: Sales digest
+
+# P3.2: hourly tick for the sales-digest sender. The endpoint itself decides
+# per-org whether anything is due (org-local sendHour match + once-per-window
+# markers), so firing hourly is correct for every timezone.
+#
+# DORMANT UNTIL CONFIGURED: when the SALES_DIGEST_SECRET repo secret is unset,
+# the send step skips with a note (no failures, no noise). To activate:
+#   1. openssl rand -hex 32                         # generate a ≥32-char secret
+#   2. gh secret set SALES_DIGEST_SECRET            # repo secret (this cron)
+#   3. wrangler secret put SALES_DIGEST_SECRET      # Worker secret (the endpoint)
+# Same Bearer fail-closed pattern as reconcile-channels / run-cleanup.
+
+on:
+  schedule:
+    - cron: "7 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    env:
+      DIGEST_SECRET: ${{ secrets.SALES_DIGEST_SECRET }}
+    steps:
+      - name: Send due digests
+        if: env.DIGEST_SECRET != ''
+        run: |
+          set -euo pipefail
+          curl --fail-with-body -sS -X POST \
+            -H "Authorization: Bearer ${DIGEST_SECRET}" \
+            https://basicuniformpos.com/api/internal/send-sales-digest
+      - name: Skipped (not configured)
+        if: env.DIGEST_SECRET == ''
+        run: echo "SALES_DIGEST_SECRET not set — digest send skipped (dormant)."

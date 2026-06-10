@@ -104,6 +104,11 @@ const ALLOWLIST = {
   // call invokes the list_connected_channels SECDEF RPC, then per-org orgQuery.
   "src/app/api/internal/reconcile-channels/route.ts":
     "Bearer-gated reconcile; lists tenants via list_connected_channels SECDEF RPC",
+  // P3.2: Bearer-gated hourly digest sender (same shape as reconcile-channels);
+  // the single getPool call invokes the list_digest_orgs SECDEF RPC, then
+  // per-org orgQuery for the report + lastSent bookkeeping.
+  "src/app/api/internal/send-sales-digest/route.ts":
+    "Bearer-gated digest sender; lists tenants via list_digest_orgs SECDEF RPC",
   // R23-L-3: admin-gated variant. Same shape as /api/health; gated by
   // `audit.view` permission and only executes a `SELECT 1 + now() +
   // version()` probe with no tenant scope.

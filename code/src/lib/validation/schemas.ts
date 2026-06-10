@@ -880,6 +880,16 @@ export const shopifyConfigSchema = z.object({
   actorPassword: z.string().max(200).optional(),
 }).strict();
 
+// P3.2: sales-digest configuration (organizations.digest_config). The
+// lastDailySentOn / lastWeeklySentOn bookkeeping fields are server-managed
+// and deliberately NOT accepted from the client (strict() rejects them).
+export const digestConfigSchema = z.object({
+  dailyEnabled: z.boolean(),
+  weeklyEnabled: z.boolean(),
+  recipients: z.array(z.string().trim().email().max(254)).max(5),
+  sendHour: z.number().int().min(0).max(23),
+}).strict();
+
 // ---------------------------------------------------------------------------
 // Generic validate helper
 // ---------------------------------------------------------------------------

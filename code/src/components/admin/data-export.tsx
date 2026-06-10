@@ -138,6 +138,92 @@ export function DataExport({ store }: DataExportProps) {
     );
   };
 
+  // P3.3: QuickBooks Online journal-import CSV (3-column format: one row per
+  // account per day, paired Debits/Credits columns). Per local calendar day:
+  //   Debits — tender totals by account (Cash on Hand, Card Clearing,
+  //            gift-card/store-credit liabilities); transactions with no
+  //            tender rows fall back to Undeposited Funds at grand_total.
+  //   Credits — Sales Revenue (grand_total − tax) + Sales Tax Payable (tax).
+  // Returns (negative amounts) flip to the opposite column so every figure
+  // is positive, as the QBO importer expects. Days are bucketed in the
+  // BROWSER'S timezone — same convention as the other exports on this panel.
+  const handleExportQuickBooksJournal = () => {
+    const TENDER_ACCOUNTS: Record<string, string> = {
+      cash: "Cash on Hand",
+      card: "Card Clearing",
+      gift_card: "Gift Card Liability",
+      store_credit: "Store Credit Liability",
+      loyalty: "Loyalty Redemptions",
+    };
+    const localDay = (iso: string) => {
+      const d = new Date(iso);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    };
+
+    // day → account → net amount (positive = debit for tender accounts,
+    // positive = credit for revenue/tax; sign flips column at emit time).
+    const days = new Map<string, Map<string, number>>();
+    const bump = (day: string, account: string, amount: number) => {
+      if (!days.has(day)) days.set(day, new Map());
+      const m = days.get(day)!;
+      m.set(account, (m.get(account) ?? 0) + amount);
+    };
+
+    const tendersByTxn = new Map<string, { tenderType: string; amount: number }[]>();
+    store.transactionTenderPlaceholders.forEach((t) => {
+      const arr = tendersByTxn.get(t.transactionId);
+      if (arr) arr.push(t); else tendersByTxn.set(t.transactionId, [t]);
+    });
+
+    store.transactionEventPlaceholders
+      .filter((evt) => evt.eventKind === "transaction_placeholder")
+      .forEach((evt) => {
+        const day = localDay(evt.createdAt);
+        const grand = Number(evt.payload?.grand_total ?? 0);
+        const tax = Number(evt.payload?.tax_total ?? 0);
+        // Credit side: revenue (net of tax) + tax payable.
+        bump(day, "credit:Sales Revenue", grand - tax);
+        bump(day, "credit:Sales Tax Payable", tax);
+        // Debit side: tenders (or Undeposited Funds when none recorded).
+        const tenders = tendersByTxn.get(evt.transactionId) ?? [];
+        if (tenders.length === 0) {
+          bump(day, "debit:Undeposited Funds", grand);
+        } else {
+          tenders.forEach((t) => {
+            const account = TENDER_ACCOUNTS[t.tenderType] ?? "Other Tenders Clearing";
+            bump(day, `debit:${account}`, t.amount);
+          });
+        }
+      });
+
+    const headers = ["JournalNo", "JournalDate", "AccountName", "Debits", "Credits", "Description"];
+    const rows: string[][] = [];
+    [...days.keys()].sort().forEach((day) => {
+      const journalNo = `BUPOS-${day.replace(/-/g, "")}`;
+      [...days.get(day)!.entries()].forEach(([key, amount]) => {
+        if (Math.abs(amount) < 0.005) return; // drop zero lines
+        const [side, account] = key.split(":", 2) as ["debit" | "credit", string];
+        // Negative nets (refund-heavy days) flip to the opposite column.
+        const effSide = amount >= 0 ? side : side === "debit" ? "credit" : "debit";
+        const abs = Math.abs(amount).toFixed(2);
+        rows.push([
+          journalNo,
+          day,
+          account,
+          effSide === "debit" ? abs : "",
+          effSide === "credit" ? abs : "",
+          `BuPOS daily sales ${day}`,
+        ]);
+      });
+    });
+
+    downloadCSV(
+      `quickbooks_journal_${new Date().toISOString().split("T")[0]}.csv`,
+      headers,
+      rows
+    );
+  };
+
   return (
     <div className="flex flex-col gap-3">
       <button
@@ -158,6 +244,16 @@ export function DataExport({ store }: DataExportProps) {
       >
         Export Tender Summary CSV
       </button>
+      <button
+        onClick={handleExportQuickBooksJournal}
+        className="touch-button rounded-2xl bg-teal-700 px-4 py-3 text-sm font-semibold text-white hover:bg-teal-800"
+      >
+        Export QuickBooks Journal CSV
+      </button>
+      <p className="text-xs text-zinc-500">
+        The QuickBooks export is a daily sales journal (debits: tenders; credits: Sales Revenue + Sales Tax
+        Payable) in QBO&apos;s 3-column journal-import format — import via Settings → Import Data → Journal Entries.
+      </p>
     </div>
   );
 }
