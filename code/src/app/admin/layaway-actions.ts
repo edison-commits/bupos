@@ -288,6 +288,7 @@ export async function makeLayawayPaymentAction(formData: FormData) {
 
   invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin");
+  revalidatePath("/admin/layaways");
 }
 
 // R10-M-1 → R11-M-1 closed: layaway cancel now takes a required
@@ -575,6 +576,7 @@ export async function cancelLayawayAction(
   invInv(ctx.employee.organizationId);
   invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin");
+  revalidatePath("/admin/layaways");
 }
 
 export async function collectLayawayAction(layawayId: string, actorPassword?: string) {
@@ -649,4 +651,5 @@ export async function collectLayawayAction(layawayId: string, actorPassword?: st
 
   invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin");
+  revalidatePath("/admin/layaways");
 }

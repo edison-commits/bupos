@@ -187,6 +187,7 @@ export async function activateGiftCardAction(formData: FormData) {
 
   invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin");
+  revalidatePath("/admin/gift-cards");
 }
 
 export async function reloadGiftCardAction(formData: FormData) {
@@ -308,6 +309,7 @@ export async function reloadGiftCardAction(formData: FormData) {
 
   invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin");
+  revalidatePath("/admin/gift-cards");
 }
 
 export async function disableGiftCardAction(
@@ -406,5 +408,6 @@ export async function disableGiftCardAction(
   }
   invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin");
+  revalidatePath("/admin/gift-cards");
   return { success: true };
 }

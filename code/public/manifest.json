@@ -5,7 +5,7 @@
   "start_url": "/register",
   "display": "standalone",
   "background_color": "#0f172a",
-  "theme_color": "#0d9488",
+  "theme_color": "#0f766e",
   "orientation": "landscape",
   "icons": [
     {

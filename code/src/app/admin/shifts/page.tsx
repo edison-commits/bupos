@@ -1,6 +1,5 @@
 'use client';
 
-import { AdminTopNav } from "@/components/layout/admin-top-nav";
 import { useState, useEffect } from "react";
 import { formatDateTime } from "@/lib/utils/date";
 import Link from "next/link";
@@ -122,7 +121,6 @@ export default function ShiftsPage() {
 
   return (
     <div className="min-h-screen bg-zinc-50">
-      <AdminTopNav />
 
       <div className="mx-auto max-w-7xl px-4 py-6">
         {/* Header */}

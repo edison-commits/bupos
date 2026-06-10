@@ -194,6 +194,7 @@ export async function createStocktakeAction(formData: FormData) {
 
   invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin");
+  revalidatePath("/admin/stocktakes");
 }
 
 export async function recordCountAction(formData: FormData) {
@@ -277,6 +278,7 @@ export async function recordCountAction(formData: FormData) {
 
   invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin");
+  revalidatePath("/admin/stocktakes");
 }
 
 export async function acceptStocktakeAction(stocktakeId: string, actorPassword?: string) {
@@ -543,6 +545,7 @@ export async function acceptStocktakeAction(stocktakeId: string, actorPassword?:
   invInv(ctx.employee.organizationId);
   invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin");
+  revalidatePath("/admin/stocktakes");
 }
 
 export async function cancelStocktakeAction(stocktakeId: string) {
@@ -595,4 +598,5 @@ export async function cancelStocktakeAction(stocktakeId: string) {
 
   invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin");
+  revalidatePath("/admin/stocktakes");
 }

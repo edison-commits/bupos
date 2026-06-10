@@ -1,9 +1,9 @@
 'use client';
 
-import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { ChevronDown, ChevronUp, Search, Download, Calendar, Filter } from 'lucide-react';
+import { ChevronDown, ChevronUp, Search, Download, Calendar, Filter, Receipt } from 'lucide-react';
+import { EmptyState } from '@/components/ui/empty-state';
 import { authFetch } from '@/lib/api/client';
 import { formatCurrency } from '@/lib/format';
 import { useDebouncedValue } from '@/lib/hooks/use-debounced-value';
@@ -334,7 +334,6 @@ export default function TransactionsPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-        <AdminTopNav />
       {/* Header */}
       <div className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -405,9 +404,11 @@ export default function TransactionsPage() {
               <TransactionSkeleton />
             </div>
           ) : transactions.length === 0 ? (
-            <div className="p-12 text-center">
-              <p className="text-gray-500 text-lg">No transactions found</p>
-            </div>
+            <EmptyState
+              icon={Receipt}
+              title="No transactions yet"
+              description="Sales rung up at the register will appear here. Try a wider date range if you expected results."
+            />
           ) : (
             <>
               <div className="overflow-x-auto">

@@ -1,6 +1,5 @@
 'use client';
 
-import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
@@ -231,7 +230,6 @@ export default function ReceivingPage() {
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: 'var(--surface-default)' }}>
-        <AdminTopNav />
       {/* Header */}
       <div className="border-b" style={{ borderColor: 'var(--border-subtle)' }}>
         <div className="mx-auto max-w-6xl px-4 py-6">

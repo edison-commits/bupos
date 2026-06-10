@@ -10,6 +10,7 @@
 import { getAdminSession } from "@/lib/auth/session";
 import { redirect } from "next/navigation";
 import type { Metadata } from "next";
+import { AdminShell } from "@/components/layout/admin-shell";
 
 export const metadata: Metadata = {
   title: {
@@ -24,5 +25,12 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   if (!session) {
     redirect("/?error=Please+sign+in+to+access+admin");
   }
-  return <>{children}</>;
+  return (
+    <AdminShell
+      adminName={session.employee.displayName}
+      adminRole={session.employee.roleKey}
+    >
+      {children}
+    </AdminShell>
+  );
 }

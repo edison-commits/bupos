@@ -1,6 +1,5 @@
 'use client';
 
-import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import { useState, useEffect } from 'react';
 import { Plus, Search, Edit2, Lock, Eye, EyeOff } from 'lucide-react';
@@ -412,7 +411,6 @@ export default function EmployeeManagement() {
 
   return (
     <div className="min-h-screen bg-slate-50 p-4 md:p-8">
-        <AdminTopNav />
       {/* Success Alert */}
       {success && (
         <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-emerald-800">

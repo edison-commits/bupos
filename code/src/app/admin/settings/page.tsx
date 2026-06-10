@@ -1,6 +1,5 @@
 'use client';
 
-import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import { useState, useEffect } from 'react';
 import { AlertCircle, Check, X } from 'lucide-react';
@@ -1149,7 +1148,6 @@ export default function SettingsPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <AdminTopNav />
         <div className="max-w-6xl mx-auto px-6 pt-6 pb-8">
           <h1 className="text-3xl font-bold text-gray-900 mb-8">Settings</h1>
           <LoadingSkeleton />
@@ -1160,7 +1158,6 @@ export default function SettingsPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <AdminTopNav />
       <div className="max-w-6xl mx-auto px-6 pt-6 pb-8">
         <h1 className="text-3xl font-bold text-gray-900 mb-8">Settings</h1>
 

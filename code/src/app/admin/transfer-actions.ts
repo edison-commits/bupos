@@ -159,6 +159,7 @@ export async function createTransferAction(formData: FormData) {
 
   invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin");
+  revalidatePath("/admin/transfers");
 }
 
 export async function shipTransferAction(transferId: string, actorPassword?: string) {
@@ -352,6 +353,7 @@ export async function shipTransferAction(transferId: string, actorPassword?: str
 
   invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin");
+  revalidatePath("/admin/transfers");
 }
 
 export async function receiveTransferAction(transferId: string, actorPassword?: string) {
@@ -498,6 +500,7 @@ export async function receiveTransferAction(transferId: string, actorPassword?: 
 
   invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin");
+  revalidatePath("/admin/transfers");
 }
 
 export async function cancelTransferAction(transferId: string) {
@@ -571,4 +574,5 @@ export async function cancelTransferAction(transferId: string) {
 
   invalidateStoreCache(ctx.employee.organizationId);
   revalidatePath("/admin");
+  revalidatePath("/admin/transfers");
 }

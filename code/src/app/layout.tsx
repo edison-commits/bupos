@@ -1,15 +1,20 @@
 import type { Metadata, Viewport } from "next";
 import { Suspense } from "react";
 import { headers } from "next/headers";
+import { Inter } from "next/font/google";
 import { Toaster } from "sonner";
 import { NoticeToaster } from "@/components/notice-toaster";
 import { SwUpdateBanner } from "@/components/sw-update-banner";
 import "./globals.css";
 
+// Brand font, self-hosted at build time (no runtime fetch — Workers-safe).
+// globals.css maps Tailwind's `font-sans` to this variable.
+const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
+
 export const viewport: Viewport = {
-  // Microsoft Fluent / Azure blue — matches --surface-accent so the
-  // mobile browser chrome + PWA splash tint with the brand colour.
-  themeColor: "#0078d4",
+  // BuPOS teal — matches --surface-accent so the mobile browser
+  // chrome + PWA splash tint with the brand colour.
+  themeColor: "#0f766e",
 };
 
 export const metadata: Metadata = {
@@ -33,7 +38,7 @@ export default async function RootLayout({
   return (
     <html
       lang="en"
-      className="h-full bg-[var(--surface-app)] text-[var(--text-primary)] antialiased"
+      className={`${inter.variable} h-full bg-[var(--surface-app)] text-[var(--text-primary)] antialiased`}
     >
       <head>
         {/*

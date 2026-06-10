@@ -1,6 +1,5 @@
 'use client';
 
-import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import { useState, useEffect, useCallback } from 'react';
 import { authFetch } from '@/lib/api/client';
@@ -113,7 +112,6 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 pt-6">
-        <AdminTopNav />
       <div className="mx-auto max-w-7xl space-y-6 px-8 pb-12">
         {/* Header */}
         <div className="flex flex-wrap items-center justify-between gap-3">

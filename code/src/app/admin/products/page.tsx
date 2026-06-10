@@ -1,6 +1,5 @@
 'use client';
 
-import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import { useCallback, useEffect, useState } from 'react';
 import { authFetch } from '@/lib/api/client';
@@ -10,6 +9,8 @@ import { useDebouncedValue } from '@/lib/hooks/use-debounced-value';
 // FE-AUDIT5-HIGH3: Escape-to-close + role/aria-modal on every modal.
 import { useEscapeClose } from '@/lib/hooks/use-escape-close';
 import { KpiCard } from '@/components/ui/kpi-card';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Package } from 'lucide-react';
 // R53: step-up re-auth when editing a variant's price or cost.
 // Server /api/products PUT gates bucketKey:'variant-price-stepup'
 // when price or cost drifts; name/SKU/stock etc stay cookie-only.
@@ -446,7 +447,6 @@ export default function ProductsPage() {
 
   return (
     <div className="space-y-6 p-6">
-        <AdminTopNav />
       {/* Summary Cards */}
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
         {[
@@ -509,8 +509,27 @@ export default function ProductsPage() {
       {/* Products Table */}
       <div className="space-y-2">
         {filteredProducts.length === 0 ? (
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-8 text-center text-emerald-700">
-            No products found. {search || selectedCategory ? 'Try adjusting your filters.' : 'Add your first product!'}
+          <div className="rounded-lg border border-gray-200 bg-white">
+            <EmptyState
+              icon={Package}
+              title={search || selectedCategory ? 'No products match your filters' : 'No products yet'}
+              description={
+                search || selectedCategory
+                  ? 'Try a different search term or clear the category filter.'
+                  : 'Create your first product to start selling at the register.'
+              }
+              action={
+                search || selectedCategory ? undefined : (
+                  <button
+                    onClick={() => setModal({ type: 'add-product' })}
+                    className="inline-flex items-center rounded-md px-4 py-2 text-sm font-semibold text-white"
+                    style={{ background: 'var(--surface-accent)' }}
+                  >
+                    Add your first product
+                  </button>
+                )
+              }
+            />
           </div>
         ) : (
           filteredProducts.map(product => (

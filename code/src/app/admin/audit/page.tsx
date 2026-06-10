@@ -1,6 +1,5 @@
 'use client';
 
-import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import { useState, useEffect, useRef, Fragment } from 'react';
 // R42-F: RoleGate removed. The component read `bupos_employee_role` from
@@ -257,7 +256,6 @@ export default function AuditPage() {
   return (
     <>
       <div className="space-y-6 p-6 max-w-7xl mx-auto">
-        <AdminTopNav />
         {/* Header */}
         <div>
           <h1 className="text-3xl font-bold text-slate-900">Audit Trail</h1>

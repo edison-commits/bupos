@@ -1,10 +1,17 @@
 @import "tailwindcss";
 
+/* Brand font: Inter, self-hosted via next/font (--font-inter set on <html>).
+   Tailwind v4 inline theme token so the existing `font-sans` utility on
+   <body> resolves to it everywhere — no per-page changes needed. */
+@theme inline {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
 :root {
   /* ───────────────────────────────────────────────────────────────
-     Microsoft Fluent Design theme (light)
-     Adopts Microsoft's Fluent / Windows 11 design language:
-       • Azure "communication blue" #0078D4 brand accent
+     BuPOS brand theme (light) on Fluent/Windows-11 structure:
+       • BuPOS teal brand accent (#0f766e — AA contrast w/ white text;
+         matches the PWA manifest + page-header eyebrow teal family)
        • Fluent neutral background (#f3f3f3 Mica-light)
        • Windows 11 geometry (8px card radius, 4px controls)
        • Fluent elevation (soft, tight, layered shadows)
@@ -16,9 +23,9 @@
   --surface-panel: #ffffff;
   --surface-panel-muted: #faf9f8;
   --surface-inverse: #1b1a19;
-  --surface-accent: #0078d4;          /* Microsoft/Azure blue */
-  --surface-accent-hover: #106ebe;    /* Fluent rest → hover */
-  --surface-accent-pressed: #005a9e;  /* Fluent pressed */
+  --surface-accent: #0f766e;          /* BuPOS teal (teal-700) */
+  --surface-accent-hover: #115e59;    /* teal-800 rest → hover */
+  --surface-accent-pressed: #134e4a;  /* teal-900 pressed */
   --surface-danger: #a4262c;          /* Fluent "danger" red */
   --border-subtle: #e1dfdd;           /* Fluent neutralStroke */
   --border-strong: #c8c6c4;
@@ -39,16 +46,15 @@
 }
 
 html.dark {
-  /* Microsoft Fluent Design theme (dark) — Windows 11 dark surfaces +
-     the brighter Fluent dark-theme brand blue (#2899F5 / #479EF5 family)
-     so the accent keeps AA contrast on near-black panels. */
+  /* BuPOS brand theme (dark) — Windows 11 dark surfaces + a brighter
+     teal so the accent keeps contrast on near-black panels. */
   --surface-app: #1f1f1f;             /* Win11 dark Mica base */
   --surface-panel: #2b2b2b;           /* Fluent dark card */
   --surface-panel-muted: #333333;
   --surface-inverse: #ffffff;
-  --surface-accent: #2899f5;          /* Fluent dark brand blue */
-  --surface-accent-hover: #4ca8f7;
-  --surface-accent-pressed: #1a86e0;
+  --surface-accent: #14b8a6;          /* BuPOS teal, dark (teal-500) */
+  --surface-accent-hover: #2dd4bf;    /* teal-400 */
+  --surface-accent-pressed: #0d9488;  /* teal-600 */
   --surface-danger: #f1707b;
   --border-subtle: #3d3d3d;
   --border-strong: #4a4a4a;
@@ -777,30 +783,6 @@ html.dark select {
 html.dark select option {
   background-color: var(--surface-panel) !important;
   color: var(--text-primary) !important;
-}
-
-/* ───────────────────────────────────────────────────────────────────
-   Top-tab nav scroll-fade affordance
-   ───────────────────────────────────────────────────────────────────
-   The admin top tab strip overflows on narrower viewports
-   (Register / Dashboard / Transactions / Inventory / Products /
-    Customers / Employees / Loyalty / Promos / Shifts / Log /
-    Clock In / Cash Drawer / Receiving / Settings). Without a fade,
-   rightmost tabs are simply truncated with no cue that the user
-   can scroll horizontally. Add a gradient fade on the right edge
-   as an affordance — same pattern Tailwind docs uses for their
-   tab nav. Theme-aware via --surface-panel (matches the nav bar
-   background, not the page).
-*/
-.admin-top-nav-overflow-fade::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  right: 0;
-  width: 3rem;
-  background: linear-gradient(to left, var(--surface-panel), transparent);
-  pointer-events: none;
 }
 
 /* Virtual keyboard / numpad slide-up animation */

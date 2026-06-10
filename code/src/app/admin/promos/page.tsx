@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AdminTopNav } from "@/components/layout/admin-top-nav";
 import { authFetch } from "@/lib/api/client";
 import type { PromoCode, ProductVariant, Product } from "@/lib/domain/types";
 import { formatCurrency } from "@/lib/format";
@@ -270,7 +269,6 @@ export default function AdminPromosPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
-      <AdminTopNav />
       <div className="mx-auto max-w-7xl p-6">
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>

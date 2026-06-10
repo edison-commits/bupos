@@ -1,6 +1,5 @@
 'use client';
 
-import { AdminTopNav } from "@/components/layout/admin-top-nav";
 
 import { useState, useEffect } from 'react';
 import { AlertCircle, Award, DollarSign, Loader2, Search, TrendingUp, Users, X } from 'lucide-react';
@@ -268,7 +267,6 @@ export default function LoyaltyDashboard() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6">
-        <AdminTopNav />
       <div className="mx-auto max-w-7xl">
         {/* Header */}
         <div className="mb-8">

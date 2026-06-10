@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { AdminTopNav } from "@/components/layout/admin-top-nav";
 import { authFetch } from '@/lib/api/client';
 import { formatCurrency } from '@/lib/format';
 import { KpiCard } from "@/components/ui/kpi-card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Boxes } from 'lucide-react';
 
 interface ProductVariant {
   variant_id: string | null;
@@ -144,7 +145,6 @@ export default function InventoryPage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
       {/* Top Navigation */}
-      <AdminTopNav />
       <div className="max-w-7xl mx-auto px-8 pt-6 pb-8">
         {/* Header */}
         <div className="mb-8">
@@ -287,8 +287,13 @@ export default function InventoryPage() {
         {/* Products List */}
         <div className="space-y-4">
           {products.length === 0 ? (
-            <div className="bg-white rounded-lg shadow-sm p-12 text-center border border-slate-200">
-              <p className="text-slate-500 text-lg">No products found</p>
+            <div className="bg-white rounded-lg shadow-sm border border-slate-200">
+              <EmptyState
+                icon={Boxes}
+                title="No inventory to show"
+                description="Add products to your catalog and their stock will appear here. If you used filters, try clearing them."
+                action={{ label: "Go to Products", href: "/admin/products" }}
+              />
             </div>
           ) : (
             products.map((product) => (

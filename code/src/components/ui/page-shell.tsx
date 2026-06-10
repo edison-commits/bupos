@@ -18,7 +18,7 @@ export function PageShell({
         <header>
           <p
             style={{
-              color: "#0d9488",
+              color: "var(--surface-accent)",
               letterSpacing: "0.2em",
             }}
             className="text-sm font-semibold uppercase"
