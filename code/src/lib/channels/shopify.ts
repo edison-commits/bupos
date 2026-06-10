@@ -210,7 +210,9 @@ export const shopifyProvider: ChannelProvider = {
         price: v.price.toFixed(2),
         compareAtPrice: v.compareAtPrice != null ? v.compareAtPrice.toFixed(2) : null,
         inventoryItem: { sku: v.sku, tracked: true },
-        inventoryQuantities: [{ locationId: input.shopifyLocationId, name: "available", quantity: Math.max(0, Math.floor(v.onHand)) }],
+        // InventoryLevelInput is { availableQuantity, locationId } — this both
+        // stocks the new item at the location and seeds its quantity.
+        inventoryQuantities: [{ availableQuantity: Math.max(0, Math.floor(v.onHand)), locationId: input.shopifyLocationId }],
       })),
     });
     if (br.errors) return { ok: false, error: typeof br.errors === "string" ? br.errors : "graphql error", externalProductId: productId };
