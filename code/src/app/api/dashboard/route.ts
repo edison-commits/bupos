@@ -86,6 +86,7 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
   // count at 1 without materially slowing the page (queries are fast).
   const client = await orgTx(orgId);
   let metricsResult, tenderResult, hourlyResult, employeeResult, lowStockResult, recentResult;
+  let prevMetricsResult, dailyResult, categoryResult;
   try {
     // R27-C4: verify the requested `locationId` belongs to the caller's
     // org BEFORE running any dashboard query. Managers/owners bypass the
@@ -204,6 +205,51 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
       [orgId, locationId, fromDate, toDate],
     );
 
+    // Prior period of EQUAL length immediately before [from, to) — feeds
+    // the "vs prior period" deltas on the KPI cards.
+    prevMetricsResult = await client.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE status = 'completed' AND grand_total >= 0)::int AS transaction_count,
+         COALESCE(SUM(grand_total) FILTER (WHERE status = 'completed'), 0)::numeric AS gross_sales,
+         COALESCE(SUM(tax_total) FILTER (WHERE status = 'completed'), 0)::numeric AS total_tax,
+         COALESCE(AVG(grand_total) FILTER (WHERE status = 'completed' AND grand_total > 0), 0)::numeric AS avg_ticket
+       FROM transactions
+       WHERE organization_id = $1 AND location_id = $2
+         AND created_at >= $3::timestamptz - ($4::timestamptz - $3::timestamptz)
+         AND created_at < $3::timestamptz`,
+      [orgId, locationId, fromDate, toDate],
+    );
+
+    // Sales-by-day series (org-timezone days, same bucketing as hourly).
+    dailyResult = await client.query(
+      `SELECT
+         (created_at AT TIME ZONE COALESCE((SELECT timezone FROM organizations WHERE id = $1), 'UTC'))::date::text AS day,
+         COUNT(*) FILTER (WHERE grand_total >= 0)::int AS count,
+         COALESCE(SUM(grand_total), 0)::numeric AS total
+       FROM transactions
+       WHERE organization_id = $1 AND location_id = $2 AND created_at >= $3 AND created_at < $4 AND status = 'completed'
+       GROUP BY 1
+       ORDER BY 1`,
+      [orgId, locationId, fromDate, toDate],
+    );
+
+    // Top categories by revenue — same cart_snapshot lateral-join source of
+    // truth as /api/reports' category report.
+    categoryResult = await client.query(
+      `SELECT c.name,
+              COALESCE(SUM((item->>'quantity')::integer * (item->>'unitPrice')::numeric), 0)::numeric AS revenue
+       FROM transactions t
+       CROSS JOIN LATERAL jsonb_array_elements(t.cart_snapshot::jsonb -> 'items') AS item
+       JOIN product_variants pv ON pv.id = (item->>'productVariantId')::uuid AND pv.organization_id = $1
+       JOIN products p ON p.id = pv.product_id AND p.organization_id = $1
+       JOIN categories c ON c.id = p.category_id AND c.organization_id = $1
+       WHERE t.organization_id = $1 AND t.location_id = $2 AND t.created_at >= $3 AND t.created_at < $4 AND t.status = 'completed'
+       GROUP BY c.id, c.name
+       ORDER BY revenue DESC
+       LIMIT 6`,
+      [orgId, locationId, fromDate, toDate],
+    );
+
     await client.query("COMMIT");
   } catch (e) {
     await client.query("ROLLBACK").catch(() => {});
@@ -213,6 +259,7 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
   }
 
   const m = metricsResult.rows[0];
+  const pm = prevMetricsResult.rows[0];
 
   const hourlyBreakdown = hourlyResult.rows.map((r: Record<string, unknown>) => ({
     hour: r.hour,
@@ -238,6 +285,21 @@ export const GET = withAuth("audit.view", async (req, ctx) => {
       avgTicket: Number(Number(m.avg_ticket).toFixed(2)),
       largestSale: Number(Number(m.largest_sale).toFixed(2)),
     },
+    previousMetrics: {
+      grossSales: Number(Number(pm.gross_sales).toFixed(2)),
+      netSales: Number((Number(pm.gross_sales) - Number(pm.total_tax)).toFixed(2)),
+      transactionCount: pm.transaction_count,
+      avgTicket: Number(Number(pm.avg_ticket).toFixed(2)),
+    },
+    dailySeries: dailyResult.rows.map((r: Record<string, unknown>) => ({
+      day: r.day,
+      count: r.count,
+      total: Number(Number(r.total).toFixed(2)),
+    })),
+    categoryMix: categoryResult.rows.map((r: Record<string, unknown>) => ({
+      name: r.name,
+      revenue: Number(Number(r.revenue).toFixed(2)),
+    })),
     hourlyBreakdown,
     tenderBreakdown: tenderResult.rows,
     // R34-D3: employeePerformance rows contain per-cashier sales /

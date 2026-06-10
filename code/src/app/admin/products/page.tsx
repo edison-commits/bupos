@@ -10,6 +10,7 @@ import { useDebouncedValue } from '@/lib/hooks/use-debounced-value';
 import { useEscapeClose } from '@/lib/hooks/use-escape-close';
 import { KpiCard } from '@/components/ui/kpi-card';
 import { EmptyState } from '@/components/ui/empty-state';
+import { PaginationBar, type PaginationInfo } from '@/components/ui/pagination-bar';
 import { Package } from 'lucide-react';
 // R53: step-up re-auth when editing a variant's price or cost.
 // Server /api/products PUT gates bucketKey:'variant-price-stepup'
@@ -66,7 +67,19 @@ interface ProductsData {
     total_variants: number;
     categories_count: number;
   };
+  pagination?: PaginationInfo;
 }
+
+/** Sort choices map to the API's whitelisted sort + dir params. */
+const SORT_CHOICES = [
+  { value: 'name-asc', label: 'Name A–Z' },
+  { value: 'name-desc', label: 'Name Z–A' },
+  { value: 'updated-desc', label: 'Recently updated' },
+  { value: 'price-asc', label: 'Price: low → high' },
+  { value: 'price-desc', label: 'Price: high → low' },
+  { value: 'stock-asc', label: 'Stock: low → high' },
+  { value: 'stock-desc', label: 'Stock: high → low' },
+] as const;
 
 interface ModalState {
   type: 'add-product' | 'edit-product' | 'add-variant' | 'edit-variant' | 'import-csv' | null;
@@ -83,6 +96,9 @@ export default function ProductsPage() {
   const debouncedSearch = useDebouncedValue(search, 300);
   const [selectedCategory, setSelectedCategory] = useState('');
   const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [sortChoice, setSortChoice] = useState<string>('name-asc');
   const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());
   const [modal, setModal] = useState<ModalState>({ type: null });
   const [saving, setSaving] = useState(false);
@@ -99,6 +115,11 @@ export default function ProductsPage() {
       if (debouncedSearch) params.append('search', debouncedSearch);
       if (selectedCategory) params.append('category', selectedCategory);
       if (activeFilter !== 'all') params.append('active', activeFilter === 'active' ? 'true' : 'false');
+      const [sort, dir] = sortChoice.split('-');
+      params.append('page', String(page));
+      params.append('pageSize', String(pageSize));
+      params.append('sort', sort);
+      params.append('dir', dir);
 
       const response = await authFetch(`/api/products?${params.toString()}`);
       if (!response.ok) throw new Error('Failed to fetch products');
@@ -109,11 +130,22 @@ export default function ProductsPage() {
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, selectedCategory, activeFilter]);
+  }, [debouncedSearch, selectedCategory, activeFilter, page, pageSize, sortChoice]);
 
   useEffect(() => {
     fetchProducts();
   }, [fetchProducts]);
+
+  // Back to page 1 whenever the result set changes shape.
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, selectedCategory, activeFilter, sortChoice, pageSize]);
+
+  // Deep link from the command palette: /admin/products?q=<term> seeds the search box.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get('q');
+    if (q) setSearch(q);
+  }, []);
 
   const toggleExpandProduct = (productId: string) => {
     const newExpanded = new Set(expandedProducts);
@@ -491,6 +523,16 @@ export default function ProductsPage() {
             <option value="active">Active Only</option>
             <option value="inactive">Inactive Only</option>
           </select>
+          <select
+            value={sortChoice}
+            onChange={e => setSortChoice(e.target.value)}
+            aria-label="Sort products"
+            className="rounded-lg border border-emerald-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
+          >
+            {SORT_CHOICES.map(c => (
+              <option key={c.value} value={c.value}>Sort: {c.label}</option>
+            ))}
+          </select>
           <button
             onClick={() => setModal({ type: 'import-csv' })}
             className="rounded-lg border-2 border-emerald-300 bg-white px-5 py-4 text-lg font-bold text-emerald-700 hover:bg-emerald-50"
@@ -544,6 +586,13 @@ export default function ProductsPage() {
               onEditVariant={(variant: ProductVariant) => setModal({ type: 'edit-variant', productId: product.id, variantId: variant.id, data: variant })}
             />
           ))
+        )}
+        {data?.pagination && data.pagination.total > 0 && (
+          <PaginationBar
+            pagination={data.pagination}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+          />
         )}
       </div>
 

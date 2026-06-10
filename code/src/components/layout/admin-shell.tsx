@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, type ComponentType } from "react";
 import { adminLogoutAction } from "@/app/admin/actions";
+import { CommandPalette } from "./command-palette";
 import {
   ArrowLeftRight,
   Award,
@@ -24,6 +25,7 @@ import {
   PackageCheck,
   Receipt,
   ScrollText,
+  Search,
   Settings,
   Store,
   Tags,
@@ -51,7 +53,7 @@ interface NavItem {
   exact?: boolean;
 }
 
-const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
+export const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
   {
     label: null,
     items: [{ href: "/admin/dashboard", label: "Dashboard", icon: LayoutDashboard }],
@@ -198,6 +200,7 @@ export function AdminShell({
 }) {
   const pathname = usePathname();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   // Close the mobile drawer on navigation.
   useEffect(() => { setDrawerOpen(false); }, [pathname]);
 
@@ -208,6 +211,18 @@ export function AdminShell({
   const sidebarInner = (
     <div className="flex h-full flex-col" style={{ background: "var(--surface-panel)" }}>
       <Wordmark />
+      <div className="px-2 pb-2">
+        <button
+          type="button"
+          onClick={() => setPaletteOpen(true)}
+          className="flex w-full items-center gap-2 rounded-md border px-3 py-1.5 text-sm"
+          style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)", background: "var(--surface-panel-muted)" }}
+        >
+          <Search className="h-3.5 w-3.5" />
+          <span className="flex-1 text-left">Search…</span>
+          <kbd className="rounded border px-1 py-0.5 text-[10px]" style={{ borderColor: "var(--border-subtle)" }}>⌘K</kbd>
+        </button>
+      </div>
       <NavLinks pathname={pathname} />
       <UserCard adminName={adminName} adminRole={adminRole} />
     </div>
@@ -268,6 +283,8 @@ export function AdminShell({
         </header>
         <main className="min-w-0 flex-1">{children}</main>
       </div>
+
+      <CommandPalette open={paletteOpen} setOpen={setPaletteOpen} />
     </div>
   );
 }

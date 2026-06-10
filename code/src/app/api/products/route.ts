@@ -30,6 +30,20 @@ export const GET = withDualAuth("catalog.manage", async (request, ctx) => {
     const category = searchParams.get('category') || '';
     const active = searchParams.get('active');
 
+    // Opt-in server-side pagination + sorting. Absent `page`, the response
+    // is the legacy full list — existing consumers are unaffected.
+    const page = Math.max(0, parseInt(searchParams.get('page') ?? '0', 10) || 0); // 0 = not requested
+    const pageSize = Math.min(200, Math.max(10, parseInt(searchParams.get('pageSize') ?? '50', 10) || 50));
+    // Whitelisted sort expressions — NEVER interpolate user input into SQL.
+    const SORT_EXPRS: Record<string, string> = {
+      name: 'p.name',
+      updated: 'MAX(p.updated_at)',
+      price: 'MIN(pv.price)',
+      stock: 'COALESCE(SUM(i.on_hand), 0)',
+    };
+    const sortExpr = SORT_EXPRS[searchParams.get('sort') ?? 'name'] ?? SORT_EXPRS.name;
+    const sortDir = searchParams.get('dir') === 'desc' ? 'DESC' : 'ASC';
+
     // R26-F1: explicit organization_id filter. The `postgres` role has
     // BYPASSRLS in prod, so the RLS policy on products DOES NOT fire.
     // Without this filter the GET /api/products handler leaks every
@@ -80,7 +94,43 @@ export const GET = withDualAuth("catalog.manage", async (request, ctx) => {
     // can't splice foreign rows into this tenant's list.
     const client = await orgTx(orgId);
     let productsResult, categoriesResult, summaryResult;
+    let pageIds: string[] | null = null;
+    let pagination: { page: number; pageSize: number; total: number; totalPages: number } | null = null;
     try {
+      if (page > 0) {
+        // Resolve the page of PRODUCT ids first (the main query returns one
+        // row per variant, so LIMIT there would truncate mid-product). Both
+        // queries keep the exact same join set as the main query so the
+        // $1/$2 slots stay bound.
+        const countResult = await client.query(
+          `
+          SELECT COUNT(DISTINCT p.id)::int AS total
+          FROM products p
+          LEFT JOIN product_variants pv ON p.id = pv.product_id AND pv.organization_id = $1
+          LEFT JOIN inventory_levels i ON pv.id = i.product_variant_id AND i.location_id = $2 AND i.organization_id = $1
+          WHERE p.organization_id = $1${andClause}
+          `,
+          params
+        );
+        const total = (countResult.rows[0] as { total: number } | undefined)?.total ?? 0;
+        const pageResult = await client.query(
+          `
+          SELECT p.id
+          FROM products p
+          LEFT JOIN product_variants pv ON p.id = pv.product_id AND pv.organization_id = $1
+          LEFT JOIN inventory_levels i ON pv.id = i.product_variant_id AND i.location_id = $2 AND i.organization_id = $1
+          WHERE p.organization_id = $1${andClause}
+          GROUP BY p.id
+          ORDER BY ${sortExpr} ${sortDir}, p.name ASC
+          LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
+          `,
+          params
+        );
+        pageIds = (pageResult.rows as { id: string }[]).map((r) => r.id);
+        pagination = { page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) };
+      }
+      const pageFilter = pageIds ? ` AND p.id = ANY($${params.length + 1}::uuid[])` : '';
+      const mainParams = pageIds ? [...params, pageIds] : params;
       productsResult = await client.query(
         `
         SELECT
@@ -113,10 +163,10 @@ export const GET = withDualAuth("catalog.manage", async (request, ctx) => {
         LEFT JOIN suppliers s ON p.supplier_id = s.id AND s.organization_id = $1
         LEFT JOIN product_variants pv ON p.id = pv.product_id AND pv.organization_id = $1
         LEFT JOIN inventory_levels i ON pv.id = i.product_variant_id AND i.location_id = $2 AND i.organization_id = $1
-        WHERE p.organization_id = $1${andClause}
+        WHERE p.organization_id = $1${andClause}${pageFilter}
         ORDER BY p.name, pv.sku
         `,
-        params
+        mainParams
       );
 
       // R26-F1: explicit org filters on the metadata queries too.
@@ -207,6 +257,13 @@ export const GET = withDualAuth("catalog.manage", async (request, ctx) => {
       };
     });
 
+    // The main query orders by name for stable variant grouping; re-apply
+    // the requested sort using the page-id order resolved above.
+    if (pageIds) {
+      const orderIdx = new Map(pageIds.map((id, i) => [id, i]));
+      products.sort((a, b) => (orderIdx.get(a.id) ?? 0) - (orderIdx.get(b.id) ?? 0));
+    }
+
     const categories = categoriesResult.rows;
     const summary = summaryResult.rows[0];
 
@@ -214,6 +271,7 @@ export const GET = withDualAuth("catalog.manage", async (request, ctx) => {
       products,
       categories,
       summary,
+      ...(pagination ? { pagination } : {}),
     };
     const resp = NextResponse.json(response);
     resp.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');

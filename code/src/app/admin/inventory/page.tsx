@@ -6,6 +6,8 @@ import { authFetch } from '@/lib/api/client';
 import { formatCurrency } from '@/lib/format';
 import { KpiCard } from "@/components/ui/kpi-card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PaginationBar, type PaginationInfo } from "@/components/ui/pagination-bar";
+import { useDebouncedValue } from '@/lib/hooks/use-debounced-value';
 import { Boxes } from 'lucide-react';
 
 interface ProductVariant {
@@ -46,17 +48,29 @@ interface InventoryData {
   types: string[];
   brands: string[];
   summary: InventorySummary;
+  pagination?: PaginationInfo;
 }
+
+const SORT_CHOICES = [
+  { value: 'name-asc', label: 'Name A–Z' },
+  { value: 'name-desc', label: 'Name Z–A' },
+  { value: 'stock-asc', label: 'Stock: low → high' },
+  { value: 'stock-desc', label: 'Stock: high → low' },
+] as const;
 
 export default function InventoryPage() {
   const [data, setData] = useState<InventoryData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search, 300);
   const [selectedCategory, setSelectedCategory] = useState('');
   const [selectedType, setSelectedType] = useState('');
   const [selectedBrand, setSelectedBrand] = useState('');
   const [stockFilter, setStockFilter] = useState<'all' | 'low' | 'out'>('all');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [sortChoice, setSortChoice] = useState<string>('name-asc');
   const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());
 
   // Fetch inventory data
@@ -65,11 +79,16 @@ export default function InventoryPage() {
     setError(null);
     try {
       const params = new URLSearchParams();
-      if (search) params.append('search', search);
+      if (debouncedSearch) params.append('search', debouncedSearch);
       if (selectedCategory) params.append('category', selectedCategory);
       if (selectedType) params.append('type', selectedType);
       if (selectedBrand) params.append('brand', selectedBrand);
       if (stockFilter !== 'all') params.append('stock', stockFilter);
+      const [sort, dir] = sortChoice.split('-');
+      params.append('page', String(page));
+      params.append('pageSize', String(pageSize));
+      params.append('sort', sort);
+      params.append('dir', dir);
 
       const response = await authFetch(`/api/inventory?${params.toString()}`);
       if (!response.ok) {
@@ -83,11 +102,16 @@ export default function InventoryPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, selectedCategory, selectedType, selectedBrand, stockFilter]);
+  }, [debouncedSearch, selectedCategory, selectedType, selectedBrand, stockFilter, page, pageSize, sortChoice]);
 
   useEffect(() => {
     fetchInventory();
   }, [fetchInventory]);
+
+  // Back to page 1 whenever the result set changes shape.
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, selectedCategory, selectedType, selectedBrand, stockFilter, sortChoice, pageSize]);
 
   const toggleProduct = (productId: string) => {
     const newExpanded = new Set(expandedProducts);
@@ -256,6 +280,22 @@ export default function InventoryPage() {
                 </select>
               </div>
 
+              {/* Sort */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Sort
+                </label>
+                <select
+                  value={sortChoice}
+                  onChange={(e) => setSortChoice(e.target.value)}
+                  className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent transition"
+                >
+                  {SORT_CHOICES.map((c) => (
+                    <option key={c.value} value={c.value}>{c.label}</option>
+                  ))}
+                </select>
+              </div>
+
               <div className="flex items-end">
                 <button
                   onClick={() => fetchInventory()}
@@ -306,6 +346,13 @@ export default function InventoryPage() {
                 getStockBadgeColor={getStockBadgeColor}
               />
             ))
+          )}
+          {data?.pagination && data.pagination.total > 0 && (
+            <PaginationBar
+              pagination={data.pagination}
+              onPageChange={setPage}
+              onPageSizeChange={setPageSize}
+            />
           )}
         </div>
       </div>

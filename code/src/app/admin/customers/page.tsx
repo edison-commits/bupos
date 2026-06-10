@@ -62,6 +62,12 @@ export default function CustomerManagement() {
   const [stats, setStats] = useState({ totalCustomers: 0, newThisMonth: 0, avgSpend: 0, totalPointsOutstanding: 0 });
   const [submitting, setSubmitting] = useState(false);
 
+  // Deep link from the command palette: /admin/customers?q=<term> seeds the search box.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get('q');
+    if (q) setSearch(q);
+  }, []);
+
   const [formData, setFormData] = useState({
     first_name: '',
     last_name: '',

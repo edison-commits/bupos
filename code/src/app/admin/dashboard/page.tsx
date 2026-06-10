@@ -7,58 +7,90 @@ import { DASHBOARD_POLL_INTERVAL_MS } from '@/lib/config/timing';
 import { formatCurrency } from '@/lib/format';
 import { safeErr } from "@/lib/logging/safe-err";
 import { KpiCard } from "@/components/ui/kpi-card";
+// Field names mirror /api/dashboard's response exactly (pg numerics arrive
+// as strings — Number() at render). The previous shape drifted from the API
+// (hour/sales vs label/total, type vs tender_type, …) which rendered the
+// hourly/tender/employee/recent sections blank.
 interface Metrics {
   grossSales: number;
-  discounts: number;
-  tax: number;
+  totalDiscounts: number;
+  totalTax: number;
   netSales: number;
   transactionCount: number;
   avgTicket: number;
   largestSale: number;
 }
 
+interface PreviousMetrics {
+  grossSales: number;
+  netSales: number;
+  transactionCount: number;
+  avgTicket: number;
+}
+
 interface HourlyData {
-  hour: string;
-  sales: number;
+  hour: number;
+  label: string;
   count: number;
+  total: number;
+}
+
+interface DailyPoint {
+  day: string;
+  count: number;
+  total: number;
+}
+
+interface CategorySlice {
+  name: string;
+  revenue: number;
 }
 
 interface TenderBreakdown {
-  type: string;
-  total: number;
+  tender_type: string;
+  total: string | number;
   count: number;
 }
 
 interface EmployeePerformance {
-  name: string;
-  sales: number;
-  count: number;
-  avgTicket: number;
+  display_name: string;
+  total_sales: string | number;
+  transaction_count: number;
+  avg_ticket: string | number;
 }
 
 interface RecentTransaction {
   id: string;
-  total: number;
+  grand_total: string | number;
   status: string;
   created_at: string;
-  employee_name: string;
-  item_count: number;
+  employee_name: string | null;
 }
 
 interface LowStockAlert {
   product_name: string;
-  variant_label: string;
-  quantity: number;
+  sku: string | null;
+  size: string | null;
+  color: string | null;
+  on_hand: number;
+  reorder_point: number;
 }
 
 interface DashboardData {
   metrics: Metrics;
+  previousMetrics?: PreviousMetrics;
+  dailySeries?: DailyPoint[];
+  categoryMix?: CategorySlice[];
   hourlyBreakdown: HourlyData[];
   tenderBreakdown: TenderBreakdown[];
   employeePerformance: EmployeePerformance[];
   recentTransactions: RecentTransaction[];
   lowStockAlerts: LowStockAlert[];
 }
+
+/** % change vs the prior period; null when there's no baseline. */
+const pctChange = (cur: number, prev: number | undefined): number | null =>
+  prev && prev > 0 ? ((cur - prev) / prev) * 100 : null;
 
 type RangeType = 'today' | 'week' | 'month';
 
@@ -142,27 +174,29 @@ export default function DashboardPage() {
           <SkeletonLoader />
         ) : data ? (
           <>
-            {/* Top Metrics */}
+            {/* Top Metrics — with vs-prior-period deltas */}
             <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-              <MetricCard
+              <KpiCard
                 label="Net Sales"
                 value={formatCurrency(data.metrics.netSales)}
-                Icon={undefined}
+                delta={pctChange(data.metrics.netSales, data.previousMetrics?.netSales)}
+                deltaLabel={range === 'today' ? 'vs yesterday' : 'vs prior period'}
               />
-              <MetricCard
+              <KpiCard
                 label="Transactions"
                 value={data.metrics.transactionCount.toString()}
-                Icon={undefined}
+                delta={pctChange(data.metrics.transactionCount, data.previousMetrics?.transactionCount)}
+                deltaLabel={range === 'today' ? 'vs yesterday' : 'vs prior period'}
               />
-              <MetricCard
+              <KpiCard
                 label="Avg Ticket"
                 value={formatCurrency(data.metrics.avgTicket)}
-                Icon={undefined}
+                delta={pctChange(data.metrics.avgTicket, data.previousMetrics?.avgTicket)}
+                deltaLabel={range === 'today' ? 'vs yesterday' : 'vs prior period'}
               />
-              <MetricCard
+              <KpiCard
                 label="Largest Sale"
                 value={formatCurrency(data.metrics.largestSale)}
-                Icon={undefined}
               />
             </div>
 
@@ -184,6 +218,28 @@ export default function DashboardPage() {
                 <TenderBreakdown data={data.tenderBreakdown} />
               </div>
             </div>
+
+            {/* Trend + Category Mix */}
+            {((range !== 'today' && (data.dailySeries?.length ?? 0) > 0) || (data.categoryMix?.length ?? 0) > 0) && (
+              <div className="grid gap-6 lg:grid-cols-2">
+                {range !== 'today' && (data.dailySeries?.length ?? 0) > 0 && (
+                  <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+                    <h2 className="mb-4 text-base font-semibold text-gray-900">
+                      Sales by Day
+                    </h2>
+                    <DailyChart data={data.dailySeries ?? []} />
+                  </div>
+                )}
+                {(data.categoryMix?.length ?? 0) > 0 && (
+                  <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+                    <h2 className="mb-4 text-base font-semibold text-gray-900">
+                      Top Categories
+                    </h2>
+                    <CategoryMix data={data.categoryMix ?? []} />
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Employee Performance */}
             <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
@@ -225,18 +281,6 @@ export default function DashboardPage() {
   );
 }
 
-interface MetricCardProps {
-  label: string;
-  value: string;
-  Icon?: React.ComponentType<{ className?: string }>;
-}
-
-function MetricCard({ label, value }: MetricCardProps) {
-  // Delegates to the shared KpiCard so every admin stat tile stays
-  // visually identical (one source of truth).
-  return <KpiCard label={label} value={value} />;
-}
-
 interface HourlyChartProps {
   data: HourlyData[];
 }
@@ -246,7 +290,7 @@ function HourlyChart({ data }: HourlyChartProps) {
     return <p className="text-gray-500 text-sm">No hourly data available</p>;
   }
 
-  const maxSales = Math.max(...data.map((d) => d.sales));
+  const maxSales = Math.max(...data.map((d) => Number(d.total)));
 
   return (
     <div className="flex items-end gap-2 h-64">
@@ -256,18 +300,78 @@ function HourlyChart({ data }: HourlyChartProps) {
             <div
               className="bg-gradient-to-t from-teal-600 to-teal-400 rounded transition-all"
               style={{
-                height: `${(item.sales / maxSales) * 200}px`,
-                minHeight: item.sales > 0 ? '4px' : '0px',
+                height: `${maxSales > 0 ? (Number(item.total) / maxSales) * 200 : 0}px`,
+                minHeight: Number(item.total) > 0 ? '4px' : '0px',
               }}
             >
               <div className="opacity-0 group-hover:opacity-100 absolute -top-8 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-xs px-2 py-1 rounded whitespace-nowrap transition-opacity">
-                {formatCurrency(item.sales, 'USD', { fractionDigits: 0 })}
+                {formatCurrency(Number(item.total), 'USD', { fractionDigits: 0 })}
               </div>
             </div>
           </div>
-          <p className="text-xs text-gray-600 text-center w-full">{item.hour}</p>
+          <p className="text-xs text-gray-600 text-center w-full">{item.label}</p>
         </div>
       ))}
+    </div>
+  );
+}
+
+function DailyChart({ data }: { data: DailyPoint[] }) {
+  const max = Math.max(...data.map((d) => Number(d.total)));
+  // "Jun 9" labels; show every label up to 10 points, then thin them out.
+  const labelEvery = data.length > 20 ? 5 : data.length > 10 ? 2 : 1;
+  return (
+    <div className="flex items-end gap-1 h-64">
+      {data.map((item, idx) => (
+        <div key={item.day} className="flex-1 flex flex-col items-center gap-2 min-w-0">
+          <div className="w-full bg-gray-200 rounded relative group cursor-pointer">
+            <div
+              className="bg-gradient-to-t from-teal-600 to-teal-400 rounded transition-all"
+              style={{
+                height: `${max > 0 ? (Number(item.total) / max) * 200 : 0}px`,
+                minHeight: Number(item.total) > 0 ? '4px' : '0px',
+              }}
+            >
+              <div className="opacity-0 group-hover:opacity-100 absolute -top-8 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-xs px-2 py-1 rounded whitespace-nowrap transition-opacity z-10">
+                {item.day}: {formatCurrency(Number(item.total), 'USD', { fractionDigits: 0 })}
+              </div>
+            </div>
+          </div>
+          <p className="text-[10px] text-gray-600 text-center w-full truncate">
+            {idx % labelEvery === 0
+              ? new Date(item.day + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+              : ' '}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CategoryMix({ data }: { data: CategorySlice[] }) {
+  const total = data.reduce((sum, c) => sum + Number(c.revenue), 0);
+  if (total <= 0) return <p className="text-gray-500 text-sm">No category data available</p>;
+  return (
+    <div className="space-y-4">
+      {data.map((cat) => {
+        const pct = (Number(cat.revenue) / total) * 100;
+        return (
+          <div key={cat.name} className="space-y-1.5">
+            <div className="flex items-center justify-between text-sm">
+              <span className="font-medium text-gray-700">{cat.name}</span>
+              <span className="text-gray-600">
+                {formatCurrency(Number(cat.revenue))} · {pct.toFixed(0)}%
+              </span>
+            </div>
+            <div className="relative h-2.5 overflow-hidden rounded bg-gray-200">
+              <div
+                className="h-full rounded bg-gradient-to-r from-teal-500 to-emerald-500 transition-all"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -281,17 +385,17 @@ function TenderBreakdown({ data }: TenderBreakdownProps) {
     return <p className="text-gray-500 text-sm">No tender data available</p>;
   }
 
-  const total = data.reduce((sum, item) => sum + item.total, 0);
+  const total = data.reduce((sum, item) => sum + Number(item.total), 0);
 
   return (
     <div className="space-y-4">
       {data.map((item, idx) => {
-        const percentage = total > 0 ? (item.total / total) * 100 : 0;
+        const percentage = total > 0 ? (Number(item.total) / total) * 100 : 0;
 
         return (
           <div key={idx} className="space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-gray-700">{item.type}</span>
+              <span className="text-sm font-medium capitalize text-gray-700">{item.tender_type?.replace(/_/g, ' ')}</span>
               <span className="text-sm text-gray-600">
                 {item.count} • {percentage.toFixed(0)}%
               </span>
@@ -346,15 +450,15 @@ function EmployeeTable({ data }: EmployeeTableProps) {
         <tbody>
           {data.map((emp, idx) => (
             <tr key={idx} className="border-b border-gray-100 hover:bg-gray-50">
-              <td className="px-4 py-3 text-gray-900 font-medium">{emp.name}</td>
+              <td className="px-4 py-3 text-gray-900 font-medium">{emp.display_name}</td>
               <td className="px-4 py-3 text-right text-teal-600 font-semibold">
-                {formatCurrency(emp.sales)}
+                {formatCurrency(Number(emp.total_sales))}
               </td>
               <td className="px-4 py-3 text-right text-gray-600">
-                {emp.count}
+                {emp.transaction_count}
               </td>
               <td className="px-4 py-3 text-right text-gray-600">
-                {formatCurrency(emp.avgTicket)}
+                {formatCurrency(Number(emp.avg_ticket))}
               </td>
             </tr>
           ))}
@@ -391,7 +495,7 @@ function TransactionList({
               Employee
             </th>
             <th className="px-4 py-3 text-center font-medium text-gray-700">
-              Items
+              Status
             </th>
             <th className="px-4 py-3 text-right font-medium text-gray-700">
               Amount
@@ -407,12 +511,18 @@ function TransactionList({
               <td className="px-4 py-3 font-mono text-gray-900">
                 {txn.id.slice(0, 8)}
               </td>
-              <td className="px-4 py-3 text-gray-700">{txn.employee_name}</td>
-              <td className="px-4 py-3 text-center text-gray-600">
-                {txn.item_count}
+              <td className="px-4 py-3 text-gray-700">{txn.employee_name ?? '—'}</td>
+              <td className="px-4 py-3 text-center">
+                <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                  txn.status === 'completed' ? 'bg-emerald-100 text-emerald-800'
+                    : txn.status === 'voided' ? 'bg-red-100 text-red-800'
+                    : 'bg-amber-100 text-amber-800'
+                }`}>
+                  {txn.status}
+                </span>
               </td>
               <td className="px-4 py-3 text-right font-semibold text-teal-600">
-                {formatCurrency(txn.total)}
+                {formatCurrency(Number(txn.grand_total))}
               </td>
               <td className="px-4 py-3 text-right text-gray-600">
                 {formatTime(txn.created_at)}
@@ -443,10 +553,12 @@ function LowStockList({ data }: LowStockListProps) {
         >
           <div>
             <p className="font-medium text-amber-900">{alert.product_name}</p>
-            <p className="text-sm text-amber-700">{alert.variant_label}</p>
+            <p className="text-sm text-amber-700">
+              {[alert.sku, [alert.size, alert.color].filter(Boolean).join('/')].filter(Boolean).join(' · ')}
+            </p>
           </div>
           <p className="font-bold text-amber-900">
-            {alert.quantity} units
+            {alert.on_hand} left <span className="font-normal text-amber-700">(reorder at {alert.reorder_point})</span>
           </p>
         </div>
       ))}

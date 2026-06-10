@@ -31,10 +31,15 @@ export function KpiCard({
   label,
   value,
   tone = "default",
+  delta,
+  deltaLabel = "vs prior period",
 }: {
   label: string;
   value: React.ReactNode;
   tone?: KpiTone;
+  /** Percent change vs the prior period; null = no baseline (shows an em dash). */
+  delta?: number | null;
+  deltaLabel?: string;
 }) {
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm transition-shadow hover:shadow-md">
@@ -42,6 +47,20 @@ export function KpiCard({
       <p className={`mt-2 text-3xl font-semibold tabular-nums ${TONE_VALUE_CLASS[tone]}`}>
         {value}
       </p>
+      {delta !== undefined && (
+        <p className="mt-1.5 text-xs tabular-nums text-gray-500">
+          {delta === null ? (
+            <span>— {deltaLabel}</span>
+          ) : (
+            <>
+              <span className={`font-semibold ${delta > 0 ? "text-emerald-600" : delta < 0 ? "text-red-600" : "text-gray-500"}`}>
+                {delta > 0 ? "▲" : delta < 0 ? "▼" : "■"} {Math.abs(delta).toFixed(1)}%
+              </span>{" "}
+              {deltaLabel}
+            </>
+          )}
+        </p>
+      )}
     </div>
   );
 }

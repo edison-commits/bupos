@@ -62,6 +62,12 @@ export const GET = withAdminAuth("inventory.adjust", async (request, ctx) => {
     const productType = searchParams.get('type') || '';
     const brand = searchParams.get('brand') || '';
     const stockFilter = searchParams.get('stock') || 'all';
+    // Opt-in pagination + sorting, applied AFTER the JS-side stock filter
+    // below (so they compose). Absent `page`, the legacy full list returns.
+    const page = Math.max(0, parseInt(searchParams.get('page') ?? '0', 10) || 0); // 0 = not requested
+    const pageSize = Math.min(200, Math.max(10, parseInt(searchParams.get('pageSize') ?? '50', 10) || 50));
+    const sortKey = searchParams.get('sort') === 'stock' ? 'stock' : 'name';
+    const sortDir = searchParams.get('dir') === 'desc' ? -1 : 1;
 
     // R27-C7: explicit organization_id filter prepended to the conditions
     // list. $1 is locationId, $2 is orgId, filter placeholders start at $3.
@@ -257,6 +263,23 @@ export const GET = withAdminAuth("inventory.adjust", async (request, ctx) => {
         .filter((p) => p.variants.length > 0);
     }
 
+    // Sort (name asc default; stock = total on-hand across variants), then
+    // slice the requested page. SQL already ordered by name, so the name
+    // sort only matters for `desc`.
+    if (sortKey === 'stock') {
+      const totalQty = (p: ProcessedProduct) => p.variants.reduce((s, v) => s + v.quantity, 0);
+      filteredProducts.sort((a, b) => (totalQty(a) - totalQty(b)) * sortDir || a.name.localeCompare(b.name));
+    } else if (sortDir === -1) {
+      filteredProducts.reverse();
+    }
+
+    let pagination: { page: number; pageSize: number; total: number; totalPages: number } | null = null;
+    if (page > 0) {
+      const total = filteredProducts.length;
+      pagination = { page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) };
+      filteredProducts = filteredProducts.slice((page - 1) * pageSize, page * pageSize);
+    }
+
     const summary = summaryResult.rows[0] as SummaryRow;
     const types = typesResult.rows.map((r: Record<string, string>) => r.value).filter(Boolean);
     const brands = brandsResult.rows.map((r: Record<string, string>) => r.value).filter(Boolean);
@@ -272,6 +295,7 @@ export const GET = withAdminAuth("inventory.adjust", async (request, ctx) => {
         lowStockCount: parseInt(summary.low_stock_count) || 0,
         outOfStockCount: parseInt(summary.out_of_stock_count) || 0,
       },
+      ...(pagination ? { pagination } : {}),
     };
     _inventoryCache.set(cacheKey, { data: response, expiresAt: Date.now() + INV_CACHE_TTL });
     if (_inventoryCache.size > MAX_INV_CACHE_SIZE) {
