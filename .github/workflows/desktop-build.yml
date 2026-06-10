@@ -1,0 +1,51 @@
+name: Desktop build (Windows)
+
+# Builds the Windows installer for the Electron shell in desktop/.
+# Runs on demand (workflow_dispatch) or on a `desktop-v*` tag. The .exe is
+# uploaded as a build ARTIFACT — download it from the run's Artifacts panel.
+#
+# UNSIGNED by design for now: first launch on Windows shows SmartScreen
+# ("More info" → "Run anyway"). To sign later, add CSC_LINK (base64 PFX) and
+# CSC_KEY_PASSWORD repo secrets — electron-builder picks them up automatically.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["desktop-v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint (syntax)
+        run: node --check main.js
+
+      - name: Build NSIS installer
+        run: npx electron-builder --win nsis --publish never
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BasicUniformPOS-windows-installer
+          path: |
+            desktop/dist/*.exe
+            desktop/dist/*.blockmap
+          retention-days: 30
+          if-no-files-found: error
