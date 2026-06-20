@@ -7,7 +7,8 @@ import { playCheckoutComplete, playVoid, playApprovalNeeded, playError, speakTot
 import { createCart, addItem, addBundle, addFreeItem, removeItem, updateQuantity, setDiscount, setDiscountMode, setLineDiscount, setPriceOverride, computeTotals, voidCart, lineDiscountAmount } from "@/lib/cart/cart";
 import { checkoutAction } from "@/app/register/checkout-action";
 import { useOnlineStatus } from "@/lib/offline/use-online-status";
-import { savePendingTransaction, cacheCatalog } from "@/lib/offline/idb-store";
+import { savePendingTransaction, cacheCatalog, getCartDraft, removeCartDraft, saveCartDraft, type CartDraft } from "@/lib/offline/idb-store";
+import { buildCartDraftKey, isRestorableCartDraft } from "./cart-autosave";
 import { logTransactionEvent, type TransactionEventType } from "@/app/register/event-action";
 import type { ProductGridItem } from "./product-grid";
 import type { TenderEntry } from "./tender-panel";
@@ -168,6 +169,10 @@ export function usePOSTerminal({
   const [processing, setProcessing] = useState(false);
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [autosaveStatus, setAutosaveStatus] = useState<"idle" | "saved" | "error">("idle");
+  const [lastAutosavedAt, setLastAutosavedAt] = useState<string | null>(null);
+  const [restorableDraft, setRestorableDraft] = useState<CartDraft | null>(null);
+  const suppressAutosaveRef = useRef(false);
 
   // Speak change due when receipt appears
   useEffect(() => {
@@ -215,9 +220,104 @@ export function usePOSTerminal({
   const [showReturnModal, setShowReturnModal] = useState(false);
   const [returnResult, setReturnResult] = useState<{ id: string; total: number; method: string } | null>(null);
 
+  // Offline mode
+  const { isOnline } = useOnlineStatus();
+
+  const draftKey = useMemo(() => buildCartDraftKey({
+    registerSessionId: registerSession.id,
+    employeeId: employee.id,
+    locationId: location.id,
+    deviceId: _deviceId || "unknown-device",
+  }), [registerSession.id, employee.id, location.id, _deviceId]);
+
+  const totals = useMemo(() => computeTotals(cart), [cart]);
+
   // Exchange
   const [showExchangeModal, setShowExchangeModal] = useState(false);
   const [exchangeCredit, setExchangeCredit] = useState<{ originalTxnId: string; creditAmount: number; reason: string } | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !("indexedDB" in window)) return;
+    let cancelled = false;
+    getCartDraft(draftKey)
+      .then((draft) => {
+        if (!cancelled && isRestorableCartDraft(draft)) setRestorableDraft(draft);
+      })
+      .catch(() => { /* draft restore is best-effort */ });
+    return () => { cancelled = true; };
+  }, [draftKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !("indexedDB" in window)) return;
+    if (suppressAutosaveRef.current) {
+      suppressAutosaveRef.current = false;
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      if (cart.items.length === 0) {
+        removeCartDraft(draftKey)
+          .then(() => {
+            setAutosaveStatus("idle");
+            setLastAutosavedAt(null);
+          })
+          .catch(() => setAutosaveStatus("error"));
+        return;
+      }
+
+      const savedAt = new Date().toISOString();
+      saveCartDraft({
+        key: draftKey,
+        cart: { ...cart },
+        approvedExceptions,
+        appliedPromo,
+        exchangeCredit,
+        screen: screen === "receipt" ? "selling" : screen,
+        savedAt,
+        registerSessionId: registerSession.id,
+        employeeId: employee.id,
+        locationId: location.id,
+        deviceId: _deviceId || "unknown-device",
+      })
+        .then(() => {
+          setAutosaveStatus("saved");
+          setLastAutosavedAt(savedAt);
+        })
+        .catch(() => setAutosaveStatus("error"));
+    }, 500);
+
+    return () => window.clearTimeout(timer);
+  }, [cart, approvedExceptions, appliedPromo, exchangeCredit, screen, draftKey, registerSession.id, employee.id, location.id, _deviceId]);
+
+  const clearCurrentDraft = useCallback(() => {
+    removeCartDraft(draftKey).catch(() => { /* best-effort cleanup */ });
+    setRestorableDraft(null);
+    setLastAutosavedAt(null);
+    setAutosaveStatus("idle");
+  }, [draftKey]);
+
+  const handleRestoreDraft = useCallback(() => {
+    if (!isRestorableCartDraft(restorableDraft)) {
+      setRestorableDraft(null);
+      return;
+    }
+    const draftCart = restorableDraft.cart as Cart;
+    suppressAutosaveRef.current = true;
+    setCart(draftCart);
+    setApprovedExceptions(restorableDraft.approvedExceptions ?? []);
+    setAppliedPromo(restorableDraft.appliedPromo ?? null);
+    setExchangeCredit(restorableDraft.exchangeCredit ?? null);
+    setScreen("selling");
+    setReceipt(null);
+    setError(null);
+    setRestorableDraft(null);
+    setAutosaveStatus("saved");
+    setLastAutosavedAt(restorableDraft.savedAt);
+  }, [restorableDraft]);
+
+  const handleDiscardDraft = useCallback(() => {
+    clearCurrentDraft();
+  }, [clearCurrentDraft]);
 
   // Layaway
   const [showLayawayModal, setShowLayawayModal] = useState(false);
@@ -230,11 +330,6 @@ export function usePOSTerminal({
   // Keyboard shortcuts
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showMoreActions, setShowMoreActions] = useState(false);
-
-  // Offline mode
-  const { isOnline } = useOnlineStatus();
-
-  const totals = useMemo(() => computeTotals(cart), [cart]);
 
   // Cache product catalog to IndexedDB for offline use.
   // Debounced because inventory updates (post-checkout) can fire this many
@@ -636,8 +731,9 @@ export function usePOSTerminal({
     setError(null);
     setVoidState(null);
     setApprovedExceptions([]);
+    clearCurrentDraft();
     playVoid();
-  }, [freshCart, logEvent]);
+  }, [freshCart, logEvent, clearCurrentDraft]);
 
   // ─── Hold / Recall ──────────────────────────────────
 
@@ -649,8 +745,9 @@ export function usePOSTerminal({
     setHeldCarts((prev) => [...prev, { cart: { ...cart }, heldAt: new Date().toISOString(), label }]);
     logEvent("cart_held", cart.id, { item_count: String(cart.items.length) });
     setCart(freshCart());
+    clearCurrentDraft();
     setError(null);
-  }, [cart, freshCart, logEvent]);
+  }, [cart, freshCart, logEvent, clearCurrentDraft]);
 
   const handleRecallCart = useCallback((index: number) => {
     const held = heldCarts[index];
@@ -885,6 +982,8 @@ export function usePOSTerminal({
         setReceipt(offlineReceipt);
       }
 
+      clearCurrentDraft();
+
       // Broadcast receipt to customer display
       broadcastCustomerDisplay({ type: "receipt", totals });
       setScreen("receipt");
@@ -919,6 +1018,7 @@ export function usePOSTerminal({
           setReceipt(offlineReceipt);
           // Broadcast receipt to customer display
           broadcastCustomerDisplay({ type: "receipt", totals });
+          clearCurrentDraft();
           setScreen("receipt");
           setApprovedExceptions([]);
         } catch {
@@ -939,7 +1039,7 @@ export function usePOSTerminal({
       checkoutInFlightRef.current = false;
       setProcessing(false);
     }
-  }, [cart, totals, approvedExceptions, isOnline, employee.displayName]);
+  }, [cart, totals, approvedExceptions, isOnline, employee.displayName, clearCurrentDraft]);
 
   const handleNewSale = useCallback(() => {
     // Broadcast cart_clear to customer display
@@ -956,7 +1056,8 @@ export function usePOSTerminal({
     // previous cart's void prompt.
     setVoidState(null);
     setPriceOverrideLineId(null);
-  }, [freshCart]);
+    clearCurrentDraft();
+  }, [freshCart, clearCurrentDraft]);
 
   const handlePrint = useCallback(() => {
     window.print();
@@ -993,6 +1094,9 @@ export function usePOSTerminal({
     receipt,
     error,
     setError,
+    autosaveStatus,
+    lastAutosavedAt,
+    restorableDraft,
     approvalRequest,
     approvedExceptions,
     voidState,
@@ -1061,6 +1165,8 @@ export function usePOSTerminal({
     handleCheckout,
     handleApprovalResult,
     handleApprovalDenied,
+    handleRestoreDraft,
+    handleDiscardDraft,
     handleTenderConfirm,
     handleNewSale,
     handlePrint,

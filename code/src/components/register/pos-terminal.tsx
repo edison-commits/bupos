@@ -60,6 +60,9 @@ export function POSTerminal(props: POSTerminalProps) {
     receipt,
     error,
     setError,
+    autosaveStatus,
+    lastAutosavedAt,
+    restorableDraft,
     approvalRequest,
     voidState,
     setVoidState,
@@ -122,6 +125,8 @@ export function POSTerminal(props: POSTerminalProps) {
     handleCheckout,
     handleApprovalResult,
     handleApprovalDenied,
+    handleRestoreDraft,
+    handleDiscardDraft,
     handleTenderConfirm,
     handleNewSale,
     handlePrint,
@@ -187,6 +192,40 @@ export function POSTerminal(props: POSTerminalProps) {
 
   return (
     <div className="flex flex-1 flex-col gap-3 overflow-y-auto">
+      {restorableDraft && (
+        <div className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-amber-950 shadow-sm" role="status">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="font-black">Unsaved sale recovered from this register</p>
+              <p className="text-sm font-medium text-amber-800">
+                Saved {new Date(restorableDraft.savedAt).toLocaleString()}. Restore it, or discard it and start fresh.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={handleRestoreDraft}
+                className="rounded-xl bg-amber-600 px-4 py-2 text-sm font-black text-white shadow-sm hover:bg-amber-700 focus-visible:ring-2 focus-visible:ring-amber-700"
+              >
+                Restore sale
+              </button>
+              <button
+                type="button"
+                onClick={handleDiscardDraft}
+                className="rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm font-black text-amber-900 hover:bg-amber-100 focus-visible:ring-2 focus-visible:ring-amber-700"
+              >
+                Discard
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {cart.items.length > 0 && !restorableDraft && (
+        <div className="px-1 text-xs font-semibold text-zinc-500" aria-live="polite">
+          {autosaveStatus === "saved" && lastAutosavedAt ? `Autosaved ${new Date(lastAutosavedAt).toLocaleTimeString()}` : null}
+          {autosaveStatus === "error" ? "Autosave unavailable — keep this tab open until checkout or hold." : null}
+        </div>
+      )}
       {/* Offline status bar */}
 
       <div className="flex flex-1 flex-col gap-3 lg:flex-row">
