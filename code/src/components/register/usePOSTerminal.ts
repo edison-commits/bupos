@@ -224,12 +224,14 @@ export function usePOSTerminal({
   // Offline mode
   const { isOnline } = useOnlineStatus();
 
-  const draftKey = useMemo(() => buildCartDraftKey({
+  const draftScope = useMemo(() => ({
     registerSessionId: registerSession.id,
     employeeId: employee.id,
     locationId: location.id,
     deviceId: _deviceId || "unknown-device",
   }), [registerSession.id, employee.id, location.id, _deviceId]);
+
+  const draftKey = useMemo(() => buildCartDraftKey(draftScope), [draftScope]);
 
   const totals = useMemo(() => computeTotals(cart), [cart]);
 
@@ -241,16 +243,18 @@ export function usePOSTerminal({
     if (typeof window === "undefined" || !("indexedDB" in window)) return;
     let cancelled = false;
     setCartDraftRestoreCheckComplete(false);
+    setRestorableDraft(null);
     getCartDraft(draftKey)
       .then((draft) => {
-        if (!cancelled && isRestorableCartDraft(draft)) setRestorableDraft(draft);
+        if (cancelled) return;
+        setRestorableDraft(isRestorableCartDraft(draft, Date.now(), draftScope) ? draft : null);
       })
       .catch(() => { /* draft restore is best-effort */ })
       .finally(() => {
         if (!cancelled) setCartDraftRestoreCheckComplete(true);
       });
     return () => { cancelled = true; };
-  }, [draftKey]);
+  }, [draftKey, draftScope]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !("indexedDB" in window)) return;
@@ -308,7 +312,7 @@ export function usePOSTerminal({
   }, [draftKey]);
 
   const handleRestoreDraft = useCallback(() => {
-    if (!isRestorableCartDraft(restorableDraft)) {
+    if (!isRestorableCartDraft(restorableDraft, Date.now(), draftScope)) {
       setRestorableDraft(null);
       return;
     }
@@ -324,7 +328,7 @@ export function usePOSTerminal({
     setRestorableDraft(null);
     setAutosaveStatus("saved");
     setLastAutosavedAt(restorableDraft.savedAt);
-  }, [restorableDraft]);
+  }, [restorableDraft, draftScope]);
 
   const handleDiscardDraft = useCallback(() => {
     clearCurrentDraft();

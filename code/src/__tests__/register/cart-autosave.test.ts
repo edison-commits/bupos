@@ -49,6 +49,22 @@ describe("cart autosave helpers", () => {
     expect(isRestorableCartDraft(draft({ savedAt: "not-a-date" }), Date.now())).toBe(false);
   });
 
+  it("rejects drafts outside the current register session scope", () => {
+    const savedAt = Date.parse("2026-06-19T12:00:00.000Z");
+    const scope = {
+      registerSessionId: "session-1",
+      employeeId: "employee-1",
+      locationId: "loc-1",
+      deviceId: "device-1",
+    };
+
+    expect(isRestorableCartDraft(draft(), savedAt, scope)).toBe(true);
+    expect(isRestorableCartDraft(draft({ registerSessionId: "session-2" }), savedAt, scope)).toBe(false);
+    expect(isRestorableCartDraft(draft({ employeeId: "employee-2" }), savedAt, scope)).toBe(false);
+    expect(isRestorableCartDraft(draft({ locationId: "loc-2" }), savedAt, scope)).toBe(false);
+    expect(isRestorableCartDraft(draft({ deviceId: "device-2" }), savedAt, scope)).toBe(false);
+  });
+
   it("waits for the restore check before autosaving or deleting drafts", () => {
     expect(shouldAutosaveCartDraft({
       restoreCheckComplete: false,
