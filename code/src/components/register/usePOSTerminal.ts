@@ -8,7 +8,7 @@ import { createCart, addItem, addBundle, addFreeItem, removeItem, updateQuantity
 import { checkoutAction } from "@/app/register/checkout-action";
 import { useOnlineStatus } from "@/lib/offline/use-online-status";
 import { savePendingTransaction, cacheCatalog, getCartDraft, removeCartDraft, saveCartDraft, type CartDraft } from "@/lib/offline/idb-store";
-import { buildCartDraftKey, isRestorableCartDraft } from "./cart-autosave";
+import { buildCartDraftKey, isRestorableCartDraft, shouldAutosaveCartDraft } from "./cart-autosave";
 import { logTransactionEvent, type TransactionEventType } from "@/app/register/event-action";
 import type { ProductGridItem } from "./product-grid";
 import type { TenderEntry } from "./tender-panel";
@@ -172,6 +172,7 @@ export function usePOSTerminal({
   const [autosaveStatus, setAutosaveStatus] = useState<"idle" | "saved" | "error">("idle");
   const [lastAutosavedAt, setLastAutosavedAt] = useState<string | null>(null);
   const [restorableDraft, setRestorableDraft] = useState<CartDraft | null>(null);
+  const [cartDraftRestoreCheckComplete, setCartDraftRestoreCheckComplete] = useState(false);
   const suppressAutosaveRef = useRef(false);
 
   // Speak change due when receipt appears
@@ -239,16 +240,26 @@ export function usePOSTerminal({
   useEffect(() => {
     if (typeof window === "undefined" || !("indexedDB" in window)) return;
     let cancelled = false;
+    setCartDraftRestoreCheckComplete(false);
     getCartDraft(draftKey)
       .then((draft) => {
         if (!cancelled && isRestorableCartDraft(draft)) setRestorableDraft(draft);
       })
-      .catch(() => { /* draft restore is best-effort */ });
+      .catch(() => { /* draft restore is best-effort */ })
+      .finally(() => {
+        if (!cancelled) setCartDraftRestoreCheckComplete(true);
+      });
     return () => { cancelled = true; };
   }, [draftKey]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !("indexedDB" in window)) return;
+    if (!shouldAutosaveCartDraft({
+      restoreCheckComplete: cartDraftRestoreCheckComplete,
+      hasPendingRestorableDraft: !!restorableDraft,
+      screen,
+      hasReceipt: !!receipt,
+    })) return;
     if (suppressAutosaveRef.current) {
       suppressAutosaveRef.current = false;
       return;
@@ -272,7 +283,7 @@ export function usePOSTerminal({
         approvedExceptions,
         appliedPromo,
         exchangeCredit,
-        screen: screen === "receipt" ? "selling" : screen,
+        screen: screen === "tender" ? "tender" : "selling",
         savedAt,
         registerSessionId: registerSession.id,
         employeeId: employee.id,
@@ -287,7 +298,7 @@ export function usePOSTerminal({
     }, 500);
 
     return () => window.clearTimeout(timer);
-  }, [cart, approvedExceptions, appliedPromo, exchangeCredit, screen, draftKey, registerSession.id, employee.id, location.id, _deviceId]);
+  }, [cart, approvedExceptions, appliedPromo, exchangeCredit, screen, receipt, restorableDraft, cartDraftRestoreCheckComplete, draftKey, registerSession.id, employee.id, location.id, _deviceId]);
 
   const clearCurrentDraft = useCallback(() => {
     removeCartDraft(draftKey).catch(() => { /* best-effort cleanup */ });

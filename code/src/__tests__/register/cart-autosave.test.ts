@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CartDraft } from "@/lib/offline/idb-store";
-import { CART_DRAFT_TTL_MS, buildCartDraftKey, isRestorableCartDraft } from "@/components/register/cart-autosave";
+import { CART_DRAFT_TTL_MS, buildCartDraftKey, isRestorableCartDraft, shouldAutosaveCartDraft } from "@/components/register/cart-autosave";
 
 function draft(overrides: Partial<CartDraft> = {}): CartDraft {
   return {
@@ -47,5 +47,47 @@ describe("cart autosave helpers", () => {
 
   it("rejects malformed savedAt timestamps", () => {
     expect(isRestorableCartDraft(draft({ savedAt: "not-a-date" }), Date.now())).toBe(false);
+  });
+
+  it("waits for the restore check before autosaving or deleting drafts", () => {
+    expect(shouldAutosaveCartDraft({
+      restoreCheckComplete: false,
+      hasPendingRestorableDraft: false,
+      screen: "selling",
+      hasReceipt: false,
+    })).toBe(false);
+  });
+
+  it("does not autosave while a recovered draft is awaiting restore or discard", () => {
+    expect(shouldAutosaveCartDraft({
+      restoreCheckComplete: true,
+      hasPendingRestorableDraft: true,
+      screen: "selling",
+      hasReceipt: false,
+    })).toBe(false);
+  });
+
+  it("does not autosave completed receipt carts back into recoverable drafts", () => {
+    expect(shouldAutosaveCartDraft({
+      restoreCheckComplete: true,
+      hasPendingRestorableDraft: false,
+      screen: "receipt",
+      hasReceipt: true,
+    })).toBe(false);
+  });
+
+  it("autosaves active selling and tender carts after restore state is resolved", () => {
+    expect(shouldAutosaveCartDraft({
+      restoreCheckComplete: true,
+      hasPendingRestorableDraft: false,
+      screen: "selling",
+      hasReceipt: false,
+    })).toBe(true);
+    expect(shouldAutosaveCartDraft({
+      restoreCheckComplete: true,
+      hasPendingRestorableDraft: false,
+      screen: "tender",
+      hasReceipt: false,
+    })).toBe(true);
   });
 });

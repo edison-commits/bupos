@@ -19,3 +19,15 @@ export function isRestorableCartDraft(draft: CartDraft | null, now = Date.now())
   const cart = draft.cart as { items?: unknown[] } | null;
   return Array.isArray(cart?.items) && cart.items.length > 0;
 }
+
+export function shouldAutosaveCartDraft(input: {
+  restoreCheckComplete: boolean;
+  hasPendingRestorableDraft: boolean;
+  screen: "selling" | "tender" | "receipt";
+  hasReceipt: boolean;
+}): boolean {
+  if (!input.restoreCheckComplete) return false;
+  if (input.hasPendingRestorableDraft) return false;
+  if (input.screen === "receipt" || input.hasReceipt) return false;
+  return true;
+}
