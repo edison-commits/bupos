@@ -7,7 +7,22 @@
  */
 
 const DB_NAME = "basicuniformpos";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
+
+export interface CartDraft {
+  key: string;
+  cart: unknown;
+  approvedExceptions: string[];
+  appliedPromo?: { code: string; discountAmount: number } | null;
+  exchangeCredit?: { originalTxnId: string; creditAmount: number; reason: string } | null;
+  pendingApprovalIntent?: unknown | null;
+  screen: "selling" | "tender";
+  savedAt: string;
+  registerSessionId: string;
+  employeeId: string;
+  locationId: string;
+  deviceId: string;
+}
 
 export interface PendingTransaction {
   id: string;
@@ -47,6 +62,9 @@ function openDB(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains("catalog")) {
         db.createObjectStore("catalog", { keyPath: "key" });
       }
+      if (!db.objectStoreNames.contains("cartDrafts")) {
+        db.createObjectStore("cartDrafts", { keyPath: "key" });
+      }
     };
 
     request.onsuccess = () => {
@@ -73,6 +91,48 @@ function openDB(): Promise<IDBDatabase> {
     request.onblocked = () =>
       reject(new Error("IndexedDB upgrade blocked by another open tab — close other POS tabs and retry."));
     request.onerror = () => reject(request.error);
+  });
+}
+
+// ─── Cart drafts ───────────────────────────────────────────────────
+
+export async function saveCartDraft(draft: CartDraft): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("cartDrafts", "readwrite");
+    tx.objectStore("cartDrafts").put(draft);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function getCartDraft(key: string): Promise<CartDraft | null> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("cartDrafts", "readonly");
+    const request = tx.objectStore("cartDrafts").get(key);
+    request.onsuccess = () => resolve((request.result as CartDraft | undefined) ?? null);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+export async function getAllCartDrafts(): Promise<CartDraft[]> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("cartDrafts", "readonly");
+    const request = tx.objectStore("cartDrafts").getAll();
+    request.onsuccess = () => resolve(request.result as CartDraft[]);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+export async function removeCartDraft(key: string): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("cartDrafts", "readwrite");
+    tx.objectStore("cartDrafts").delete(key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
   });
 }
 
