@@ -20,6 +20,7 @@ export interface InventoryForecastRow {
   colorLabel: string | null;
   supplierId: string | null;
   supplierName: string | null;
+  unitCost: number;
   onHand: number;
   reorderPoint: number;
   unitsSold30: number;
@@ -35,6 +36,11 @@ export interface InventoryForecastRow {
 function parseInteger(value: unknown): number {
   const parsed = typeof value === "number" ? value : Number.parseInt(String(value ?? 0), 10);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function parseMoney(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number.parseFloat(String(value ?? 0));
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
 }
 
 function nullableString(value: unknown): string | null {
@@ -93,6 +99,7 @@ export async function getInventoryForecast(params: InventoryForecastParams): Pro
        pv.sku,
        pv.size_label,
        pv.color_label,
+       pv.cost AS unit_cost,
        p.supplier_id,
        s.name AS supplier_name,
        il.on_hand,
@@ -142,6 +149,7 @@ export async function getInventoryForecast(params: InventoryForecastParams): Pro
         colorLabel: nullableString(row.color_label),
         supplierId: nullableString(row.supplier_id),
         supplierName: nullableString(row.supplier_name),
+        unitCost: parseMoney(row.unit_cost),
         onHand,
         reorderPoint,
         unitsSold30,

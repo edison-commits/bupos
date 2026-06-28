@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { authFetch } from '@/lib/api/client';
 import { csvCell } from '@/lib/format/csv-sanitize';
 
@@ -11,10 +12,12 @@ interface ForecastRow {
   locationId: string;
   locationName: string;
   productName: string;
+  variantId: string;
   variantName: string | null;
   sku: string;
   sizeLabel: string | null;
   colorLabel: string | null;
+  supplierId: string | null;
   supplierName: string | null;
   onHand: number;
   reorderPoint: number;
@@ -90,6 +93,8 @@ export function InventoryForecast() {
   const [risk, setRisk] = useState<RiskFilter>('all');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState<string | null>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
 
   const fetchForecast = useCallback(async () => {
     setLoading(true);
@@ -122,6 +127,29 @@ export function InventoryForecast() {
     requestAnimationFrame(() => window.URL.revokeObjectURL(url));
   };
 
+  const createPurchaseOrders = async (mode: 'critical' | 'criticalSoon' | 'selected', variantIds?: string[], location = 'all') => {
+    const actionKey = variantIds?.[0] ?? mode;
+    setCreating(actionKey);
+    setActionMessage(null);
+    setError(null);
+    try {
+      const response = await authFetch('/api/purchase-orders/from-forecast', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode, location, variantIds }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Failed to create purchase orders');
+      const orderCount = payload.orders?.length ?? 0;
+      const skippedCount = payload.skipped?.length ?? 0;
+      setActionMessage(`Created ${orderCount} draft purchase order${orderCount === 1 ? '' : 's'}${skippedCount ? `; skipped ${skippedCount} item${skippedCount === 1 ? '' : 's'}` : ''}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create purchase orders');
+    } finally {
+      setCreating(null);
+    }
+  };
+
   return (
     <div className="space-y-5">
       <div className="rounded-2xl bg-zinc-50 p-4">
@@ -144,6 +172,20 @@ export function InventoryForecast() {
               </select>
             </label>
             <button
+              onClick={() => createPurchaseOrders('critical')}
+              disabled={creating !== null || summary.critical === 0}
+              className="self-end rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {creating === 'critical' ? 'Creating...' : 'PO Critical'}
+            </button>
+            <button
+              onClick={() => createPurchaseOrders('criticalSoon')}
+              disabled={creating !== null || (summary.critical + summary.soon) === 0}
+              className="self-end rounded-lg bg-orange-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {creating === 'criticalSoon' ? 'Creating...' : 'PO Critical + Soon'}
+            </button>
+            <button
               onClick={exportCSV}
               disabled={rows.length === 0}
               className="self-end rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
@@ -153,6 +195,13 @@ export function InventoryForecast() {
           </div>
         </div>
       </div>
+
+      {actionMessage && (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+          {actionMessage}{' '}
+          <Link href="/admin/purchase-orders" className="font-semibold underline">View purchase orders</Link>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <SummaryCard label="Critical" value={summary.critical} tone="text-red-700 bg-red-50" />
@@ -182,12 +231,13 @@ export function InventoryForecast() {
                 <th className="px-4 py-3 text-right font-semibold text-zinc-900">Daily</th>
                 <th className="px-4 py-3 text-right font-semibold text-zinc-900">Stockout</th>
                 <th className="px-4 py-3 text-right font-semibold text-zinc-900">Order Qty</th>
+                <th className="px-4 py-3 text-right font-semibold text-zinc-900">Action</th>
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="px-4 py-8 text-center text-zinc-500">No forecast rows match this filter.</td>
+                  <td colSpan={12} className="px-4 py-8 text-center text-zinc-500">No forecast rows match this filter.</td>
                 </tr>
               ) : rows.map((row) => (
                 <tr key={`${row.locationId}-${row.sku}`} className="border-b border-zinc-100 hover:bg-zinc-50">
@@ -207,6 +257,15 @@ export function InventoryForecast() {
                   <td className="px-4 py-3 text-right text-zinc-600">{row.predictedDailyDemand.toFixed(2)}</td>
                   <td className="px-4 py-3 text-right text-zinc-600">{daysLabel(row.daysUntilStockout)}</td>
                   <td className="px-4 py-3 text-right font-semibold text-teal-700">{row.suggestedReorderQty}</td>
+                  <td className="px-4 py-3 text-right">
+                    <button
+                      onClick={() => createPurchaseOrders('selected', [row.variantId], row.locationId)}
+                      disabled={creating !== null || !row.supplierId || row.suggestedReorderQty <= 0}
+                      className="rounded-lg border border-teal-600 px-3 py-1 text-xs font-semibold text-teal-700 transition hover:bg-teal-50 disabled:cursor-not-allowed disabled:border-zinc-300 disabled:text-zinc-400"
+                    >
+                      {creating === row.variantId ? 'Creating...' : 'Start PO'}
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
