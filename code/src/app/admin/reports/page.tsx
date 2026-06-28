@@ -9,9 +9,10 @@ import { formatCurrency } from "@/lib/format";
 // =cmd formulas into the CSV export. Prior hand-built
 // `"${val}"` quoting didn't defend against formula injection.
 import { csvCell } from "@/lib/format/csv-sanitize";
+import { InventoryForecast } from "@/components/admin/inventory-forecast";
 
 type DateRange = "today" | "week" | "month" | "custom";
-type ReportType = "summary" | "category" | "employee" | "hourly" | "tender" | "products" | "shifts" | "salesByStore";
+type ReportType = "summary" | "category" | "employee" | "hourly" | "tender" | "products" | "shifts" | "salesByStore" | "inventoryForecast";
 type SalesGroupBy = "day" | "month" | "year";
 
 interface SalesPeriod {
@@ -151,6 +152,7 @@ export default function ReportsPage() {
     products: { type: "products", data: null, loading: false, error: null },
     shifts: { type: "shifts", data: null, loading: false, error: null },
     salesByStore: { type: "salesByStore", data: null, loading: false, error: null },
+    inventoryForecast: { type: "inventoryForecast", data: null, loading: false, error: null },
   });
 
   const getDateRange = () => {
@@ -177,6 +179,14 @@ export default function ReportsPage() {
   };
 
   const fetchReport = async (type: ReportType) => {
+    if (type === "inventoryForecast") {
+      setReports((prev) => ({
+        ...prev,
+        inventoryForecast: { ...prev.inventoryForecast, loading: false, error: null },
+      }));
+      return;
+    }
+
     const { from, to } = getDateRange();
     setReports((prev) => ({
       ...prev,
@@ -294,7 +304,7 @@ export default function ReportsPage() {
           {/* Report Type Tabs */}
           <div className="border-b border-zinc-200">
             <div className="flex gap-1 overflow-x-auto">
-              {(["summary", "salesByStore", "category", "employee", "hourly", "tender", "products", "shifts"] as ReportType[]).map(
+              {(["summary", "salesByStore", "inventoryForecast", "category", "employee", "hourly", "tender", "products", "shifts"] as ReportType[]).map(
                 (type) => (
                   <button
                     key={type}
@@ -309,7 +319,9 @@ export default function ReportsPage() {
                       ? "Sales Summary"
                       : type === "salesByStore"
                         ? "Sales by Store"
-                        : type === "category"
+                        : type === "inventoryForecast"
+                          ? "Inventory Forecast"
+                          : type === "category"
                           ? "By Category"
                           : type === "employee"
                             ? "By Employee"
@@ -376,6 +388,7 @@ export default function ReportsPage() {
               <>
                 {activeReport === "summary" && <SalesSummaryReport data={currentReport.data as SalesSummaryData | null} />}
                 {activeReport === "salesByStore" && <SalesByStoreReport data={currentReport.data as SalesByStoreData | null} />}
+                {activeReport === "inventoryForecast" && <InventoryForecast />}
                 {activeReport === "category" && <CategoryReport data={currentReport.data as CategoryReportData | null} />}
                 {activeReport === "employee" && <EmployeeReport data={currentReport.data as EmployeeReportData | null} />}
                 {activeReport === "hourly" && <HourlyReport data={currentReport.data as HourlyReportData | null} />}
