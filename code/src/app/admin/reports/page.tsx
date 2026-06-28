@@ -11,7 +11,8 @@ import { formatCurrency } from "@/lib/format";
 import { csvCell } from "@/lib/format/csv-sanitize";
 
 type DateRange = "today" | "week" | "month" | "custom";
-type ReportType = "summary" | "category" | "employee" | "hourly" | "tender" | "products" | "shifts";
+type ReportType = "summary" | "category" | "employee" | "hourly" | "tender" | "products" | "shifts" | "salesByStore";
+type SalesGroupBy = "day" | "month" | "year";
 
 interface SalesPeriod {
   revenue: number;
@@ -99,7 +100,32 @@ interface ShiftsReportData {
   shifts: ShiftItem[];
 }
 
-type AnyReportData = SalesSummaryData | CategoryReportData | EmployeeReportData | HourlyReportData | TenderReportData | ProductsReportData | ShiftsReportData;
+interface LocationOption {
+  id: string;
+  name: string;
+  code?: string;
+}
+
+interface SalesByStoreRow {
+  locationId: string;
+  locationName: string;
+  period: string;
+  revenue: number;
+  transactionCount: number;
+  unitsSold: number;
+  avgTicket: number;
+  refundCount: number;
+  returnTotal: number;
+}
+
+interface SalesByStoreData {
+  groupBy: SalesGroupBy;
+  from: string;
+  to: string;
+  rows: SalesByStoreRow[];
+}
+
+type AnyReportData = SalesSummaryData | CategoryReportData | EmployeeReportData | HourlyReportData | TenderReportData | ProductsReportData | ShiftsReportData | SalesByStoreData;
 
 interface ReportData {
   type: ReportType;
@@ -113,6 +139,9 @@ export default function ReportsPage() {
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
   const [activeReport, setActiveReport] = useState<ReportType>("summary");
+  const [salesGroupBy, setSalesGroupBy] = useState<SalesGroupBy>("month");
+  const [selectedLocation, setSelectedLocation] = useState("all");
+  const [locations, setLocations] = useState<LocationOption[]>([]);
   const [reports, setReports] = useState<Record<ReportType, ReportData>>({
     summary: { type: "summary", data: null, loading: false, error: null },
     category: { type: "category", data: null, loading: false, error: null },
@@ -121,6 +150,7 @@ export default function ReportsPage() {
     tender: { type: "tender", data: null, loading: false, error: null },
     products: { type: "products", data: null, loading: false, error: null },
     shifts: { type: "shifts", data: null, loading: false, error: null },
+    salesByStore: { type: "salesByStore", data: null, loading: false, error: null },
   });
 
   const getDateRange = () => {
@@ -154,7 +184,10 @@ export default function ReportsPage() {
     }));
 
     try {
-      const response = await authFetch(`/api/reports?type=${type}&from=${from}&to=${to}`);
+      const url = type === "salesByStore"
+        ? `/api/reports/sales-by-store?from=${from}&to=${to}&groupBy=${salesGroupBy}&location=${selectedLocation}`
+        : `/api/reports?type=${type}&from=${from}&to=${to}`;
+      const response = await authFetch(url);
       if (!response.ok) throw new Error(`Failed to fetch ${type} report`);
 
       const data = await response.json();
@@ -175,9 +208,22 @@ export default function ReportsPage() {
   };
 
   useEffect(() => {
+    let cancelled = false;
+    authFetch('/api/locations', { cache: 'no-store' })
+      .then((res) => (res.ok ? res.json() : { locations: [] }))
+      .then((data: { locations?: LocationOption[] }) => {
+        if (!cancelled) setLocations(data.locations ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setLocations([]);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
     fetchReport(activeReport);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeReport, dateRange, customFrom, customTo]);
+  }, [activeReport, dateRange, customFrom, customTo, salesGroupBy, selectedLocation]);
 
   const currentReport = reports[activeReport];
   const { from, to } = getDateRange();
@@ -248,7 +294,7 @@ export default function ReportsPage() {
           {/* Report Type Tabs */}
           <div className="border-b border-zinc-200">
             <div className="flex gap-1 overflow-x-auto">
-              {(["summary", "category", "employee", "hourly", "tender", "products", "shifts"] as ReportType[]).map(
+              {(["summary", "salesByStore", "category", "employee", "hourly", "tender", "products", "shifts"] as ReportType[]).map(
                 (type) => (
                   <button
                     key={type}
@@ -261,22 +307,59 @@ export default function ReportsPage() {
                   >
                     {type === "summary"
                       ? "Sales Summary"
-                      : type === "category"
-                        ? "By Category"
-                        : type === "employee"
-                          ? "By Employee"
-                          : type === "hourly"
-                            ? "By Hour"
-                            : type === "tender"
-                              ? "Tender Analysis"
-                              : type === "products"
-                                ? "Top Products"
-                                : "Shifts"}
+                      : type === "salesByStore"
+                        ? "Sales by Store"
+                        : type === "category"
+                          ? "By Category"
+                          : type === "employee"
+                            ? "By Employee"
+                            : type === "hourly"
+                              ? "By Hour"
+                              : type === "tender"
+                                ? "Tender Analysis"
+                                : type === "products"
+                                  ? "Top Products"
+                                  : "Shifts"}
                   </button>
                 )
               )}
             </div>
           </div>
+
+
+
+          {activeReport === "salesByStore" && (
+            <div className="rounded-2xl bg-zinc-50 p-4">
+              <p className="text-sm font-medium text-zinc-700 mb-3">Sales by Store Controls</p>
+              <div className="flex flex-wrap gap-3">
+                <label className="grid gap-1 text-sm">
+                  <span className="text-xs font-medium text-zinc-500">Group by</span>
+                  <select
+                    value={salesGroupBy}
+                    onChange={(e) => setSalesGroupBy(e.target.value as SalesGroupBy)}
+                    className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+                  >
+                    <option value="day">Day</option>
+                    <option value="month">Month</option>
+                    <option value="year">Year</option>
+                  </select>
+                </label>
+                <label className="grid gap-1 text-sm">
+                  <span className="text-xs font-medium text-zinc-500">Store</span>
+                  <select
+                    value={selectedLocation}
+                    onChange={(e) => setSelectedLocation(e.target.value)}
+                    className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+                  >
+                    <option value="all">All stores</option>
+                    {locations.map((loc) => (
+                      <option key={loc.id} value={loc.id}>{loc.name || loc.code || loc.id}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </div>
+          )}
 
           {/* Report Content */}
           <div className="min-h-96">
@@ -292,6 +375,7 @@ export default function ReportsPage() {
             ) : (
               <>
                 {activeReport === "summary" && <SalesSummaryReport data={currentReport.data as SalesSummaryData | null} />}
+                {activeReport === "salesByStore" && <SalesByStoreReport data={currentReport.data as SalesByStoreData | null} />}
                 {activeReport === "category" && <CategoryReport data={currentReport.data as CategoryReportData | null} />}
                 {activeReport === "employee" && <EmployeeReport data={currentReport.data as EmployeeReportData | null} />}
                 {activeReport === "hourly" && <HourlyReport data={currentReport.data as HourlyReportData | null} />}
@@ -312,6 +396,65 @@ export default function ReportsPage() {
             </button>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function SalesByStoreReport({ data }: { data: SalesByStoreData | null }) {
+  if (!data?.rows) return null;
+
+  const totals = data.rows.reduce((acc, row) => ({
+    revenue: acc.revenue + row.revenue,
+    transactionCount: acc.transactionCount + row.transactionCount,
+    unitsSold: acc.unitsSold + row.unitsSold,
+    refundCount: acc.refundCount + row.refundCount,
+    returnTotal: acc.returnTotal + row.returnTotal,
+  }), { revenue: 0, transactionCount: 0, unitsSold: 0, refundCount: 0, returnTotal: 0 });
+  const avgTicket = totals.transactionCount > 0 ? totals.revenue / totals.transactionCount : 0;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <MetricCard label="Revenue" value={formatCurrency(totals.revenue)} />
+        <MetricCard label="Transactions" value={String(totals.transactionCount)} />
+        <MetricCard label="Units Sold" value={String(totals.unitsSold)} />
+        <MetricCard label="Avg Ticket" value={formatCurrency(avgTicket)} />
+        <MetricCard label="Returns" value={formatCurrency(totals.returnTotal)} />
+      </div>
+      <div className="overflow-x-auto rounded-xl border border-zinc-200">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-zinc-200 bg-zinc-50">
+              <th className="px-4 py-3 text-left font-semibold text-zinc-900">Store</th>
+              <th className="px-4 py-3 text-left font-semibold text-zinc-900">Period</th>
+              <th className="px-4 py-3 text-right font-semibold text-zinc-900">Revenue</th>
+              <th className="px-4 py-3 text-right font-semibold text-zinc-900">Transactions</th>
+              <th className="px-4 py-3 text-right font-semibold text-zinc-900">Units</th>
+              <th className="px-4 py-3 text-right font-semibold text-zinc-900">Avg Ticket</th>
+              <th className="px-4 py-3 text-right font-semibold text-zinc-900">Refunds</th>
+              <th className="px-4 py-3 text-right font-semibold text-zinc-900">Return Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.rows.length === 0 ? (
+              <tr>
+                <td colSpan={8} className="px-4 py-8 text-center text-zinc-500">No sales found for this range.</td>
+              </tr>
+            ) : data.rows.map((row) => (
+              <tr key={`${row.locationId}-${row.period}`} className="border-b border-zinc-100 hover:bg-zinc-50">
+                <td className="px-4 py-3 font-medium text-zinc-900">{row.locationName}</td>
+                <td className="px-4 py-3 text-zinc-600">{row.period}</td>
+                <td className="px-4 py-3 text-right font-semibold text-teal-600">{formatCurrency(row.revenue)}</td>
+                <td className="px-4 py-3 text-right text-zinc-600">{row.transactionCount}</td>
+                <td className="px-4 py-3 text-right text-zinc-600">{row.unitsSold}</td>
+                <td className="px-4 py-3 text-right text-zinc-600">{formatCurrency(row.avgTicket)}</td>
+                <td className="px-4 py-3 text-right text-red-600">{row.refundCount}</td>
+                <td className="px-4 py-3 text-right text-red-600">{formatCurrency(row.returnTotal)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );
@@ -605,6 +748,12 @@ function reportToCSV(type: ReportType, data: AnyReportData): string {
     csv += `Discounts,$${d.current.discountTotal.toFixed(2)}\n`;
     csv += `Refunds,${d.current.refundCount}\n`;
     csv += `Returns Total,$${d.current.returnTotal.toFixed(2)}\n`;
+  } else if (type === "salesByStore") {
+    const d = data as SalesByStoreData;
+    csv = "Store,Period,Revenue,Transactions,Units Sold,Avg Ticket,Refunds,Return Total\n";
+    d.rows.forEach((row) => {
+      csv += [csvCell(row.locationName), csvCell(row.period), csvCell(row.revenue.toFixed(2)), csvCell(row.transactionCount), csvCell(row.unitsSold), csvCell(row.avgTicket.toFixed(2)), csvCell(row.refundCount), csvCell(row.returnTotal.toFixed(2))].join(",") + "\n";
+    });
   } else if (type === "category") {
     const d = data as CategoryReportData;
     csv = "Category,Revenue,Items,Transactions,% of Total\n";
