@@ -70,7 +70,7 @@ interface LineItemInput {
 const statusBadgeColor = (status: string) => {
   switch (status) {
     case 'draft': return '#e5e7eb'; // gray-200
-    case 'pending': return '#3b82f6'; // blue-500
+    case 'submitted': return '#3b82f6'; // blue-500
     case 'partial': return '#f59e0b'; // amber-500
     case 'received': return '#10b981'; // emerald-500
     case 'cancelled': return '#ef4444'; // red-500
@@ -81,7 +81,7 @@ const statusBadgeColor = (status: string) => {
 const statusTextColor = (status: string) => {
   switch (status) {
     case 'draft': return '#374151'; // gray-700
-    case 'pending': return 'white';
+    case 'submitted': return 'white';
     case 'partial': return 'white';
     case 'received': return 'white';
     case 'cancelled': return 'white';
@@ -116,7 +116,7 @@ export default function PurchaseOrdersPage() {
   const [lineUnitCost, setLineUnitCost] = useState('');
 
   // Filter state
-  const [statusFilter, setStatusFilter] = useState<'all' | 'draft' | 'pending' | 'partial' | 'received'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'draft' | 'submitted' | 'partial' | 'received'>('all');
 
   // Loading states
   const [creating, setCreating] = useState(false);
@@ -373,7 +373,7 @@ export default function PurchaseOrdersPage() {
           <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-4">
             {[
               { label: 'Draft', count: orders.filter((o) => o.status === 'draft').length, color: '#e5e7eb' },
-              { label: 'Pending', count: orders.filter((o) => o.status === 'pending').length, color: '#3b82f6' },
+              { label: 'Submitted', count: orders.filter((o) => o.status === 'submitted').length, color: '#3b82f6' },
               { label: 'Open', count: orders.filter((o) => o.status === 'partial').length, color: '#f59e0b' },
               { label: 'Received', count: orders.filter((o) => o.status === 'received').length, color: '#10b981' },
             ].map((stat) => (
@@ -427,7 +427,7 @@ export default function PurchaseOrdersPage() {
 
             {/* Filters */}
             <div className="mb-4 flex flex-wrap gap-2">
-              {(['all', 'draft', 'pending', 'partial', 'received'] as const).map((status) => (
+              {(['all', 'draft', 'submitted', 'partial', 'received'] as const).map((status) => (
                 <button
                   key={status}
                   onClick={() => setStatusFilter(status)}
@@ -608,7 +608,7 @@ export default function PurchaseOrdersPage() {
                 {/* Actions */}
                 {selectedOrder.status === 'draft' && (
                   <button
-                    onClick={() => handleUpdateStatus(selectedOrder.id, 'pending')}
+                    onClick={() => handleUpdateStatus(selectedOrder.id, 'submitted')}
                     disabled={updating}
                     style={{
                       backgroundColor: updating ? '#d1d5db' : '#14b8a6',
@@ -620,7 +620,7 @@ export default function PurchaseOrdersPage() {
                   </button>
                 )}
 
-                {(selectedOrder.status === 'pending' || selectedOrder.status === 'partial') && (
+                {(selectedOrder.status === 'submitted' || selectedOrder.status === 'partial') && (
                   <button
                     onClick={() => handleUpdateStatus(selectedOrder.id, 'cancelled')}
                     disabled={updating}

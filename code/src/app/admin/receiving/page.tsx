@@ -56,6 +56,7 @@ export default function ReceivingPage() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [selectedPO, setSelectedPO] = useState<PurchaseOrder | null>(null);
   const [poDetails, setPoDetails] = useState<PurchaseOrderLine[]>([]);
+  const [poReceiveQuantities, setPoReceiveQuantities] = useState<Record<string, string>>({});
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [posLoading, setPosLoading] = useState(false);
 
@@ -160,12 +161,12 @@ export default function ReceivingPage() {
     if (isNaN(qty) || qty <= 0) return;
 
     const existing = receivingItems.find(
-      (item) => item.variant_id === line.product_variant_id
+      (item) => item.po_line_id === line.id
     );
     if (existing) {
       // Update quantity for PO items
       const updated = receivingItems.map((item) =>
-        item.variant_id === line.product_variant_id
+        item.po_line_id === line.id
           ? {
               ...item,
               quantity: qty,
@@ -205,7 +206,12 @@ export default function ReceivingPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          items: receivingItems,
+          type: 'receive',
+          items: receivingItems.map((item) => ({
+            product_variant_id: item.variant_id,
+            quantity: item.quantity,
+            po_line_id: item.po_line_id,
+          })),
           mode,
           po_id: selectedPO?.id,
         }),
@@ -218,6 +224,7 @@ export default function ReceivingPage() {
 
       setSubmitSuccess(true);
       setReceivingItems([]);
+      setPoReceiveQuantities({});
       setSelectedPO(null);
       setMode('quick');
       setTimeout(() => setSubmitSuccess(false), SUCCESS_TOAST_MS);
@@ -276,6 +283,7 @@ export default function ReceivingPage() {
             onClick={() => {
               setMode('quick');
               setSelectedPO(null);
+              setPoReceiveQuantities({});
               setReceivingItems([]);
             }}
             style={{
@@ -290,6 +298,7 @@ export default function ReceivingPage() {
           <button
             onClick={() => {
               setMode('po');
+              setPoReceiveQuantities({});
               setReceivingItems([]);
               setSearchQuery('');
             }}
@@ -479,6 +488,7 @@ export default function ReceivingPage() {
                       onClick={() => {
                         setSelectedPO(null);
                         setPoDetails([]);
+                        setPoReceiveQuantities({});
                         setReceivingItems([]);
                       }}
                       className="text-sm font-medium transition"
@@ -522,10 +532,10 @@ export default function ReceivingPage() {
                 <div className="space-y-3">
                   {poDetails.map((line) => {
                     const isReceived = receivingItems.some(
-                      (item) => item.variant_id === line.product_variant_id
+                      (item) => item.po_line_id === line.id
                     );
                     const receivedQty = receivingItems.find(
-                      (item) => item.variant_id === line.product_variant_id
+                      (item) => item.po_line_id === line.id
                     )?.quantity || '';
 
                     return (
@@ -557,14 +567,20 @@ export default function ReceivingPage() {
                           <div className="flex gap-2">
                             <input
                               type="number"
-                              value={receivedQty}
+                              value={poReceiveQuantities[line.id] ?? String(receivedQty)}
                               onChange={(e) => {
-                                const newItems = receivingItems.map((item) =>
-                                  item.variant_id === line.product_variant_id
-                                    ? { ...item, quantity: parseInt(e.target.value) || 0 }
-                                    : item
-                                );
-                                setReceivingItems(newItems);
+                                setPoReceiveQuantities((prev) => ({
+                                  ...prev,
+                                  [line.id]: e.target.value,
+                                }));
+                                if (isReceived) {
+                                  const qty = parseInt(e.target.value, 10) || 0;
+                                  setReceivingItems((items) =>
+                                    items.map((item) =>
+                                      item.po_line_id === line.id ? { ...item, quantity: qty } : item
+                                    )
+                                  );
+                                }
                               }}
                               placeholder="Qty"
                               min="0"
@@ -577,7 +593,7 @@ export default function ReceivingPage() {
                             />
                             <button
                               onClick={() =>
-                                handleAddPOItem(line, String(receivedQty))
+                                handleAddPOItem(line, poReceiveQuantities[line.id] ?? String(receivedQty))
                               }
                               style={{
                                 backgroundColor: isReceived ? '#14b8a6' : '#e5e7eb',
