@@ -9,8 +9,7 @@ import { hasPermission } from "@/lib/domain/permissions";
 // AUTH-AUDIT6-HIGH1: register PIN-login rate-limiting moved to the shared
 // `enforceRegisterPinRateLimits` gate; signInRegister no longer rate-limits
 // inline, so `checkRateLimit` is no longer imported here.
-import { mutateStore, readStore } from "@/lib/persistence/store";
-import type { AdminSessionContext, RegisterSessionContext, SessionRecord } from "@/lib/persistence/types";
+import type { AdminSessionContext, LocalStoreData, RegisterSessionContext, SessionRecord } from "@/lib/persistence/types";
 import type { RegisterSessionRecord, ShiftRecord, RoleKey, Employee, Location } from "@/lib/domain/types";
 // R35-P3: hoist the hot-path auth modules to static. Each was previously
 // dynamic-imported inside resolveSession / login / register-login — all
@@ -26,6 +25,23 @@ import { invalidateStoreCache } from "@/lib/persistence/postgres-read-store";
 import { safeErr } from "@/lib/logging/safe-err";
 
 const isPg = () => !!process.env.USE_POSTGRES;
+
+async function loadJsonStore() {
+  return import(/* turbopackIgnore: true */ "@/lib/persistence/json-store");
+}
+
+async function readStore(_orgId?: string): Promise<LocalStoreData> {
+  const { readJsonStore } = await loadJsonStore();
+  return readJsonStore();
+}
+
+async function mutateStore<T>(updater: (store: LocalStoreData) => Promise<T> | T): Promise<T> {
+  const { readJsonStore, writeJsonStore } = await loadJsonStore();
+  const store = await readJsonStore();
+  const result = await updater(store);
+  await writeJsonStore(store);
+  return result;
+}
 
 // R41-2: cookie rename for opacity (R38-C-H6: prior names
 // `basicuniformpos_admin_session` vs `basicuniformpos_register_session`

@@ -28,6 +28,12 @@ if (process.env.NODE_ENV === "development") {
 }
 
 const nextConfig: NextConfig = {
+  turbopack: {
+    // This app lives under ~/Projects/bupos/code while ~/package-lock.json also
+    // exists. Pinning the Turbopack root prevents Next from treating the home
+    // directory as the project root and expanding file tracing/watching scope.
+    root: process.cwd(),
+  },
   // Optimize tree-shaking for heavy icon + chart libraries
   experimental: {
     optimizePackageImports: ["lucide-react", "recharts"],
