@@ -12,7 +12,7 @@
  * itself prints a clear warning before proceeding.
  */
 import { Pool } from 'pg';
-import { randomUUID, randomBytes, pbkdf2Sync, createHash } from 'node:crypto';
+import { randomUUID, randomBytes, pbkdf2Sync } from 'node:crypto';
 
 // ── Crypto (matches src/lib/auth/crypto.ts) ──
 // TST2-M1: production verifies via crypto.subtle.deriveBits with

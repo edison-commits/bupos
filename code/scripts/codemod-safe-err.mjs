@@ -46,9 +46,6 @@ const SCOPES = [
   "src/lib/email",
 ];
 
-// Bare catch-variable identifiers we're willing to rewrite.
-const CATCH_IDENT = /\b(err|error|e)\b/;
-
 // Match `console.error(FIRST_ARG, IDENT)` where IDENT is a simple identifier.
 // First arg can span multiple lines (template / concat), but we lock the
 // match to second arg being a bare identifier followed by `)` or `);`.

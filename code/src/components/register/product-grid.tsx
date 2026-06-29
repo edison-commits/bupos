@@ -393,6 +393,10 @@ export const ProductGrid = memo(function ProductGrid({ items, categories, onAddI
               {/* Hero image area — 60%+ of card */}
               <div className="relative w-full" style={S.aspect4x3}>
                 {item.product.imageUrl ? (
+                  // Product image URLs are tenant-managed and may be remote; keep
+                  // a plain img so the POS grid does not depend on Next image
+                  // remote-pattern configuration for checkout-critical tiles.
+                  // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={item.product.imageUrl}
                     alt={item.product.name}
@@ -466,6 +470,8 @@ export const ProductGrid = memo(function ProductGrid({ items, categories, onAddI
             <div className="flex items-start justify-between gap-4 mb-6">
               <div className="flex items-center gap-4 flex-1">
                 {variantPickerProduct.product.imageUrl ? (
+                  // See product-tile image note above.
+                  // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={variantPickerProduct.product.imageUrl}
                     alt={variantPickerProduct.product.name}

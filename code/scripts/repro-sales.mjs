@@ -12,7 +12,7 @@ const PW = 'Bupos2026!';
 const DB = (() => { const m = readFileSync(new URL('../.env.local', import.meta.url), 'utf8').match(/^DATABASE_URL=(.+)$/m); return m[1].trim(); })();
 const MGR = '4dcad700-6335-4e69-b4c3-c15e39e3e583';
 const LOC = 'c57268b3-cb14-4c1a-bda6-55e49ddc6313';
-const VARIANTS = [{ id: '3fcfb7b8', p: 54 }, { id: '13b7dd62', p: 54 }, { id: '20e5e39c', p: 22 }, { id: '021e7e4d', p: 22 }];
+const _VARIANTS = [{ id: '3fcfb7b8', p: 54 }, { id: '13b7dd62', p: 54 }, { id: '20e5e39c', p: 22 }, { id: '021e7e4d', p: 22 }];
 const TAX = 0.1025;
 const r2 = (n) => Math.round(n * 100) / 100;
 const withTax = (s) => r2(s + r2(s * TAX));
@@ -60,7 +60,7 @@ const main = async () => {
   const N = 50;
   for (let i = 0; i < N; i++) {
     const mode = pick(['cash', 'cash', 'card', 'split']);
-    const nLines = ri(1, 3); const hasCust = false;
+    const nLines = ri(1, 3);
     const lines = []; for (let L = 0; L < nLines; L++) { const v = pick(variants); lines.push({ productVariantId: v.id, quantity: ri(1, 3), unitPrice: v.p }); }
     const sub = r2(lines.reduce((s, l) => s + l.unitPrice * l.quantity, 0)); const total = withTax(sub);
     let tenders;

@@ -35,7 +35,7 @@ assertSafeTargetDb({ forceEnv: 'TEST_R9_FORCE', scriptId: 'test-r9-regressions' 
 
 const ORG_A = "33262270-7100-4b46-b2fb-8b50ad872bbb";
 const LOCATION_ID = "c57268b3-cb14-4c1a-bda6-55e49ddc6313";
-const VARIANT_ID = "3fcfb7b8-856c-4ed7-8cd2-cbb1666f2e18";
+const _VARIANT_ID = "3fcfb7b8-856c-4ed7-8cd2-cbb1666f2e18";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 

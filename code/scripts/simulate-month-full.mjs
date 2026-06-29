@@ -47,7 +47,7 @@ import { randomUUID } from 'node:crypto';
 const BUPOS_URL = process.env.BUPOS_URL ?? 'https://basicuniformpos.com';
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? 'admin@bupos.com';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? 'Bupos2026!';
-const CASHIER_PIN = process.env.CASHIER_PIN ?? '3333';
+const _CASHIER_PIN = process.env.CASHIER_PIN ?? '3333';
 const MANAGER_PIN = process.env.MANAGER_PIN ?? '2222';
 const DAYS = Number(process.env.DAYS ?? 26);
 const SALES_MIN = Number(process.env.SALES_MIN ?? 5);

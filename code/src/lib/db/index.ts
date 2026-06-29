@@ -29,7 +29,6 @@ function readConnectionInfo() {
 // `Record<string, unknown>`. Consumers call `pool.query<RowShape>`
 // and access `.rows` / `.rowCount`. Default to `any` to match pg's +
 // @neondatabase/serverless's native type signatures.
-type Row = Record<string, unknown>;
 interface QueryResultLike<
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches driver signatures
   T = any,
