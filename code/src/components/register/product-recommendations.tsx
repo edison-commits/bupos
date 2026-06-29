@@ -2,6 +2,7 @@
 /* eslint-disable @next/next/no-img-element -- remote product images, width/height unknown */
 
 import { useMemo } from 'react';
+import type { Customer } from '@/lib/domain/types';
 import { formatCurrency } from "@/lib/format";
 
 interface ProductRecommendationsProps {
@@ -10,12 +11,17 @@ interface ProductRecommendationsProps {
     productId: string;
     productName: string;
   }[];
+  customer?: Customer;
   transactionEvents: {
     id: string;
     transactionId: string;
     eventKind: string;
     payload?: Record<string, string>;
     createdAt: string;
+  }[];
+  categories: {
+    id: string;
+    name: string;
   }[];
   products: {
     id: string;
@@ -30,6 +36,8 @@ interface ProductRecommendationsProps {
     name: string;
     sku: string;
     price: number;
+    sizeLabel?: string;
+    colorLabel?: string;
     isActive: boolean;
   }[];
   inventory: {
@@ -47,30 +55,54 @@ interface RecommendationItem {
   price: number;
   imageUrl?: string;
   score: number;
-  reason: 'frequently_bought_together' | 'category_suggestion';
+  reason: 'customer_preference' | 'frequently_bought_together' | 'category_suggestion';
   frequency: number;
+  preferenceReasons: string[];
   inStock: boolean;
+}
+
+function normalize(value?: string) {
+  return (value ?? '').trim().toLowerCase();
+}
+
+function includesNormalized(haystack: string | undefined, needle: string | undefined) {
+  const h = normalize(haystack);
+  const n = normalize(needle);
+  return !!h && !!n && h.includes(n);
+}
+
+function addOrUpgradeRecommendation(
+  recommendationMap: Map<string, RecommendationItem>,
+  item: RecommendationItem,
+) {
+  const key = `${item.productId}-${item.variantId}`;
+  const existing = recommendationMap.get(key);
+  if (!existing || item.score > existing.score) {
+    recommendationMap.set(key, item);
+  }
 }
 
 export function ProductRecommendations({
   currentCartItems,
+  customer,
   transactionEvents,
+  categories,
   products,
   variants,
   inventory,
   onAddItem,
 }: ProductRecommendationsProps) {
   const recommendations = useMemo(() => {
-    if (currentCartItems.length === 0) return [];
+    const hasCustomerPreferences = (customer?.preferences?.length ?? 0) > 0;
+    if (currentCartItems.length === 0 && !hasCustomerPreferences) return [];
 
-    const cartProductIds = new Set(currentCartItems.map((item) => item.productId));
+    const cartProductIds = new Set(currentCartItems.map((item) => item.productId).filter(Boolean));
     const cartProductNames = new Set(currentCartItems.map((item) => item.productName));
 
-    // Build a map of variant ID to variant details for quick lookup
+    const categoryMap = new Map(categories.map((c) => [c.id, c]));
     const variantMap = new Map(variants.map((v) => [v.id, v]));
     const productMap = new Map(products.map((p) => [p.id, p]));
 
-    // Pre-bucket active variants by productId so downstream lookups avoid O(V) scans.
     const activeVariantsByProductId = new Map<string, typeof variants>();
     for (const v of variants) {
       if (!v.isActive) continue;
@@ -79,12 +111,80 @@ export function ProductRecommendations({
       else activeVariantsByProductId.set(v.productId, [v]);
     }
 
-    // Build inventory lookup
     const inventoryMap = new Map(
       inventory.map((i) => [i.productVariantId, i.onHand])
     );
 
-    // Extract transactions from events
+    const recommendationMap = new Map<string, RecommendationItem>();
+
+    // Strategy 0: explicit customer preference matching. This is intentionally
+    // transparent and staff/customer-confirmed, not black-box AI.
+    for (const preference of customer?.preferences ?? []) {
+      const categoryNeedle = normalize(preference.category);
+      const preferredColors = preference.preferredColors.map(normalize).filter(Boolean);
+      const preferredBrands = preference.preferredBrands.map(normalize).filter(Boolean);
+      const sizeNeedle = normalize(preference.sizeLabel);
+      const fitNeedle = normalize(preference.fitPreference);
+
+      for (const product of products) {
+        if (!product.isActive || cartProductIds.has(product.id)) continue;
+        const categoryName = categoryMap.get(product.categoryId)?.name;
+        const productCategoryMatch =
+          includesNormalized(categoryName, categoryNeedle) || includesNormalized(product.name, categoryNeedle);
+        const productBrandMatch = preferredBrands.some((brand) => includesNormalized(product.name, brand));
+        if (!productCategoryMatch && !productBrandMatch) continue;
+
+        for (const variant of activeVariantsByProductId.get(product.id) ?? []) {
+          const stock = inventoryMap.get(variant.id) ?? 0;
+          if (stock <= 0) continue;
+
+          const preferenceReasons: string[] = [];
+          let score = 50;
+
+          if (productCategoryMatch) {
+            preferenceReasons.push(preference.category);
+            score += 10;
+          }
+          if (sizeNeedle && includesNormalized(variant.sizeLabel || variant.name, sizeNeedle)) {
+            preferenceReasons.push(`size ${preference.sizeLabel}`);
+            score += 25;
+          }
+          const matchedColor = preferredColors.find((color) =>
+            includesNormalized(variant.colorLabel || variant.name, color) || includesNormalized(product.name, color)
+          );
+          if (matchedColor) {
+            preferenceReasons.push(`color ${matchedColor}`);
+            score += 15;
+          }
+          const matchedBrand = preferredBrands.find((brand) =>
+            includesNormalized(product.name, brand) || includesNormalized(variant.name, brand)
+          );
+          if (matchedBrand) {
+            preferenceReasons.push(`brand ${matchedBrand}`);
+            score += 15;
+          }
+          if (fitNeedle && includesNormalized(`${product.name} ${variant.name}`, fitNeedle)) {
+            preferenceReasons.push(preference.fitPreference ?? 'preferred fit');
+            score += 10;
+          }
+
+          addOrUpgradeRecommendation(recommendationMap, {
+            productId: product.id,
+            variantId: variant.id,
+            productName: product.name,
+            variantName: variant.name,
+            price: variant.price,
+            imageUrl: product.imageUrl,
+            score,
+            reason: 'customer_preference',
+            frequency: 0,
+            preferenceReasons,
+            inStock: true,
+          });
+        }
+      }
+    }
+
     const transactionMap = new Map<
       string,
       { productIds: Set<string>; productNames: Set<string> }
@@ -92,7 +192,6 @@ export function ProductRecommendations({
 
     for (const event of transactionEvents) {
       if (event.eventKind === 'transaction_placeholder' && event.payload) {
-        // Try to extract variant IDs from payload
         const itemVariantIds = event.payload.item_variant_ids;
         const itemProductIds = event.payload.item_product_ids;
         const itemProductNames = event.payload.item_product_names;
@@ -106,7 +205,6 @@ export function ProductRecommendations({
 
         const transaction = transactionMap.get(event.transactionId)!;
 
-        // Parse comma-separated IDs if available
         if (itemVariantIds && typeof itemVariantIds === 'string') {
           itemVariantIds.split(',').forEach((id) => {
             const vid = id.trim();
@@ -131,10 +229,6 @@ export function ProductRecommendations({
       }
     }
 
-    // Score recommendations
-    const recommendationMap = new Map<string, RecommendationItem>();
-
-    // Strategy 1: Co-purchase based on product names
     const productNameMatches = new Map<string, number>();
     for (const [, transaction] of transactionMap) {
       const hasCartItem = Array.from(transaction.productNames).some((name) =>
@@ -153,7 +247,6 @@ export function ProductRecommendations({
       }
     }
 
-    // Strategy 2: Co-purchase based on product IDs
     const productIdMatches = new Map<string, number>();
     for (const [, transaction] of transactionMap) {
       const hasCartItem = Array.from(transaction.productIds).some((id) =>
@@ -172,40 +265,33 @@ export function ProductRecommendations({
       }
     }
 
-    // Convert matches to recommendations (co-purchase strategy)
     for (const [productId, frequency] of productIdMatches) {
       const product = productMap.get(productId);
       if (!product || !product.isActive) continue;
 
-      // Get the best variant (cheapest active variant with stock) — O(1) lookup
       const productVariants = activeVariantsByProductId.get(productId) ?? [];
-
       if (productVariants.length === 0) continue;
 
       for (const variant of productVariants) {
         const stock = inventoryMap.get(variant.id) ?? 0;
         if (stock <= 0) continue;
 
-        const key = `${productId}-${variant.id}`;
-
-        if (!recommendationMap.has(key)) {
-          recommendationMap.set(key, {
-            productId,
-            variantId: variant.id,
-            productName: product.name,
-            variantName: variant.name,
-            price: variant.price,
-            imageUrl: product.imageUrl,
-            score: frequency * 10, // Weight co-purchase highly
-            reason: 'frequently_bought_together',
-            frequency,
-            inStock: true,
-          });
-        }
+        addOrUpgradeRecommendation(recommendationMap, {
+          productId,
+          variantId: variant.id,
+          productName: product.name,
+          variantName: variant.name,
+          price: variant.price,
+          imageUrl: product.imageUrl,
+          score: frequency * 10,
+          reason: 'frequently_bought_together',
+          frequency,
+          preferenceReasons: [],
+          inStock: true,
+        });
       }
     }
 
-    // Strategy 3: Category-based recommendations
     const cartCategories = new Set<string>();
     for (const cartItem of currentCartItems) {
       const product = productMap.get(cartItem.productId);
@@ -232,44 +318,34 @@ export function ProductRecommendations({
       const product = productMap.get(productId);
       if (!product) continue;
 
-      const productVariants = variants.filter(
-        (v) => v.productId === productId && v.isActive
-      );
-
+      const productVariants = activeVariantsByProductId.get(productId) ?? [];
       if (productVariants.length === 0) continue;
 
-      // Prefer the first active variant with stock
       for (const variant of productVariants) {
         const stock = inventoryMap.get(variant.id) ?? 0;
         if (stock <= 0) continue;
 
-        const key = `${productId}-${variant.id}`;
-
-        if (!recommendationMap.has(key)) {
-          recommendationMap.set(key, {
-            productId,
-            variantId: variant.id,
-            productName: product.name,
-            variantName: variant.name,
-            price: variant.price,
-            imageUrl: product.imageUrl,
-            score: 3, // Lower score for category-based
-            reason: 'category_suggestion',
-            frequency: 0,
-            inStock: true,
-          });
-        }
+        addOrUpgradeRecommendation(recommendationMap, {
+          productId,
+          variantId: variant.id,
+          productName: product.name,
+          variantName: variant.name,
+          price: variant.price,
+          imageUrl: product.imageUrl,
+          score: 3,
+          reason: 'category_suggestion',
+          frequency: 0,
+          preferenceReasons: [],
+          inStock: true,
+        });
         break;
       }
     }
 
-    // Sort by score and limit to 6 recommendations
-    const sorted = Array.from(recommendationMap.values())
+    return Array.from(recommendationMap.values())
       .sort((a, b) => b.score - a.score)
       .slice(0, 6);
-
-    return sorted.length > 0 ? sorted : [];
-  }, [currentCartItems, transactionEvents, products, variants, inventory]);
+  }, [currentCartItems, customer, transactionEvents, categories, products, variants, inventory]);
 
   if (recommendations.length === 0) {
     return null;
@@ -320,13 +396,14 @@ interface RecommendationCardProps {
 
 function RecommendationCard({ item, onAdd }: RecommendationCardProps) {
   const reasonLabel =
-    item.reason === 'frequently_bought_together'
-      ? `Bought together ${item.frequency}x`
-      : 'Popular in category';
+    item.reason === 'customer_preference'
+      ? 'Matches customer preferences'
+      : item.reason === 'frequently_bought_together'
+        ? `Bought together ${item.frequency}x`
+        : 'Popular in category';
 
   return (
     <div className="flex-shrink-0 w-56 rounded-2xl bg-zinc-50 border border-zinc-200 overflow-hidden transition-shadow hover:shadow-md">
-      {/* Product Image */}
       <div className="h-24 bg-zinc-200 overflow-hidden">
         {item.imageUrl ? (
           <img
@@ -341,9 +418,7 @@ function RecommendationCard({ item, onAdd }: RecommendationCardProps) {
         )}
       </div>
 
-      {/* Content */}
       <div className="p-3 flex flex-col gap-2">
-        {/* Product & Variant Names */}
         <div className="min-h-10">
           <p className="text-sm font-medium text-zinc-900 leading-tight">
             {item.productName}
@@ -355,17 +430,19 @@ function RecommendationCard({ item, onAdd }: RecommendationCardProps) {
           )}
         </div>
 
-        {/* Price — variant price is already stored in dollars (numeric), not cents */}
         <p className="text-lg font-semibold text-teal-600">
           {formatCurrency(item.price)}
         </p>
 
-        {/* Reason Badge */}
         <span className="inline-flex text-xs font-medium text-teal-700 bg-teal-50 px-2 py-1 rounded-full w-fit">
           {reasonLabel}
         </span>
+        {item.preferenceReasons.length > 0 && (
+          <p className="line-clamp-2 text-xs text-zinc-500">
+            {item.preferenceReasons.join(' · ')}
+          </p>
+        )}
 
-        {/* Add Button */}
         <button
           onClick={onAdd}
           className="mt-auto w-full px-3 py-2 bg-teal-600 hover:bg-teal-700 text-white font-medium text-sm rounded-lg transition-colors"

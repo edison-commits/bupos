@@ -146,6 +146,11 @@ export function POSTerminal(props: POSTerminalProps) {
     return map;
   }, [variants, products]);
 
+  const selectedCustomerForRecommendations = useMemo(
+    () => customers.find((customer) => customer.id === cart.customerId),
+    [customers, cart.customerId],
+  );
+
   const openHeldCarts = useCallback(() => setShowHeldCarts(true), [setShowHeldCarts]);
 
   // R82-FE-H1: Esc handlers for the three pos-terminal modals that
@@ -243,15 +248,21 @@ export function POSTerminal(props: POSTerminalProps) {
         <div className="flex-1 overflow-hidden rounded-2xl border p-3 shadow-lg sm:p-4" style={S.panelWithBorder}>
           <ProductGrid items={gridItems} categories={categories} onAddItem={handleAddItem} />
         </div>
-        {screen === "selling" && cart.items.length > 0 && (
+        {screen === "selling" && (cart.items.length > 0 || selectedCustomerForRecommendations?.preferences?.length) && (
           <ProductRecommendations
             currentCartItems={cart.items.map((i) => {
               const v = variants.find((vv) => vv.id === i.productVariantId);
               return { productVariantId: i.productVariantId, productId: v?.productId ?? "", productName: i.productName };
             })}
+            customer={selectedCustomerForRecommendations}
             transactionEvents={transactionEvents}
+            categories={categories}
             products={products}
-            variants={variants}
+            variants={variants.map((variant) => ({
+              ...variant,
+              sizeLabel: variant.sizeLabel,
+              colorLabel: variant.colorLabel,
+            }))}
             inventory={inventory}
             onAddItem={(productId, variantId) => {
               const v = variants.find((vv) => vv.id === variantId);
