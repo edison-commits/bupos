@@ -9,6 +9,54 @@ import { randomUUID } from '@/lib/uuid';
 import { invalidateStoreCache } from '@/lib/persistence/postgres-read-store';
 
 import { safeErr } from "@/lib/logging/safe-err";
+const ORG_SETTINGS_SELECT = `id, name, legal_name, slug, phone, email, website, timezone, currency_code,
+                receipt_header, receipt_footer,
+                receipt_store_name, receipt_store_address, receipt_store_city,
+                receipt_store_region, receipt_store_postal_code, receipt_store_phone,
+                customer_display_display_name, customer_display_welcome_text,
+                customer_display_idle_message, customer_display_accent_color`;
+
+function settingsResponse(org: Record<string, unknown>, location: Record<string, unknown>) {
+  return {
+    store: {
+      name: org.name,
+      legalName: org.legal_name,
+      phone: org.phone,
+      email: org.email,
+      website: org.website,
+      timezone: org.timezone,
+      currencyCode: org.currency_code,
+    },
+    location: {
+      name: location.name,
+      code: location.code,
+      address1: location.address1,
+      city: location.city,
+      region: location.region,
+      postalCode: location.postal_code,
+      phone: location.phone,
+      taxRate: Number(location.tax_rate),
+      isActive: location.is_active,
+    },
+    receipt: {
+      header: org.receipt_header || '',
+      footer: org.receipt_footer || '',
+      storeName: org.receipt_store_name || '',
+      storeAddress: org.receipt_store_address || '',
+      storeCity: org.receipt_store_city || '',
+      storeRegion: org.receipt_store_region || '',
+      storePostalCode: org.receipt_store_postal_code || '',
+      storePhone: org.receipt_store_phone || '',
+    },
+    customerDisplay: {
+      displayName: org.customer_display_display_name || '',
+      welcomeText: org.customer_display_welcome_text || 'Welcome',
+      idleMessage: org.customer_display_idle_message || 'Ready to checkout',
+      accentColor: org.customer_display_accent_color || '#14b8a6',
+    },
+  };
+}
+
 export const GET = withDualAuth("catalog.manage", async (req, ctx) => {
   const { orgId, locationId } = ctx;
   if (!locationId) {
@@ -22,10 +70,7 @@ export const GET = withDualAuth("catalog.manage", async (req, ctx) => {
       // IS the tenant scope.
       orgQuery(
         orgId,
-        `SELECT id, name, legal_name, slug, phone, email, website, timezone, currency_code,
-                receipt_header, receipt_footer,
-                receipt_store_name, receipt_store_address, receipt_store_city,
-                receipt_store_region, receipt_store_postal_code, receipt_store_phone
+        `SELECT ${ORG_SETTINGS_SELECT}
          FROM organizations WHERE id = $1`,
         [orgId]
       ),
@@ -47,38 +92,7 @@ export const GET = withDualAuth("catalog.manage", async (req, ctx) => {
       return NextResponse.json({ error: 'Location not found' }, { status: 404 });
     }
 
-    return NextResponse.json({
-      store: {
-        name: org.name,
-        legalName: org.legal_name,
-        phone: org.phone,
-        email: org.email,
-        website: org.website,
-        timezone: org.timezone,
-        currencyCode: org.currency_code,
-      },
-      location: {
-        name: location.name,
-        code: location.code,
-        address1: location.address1,
-        city: location.city,
-        region: location.region,
-        postalCode: location.postal_code,
-        phone: location.phone,
-        taxRate: Number(location.tax_rate),
-        isActive: location.is_active,
-      },
-      receipt: {
-        header: org.receipt_header || '',
-        footer: org.receipt_footer || '',
-        storeName: org.receipt_store_name || '',
-        storeAddress: org.receipt_store_address || '',
-        storeCity: org.receipt_store_city || '',
-        storeRegion: org.receipt_store_region || '',
-        storePostalCode: org.receipt_store_postal_code || '',
-        storePhone: org.receipt_store_phone || '',
-      },
-    });
+    return NextResponse.json(settingsResponse(org, location));
   } catch (error) {
     console.error('Settings GET error:', safeErr(error));
     return NextResponse.json({ error: 'Failed to fetch settings' }, { status: 500 });
@@ -269,11 +283,8 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
           // IS the tenant scope.
           orgQuery(
             orgId,
-            `SELECT id, name, legal_name, slug, phone, email, website, timezone, currency_code,
-                    receipt_header, receipt_footer,
-                    receipt_store_name, receipt_store_address, receipt_store_city,
-                    receipt_store_region, receipt_store_postal_code, receipt_store_phone
-             FROM organizations WHERE id = $1`,
+            `SELECT ${ORG_SETTINGS_SELECT}
+              FROM organizations WHERE id = $1`,
             [orgId]
           ),
           orgQuery(
@@ -285,24 +296,7 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
         ]);
         const org = updatedOrg.rows[0];
         const loc = updatedLocation.rows[0];
-        return NextResponse.json({
-          store: {
-            name: org.name, legalName: org.legal_name, phone: org.phone,
-            email: org.email, website: org.website, timezone: org.timezone,
-            currencyCode: org.currency_code,
-          },
-          location: {
-            name: loc.name, code: loc.code, address1: loc.address1,
-            city: loc.city, region: loc.region, postalCode: loc.postal_code,
-            phone: loc.phone, taxRate: Number(loc.tax_rate), isActive: loc.is_active,
-          },
-          receipt: {
-            header: org.receipt_header || '', footer: org.receipt_footer || '',
-            storeName: org.receipt_store_name || '', storeAddress: org.receipt_store_address || '',
-            storeCity: org.receipt_store_city || '', storeRegion: org.receipt_store_region || '',
-            storePostalCode: org.receipt_store_postal_code || '', storePhone: org.receipt_store_phone || '',
-          },
-        });
+        return NextResponse.json(settingsResponse(org, loc));
       }
 
       case 'receipt': {
@@ -325,6 +319,40 @@ export const PUT = withAdminAuth('employee.manage', async (request, ctx) => {
             [
               randomUUID(), orgId, locationId ?? null, ctx.employee.id, orgId,
               JSON.stringify({ section: 'receipt', keys: Object.keys(data as Record<string, unknown>) }),
+            ],
+          );
+          await client.query("COMMIT");
+          invalidateStoreCache(orgId);
+        } catch (e) {
+          await client.query("ROLLBACK").catch(() => {});
+          throw e;
+        } finally {
+          client.release();
+        }
+        return NextResponse.json({ success: true });
+      }
+
+      case 'customerDisplay': {
+        const upd = buildDynamicUpdate(
+          'organizations',
+          {
+            displayName: 'customer_display_display_name',
+            welcomeText: 'customer_display_welcome_text',
+            idleMessage: 'customer_display_idle_message',
+            accentColor: 'customer_display_accent_color',
+          },
+          data as Record<string, unknown>,
+          (offset) => ({ sql: `id = $${offset}`, params: [orgId] }),
+        );
+        const client = await orgTx(orgId);
+        try {
+          if (upd) await client.query(upd.sql, upd.params);
+          await client.query(
+            `INSERT INTO audit_events (id, organization_id, location_id, actor_employee_id, entity_type, entity_id, event_kind, payload, created_at)
+             VALUES ($1, $2, $3, $4, 'organization', $5, 'settings_updated', $6, now())`,
+            [
+              randomUUID(), orgId, locationId ?? null, ctx.employee.id, orgId,
+              JSON.stringify({ section: 'customerDisplay', keys: Object.keys(data as Record<string, unknown>) }),
             ],
           );
           await client.query("COMMIT");

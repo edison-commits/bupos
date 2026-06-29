@@ -384,6 +384,13 @@ export const receivingCreateSchema = z.object({
 // Every section is .strict() so unknown keys are rejected rather than silently
 // dropped — the settings UPDATE builder then can't accidentally route an
 // unexpected key through to a real column via the field map.
+const customerDisplaySettingsSchema = z.object({
+  displayName: z.string().max(200).optional(),
+  welcomeText: z.string().max(120).optional(),
+  idleMessage: z.string().max(160).optional(),
+  accentColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
+}).strict();
+
 const storeSettingsSchema = z.object({
   name: z.string().max(200).optional(),
   legalName: z.string().max(200).optional(),
@@ -427,6 +434,7 @@ export const settingsUpdateSchema = z.discriminatedUnion('section', [
   z.object({ section: z.literal('store'), data: storeSettingsSchema }),
   z.object({ section: z.literal('location'), data: locationSettingsSchema }),
   z.object({ section: z.literal('receipt'), data: receiptSettingsSchema }),
+  z.object({ section: z.literal('customerDisplay'), data: customerDisplaySettingsSchema }),
 ]);
 
 // ---------------------------------------------------------------------------

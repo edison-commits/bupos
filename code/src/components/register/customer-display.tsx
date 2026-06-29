@@ -4,6 +4,13 @@ import { useState, useEffect } from "react";
 import type { Cart, CartTotals } from "@/lib/cart/types";
 import { formatCurrency } from "@/lib/format";
 
+export interface CustomerDisplayBranding {
+  displayName?: string;
+  welcomeText?: string;
+  idleMessage?: string;
+  accentColor?: string;
+}
+
 interface CustomerDisplayProps {
   cart: Cart;
   totals: CartTotals;
@@ -12,6 +19,7 @@ interface CustomerDisplayProps {
   appliedPromo?: string | null;
   exchangeCredit?: number | null;
   paymentStatus?: "pending" | "processing";
+  branding?: CustomerDisplayBranding;
 }
 
 type DisplayMode = "idle" | "active" | "payment" | "receipt";
@@ -29,6 +37,7 @@ export function CustomerDisplay({
   appliedPromo,
   exchangeCredit,
   paymentStatus = "pending",
+  branding,
 }: CustomerDisplayProps) {
   const [displayMode, setDisplayMode] = useState<DisplayMode>("idle");
   const [transactionComplete, setTransactionComplete] = useState(false);
@@ -57,7 +66,7 @@ export function CustomerDisplay({
   return (
     <div className="flex flex-col h-screen w-full bg-slate-950 text-white overflow-hidden">
       {displayMode === "idle" && (
-        <IdleScreen storeName={storeName} />
+        <IdleScreen storeName={storeName} branding={branding} />
       )}
 
       {displayMode === "active" && (
@@ -84,28 +93,29 @@ export function CustomerDisplay({
 /**
  * Idle screen: shows branding and welcome message
  */
-function IdleScreen({ storeName }: { storeName: string }) {
+function IdleScreen({ storeName, branding }: { storeName: string; branding?: CustomerDisplayBranding }) {
+  const accentColor = branding?.accentColor || '#14b8a6';
   return (
     <div className="flex-1 flex flex-col items-center justify-center bg-gradient-to-b from-slate-900 to-slate-950 px-8 text-center">
       <div className="mb-12">
-        <div className="text-7xl font-bold text-teal-500 mb-4">
+        <div className="text-7xl font-bold mb-4" style={{ color: accentColor }}>
           ◆
         </div>
         <h1 className="text-6xl font-bold text-white mb-4 tracking-tight">
-          {storeName}
+          {branding?.displayName || storeName}
         </h1>
       </div>
 
       <div className="max-w-xl">
         <p className="text-4xl text-gray-300 mb-8 font-light">
-          Welcome
+          {branding?.welcomeText || 'Welcome'}
         </p>
         <p className="text-2xl text-gray-400">
-          Ready to checkout
+          {branding?.idleMessage || 'Ready to checkout'}
         </p>
       </div>
 
-      <div className="mt-12 flex gap-2 text-teal-500">
+      <div className="mt-12 flex gap-2" style={{ color: accentColor }}>
         <div className="w-3 h-3 rounded-full animate-pulse"></div>
         <div className="w-3 h-3 rounded-full animate-pulse delay-100"></div>
         <div className="w-3 h-3 rounded-full animate-pulse delay-200"></div>

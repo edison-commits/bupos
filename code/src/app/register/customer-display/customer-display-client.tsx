@@ -3,12 +3,13 @@
 import { useState, useEffect } from "react";
 import type { Cart, CartTotals } from "@/lib/cart/types";
 import { computeTotals, createCart } from "@/lib/cart/cart";
-import { CustomerDisplay } from "@/components/register/customer-display";
+import { CustomerDisplay, type CustomerDisplayBranding } from "@/components/register/customer-display";
 import { displayMessageSchema } from "@/lib/validation/display-message";
 
 interface CustomerDisplayClientProps {
   storeName: string;
   locationName: string;
+  branding?: CustomerDisplayBranding;
 }
 
 /**
@@ -21,7 +22,7 @@ interface CustomerDisplayClientProps {
  * so any XSS elsewhere in the app could feed crafted payloads into
  * this display to spoof totals the customer sees at payment time.
  */
-export function CustomerDisplayClient({ storeName, locationName }: CustomerDisplayClientProps) {
+export function CustomerDisplayClient({ storeName, locationName, branding }: CustomerDisplayClientProps) {
   const [cart, setCart] = useState<Cart>(() => createCart("", "", ""));
   const [totals, setTotals] = useState<CartTotals>({ subtotal: 0, modifiersTotal: 0, discountTotal: 0, taxTotal: 0, grandTotal: 0, itemCount: 0 });
   const [customerName, setCustomerName] = useState<string | undefined>(undefined);
@@ -83,6 +84,7 @@ export function CustomerDisplayClient({ storeName, locationName }: CustomerDispl
       appliedPromo={appliedPromo}
       exchangeCredit={exchangeCredit}
       paymentStatus={paymentStatus}
+      branding={branding}
     />
   );
 }

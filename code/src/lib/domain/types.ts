@@ -77,6 +77,10 @@ export interface Organization extends BaseRecord {
   website?: string;
   receiptHeader?: string;
   receiptFooter?: string;
+  customerDisplayDisplayName?: string;
+  customerDisplayWelcomeText?: string;
+  customerDisplayIdleMessage?: string;
+  customerDisplayAccentColor?: string;
 }
 
 export interface Location extends BaseRecord {
