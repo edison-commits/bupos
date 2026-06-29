@@ -347,16 +347,25 @@ export default function PurchaseOrdersPage() {
                 Manage supplier purchase orders and receiving
               </p>
             </div>
-            <button
-              onClick={() => {
-                setShowCreateModal(true);
-                setError(null);
-              }}
-              style={{ backgroundColor: '#14b8a6', color: 'white' }}
-              className="rounded px-6 py-3 font-medium transition hover:opacity-90"
-            >
-              Create PO
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <Link
+                href="/admin/purchase-orders/supplier-performance"
+                style={{ backgroundColor: '#0f766e', color: 'white' }}
+                className="rounded px-6 py-3 font-medium transition hover:opacity-90"
+              >
+                Supplier Performance
+              </Link>
+              <button
+                onClick={() => {
+                  setShowCreateModal(true);
+                  setError(null);
+                }}
+                style={{ backgroundColor: '#14b8a6', color: 'white' }}
+                className="rounded px-6 py-3 font-medium transition hover:opacity-90"
+              >
+                Create PO
+              </button>
+            </div>
           </div>
         </div>
       </div>
