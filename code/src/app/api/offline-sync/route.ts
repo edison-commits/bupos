@@ -58,6 +58,17 @@ interface CartLineItem {
   [key: string]: unknown;
 }
 
+interface OfflineTender {
+  type: 'cash' | 'card' | 'store_credit' | 'loyalty' | 'gift_card';
+  amount: number;
+  metadata?: {
+    gift_card_id?: string;
+    [key: string]: unknown;
+  };
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 /**
  * POST /api/offline-sync
  *
@@ -79,7 +90,7 @@ export const POST = withDualAuth("register.open", async (request, ctx) => {
     const body = v.data;
     const { id, timestamp: rawTimestamp, registerSessionId, approvedExceptions: rawApprovedExceptions = [] } = body;
     const cart = body.cart as CartPayload;
-    const tenders = body.tenders as Array<{ type: string; amount: number }>;
+    const tenders = body.tenders as OfflineTender[];
     // approvedExceptions: we ACCEPT only those codes that have a matching
     // pending/approved row in register_session_exceptions for THIS register
     // session and still within its expiry. The client can claim anything but
@@ -137,12 +148,29 @@ export const POST = withDualAuth("register.open", async (request, ctx) => {
       if (!t || typeof t !== 'object' || Array.isArray(t)) {
         return NextResponse.json({ error: 'Invalid tender entry' }, { status: 400 });
       }
-      const tt = t as { type?: unknown; amount?: unknown };
+      const tt = t as { type?: unknown; amount?: unknown; metadata?: unknown };
       if (typeof tt.type !== 'string' || !ALLOWED_TENDER_TYPES.has(tt.type)) {
         return NextResponse.json({ error: 'Invalid tender type' }, { status: 400 });
       }
       if (typeof tt.amount !== 'number' || !Number.isFinite(tt.amount) || tt.amount <= 0 || tt.amount > 10_000_000) {
         return NextResponse.json({ error: 'Invalid tender amount' }, { status: 400 });
+      }
+      if (tt.metadata !== undefined && (tt.metadata === null || typeof tt.metadata !== 'object' || Array.isArray(tt.metadata))) {
+        return NextResponse.json({ error: 'Invalid tender metadata' }, { status: 400 });
+      }
+      // CRIT-AUDIT11: value-backed tenders must carry the server-verified
+      // backing identifier/customer before the payload can satisfy tender
+      // sufficiency. Prior shape accepted loyalty/store_credit without a
+      // customer and gift_card without gift_card_id; the sale was recorded as
+      // paid while no balance/points were deducted.
+      if ((tt.type === 'loyalty' || tt.type === 'store_credit') && typeof cart.customerId !== 'string') {
+        return NextResponse.json({ error: `${tt.type} tender requires a customer` }, { status: 400 });
+      }
+      if (tt.type === 'gift_card') {
+        const metadata = tt.metadata as { gift_card_id?: unknown } | undefined;
+        if (typeof metadata?.gift_card_id !== 'string' || !UUID_RE.test(metadata.gift_card_id)) {
+          return NextResponse.json({ error: 'Gift card tender requires gift_card_id metadata' }, { status: 400 });
+        }
       }
     }
 
@@ -986,9 +1014,11 @@ export const POST = withDualAuth("register.open", async (request, ctx) => {
         const tenderIds = tenders.map(() => randomUUID());
         const tenderTypes = tenders.map((t: { type: string }) => t.type);
         const tenderAmounts = tenders.map((t: { amount: number }) => t.amount);
-        const tenderMetas = tenders.map((_, i) =>
-          JSON.stringify(i === lastCashIdx ? { change_due: changeDue.toFixed(2) } : {}),
-        );
+        const tenderMetas = tenders.map((t, i) => {
+          const metadata: Record<string, unknown> = t.metadata && typeof t.metadata === 'object' ? { ...t.metadata } : {};
+          if (i === lastCashIdx) metadata.change_due = changeDue.toFixed(2);
+          return JSON.stringify(metadata);
+        });
         await syncClient.query(
           `INSERT INTO transaction_tenders (id, transaction_id, tender_type, amount, metadata)
            SELECT unnest($1::uuid[]), $2, unnest($3::text[]), unnest($4::numeric[]), unnest($5::jsonb[])
@@ -1159,9 +1189,9 @@ export const POST = withDualAuth("register.open", async (request, ctx) => {
         // WITHOUT this, an offline cart with a gift_card tender would redeem at
         // the register but never burn balance server-side — infinite store value.
         const giftCardTenders = tenders.filter(
-          (t: { type: string; amount: number; metadata?: { gift_card_id?: string } }) =>
-            t.type === "gift_card" && t.metadata?.gift_card_id,
-        ) as Array<{ type: string; amount: number; metadata: { gift_card_id: string } }>;
+          (t): t is OfflineTender & { metadata: { gift_card_id: string } } =>
+            t.type === "gift_card" && typeof t.metadata?.gift_card_id === 'string',
+        );
         for (const tender of giftCardTenders) {
           // R75-M: include `expires_at` in the SELECT + reject expired
           // cards even when status is still 'active'. No scheduled
