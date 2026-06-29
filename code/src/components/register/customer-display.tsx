@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import type { Cart, CartTotals } from "@/lib/cart/types";
+import { CustomerSignupQr } from "./customer-signup-qr";
 import { formatCurrency } from "@/lib/format";
 
 export interface CustomerDisplayBranding {
@@ -20,6 +21,7 @@ interface CustomerDisplayProps {
   exchangeCredit?: number | null;
   paymentStatus?: "pending" | "processing";
   branding?: CustomerDisplayBranding;
+  customerSignupUrl?: string;
 }
 
 type DisplayMode = "idle" | "active" | "payment" | "receipt";
@@ -38,6 +40,7 @@ export function CustomerDisplay({
   exchangeCredit,
   paymentStatus = "pending",
   branding,
+  customerSignupUrl,
 }: CustomerDisplayProps) {
   const [displayMode, setDisplayMode] = useState<DisplayMode>("idle");
   const [transactionComplete, setTransactionComplete] = useState(false);
@@ -66,7 +69,7 @@ export function CustomerDisplay({
   return (
     <div className="flex flex-col h-screen w-full bg-slate-950 text-white overflow-hidden">
       {displayMode === "idle" && (
-        <IdleScreen storeName={storeName} branding={branding} />
+        <IdleScreen storeName={storeName} branding={branding} customerSignupUrl={customerSignupUrl} />
       )}
 
       {displayMode === "active" && (
@@ -93,11 +96,11 @@ export function CustomerDisplay({
 /**
  * Idle screen: shows branding and welcome message
  */
-function IdleScreen({ storeName, branding }: { storeName: string; branding?: CustomerDisplayBranding }) {
+function IdleScreen({ storeName, branding, customerSignupUrl }: { storeName: string; branding?: CustomerDisplayBranding; customerSignupUrl?: string }) {
   const accentColor = branding?.accentColor || '#14b8a6';
   return (
     <div className="flex-1 flex flex-col items-center justify-center bg-gradient-to-b from-slate-900 to-slate-950 px-8 text-center">
-      <div className="mb-12">
+      <div className="mb-8">
         <div className="text-7xl font-bold mb-4" style={{ color: accentColor }}>
           ◆
         </div>
@@ -107,7 +110,7 @@ function IdleScreen({ storeName, branding }: { storeName: string; branding?: Cus
       </div>
 
       <div className="max-w-xl">
-        <p className="text-4xl text-gray-300 mb-8 font-light">
+        <p className="text-4xl text-gray-300 mb-6 font-light">
           {branding?.welcomeText || 'Welcome'}
         </p>
         <p className="text-2xl text-gray-400">
@@ -115,7 +118,13 @@ function IdleScreen({ storeName, branding }: { storeName: string; branding?: Cus
         </p>
       </div>
 
-      <div className="mt-12 flex gap-2" style={{ color: accentColor }}>
+      {customerSignupUrl && (
+        <div className="mt-8">
+          <CustomerSignupQr url={customerSignupUrl} />
+        </div>
+      )}
+
+      <div className="mt-10 flex gap-2" style={{ color: accentColor }}>
         <div className="w-3 h-3 rounded-full animate-pulse"></div>
         <div className="w-3 h-3 rounded-full animate-pulse delay-100"></div>
         <div className="w-3 h-3 rounded-full animate-pulse delay-200"></div>

@@ -24,11 +24,14 @@ export default async function CustomerDisplayPage() {
     accentColor: store.organization.customerDisplayAccentColor || '#14b8a6',
   };
 
+  const customerSignupUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://basicuniformpos.com'}/customer-signup`;
+
   return (
     <CustomerDisplayClient
       storeName={store.organization.name}
       locationName={location?.name ?? ""}
       branding={customerDisplayBranding}
+      customerSignupUrl={customerSignupUrl}
     />
   );
 }
