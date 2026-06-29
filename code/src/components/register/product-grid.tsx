@@ -102,12 +102,21 @@ export const ProductGrid = memo(function ProductGrid({ items, categories, onAddI
   const searchRef = useRef<HTMLInputElement>(null);
   const scanTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Build a flat lookup of SKU/barcode → variant+product for instant scan matching
+  // Build a flat lookup of SKU/barcode → variant+product for instant scan matching.
+  // Keep stock in a one-pass map so scanner setup stays O(products + variants + inventory),
+  // not O(products × variants × inventory-per-product).
   const scanLookup = useMemo(() => {
+    const stockByVariantId = new Map<string, number>();
+    for (const item of items) {
+      for (const inv of item.inventory) {
+        stockByVariantId.set(inv.productVariantId, (stockByVariantId.get(inv.productVariantId) ?? 0) + inv.onHand);
+      }
+    }
+
     const map = new Map<string, { variant: ProductVariant; product: Product; stock: number }>();
     for (const item of items) {
       for (const v of item.variants) {
-        const stock = item.inventory.reduce((sum, inv) => inv.productVariantId === v.id ? sum + inv.onHand : sum, 0);
+        const stock = stockByVariantId.get(v.id) ?? 0;
         if (v.sku) map.set(v.sku.toLowerCase(), { variant: v, product: item.product, stock });
         if (v.barcode) map.set(v.barcode.toLowerCase(), { variant: v, product: item.product, stock });
       }
