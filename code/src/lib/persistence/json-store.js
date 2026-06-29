@@ -1,7 +1,5 @@
 import "server-only";
 
-import type { LocalStoreData } from "@/lib/persistence/types";
-
 async function getFs() {
   const { mkdir, readFile, writeFile } = await import(/* turbopackIgnore: true */ "node:fs/promises");
   const path = await import(/* turbopackIgnore: true */ "node:path");
@@ -16,20 +14,20 @@ async function getPaths() {
 }
 
 async function ensureStoreFile() {
-  const { mkdir, readFile, writeFile } = await getFs();
+  const { mkdir, readFile } = await getFs();
   const { DATA_DIR: dir, STORE_PATH: storePath } = await getPaths();
   await mkdir(dir, { recursive: true });
 
   try {
     await readFile(storePath, "utf8");
   } catch {
-    const { createSeedStore } = await import("@/lib/persistence/seed");
-    const seed = await createSeedStore();
-    await writeFile(storePath, JSON.stringify(seed, null, 2), "utf8");
+    throw new Error(
+      "JSON fallback store is missing. Create .data/basicuniformpos-store.json before running without USE_POSTGRES.",
+    );
   }
 }
 
-export function normalizeStore(store: LocalStoreData): LocalStoreData {
+export function normalizeStore(store) {
   return {
     ...store,
     customers: store.customers ?? [],
@@ -58,28 +56,28 @@ export function normalizeStore(store: LocalStoreData): LocalStoreData {
   };
 }
 
-export async function readJsonStore(): Promise<LocalStoreData> {
+export async function readJsonStore() {
   await ensureStoreFile();
   const { readFile } = await getFs();
   const { STORE_PATH: storePath } = await getPaths();
   const raw = await readFile(storePath, "utf8");
-  let parsed: LocalStoreData;
+  let parsed;
   try {
-    parsed = JSON.parse(raw) as LocalStoreData;
+    parsed = JSON.parse(raw);
   } catch {
     throw new Error("Failed to parse store file — data may be corrupt. Restore from backup.");
   }
   return normalizeStore(parsed);
 }
 
-export async function writeJsonStore(store: LocalStoreData): Promise<void> {
+export async function writeJsonStore(store) {
   await ensureStoreFile();
   const { writeFile } = await getFs();
   const { STORE_PATH: storePath } = await getPaths();
   await writeFile(storePath, JSON.stringify(normalizeStore(store), null, 2), "utf8");
 }
 
-export async function getJsonStorePath(): Promise<string> {
+export async function getJsonStorePath() {
   const { STORE_PATH: storePath } = await getPaths();
   return storePath;
 }
