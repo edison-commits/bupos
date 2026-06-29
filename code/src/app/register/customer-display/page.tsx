@@ -17,11 +17,18 @@ export default async function CustomerDisplayPage() {
   const { readStore } = await import("@/lib/persistence/store");
   const store = await readStore(orgId);
   const location = store.locations[0];
+  const customerDisplayBranding = {
+    displayName: store.organization.customerDisplayDisplayName || store.organization.name,
+    welcomeText: store.organization.customerDisplayWelcomeText || 'Welcome',
+    idleMessage: store.organization.customerDisplayIdleMessage || 'Ready to checkout',
+    accentColor: store.organization.customerDisplayAccentColor || '#14b8a6',
+  };
 
   return (
     <CustomerDisplayClient
       storeName={store.organization.name}
       locationName={location?.name ?? ""}
+      branding={customerDisplayBranding}
     />
   );
 }

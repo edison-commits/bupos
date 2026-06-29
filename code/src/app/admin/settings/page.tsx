@@ -45,6 +45,12 @@ interface StoreSettings {
     storePostalCode: string;
     storePhone: string;
   };
+  customerDisplay: {
+    displayName: string;
+    welcomeText: string;
+    idleMessage: string;
+    accentColor: string;
+  };
 }
 
 const EMPTY_SETTINGS: StoreSettings = {
@@ -77,6 +83,12 @@ const EMPTY_SETTINGS: StoreSettings = {
     storeRegion: '',
     storePostalCode: '',
     storePhone: '',
+  },
+  customerDisplay: {
+    displayName: '',
+    welcomeText: 'Welcome',
+    idleMessage: 'Ready to checkout',
+    accentColor: '#14b8a6',
   },
 };
 
@@ -949,17 +961,117 @@ function ReceiptSection({
   );
 }
 
+function CustomerDisplayPreview({ data, fallbackName }: { data: StoreSettings['customerDisplay']; fallbackName: string }) {
+  const accentColor = data.accentColor || '#14b8a6';
+  return (
+    <div className="overflow-hidden rounded-2xl bg-slate-950 p-6 text-white shadow-xl">
+      <div className="mb-8 text-center">
+        <div className="mb-4 text-5xl font-black" style={{ color: accentColor }}>◆</div>
+        <h3 className="text-3xl font-bold">{data.displayName || fallbackName || 'Store Name'}</h3>
+      </div>
+      <p className="text-center text-2xl text-slate-200">{data.welcomeText || 'Welcome'}</p>
+      <p className="mt-3 text-center text-lg text-slate-400">{data.idleMessage || 'Ready to checkout'}</p>
+      <div className="mt-8 rounded-xl border border-slate-700 bg-slate-900 p-4">
+        <div className="flex justify-between text-sm text-slate-300"><span>Sample total</span><span>$48.00</span></div>
+        <div className="mt-3 h-2 rounded-full" style={{ backgroundColor: accentColor }} />
+      </div>
+    </div>
+  );
+}
+
+function CustomerDisplaySection({
+  data,
+  fallbackName,
+  isEditing,
+  isSaving,
+  onEdit,
+  onCancel,
+  onSave,
+  error,
+}: {
+  data: StoreSettings['customerDisplay'];
+  fallbackName: string;
+  isEditing: boolean;
+  isSaving: boolean;
+  onEdit: () => void;
+  onCancel: () => void;
+  onSave: (data: StoreSettings['customerDisplay']) => Promise<void>;
+  error: string | null;
+}) {
+  const [formData, setFormData] = useState<StoreSettings['customerDisplay']>(data);
+  useEffect(() => { setFormData(data); }, [data, isEditing]);
+  const handleChange = (field: keyof StoreSettings['customerDisplay'], value: string) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
+  };
+
+  if (!isEditing) {
+    return (
+      <div className="bg-white rounded-lg shadow p-6">
+        <div className="mb-6 flex items-center justify-between">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900">Customer Display Branding</h2>
+            <p className="mt-1 text-sm text-gray-500">Customize the idle and checkout screen customers see at the register.</p>
+          </div>
+          <button onClick={onEdit} className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition font-medium">Edit</button>
+        </div>
+        <div className="grid gap-6 lg:grid-cols-2">
+          <div className="space-y-4">
+            <div><label className="text-sm font-medium text-gray-600">Display Name</label><p className="text-lg text-gray-900 mt-1">{data.displayName || fallbackName || '—'}</p></div>
+            <div><label className="text-sm font-medium text-gray-600">Welcome Text</label><p className="text-lg text-gray-900 mt-1">{data.welcomeText || 'Welcome'}</p></div>
+            <div><label className="text-sm font-medium text-gray-600">Idle Message</label><p className="text-lg text-gray-900 mt-1">{data.idleMessage || 'Ready to checkout'}</p></div>
+            <div><label className="text-sm font-medium text-gray-600">Accent Color</label><p className="text-lg text-gray-900 mt-1">{data.accentColor || '#14b8a6'}</p></div>
+          </div>
+          <CustomerDisplayPreview data={data} fallbackName={fallbackName} />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-lg shadow p-6">
+      <h2 className="mb-6 text-2xl font-bold text-gray-900">Customer Display Branding</h2>
+      {error && <ErrorAlert message={error} />}
+      <div className="grid gap-8 lg:grid-cols-2">
+        <div className="space-y-5">
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">Display Name</label>
+            <input value={formData.displayName} onChange={(e) => handleChange('displayName', e.target.value)} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500" placeholder={fallbackName || 'Store name'} />
+          </div>
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">Welcome Text</label>
+            <input value={formData.welcomeText} onChange={(e) => handleChange('welcomeText', e.target.value)} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500" placeholder="Welcome" />
+          </div>
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">Idle Message</label>
+            <input value={formData.idleMessage} onChange={(e) => handleChange('idleMessage', e.target.value)} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500" placeholder="Ready to checkout" />
+          </div>
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">Accent Color</label>
+            <input type="color" value={formData.accentColor || '#14b8a6'} onChange={(e) => handleChange('accentColor', e.target.value)} className="h-11 w-24 rounded-lg border border-gray-300 p-1" />
+          </div>
+          <div className="flex gap-3">
+            <button onClick={() => onSave(formData)} disabled={isSaving} className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:bg-gray-400 transition font-medium flex items-center gap-2"><Check size={18} /> Save</button>
+            <button onClick={onCancel} disabled={isSaving} className="px-4 py-2 bg-gray-300 text-gray-900 rounded-lg hover:bg-gray-400 disabled:bg-gray-200 transition font-medium flex items-center gap-2"><X size={18} /> Cancel</button>
+          </div>
+        </div>
+        <CustomerDisplayPreview data={formData} fallbackName={fallbackName} />
+      </div>
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const [settings, setSettings] = useState<StoreSettings>(EMPTY_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [globalError, setGlobalError] = useState<string | null>(null);
 
-  const [editingSection, setEditingSection] = useState<'store' | 'location' | 'receipt' | null>(null);
+  const [editingSection, setEditingSection] = useState<'store' | 'location' | 'receipt' | 'customerDisplay' | null>(null);
   const [savingSection, setSavingSection] = useState<string | null>(null);
   const [sectionErrors, setSectionErrors] = useState<Record<string, string | null>>({
     store: null,
     location: null,
     receipt: null,
+    customerDisplay: null,
   });
   const [promptPassword, passwordGate] = usePasswordGate();
   // SEC-AUDIT7-CRIT1: the signed per-store /register terminal link.
@@ -1145,6 +1257,33 @@ export default function SettingsPage() {
     }
   };
 
+  const handleSaveCustomerDisplay = async (data: StoreSettings['customerDisplay']) => {
+    try {
+      setSavingSection('customerDisplay');
+      setSectionErrors((prev) => ({ ...prev, customerDisplay: null }));
+
+      const response = await authFetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ section: 'customerDisplay', data }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save customer display settings');
+      }
+
+      await fetchSettings();
+      setEditingSection(null);
+    } catch (error) {
+      setSectionErrors((prev) => ({
+        ...prev,
+        customerDisplay: error instanceof Error ? error.message : 'An error occurred',
+      }));
+    } finally {
+      setSavingSection(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50">
@@ -1230,6 +1369,17 @@ export default function SettingsPage() {
             onCancel={() => setEditingSection(null)}
             onSave={handleSaveReceipt}
             error={sectionErrors.receipt}
+          />
+
+          <CustomerDisplaySection
+            data={settings.customerDisplay}
+            fallbackName={settings.store.name}
+            isEditing={editingSection === 'customerDisplay'}
+            isSaving={savingSection === 'customerDisplay'}
+            onEdit={() => setEditingSection('customerDisplay')}
+            onCancel={() => setEditingSection(null)}
+            onSave={handleSaveCustomerDisplay}
+            error={sectionErrors.customerDisplay}
           />
         </div>
       </div>
