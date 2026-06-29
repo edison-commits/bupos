@@ -320,6 +320,12 @@ export default function InventoryPage() {
               >
                 Export Products CSV
               </Link>
+              <Link
+                href="/admin/inventory/adjustments"
+                className="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition font-medium text-sm"
+              >
+                Adjustment Review
+              </Link>
             </div>
           </div>
         </div>
