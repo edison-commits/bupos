@@ -50,8 +50,12 @@ export const mockProvider: ChannelProvider = {
       },
     };
   },
-  async setInventory(_creds, inventoryItemId, locationId, onHand) {
-    mockInventorySetCalls.push({ inventoryItemId, locationId, onHand });
+  async getInventoryQuantity(_creds, inventoryItemId) {
+    return { ok: true, quantity: inventoryItemId.endsWith("-drift") ? 0 : 10 };
+  },
+
+  async setInventory(_creds, inventoryItemId, shopifyLocationId, onHand) {
+    mockInventorySetCalls.push({ inventoryItemId, locationId: shopifyLocationId, onHand });
     return { ok: true };
   },
   async setVariantPrice(_creds, productId, variantId, price, compareAt) {

@@ -272,6 +272,67 @@ export async function pushInventory(
   return summary;
 }
 
+export interface ReconciliationItem {
+  productVariantId: string;
+  sku: string;
+  productName: string;
+  variantName: string | null;
+  buposOnHand: number;
+  shopifyOnHand: number | null;
+  drift: number | null;
+  status: "in_sync" | "needs_attention" | "error";
+  error?: string;
+}
+export interface InventoryReconciliationReport {
+  summary: { total: number; inSync: number; needsAttention: number; errors: number; checkedAt: string };
+  items: ReconciliationItem[];
+}
+
+/** Compare BUPOS fulfillment-location on-hand to live Shopify available quantity. */
+export async function getInventoryReconciliation(
+  row: IntegrationRow,
+  creds: ChannelCredentials,
+  limit = 100,
+): Promise<InventoryReconciliationReport> {
+  const checkedAt = new Date().toISOString();
+  const report: InventoryReconciliationReport = { summary: { total: 0, inSync: 0, needsAttention: 0, errors: 0, checkedAt }, items: [] };
+  if (!row.fulfillment_location_id) return report;
+  const provider = getChannelProvider(row.provider);
+  const { rows } = await orgQuery(
+    row.organization_id,
+    `SELECT m.product_variant_id, m.sku, m.external_inventory_item_id, m.shopify_location_id,
+            p.name AS product_name, pv.name AS variant_name, COALESCE(il.on_hand, 0)::int AS bupos_on_hand
+       FROM channel_product_map m
+       JOIN product_variants pv ON pv.id = m.product_variant_id AND pv.organization_id = $1
+       JOIN products p ON p.id = pv.product_id AND p.organization_id = $1
+       LEFT JOIN inventory_levels il
+         ON il.product_variant_id = m.product_variant_id
+        AND il.location_id = $3
+        AND il.organization_id = $1
+      WHERE m.organization_id = $1 AND m.channel_integration_id = $2
+      ORDER BY ABS(COALESCE(il.on_hand, 0) - COALESCE(m.last_pushed_on_hand, 0)) DESC, p.name ASC
+      LIMIT $4`,
+    [row.organization_id, row.id, row.fulfillment_location_id, limit],
+  );
+
+  for (const r of rows as { product_variant_id: string; sku: string; external_inventory_item_id: string; shopify_location_id: string; product_name: string; variant_name: string | null; bupos_on_hand: number }[]) {
+    const remote = await provider.getInventoryQuantity(creds, r.external_inventory_item_id, r.shopify_location_id);
+    if (!remote.ok || typeof remote.quantity !== "number") {
+      report.summary.errors++;
+      report.items.push({ productVariantId: r.product_variant_id, sku: r.sku, productName: r.product_name, variantName: r.variant_name, buposOnHand: Number(r.bupos_on_hand), shopifyOnHand: null, drift: null, status: "error", error: remote.error ?? "Shopify inventory unavailable" });
+      continue;
+    }
+    const buposOnHand = Number(r.bupos_on_hand);
+    const shopifyOnHand = Number(remote.quantity);
+    const drift = shopifyOnHand - buposOnHand;
+    const status = drift === 0 ? "in_sync" : "needs_attention";
+    if (status === "in_sync") report.summary.inSync++; else report.summary.needsAttention++;
+    report.items.push({ productVariantId: r.product_variant_id, sku: r.sku, productName: r.product_name, variantName: r.variant_name, buposOnHand, shopifyOnHand, drift, status });
+  }
+  report.summary.total = report.items.length;
+  return report;
+}
+
 /**
  * Push variant prices (+ compare-at) to Shopify for mapped variants whose price
  * changed since the last push. POS-authoritative. `onlyVariantIds` limits the
