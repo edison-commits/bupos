@@ -20,6 +20,7 @@ interface AdjustmentRow {
   created_at: string;
   is_large_negative: boolean;
   is_after_hours: boolean;
+  is_repeat_pattern: boolean;
 }
 
 interface AdjustmentSummary {
@@ -28,11 +29,23 @@ interface AdjustmentSummary {
   units_added: number;
   large_negative_count: number;
   after_hours_count: number;
+  repeated_negative_count: number;
+}
+
+interface PatternRow {
+  employee_name?: string;
+  sku?: string | null;
+  product_name?: string;
+  adjustment_count: number;
+  units_removed: number;
+  latest_at: string;
 }
 
 interface AdjustmentResponse {
   adjustments: AdjustmentRow[];
   summary: AdjustmentSummary;
+  employeePatterns: PatternRow[];
+  skuPatterns: PatternRow[];
   pagination: PaginationInfo;
 }
 
@@ -101,6 +114,7 @@ export default function InventoryAdjustmentReviewPage() {
     units_added: 0,
     large_negative_count: 0,
     after_hours_count: 0,
+    repeated_negative_count: 0,
   };
 
   const exportCsv = () => {
@@ -115,7 +129,7 @@ export default function InventoryAdjustmentReviewPage() {
       String(row.previous_on_hand),
       String(row.delta),
       String(row.resulting_on_hand),
-      [row.is_large_negative ? 'Large negative' : '', row.is_after_hours ? 'After hours' : ''].filter(Boolean).join('; '),
+      [row.is_large_negative ? 'Large negative' : '', row.is_after_hours ? 'After hours' : '', row.is_repeat_pattern ? 'Repeat pattern' : ''].filter(Boolean).join('; '),
     ]);
     const csv = [header, ...lines].map((line) => line.map(csvCell).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
@@ -141,12 +155,18 @@ export default function InventoryAdjustmentReviewPage() {
           </Link>
         </div>
 
-        <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-5">
+        <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-6">
           <Metric label="Adjustments" value={summary.total_adjustments} />
           <Metric label="Units removed" value={summary.units_removed} tone="alert" />
           <Metric label="Units added" value={summary.units_added} tone="good" />
           <Metric label="Large negative" value={summary.large_negative_count} tone="warn" />
           <Metric label="After hours" value={summary.after_hours_count} tone="warn" />
+          <Metric label="Repeat pattern" value={summary.repeated_negative_count} tone="alert" />
+        </div>
+
+        <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <PatternPanel title="Suspicious patterns by employee" rows={data?.employeePatterns ?? []} kind="employee" />
+          <PatternPanel title="Suspicious patterns by SKU" rows={data?.skuPatterns ?? []} kind="sku" />
         </div>
 
         <div className="mb-6 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
@@ -223,6 +243,7 @@ export default function InventoryAdjustmentReviewPage() {
                     <div className="flex flex-wrap gap-1">
                       {row.is_large_negative && <span className="rounded-full bg-red-100 px-2 py-1 text-xs font-semibold text-red-800">Large negative</span>}
                       {row.is_after_hours && <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-800">After hours</span>}
+                      {row.is_repeat_pattern && <span className="rounded-full bg-purple-100 px-2 py-1 text-xs font-semibold text-purple-800">Repeat pattern</span>}
                     </div>
                   </td>
                 </tr>
@@ -237,6 +258,42 @@ export default function InventoryAdjustmentReviewPage() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function PatternPanel({ title, rows, kind }: { title: string; rows: PatternRow[]; kind: 'employee' | 'sku' }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <h2 className="font-semibold text-slate-900">{title}</h2>
+          <p className="text-xs text-slate-500">Three or more negative adjustments in the current filter set.</p>
+        </div>
+        <span className="rounded-full bg-purple-100 px-2 py-1 text-xs font-semibold text-purple-800">Repeat pattern</span>
+      </div>
+      {rows.length === 0 ? (
+        <p className="rounded-lg bg-slate-50 px-3 py-4 text-sm text-slate-500">No repeat shrink patterns found.</p>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((row, index) => (
+            <div key={`${kind}-${index}`} className="rounded-lg border border-slate-100 px-3 py-2">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="font-semibold text-slate-900">
+                    {kind === 'employee' ? row.employee_name : `${row.sku || 'No SKU'} · ${row.product_name ?? 'Unknown product'}`}
+                  </p>
+                  <p className="text-xs text-slate-500">Latest: {formatDate(row.latest_at)}</p>
+                </div>
+                <div className="text-right text-sm">
+                  <p className="font-bold text-red-700">-{row.units_removed} units</p>
+                  <p className="text-xs text-slate-500">{row.adjustment_count} adjustments</p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

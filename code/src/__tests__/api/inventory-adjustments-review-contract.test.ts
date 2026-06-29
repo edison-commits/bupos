@@ -32,11 +32,22 @@ describe("inventory adjustment review contract", () => {
     expect(src).toContain("after_hours_count");
   });
 
+  it("returns repeat-pattern shrink signals by employee and SKU", () => {
+    const src = read("src/app/api/inventory/adjustments/route.ts");
+    expect(src).toContain("repeated_negative_count");
+    expect(src).toContain("patternsResult");
+    expect(src).toContain("employeePatterns");
+    expect(src).toContain("skuPatterns");
+    expect(src).toContain("HAVING COUNT(*) >= 3");
+  });
+
   it("renders the admin shrink review page with CSV export and risk filters", () => {
     const src = read("src/app/admin/inventory/adjustments/page.tsx");
     expect(src).toContain("Inventory Adjustment Review");
     expect(src).toContain("Large negative");
     expect(src).toContain("After hours");
+    expect(src).toContain("Repeat pattern");
+    expect(src).toContain("Suspicious patterns");
     expect(src).toContain("exportCsv");
     expect(src).toContain("/api/inventory/adjustments");
   });
