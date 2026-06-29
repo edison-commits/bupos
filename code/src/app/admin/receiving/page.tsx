@@ -212,6 +212,27 @@ export default function ReceivingPage() {
     }
   };
 
+  const handleReceiveRemaining = () => {
+    const remainingLines = poDetails.filter((line) => line.quantity_ordered > line.quantity_received);
+    const nextQuantities: Record<string, string> = {};
+    const nextItems = remainingLines.map((line) => {
+      const remaining = Math.max(0, line.quantity_ordered - line.quantity_received);
+      nextQuantities[line.id] = String(remaining);
+      return {
+        variant_id: line.product_variant_id,
+        sku: line.sku,
+        product_name: line.product_name,
+        variant_name: line.variant_name,
+        quantity: remaining,
+        po_line_id: line.id,
+        expected_quantity: line.quantity_ordered,
+      };
+    });
+
+    setPoReceiveQuantities(nextQuantities);
+    setReceivingItems(nextItems);
+  };
+
   // Remove item from batch
   const handleRemoveItem = (variantId: string) => {
     setReceivingItems(receivingItems.filter((item) => item.variant_id !== variantId));
@@ -221,6 +242,8 @@ export default function ReceivingPage() {
   const handleSubmit = async () => {
     if (receivingItems.length === 0) return;
 
+    const submittedMode = mode;
+    const submittedPoId = selectedPO?.id;
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -247,8 +270,14 @@ export default function ReceivingPage() {
       setSubmitSuccess(true);
       setReceivingItems([]);
       setPoReceiveQuantities({});
-      setSelectedPO(null);
-      setMode('quick');
+      if (submittedMode === 'po' && submittedPoId) {
+        setMode('po');
+        await fetchPODetails(submittedPoId);
+        await fetchPurchaseOrders();
+      } else {
+        setSelectedPO(null);
+        setMode('quick');
+      }
       setTimeout(() => setSubmitSuccess(false), SUCCESS_TOAST_MS);
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : 'An error occurred');
@@ -548,9 +577,24 @@ export default function ReceivingPage() {
                   borderColor: 'var(--border-subtle)',
                 }}
               >
-                <h2 className="mb-4 text-lg font-bold" style={{ color: 'var(--text-primary)' }}>
-                  Expected Items
-                </h2>
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>
+                    Expected Items
+                  </h2>
+                  <button
+                    onClick={handleReceiveRemaining}
+                    disabled={!poDetails.some((line) => line.quantity_ordered > line.quantity_received)}
+                    style={{
+                      backgroundColor: !poDetails.some((line) => line.quantity_ordered > line.quantity_received)
+                        ? '#d1d5db'
+                        : '#14b8a6',
+                      color: 'white',
+                    }}
+                    className="rounded px-4 py-2 text-sm font-medium transition disabled:cursor-not-allowed"
+                  >
+                    Receive Remaining
+                  </button>
+                </div>
                 <div className="space-y-3">
                   {poDetails.map((line) => {
                     const isReceived = receivingItems.some(

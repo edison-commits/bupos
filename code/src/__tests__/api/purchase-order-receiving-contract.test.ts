@@ -58,4 +58,20 @@ describe("purchase order receiving contract", () => {
     expect(src).toContain("purchaseOrders.find((po) => po.id === initialPoId)");
     expect(src).toContain("fetchPODetails(matchedPO.id)");
   });
+
+  it("receiving page can autofill and batch receive remaining PO quantities", () => {
+    const src = read("src/app/admin/receiving/page.tsx");
+    expect(src).toContain("handleReceiveRemaining");
+    expect(src).toContain("Math.max(0, line.quantity_ordered - line.quantity_received)");
+    expect(src).toContain("Receive Remaining");
+    expect(src).toContain("poDetails.filter((line) => line.quantity_ordered > line.quantity_received)");
+  });
+
+  it("PO receiving submit stays in PO mode and refreshes the selected PO", () => {
+    const src = read("src/app/admin/receiving/page.tsx");
+    expect(src).toContain("const submittedMode = mode;");
+    expect(src).toContain("if (submittedMode === 'po' && submittedPoId)");
+    expect(src).toContain("await fetchPODetails(submittedPoId)");
+    expect(src).toContain("setMode('po')");
+  });
 });
