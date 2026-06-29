@@ -1,9 +1,9 @@
 /**
  * R93 — sales digest (P3.2) security/correctness invariants.
- * The digest sender is a cross-org Bearer endpoint (the third of its kind,
+ * The digest sender is a cross-org HMAC endpoint (the third of its kind,
  * after run-cleanup and reconcile-channels) — these asserts keep it on the
- * same rails: fail-closed secret, constant-time compare, SECDEF RPC for the
- * cross-org list, server-managed bookkeeping fields not client-writable.
+ * same rails: fail-closed secret, replay-bounded signatures, SECDEF RPC for
+ * the cross-org list, server-managed bookkeeping fields not client-writable.
  */
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
@@ -15,12 +15,16 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "..", "..", "..");
 const read = (rel: string) => fs.readFileSync(path.join(REPO, rel), "utf8");
 
-describe("R93: internal sender is Bearer-gated, fail-closed, constant-time", () => {
+describe("R93: internal sender is HMAC-gated, fail-closed, replay-bounded", () => {
   const src = read("src/app/api/internal/send-sales-digest/route.ts");
-  it("fails closed when SALES_DIGEST_SECRET is unset/short and compares constant-time", () => {
-    expect(src).toMatch(/secret\.length < 32/);
-    expect(src).toMatch(/function bearerMatches/);
-    expect(src).toMatch(/diff \|= a\[i\] \^ b\[i\]/);
+  const helper = read("src/lib/api/internal-hmac.ts");
+  it("fails closed when SALES_DIGEST_SECRET is unset/short and requires timestamped HMAC", () => {
+    expect(src).toMatch(/requireInternalHmac\(req, process\.env\.SALES_DIGEST_SECRET/);
+    expect(helper).toMatch(/secret\.length < 32/);
+    expect(helper).toMatch(/x-internal-timestamp/);
+    expect(helper).toMatch(/x-internal-signature/);
+    expect(helper).toMatch(/Math\.abs\(Date\.now\(\) - ts\) > WINDOW_MS/);
+    expect(helper).toMatch(/timingSafeEqual/);
   });
   it("lists tenants via the SECDEF RPC and does per-org work via orgQuery", () => {
     expect(src).toMatch(/FROM list_digest_orgs\(\)/);
@@ -72,9 +76,12 @@ describe("R93: migration 090 ships the column + locked-down RPC", () => {
 
 describe("R93: the hourly cron exists and is dormant-safe", () => {
   const wf = fs.readFileSync(path.resolve(REPO, "..", ".github", "workflows", "sales-digest.yml"), "utf8");
-  it("fires hourly, posts with the Bearer secret, and skips cleanly when unconfigured", () => {
+  it("fires hourly, posts with a timestamped HMAC, and skips cleanly when unconfigured", () => {
     expect(wf).toMatch(/cron: "7 \* \* \* \*"/);
     expect(wf).toMatch(/send-sales-digest/);
+    expect(wf).toMatch(/openssl dgst -sha256 -hmac/);
+    expect(wf).toMatch(/x-internal-timestamp/);
+    expect(wf).toMatch(/x-internal-signature/);
     expect(wf).toMatch(/if: env\.DIGEST_SECRET != ''/);
     expect(wf).toMatch(/if: env\.DIGEST_SECRET == ''/);
   });

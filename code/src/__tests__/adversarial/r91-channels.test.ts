@@ -58,15 +58,26 @@ describe("R91: order intake correctness", () => {
   });
 });
 
-describe("R91: the reconcile endpoint is Bearer-gated, fail-closed, constant-time", () => {
+describe("R91: the reconcile endpoint is HMAC-gated, fail-closed, replay-bounded", () => {
   const src = read("src/app/api/internal/reconcile-channels/route.ts");
-  it("fails closed if the secret is unset / <32 chars and compares constant-time", () => {
-    expect(src).toMatch(/secret\.length < 32/);
-    expect(src).toMatch(/function bearerMatches/);
-    expect(src).toMatch(/diff \|= a\[i\] \^ b\[i\]/);
+  const helper = read("src/lib/api/internal-hmac.ts");
+  it("fails closed if the secret is unset / <32 chars and requires timestamped HMAC", () => {
+    expect(src).toMatch(/requireInternalHmac\(req, process\.env\.CHANNEL_RECONCILE_SECRET/);
+    expect(helper).toMatch(/secret\.length < 32/);
+    expect(helper).toMatch(/x-internal-timestamp/);
+    expect(helper).toMatch(/x-internal-signature/);
+    expect(helper).toMatch(/Math\.abs\(Date\.now\(\) - ts\) > WINDOW_MS/);
+    expect(helper).toMatch(/timingSafeEqual/);
   });
   it("lists tenants via the SECDEF RPC", () => {
     expect(src).toMatch(/list_connected_channels/);
+  });
+  it("the workflow signs requests instead of sending replayable bearer headers", () => {
+    const wf = fs.readFileSync(path.resolve(REPO, "..", ".github", "workflows", "reconcile-channels.yml"), "utf8");
+    expect(wf).toMatch(/openssl dgst -sha256 -hmac/);
+    expect(wf).toMatch(/x-internal-timestamp/);
+    expect(wf).toMatch(/x-internal-signature/);
+    expect(wf).not.toMatch(/Authorization:/);
   });
 });
 
