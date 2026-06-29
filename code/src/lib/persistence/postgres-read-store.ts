@@ -2,7 +2,7 @@ import 'server-only';
 import { defaultApprovalThresholds } from '@/lib/config/thresholds';
 import { roleDefinitions } from '@/lib/domain/permissions';
 import type { LocalStoreData } from '@/lib/persistence/types';
-import type { Organization, Location, ModifierGroup, Modifier, TenderType, Employee, Category, Product, ProductVariant, InventoryLevel, Customer, PromoCode, PromoCodeStatus, TransactionTenderPlaceholder, TransactionEventPlaceholder, AuditEventKind, ProductBundle, BundleItem, Stocktake, StocktakeLine } from '@/lib/domain/types';
+import type { Organization, Location, ModifierGroup, Modifier, TenderType, Employee, Category, Product, ProductVariant, InventoryLevel, Customer, CustomerPreference, PromoCode, PromoCodeStatus, TransactionTenderPlaceholder, TransactionEventPlaceholder, AuditEventKind, ProductBundle, BundleItem, Stocktake, StocktakeLine } from '@/lib/domain/types';
 
 // In-memory cache with stale-while-revalidate to prevent cache stampedes.
 // On expiry, one request refreshes while others continue serving stale data.
@@ -92,6 +92,9 @@ function toInventory(r: Record<string, unknown>): InventoryLevel {
 function toCustomer(r: Record<string, unknown>): Customer {
   return { id: r.id as string, organizationId: r.organization_id as string, firstName: r.first_name as string, lastName: r.last_name as string, email: (r.email as string) ?? undefined, phone: (r.phone as string) ?? undefined, loyaltyPoints: Number(r.loyalty_points ?? 0), totalSpend: Number(r.total_spend ?? 0), visitCount: Number(r.visit_count ?? 0), storeCreditBalance: Number(r.store_credit_balance ?? 0), isActive: r.is_active as boolean, createdAt: String(r.created_at), updatedAt: String(r.updated_at) };
 }
+function toCustomerPreference(r: Record<string, unknown>): CustomerPreference {
+  return { id: r.id as string, organizationId: r.organization_id as string, customerId: r.customer_id as string, category: r.category as string, sizeLabel: (r.size_label as string) ?? undefined, fitPreference: (r.fit_preference as string) ?? undefined, preferredColors: (r.preferred_colors as string[]) ?? [], preferredBrands: (r.preferred_brands as string[]) ?? [], styleNotes: (r.style_notes as string) ?? undefined, createdAt: String(r.created_at), updatedAt: String(r.updated_at) };
+}
 
 function parseArray<T>(val: unknown): T[] {
   if (typeof val === 'string') return JSON.parse(val) as T[];
@@ -159,6 +162,7 @@ async function _doFetchStore(orgId: string): Promise<LocalStoreData> {
   let bundleItemRowsRes: { rows: Record<string, unknown>[] };
   let stocktakeRowsRes: { rows: Record<string, unknown>[] };
   let stocktakeLineRowsRes: { rows: Record<string, unknown>[] };
+  let customerPreferenceRowsRes: { rows: Record<string, unknown>[] };
   try {
     const storeRes = await client.query<{ result: Record<string, unknown> | null }>(
       `SELECT get_full_store($1::uuid) AS result`,
@@ -207,6 +211,14 @@ async function _doFetchStore(orgId: string): Promise<LocalStoreData> {
        ORDER BY sl.created_at ASC`,
       [orgId],
     );
+    customerPreferenceRowsRes = await client.query<Record<string, unknown>>(
+      `SELECT id, organization_id, customer_id, category, size_label, fit_preference,
+              preferred_colors, preferred_brands, style_notes, created_at, updated_at
+         FROM customer_preferences
+        WHERE organization_id = $1
+        ORDER BY category ASC`,
+      [orgId],
+    );
     await client.query("COMMIT");
   } catch (e) {
     await client.query("ROLLBACK").catch(() => {});
@@ -226,6 +238,16 @@ async function _doFetchStore(orgId: string): Promise<LocalStoreData> {
   const variants = parseArray<Record<string, unknown>>(row.variants).map(toVariant);
   const inventory = parseArray<Record<string, unknown>>(row.inventory).map(toInventory);
   const customers = parseArray<Record<string, unknown>>(row.customers).map(toCustomer);
+  const customerPreferences = customerPreferenceRowsRes.rows.map(toCustomerPreference);
+  const preferencesByCustomer = new Map<string, CustomerPreference[]>();
+  for (const preference of customerPreferences) {
+    const existing = preferencesByCustomer.get(preference.customerId) ?? [];
+    existing.push(preference);
+    preferencesByCustomer.set(preference.customerId, existing);
+  }
+  for (const customer of customers) {
+    customer.preferences = preferencesByCustomer.get(customer.id) ?? [];
+  }
   const promoCodes = parseArray<Record<string, unknown>>(row.promo_codes).map((r) => ({
     id: r.id as string, organizationId: r.organization_id as string,
     code: r.code as string, description: (r.description as string) ?? '',

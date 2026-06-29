@@ -111,7 +111,7 @@ export const GET = withAdminAuth('employee.manage', async (request, ctx) => {
   try {
     // Single customer detail with purchase history
     if (id) {
-      const [customerRes, transactionsRes, statsRes] = await Promise.all([
+      const [customerRes, transactionsRes, statsRes, preferencesRes] = await Promise.all([
         orgQuery(
           orgId,
           `SELECT id, first_name, last_name, email, phone, address, notes, loyalty_points, total_spend, visit_count, store_credit_balance, is_active, created_at, updated_at FROM customers WHERE id = $1 AND organization_id = $2`,
@@ -134,6 +134,15 @@ export const GET = withAdminAuth('employee.manage', async (request, ctx) => {
            WHERE customer_id = $1 AND organization_id = $2`,
           [id, orgId]
         ),
+        orgQuery(
+          orgId,
+          `SELECT id, organization_id, customer_id, category, size_label, fit_preference,
+                  preferred_colors, preferred_brands, style_notes, created_at, updated_at
+             FROM customer_preferences
+            WHERE customer_id = $1 AND organization_id = $2
+            ORDER BY category ASC`,
+          [id, orgId]
+        ),
       ]);
 
       if (customerRes.rows.length === 0) {
@@ -149,6 +158,7 @@ export const GET = withAdminAuth('employee.manage', async (request, ctx) => {
           visit_count: stats.visit_count,
           total_spend: stats.total_spend,
         },
+        preferences: preferencesRes.rows,
         transactions: transactionsRes.rows,
       });
     }

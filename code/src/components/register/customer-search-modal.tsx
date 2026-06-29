@@ -1,11 +1,15 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
-import type { Customer, TransactionEventPlaceholder, TransactionTenderPlaceholder } from "@/lib/domain/types";
+import type { Customer, CustomerPreference, TransactionEventPlaceholder, TransactionTenderPlaceholder } from "@/lib/domain/types";
 import { formatCurrency } from "@/lib/format";
 
+interface CustomerWithPreferences extends Customer {
+  preferences?: CustomerPreference[];
+}
+
 interface CustomerSearchModalProps {
-  customers: Customer[];
+  customers: CustomerWithPreferences[];
   currentCustomerId?: string;
   transactionEvents?: TransactionEventPlaceholder[];
   transactionTenders?: TransactionTenderPlaceholder[];
@@ -231,6 +235,23 @@ export function CustomerSearchModal({
                         </div>
                       </div>
                     </button>
+                    {(customer.preferences?.length ?? 0) > 0 && (
+                      <div className="rounded-lg bg-teal-50 px-4 py-2 text-xs text-teal-900">
+                        <p className="font-semibold">Size/style hints</p>
+                        <div className="mt-1 space-y-1">
+                          {customer.preferences?.slice(0, 3).map((pref) => {
+                            const preferredColors = pref.preferredColors ?? [];
+                            const preferredBrands = pref.preferredBrands ?? [];
+                            return (
+                              <p key={pref.id}>
+                                <span className="font-medium">{pref.category}:</span>{' '}
+                                {[pref.sizeLabel, pref.fitPreference, preferredColors.length ? `colors ${preferredColors.join(', ')}` : '', preferredBrands.length ? `brands ${preferredBrands.join(', ')}` : ''].filter(Boolean).join(' · ')}
+                              </p>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                     {(purchaseHistory.get(customer.id)?.length ?? 0) > 0 && (
                       <button
                         type="button"
