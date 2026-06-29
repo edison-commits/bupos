@@ -123,6 +123,15 @@ export const customerPreferencesUpdateSchema = z.object({
   preferences: z.array(customerPreferenceSchema).max(24),
 }).strict();
 
+export const customerSelfSignupSchema = z.object({
+  firstName: requiredString,
+  lastName: requiredString,
+  email: optionalEmail,
+  phone: optionalString,
+  marketingOptIn: z.boolean().optional(),
+  preferences: z.array(customerPreferenceSchema).max(12).optional().default([]),
+}).strict();
+
 // ---------------------------------------------------------------------------
 // Products
 // ---------------------------------------------------------------------------

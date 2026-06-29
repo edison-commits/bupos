@@ -10,6 +10,7 @@ interface CustomerDisplayClientProps {
   storeName: string;
   locationName: string;
   branding?: CustomerDisplayBranding;
+  customerSignupUrl?: string;
 }
 
 /**
@@ -22,7 +23,7 @@ interface CustomerDisplayClientProps {
  * so any XSS elsewhere in the app could feed crafted payloads into
  * this display to spoof totals the customer sees at payment time.
  */
-export function CustomerDisplayClient({ storeName, locationName, branding }: CustomerDisplayClientProps) {
+export function CustomerDisplayClient({ storeName, locationName, branding, customerSignupUrl }: CustomerDisplayClientProps) {
   const [cart, setCart] = useState<Cart>(() => createCart("", "", ""));
   const [totals, setTotals] = useState<CartTotals>({ subtotal: 0, modifiersTotal: 0, discountTotal: 0, taxTotal: 0, grandTotal: 0, itemCount: 0 });
   const [customerName, setCustomerName] = useState<string | undefined>(undefined);
@@ -85,6 +86,7 @@ export function CustomerDisplayClient({ storeName, locationName, branding }: Cus
       exchangeCredit={exchangeCredit}
       paymentStatus={paymentStatus}
       branding={branding}
+      customerSignupUrl={customerSignupUrl}
     />
   );
 }
