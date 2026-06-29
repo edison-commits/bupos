@@ -109,6 +109,20 @@ export const customerUpdateSchema = z.object({
   is_active: z.boolean().optional(),
 });
 
+export const customerPreferenceSchema = z.object({
+  category: requiredString,
+  size_label: optionalString,
+  fit_preference: optionalString,
+  preferred_colors: z.array(requiredString).max(12).optional().default([]),
+  preferred_brands: z.array(requiredString).max(12).optional().default([]),
+  style_notes: optionalString,
+}).strict();
+
+export const customerPreferencesUpdateSchema = z.object({
+  customer_id: uuid,
+  preferences: z.array(customerPreferenceSchema).max(24),
+}).strict();
+
 // ---------------------------------------------------------------------------
 // Products
 // ---------------------------------------------------------------------------

@@ -26,6 +26,16 @@ interface Customer {
   updated_at: string;
 }
 
+interface CustomerPreference {
+  id?: string;
+  category: string;
+  size_label?: string;
+  fit_preference?: string;
+  preferred_colors: string[];
+  preferred_brands: string[];
+  style_notes?: string;
+}
+
 interface Transaction {
   id: string;
   created_at: string;
@@ -59,6 +69,10 @@ export default function CustomerManagement() {
   const [deleting, setDeleting] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [preferences, setPreferences] = useState<CustomerPreference[]>([]);
+  const [editingPreferences, setEditingPreferences] = useState(false);
+  const [savingPreferences, setSavingPreferences] = useState(false);
+  const [preferenceDrafts, setPreferenceDrafts] = useState<CustomerPreference[]>([]);
   const [stats, setStats] = useState({ totalCustomers: 0, newThisMonth: 0, avgSpend: 0, totalPointsOutstanding: 0 });
   const [submitting, setSubmitting] = useState(false);
 
@@ -191,6 +205,9 @@ export default function CustomerManagement() {
 
       const data = await response.json();
       setSelectedCustomer(data.customer);
+      setPreferences(data.preferences ?? []);
+      setPreferenceDrafts(data.preferences ?? []);
+      setEditingPreferences(false);
       setTransactions(data.transactions);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load customer details');
@@ -305,6 +322,52 @@ export default function CustomerManagement() {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const preferenceToCsv = (values: string[]) => values.join(', ');
+  const csvToPreferenceList = (value: string) => value.split(',').map((v) => v.trim()).filter(Boolean).slice(0, 12);
+
+  const updatePreferenceDraft = (index: number, patch: Partial<CustomerPreference>) => {
+    setPreferenceDrafts((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+  };
+
+  const handleSavePreferences = async () => {
+    if (!selectedCustomer || savingPreferences) return;
+    setSavingPreferences(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const response = await authFetch('/api/customers/preferences', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customer_id: selectedCustomer.id,
+          preferences: preferenceDrafts
+            .filter((pref) => pref.category.trim())
+            .map((pref) => ({
+              category: pref.category.trim(),
+              size_label: pref.size_label?.trim() || undefined,
+              fit_preference: pref.fit_preference?.trim() || undefined,
+              preferred_colors: pref.preferred_colors,
+              preferred_brands: pref.preferred_brands,
+              style_notes: pref.style_notes?.trim() || undefined,
+            })),
+        }),
+      });
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to save preferences');
+      }
+      const data = await response.json();
+      setPreferences(data.preferences ?? []);
+      setPreferenceDrafts(data.preferences ?? []);
+      setEditingPreferences(false);
+      setSuccess('Customer fit and style preferences saved.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save preferences');
+    } finally {
+      setSavingPreferences(false);
     }
   };
 
@@ -583,7 +646,7 @@ export default function CustomerManagement() {
       {/* Detail Modal */}
       {modalMode === 'detail' && selectedCustomer && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-2xl rounded-lg bg-white p-6 shadow-lg max-h-96 overflow-y-auto">
+          <div className="w-full max-w-4xl rounded-lg bg-white p-6 shadow-lg max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold text-gray-900 mb-4">
               {selectedCustomer.first_name} {selectedCustomer.last_name}
             </h2>
@@ -628,6 +691,70 @@ export default function CustomerManagement() {
                       <p className="mt-1 text-2xl font-bold text-teal-700">{formatCurrency(selectedCustomer.store_credit_balance)}</p>
                     </div>
                   </div>
+                </div>
+
+                {/* Fit & style memory */}
+                <div className="border-b border-gray-200 pb-4">
+                  <div className="mb-3 flex items-center justify-between">
+                    <div>
+                      <h3 className="font-semibold text-gray-900">Fit & style memory</h3>
+                      <p className="text-xs text-gray-500">Remember sizes, preferred fit, colors, brands, and notes by category.</p>
+                    </div>
+                    {!editingPreferences ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPreferenceDrafts(preferences.length > 0 ? preferences : [{ category: 'Scrub tops', size_label: '', fit_preference: '', preferred_colors: [], preferred_brands: [], style_notes: '' }]);
+                          setEditingPreferences(true);
+                        }}
+                        className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                      >
+                        Edit memory
+                      </button>
+                    ) : null}
+                  </div>
+
+                  {!editingPreferences ? (
+                    preferences.length === 0 ? (
+                      <p className="rounded-lg bg-gray-50 p-3 text-sm text-gray-600">No saved size or style preferences yet.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {preferences.map((pref) => (
+                          <div key={pref.id ?? pref.category} className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm">
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="font-semibold text-gray-900">{pref.category}</p>
+                              <p className="text-emerald-700">{[pref.size_label, pref.fit_preference].filter(Boolean).join(' · ') || 'No size saved'}</p>
+                            </div>
+                            <p className="mt-1 text-xs text-gray-600">
+                              {[pref.preferred_colors?.length ? `Colors: ${pref.preferred_colors.join(', ')}` : '', pref.preferred_brands?.length ? `Brands: ${pref.preferred_brands.join(', ')}` : ''].filter(Boolean).join(' • ')}
+                            </p>
+                            {pref.style_notes && <p className="mt-1 text-xs text-gray-500">{pref.style_notes}</p>}
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  ) : (
+                    <div className="space-y-3">
+                      {preferenceDrafts.map((pref, index) => (
+                        <div key={`${pref.id ?? 'new'}-${index}`} className="rounded-lg border border-emerald-100 bg-emerald-50/40 p-3">
+                          <div className="grid gap-2 sm:grid-cols-3">
+                            <input value={pref.category} onChange={(e) => updatePreferenceDraft(index, { category: e.target.value })} placeholder="Category e.g. Pants" className="rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                            <input value={pref.size_label ?? ''} onChange={(e) => updatePreferenceDraft(index, { size_label: e.target.value })} placeholder="Size e.g. M / 8.5W" className="rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                            <input value={pref.fit_preference ?? ''} onChange={(e) => updatePreferenceDraft(index, { fit_preference: e.target.value })} placeholder="Fit e.g. jogger / relaxed" className="rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                            <input value={preferenceToCsv(pref.preferred_colors ?? [])} onChange={(e) => updatePreferenceDraft(index, { preferred_colors: csvToPreferenceList(e.target.value) })} placeholder="Colors comma-separated" className="rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                            <input value={preferenceToCsv(pref.preferred_brands ?? [])} onChange={(e) => updatePreferenceDraft(index, { preferred_brands: csvToPreferenceList(e.target.value) })} placeholder="Brands comma-separated" className="rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                            <input value={pref.style_notes ?? ''} onChange={(e) => updatePreferenceDraft(index, { style_notes: e.target.value })} placeholder="Style notes" className="rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                          </div>
+                          <button type="button" onClick={() => setPreferenceDrafts((prev) => prev.filter((_, i) => i !== index))} className="mt-2 text-xs font-semibold text-red-600 hover:text-red-700">Remove</button>
+                        </div>
+                      ))}
+                      <div className="flex flex-wrap gap-2">
+                        <button type="button" onClick={() => setPreferenceDrafts((prev) => [...prev, { category: '', size_label: '', fit_preference: '', preferred_colors: [], preferred_brands: [], style_notes: '' }])} className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-100">Add preference</button>
+                        <button type="button" onClick={handleSavePreferences} disabled={savingPreferences} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">{savingPreferences ? 'Saving…' : 'Save memory'}</button>
+                        <button type="button" onClick={() => { setPreferenceDrafts(preferences); setEditingPreferences(false); }} className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50">Cancel</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Purchase History */}

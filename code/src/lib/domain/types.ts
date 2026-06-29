@@ -176,6 +176,17 @@ export interface InventoryLevel extends BaseRecord {
   reorderPoint: number;
 }
 
+export interface CustomerPreference extends BaseRecord {
+  organizationId: EntityId;
+  customerId: EntityId;
+  category: string;
+  sizeLabel?: string;
+  fitPreference?: string;
+  preferredColors: string[];
+  preferredBrands: string[];
+  styleNotes?: string;
+}
+
 export interface Customer extends BaseRecord {
   organizationId: EntityId;
   firstName: string;
@@ -188,6 +199,7 @@ export interface Customer extends BaseRecord {
   storeCreditBalance: number;
   notes?: string;
   taxExempt?: boolean;
+  preferences?: CustomerPreference[];
   isActive: boolean;
 }
 
