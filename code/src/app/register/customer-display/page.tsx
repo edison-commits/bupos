@@ -14,22 +14,21 @@ export default async function CustomerDisplayPage() {
     return <CustomerDisplayClient storeName="" locationName="" />;
   }
 
-  const { readStore } = await import("@/lib/persistence/store");
-  const store = await readStore(orgId);
-  const location = store.locations[0];
+  const { readCustomerDisplayBranding } = await import("@/lib/persistence/store");
+  const branding = await readCustomerDisplayBranding(orgId);
   const customerDisplayBranding = {
-    displayName: store.organization.customerDisplayDisplayName || store.organization.name,
-    welcomeText: store.organization.customerDisplayWelcomeText || 'Welcome',
-    idleMessage: store.organization.customerDisplayIdleMessage || 'Ready to checkout',
-    accentColor: store.organization.customerDisplayAccentColor || '#14b8a6',
+    displayName: branding.displayName,
+    welcomeText: branding.welcomeText,
+    idleMessage: branding.idleMessage,
+    accentColor: branding.accentColor,
   };
 
   const customerSignupUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://basicuniformpos.com'}/customer-signup`;
 
   return (
     <CustomerDisplayClient
-      storeName={store.organization.name}
-      locationName={location?.name ?? ""}
+      storeName={branding.storeName}
+      locationName={branding.locationName}
       branding={customerDisplayBranding}
       customerSignupUrl={customerSignupUrl}
     />

@@ -50,6 +50,7 @@ describe("customer self-signup QR flow", () => {
     expect(pkg).toContain('"qrcode"');
     expect(display).toContain("CustomerSignupQr");
     expect(display).toContain("customerSignupUrl");
+    expect(page).toContain("readCustomerDisplayBranding");
     expect(page).toContain("customerSignupUrl");
     expect(page).toContain("/customer-signup");
   });

@@ -1,7 +1,7 @@
 import 'server-only';
 import { defaultApprovalThresholds } from '@/lib/config/thresholds';
 import { roleDefinitions } from '@/lib/domain/permissions';
-import type { LocalStoreData } from '@/lib/persistence/types';
+import type { CustomerDisplayBrandingData, LocalStoreData } from '@/lib/persistence/types';
 import type { Organization, Location, ModifierGroup, Modifier, TenderType, Employee, Category, Product, ProductVariant, InventoryLevel, Customer, CustomerPreference, PromoCode, PromoCodeStatus, TransactionTenderPlaceholder, TransactionEventPlaceholder, AuditEventKind, ProductBundle, BundleItem, Stocktake, StocktakeLine } from '@/lib/domain/types';
 
 // In-memory cache with stale-while-revalidate to prevent cache stampedes.
@@ -52,6 +52,45 @@ function toOrg(r: Record<string, unknown>): Organization {
 }
 function toLocation(r: Record<string, unknown>): Location {
   return { id: r.id as string, organizationId: r.organization_id as string, name: r.name as string, code: r.code as string, address1: (r.address1 as string) ?? '', city: (r.city as string) ?? '', region: (r.region as string) ?? '', postalCode: (r.postal_code as string) ?? '', phone: (r.phone as string) ?? '', taxRate: Number(r.tax_rate ?? 0.1025), isActive: r.is_active as boolean, createdAt: String(r.created_at), updatedAt: String(r.updated_at) };
+}
+
+export async function readCustomerDisplayBrandingFromPg(orgId: string): Promise<CustomerDisplayBrandingData> {
+  const { orgQuery } = await import("@/lib/supabase-rest");
+  // check-pool-org-filter: scoped-by-organization-primary-key-and-location-org-filter
+  const res = await orgQuery(
+    orgId,
+    `SELECT
+       o.name,
+       o.customer_display_display_name,
+       o.customer_display_welcome_text,
+       o.customer_display_idle_message,
+       o.customer_display_accent_color,
+       COALESCE(l.name, '') AS location_name
+     FROM organizations o
+     LEFT JOIN LATERAL (
+       SELECT name
+         FROM locations
+        WHERE organization_id = o.id
+          AND is_active = true
+        ORDER BY created_at ASC, id ASC
+        LIMIT 1
+     ) l ON true
+     WHERE o.id = $1
+     LIMIT 1`,
+    [orgId],
+  );
+
+  const row = res.rows[0] as Record<string, unknown> | undefined;
+  if (!row) throw new Error(`Organization ${orgId} not found`);
+  const storeName = String(row.name ?? "Basic Uniform");
+  return {
+    storeName,
+    locationName: String(row.location_name ?? ""),
+    displayName: String(row.customer_display_display_name || storeName),
+    welcomeText: String(row.customer_display_welcome_text || "Welcome"),
+    idleMessage: String(row.customer_display_idle_message || "Ready to checkout"),
+    accentColor: String(row.customer_display_accent_color || "#14b8a6"),
+  };
 }
 function toModifierGroup(r: Record<string, unknown>): ModifierGroup {
   return { id: r.id as string, organizationId: r.organization_id as string, name: r.name as string, selectionMode: r.selection_mode as ModifierGroup['selectionMode'], minSelections: Number(r.min_selections), maxSelections: Number(r.max_selections), createdAt: String(r.created_at), updatedAt: String(r.updated_at) };

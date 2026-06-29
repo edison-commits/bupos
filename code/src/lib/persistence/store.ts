@@ -1,7 +1,7 @@
 import "server-only";
 
 import { cache } from "react";
-import type { LocalStoreData } from "@/lib/persistence/types";
+import type { CustomerDisplayBrandingData, LocalStoreData } from "@/lib/persistence/types";
 
 const isPg = () => !!process.env.USE_POSTGRES;
 
@@ -87,6 +87,24 @@ export const readStore = cache(async function readStore(orgId?: string): Promise
     throw new Error("Failed to parse store file — data may be corrupt. Restore from backup.");
   }
   return normalizeStore(parsed);
+});
+
+export const readCustomerDisplayBranding = cache(async function readCustomerDisplayBranding(orgId: string): Promise<CustomerDisplayBrandingData> {
+  if (isPg()) {
+    const { readCustomerDisplayBrandingFromPg } = await import("@/lib/persistence/postgres-read-store");
+    return readCustomerDisplayBrandingFromPg(orgId);
+  }
+  const store = await readStore(orgId);
+  const location = store.locations.find((entry) => entry.isActive) ?? store.locations[0];
+  const storeName = store.organization.name;
+  return {
+    storeName,
+    locationName: location?.name ?? "",
+    displayName: store.organization.customerDisplayDisplayName || storeName,
+    welcomeText: store.organization.customerDisplayWelcomeText || "Welcome",
+    idleMessage: store.organization.customerDisplayIdleMessage || "Ready to checkout",
+    accentColor: store.organization.customerDisplayAccentColor || "#14b8a6",
+  };
 });
 
 export async function writeStore(store: LocalStoreData) {

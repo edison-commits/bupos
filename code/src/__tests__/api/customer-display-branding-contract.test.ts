@@ -50,9 +50,18 @@ describe("customer display branding controls", () => {
     expect(component).toContain("branding={branding}");
   });
 
-  it("register customer display page passes persisted branding to the display client", () => {
+  it("register customer display page passes persisted branding to the display client through a narrow read model", () => {
     const page = read("src/app/register/customer-display/page.tsx");
+    const store = read("src/lib/persistence/store.ts");
+    const pg = read("src/lib/persistence/postgres-read-store.ts");
     const client = read("src/app/register/customer-display/customer-display-client.tsx");
+    expect(page).toContain("readCustomerDisplayBranding");
+    expect(page).not.toContain("readStore(orgId)");
+    expect(store).toContain("readCustomerDisplayBranding");
+    expect(pg).toContain("readCustomerDisplayBrandingFromPg");
+    expect(pg).toContain("FROM organizations o");
+    expect(pg).toContain("LEFT JOIN LATERAL");
+    expect(pg).not.toContain("get_full_store($1::uuid) AS result`\n    [orgId]");
     expect(page).toContain("customerDisplayBranding");
     expect(page).toContain("displayName");
     expect(client).toContain("branding?: CustomerDisplayBranding");
