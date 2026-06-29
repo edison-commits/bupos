@@ -3,31 +3,19 @@ import type { NextRequest } from "next/server";
 import { getPool, orgQuery } from "@/lib/supabase-rest";
 import { safeErr } from "@/lib/logging/safe-err";
 import { loadIntegration, decryptCreds, changedSinceLastSync, pushInventory, pushPrices } from "@/lib/channels/repo";
+import { requireInternalHmac } from "@/lib/api/internal-hmac";
 
 /**
- * Bearer-gated periodic reconcile: pushes the fulfillment location's on_hand to
+ * HMAC-gated periodic reconcile: pushes the fulfillment location's on_hand to
  * Shopify for variants whose inventory changed since last sync (so IN-STORE
  * sales propagate online). Invoked by a GitHub-Actions cron — Cloudflare Worker
- * cron isn't usable with OpenNext. Auth + fail-closed gate copied from
- * /api/internal/run-cleanup.
+ * drives the HMAC-gated /api/internal/reconcile-channels endpoint — same
+ * fail-closed pattern as the nightly pg_cron cleanup + the synthetic-health
+ * probe, plus timestamp-bound replay protection.
  */
-function bearerMatches(authHeader: string, expected: string): boolean {
-  const a = new TextEncoder().encode(authHeader);
-  const b = new TextEncoder().encode(expected);
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
-  return diff === 0;
-}
-
 export async function POST(req: NextRequest) {
-  const secret = process.env.CHANNEL_RECONCILE_SECRET;
-  if (!secret || secret.length < 32) {
-    return NextResponse.json({ error: "Reconcile endpoint not configured" }, { status: 503 });
-  }
-  if (!bearerMatches(req.headers.get("authorization") ?? "", `Bearer ${secret}`)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await requireInternalHmac(req, process.env.CHANNEL_RECONCILE_SECRET, "Reconcile endpoint not configured");
+  if (!auth.ok) return auth.response;
 
   let connected: { integration_id: string; organization_id: string }[] = [];
   try {

@@ -4,15 +4,16 @@ name: Reconcile sales channels
 # location's on_hand to Shopify for variants changed since last sync, so
 # IN-STORE sales propagate online. Cloudflare Worker cron can't be used with
 # OpenNext (it only synthesizes a fetch handler), so this GitHub-Actions cron
-# drives the Bearer-gated /api/internal/reconcile-channels endpoint — same
-# pattern as the nightly pg_cron cleanup + the synthetic-health probe.
+# drives the HMAC-gated /api/internal/reconcile-channels endpoint.
 #
 # DISABLED-BY-DEFAULT until the operator provisions the secret:
 #   1. `wrangler secret put CHANNEL_RECONCILE_SECRET`  (≥32 chars; the Worker
 #      endpoint fails closed without it)
 #   2. add the SAME value as the GitHub Actions secret CHANNEL_RECONCILE_SECRET
 #   3. uncomment the `schedule:` block below to enable the 15-minute cadence.
-# Until then it only runs on manual dispatch and is a no-op (401/503).
+# Until then it only runs on manual dispatch and skips cleanly.
+# Requests are timestamped and HMAC-signed; captured request headers expire in
+# 60 seconds and cannot be replayed indefinitely.
 
 on:
   # schedule:
@@ -35,8 +36,13 @@ jobs:
             exit 0
           fi
           echo "→ Reconciling channels via $RECONCILE_URL"
+          ts="$(date +%s%3N)"
+          body_hash="$(printf '' | sha256sum | awk '{print $1}')"
+          payload="$(printf 'POST\n/api/internal/reconcile-channels\n%s\n%s' "$ts" "$body_hash")"
+          sig="$(printf '%s' "$payload" | openssl dgst -sha256 -hmac "$CHANNEL_RECONCILE_SECRET" -binary | xxd -p -c 256)"
           curl -fsS --max-time 120 -X POST "$RECONCILE_URL" \
-            -H "Authorization: Bearer ${CHANNEL_RECONCILE_SECRET}"
+            -H "x-internal-timestamp: ${ts}" \
+            -H "x-internal-signature: ${sig}"
 
       - name: Notify on failure
         if: failure()

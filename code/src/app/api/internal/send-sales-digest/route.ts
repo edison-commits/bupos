@@ -3,9 +3,10 @@ import type { NextRequest } from "next/server";
 import { getPool, orgQuery } from "@/lib/supabase-rest";
 import { safeErr } from "@/lib/logging/safe-err";
 import { generateReportData, sendEodEmail, hasResendKey } from "@/lib/reports/eod";
+import { requireInternalHmac } from "@/lib/api/internal-hmac";
 
 /**
- * Bearer-gated scheduled sender for the sales digest (P3.2). Invoked hourly
+ * HMAC-gated scheduled sender for the sales digest (P3.2). Invoked hourly
  * by GitHub Actions (Worker cron isn't usable with OpenNext — same precedent
  * as reconcile-channels). For each org with a digest enabled (cross-org list
  * via the SECURITY DEFINER list_digest_orgs RPC), checks whether the org's
@@ -14,17 +15,9 @@ import { generateReportData, sendEodEmail, hasResendKey } from "@/lib/reports/eo
  *   • weekly digest — Mondays only, covers the previous Mon–Sun
  * Double-sends are prevented by lastDailySentOn / lastWeeklySentOn markers
  * (the hourly cron + retries are idempotent per target window). Auth +
- * fail-closed gate copied from /api/internal/run-cleanup.
+ * fail-closed gate copied from /api/internal/run-cleanup, with timestamp-bound
+ * HMAC protection so captured request headers cannot be replayed indefinitely.
  */
-function bearerMatches(authHeader: string, expected: string): boolean {
-  const a = new TextEncoder().encode(authHeader);
-  const b = new TextEncoder().encode(expected);
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
-  return diff === 0;
-}
-
 interface DigestOrgRow {
   organization_id: string;
   timezone: string | null;
@@ -72,13 +65,8 @@ async function markSent(orgId: string, field: "lastDailySentOn" | "lastWeeklySen
 }
 
 export async function POST(req: NextRequest) {
-  const secret = process.env.SALES_DIGEST_SECRET;
-  if (!secret || secret.length < 32) {
-    return NextResponse.json({ error: "Digest endpoint not configured" }, { status: 503 });
-  }
-  if (!bearerMatches(req.headers.get("authorization") ?? "", `Bearer ${secret}`)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await requireInternalHmac(req, process.env.SALES_DIGEST_SECRET, "Digest endpoint not configured");
+  if (!auth.ok) return auth.response;
   if (!hasResendKey()) {
     return NextResponse.json({ error: "RESEND_API_KEY not configured" }, { status: 503 });
   }

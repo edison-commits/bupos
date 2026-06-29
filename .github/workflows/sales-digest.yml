@@ -9,7 +9,8 @@ name: Sales digest
 #   1. openssl rand -hex 32                         # generate a ≥32-char secret
 #   2. gh secret set SALES_DIGEST_SECRET            # repo secret (this cron)
 #   3. wrangler secret put SALES_DIGEST_SECRET      # Worker secret (the endpoint)
-# Same Bearer fail-closed pattern as reconcile-channels / run-cleanup.
+# Requests are timestamped and HMAC-signed; captured request headers expire in
+# 60 seconds and cannot be replayed indefinitely.
 
 on:
   schedule:
@@ -24,14 +25,19 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DIGEST_SECRET: ${{ secrets.SALES_DIGEST_SECRET }}
+      DIGEST_URL: https://basicuniformpos.com/api/internal/send-sales-digest
     steps:
       - name: Send due digests
         if: env.DIGEST_SECRET != ''
         run: |
           set -euo pipefail
-          curl --fail-with-body -sS -X POST \
-            -H "Authorization: Bearer ${DIGEST_SECRET}" \
-            https://basicuniformpos.com/api/internal/send-sales-digest
+          ts="$(date +%s%3N)"
+          body_hash="$(printf '' | sha256sum | awk '{print $1}')"
+          payload="$(printf 'POST\n/api/internal/send-sales-digest\n%s\n%s' "$ts" "$body_hash")"
+          sig="$(printf '%s' "$payload" | openssl dgst -sha256 -hmac "$DIGEST_SECRET" -binary | xxd -p -c 256)"
+          curl --fail-with-body -sS -X POST "$DIGEST_URL" \
+            -H "x-internal-timestamp: ${ts}" \
+            -H "x-internal-signature: ${sig}"
       - name: Skipped (not configured)
         if: env.DIGEST_SECRET == ''
         run: echo "SALES_DIGEST_SECRET not set — digest send skipped (dormant)."
