@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { authFetch } from '@/lib/api/client';
 import { formatCurrency } from '@/lib/format';
+import { csvCell } from '@/lib/format/csv-sanitize';
 import { safeErr } from "@/lib/logging/safe-err";
 interface Supplier {
   id: string;
@@ -329,14 +330,50 @@ export default function PurchaseOrdersPage() {
     }
   };
 
+  const handlePrintPO = () => {
+    window.print();
+  };
+
+  const handleExportSupplierCsv = () => {
+    if (!selectedOrder) return;
+    const header = ['PO Number', 'Supplier', 'Expected Delivery', 'SKU', 'Product', 'Variant', 'Quantity Ordered', 'Unit Cost', 'Line Total'];
+    const rows = selectedOrder.lines.map((line) => [
+      selectedOrder.po_number,
+      selectedOrder.supplier_name,
+      selectedOrder.expected_at ? new Date(selectedOrder.expected_at).toLocaleDateString() : '',
+      line.sku,
+      line.product_name,
+      line.variant_name,
+      String(line.quantity_ordered),
+      String(line.unit_cost),
+      String(line.unit_cost * line.quantity_ordered),
+    ]);
+    const csv = [header, ...rows].map((row) => row.map(csvCell).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${selectedOrder.po_number}-supplier-export.csv`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
   const filteredOrders = orders.filter(
     (o) => statusFilter === 'all' || o.status === statusFilter
   );
 
   return (
     <div style={{ backgroundColor: 'var(--surface-default)' }} className="min-h-screen">
+      <style jsx global>{`
+        @media print {
+          body * { visibility: hidden; }
+          .printable-po-detail, .printable-po-detail * { visibility: visible; }
+          .printable-po-detail { position: absolute; left: 0; top: 0; width: 100%; max-height: none !important; overflow: visible !important; border: 0 !important; box-shadow: none !important; }
+          .no-print { display: none !important; }
+        }
+      `}</style>
       {/* Header */}
-      <div className="border-b" style={{ borderColor: 'var(--border-subtle)' }}>
+      <div className="no-print border-b" style={{ borderColor: 'var(--border-subtle)' }}>
         <div className="mx-auto max-w-7xl px-4 py-6">
           <div className="flex items-center justify-between">
             <div>
@@ -418,7 +455,7 @@ export default function PurchaseOrdersPage() {
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           {/* List Panel */}
           <div
-            className="rounded-lg border p-6 lg:col-span-2"
+            className="no-print rounded-lg border p-6 lg:col-span-2"
             style={{
               backgroundColor: 'var(--surface-panel)',
               borderColor: 'var(--border-subtle)',
@@ -500,7 +537,7 @@ export default function PurchaseOrdersPage() {
 
           {/* Detail Panel */}
           <div
-            className="rounded-lg border p-6"
+            className="printable-po-detail rounded-lg border p-6"
             style={{
               backgroundColor: 'var(--surface-panel)',
               borderColor: 'var(--border-subtle)',
@@ -510,21 +547,35 @@ export default function PurchaseOrdersPage() {
           >
             {selectedOrder ? (
               <div className="space-y-4">
-                <div>
+                <div className="no-print flex flex-wrap gap-2">
                   <button
                     onClick={() => setSelectedOrder(null)}
-                    className="text-sm font-medium transition"
-                    style={{ color: '#14b8a6' }}
+                    className="rounded border px-3 py-2 text-sm font-medium transition"
+                    style={{ color: '#14b8a6', borderColor: 'var(--border-default)' }}
                   >
                     ← Back to list
+                  </button>
+                  <button
+                    onClick={handlePrintPO}
+                    className="rounded bg-slate-900 px-3 py-2 text-sm font-semibold text-white"
+                  >
+                    Print / Save PDF
+                  </button>
+                  <button
+                    onClick={handleExportSupplierCsv}
+                    className="rounded bg-emerald-600 px-3 py-2 text-sm font-semibold text-white"
+                  >
+                    Export Supplier CSV
                   </button>
                 </div>
 
                 {/* PO Header */}
                 <div className="border-b pb-4" style={{ borderColor: 'var(--border-subtle)' }}>
+                  <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--text-secondary)' }}>PO Number</p>
                   <p className="font-bold text-lg" style={{ color: 'var(--text-primary)' }}>
                     {selectedOrder.po_number}
                   </p>
+                  <p className="mt-2 text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--text-secondary)' }}>Supplier</p>
                   <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
                     {selectedOrder.supplier_name}
                   </p>
@@ -550,7 +601,7 @@ export default function PurchaseOrdersPage() {
                   {selectedOrder.expected_at && (
                     <>
                       <p style={{ color: 'var(--text-secondary)' }} className="mt-2 font-medium">
-                        Expected
+                        Expected Delivery
                       </p>
                       <p style={{ color: 'var(--text-primary)' }}>
                         {new Date(selectedOrder.expected_at).toLocaleDateString()}
