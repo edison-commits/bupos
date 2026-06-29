@@ -37,7 +37,7 @@ export const GET = withDualAuth("inventory.adjust", async (request, ctx) => {
         JOIN locations l ON po.location_id = l.id AND l.organization_id = $1
         LEFT JOIN purchase_order_lines pol ON po.id = pol.purchase_order_id
         WHERE po.organization_id = $1
-          AND po.status IN ('pending', 'partial')
+          AND po.status IN ('submitted', 'partial')
           AND po.location_id = $2
         GROUP BY po.id, s.name, l.name
         ORDER BY po.created_at DESC`,
@@ -65,8 +65,9 @@ export const GET = withDualAuth("inventory.adjust", async (request, ctx) => {
         JOIN product_variants pv ON pol.product_variant_id = pv.id AND pv.organization_id = $2
         JOIN products p ON pv.product_id = p.id AND p.organization_id = $2
         WHERE pol.purchase_order_id = $1
+          AND po.location_id = $3
         ORDER BY p.name, pv.name`,
-        [poId, orgId]
+        [poId, orgId, locationId]
       );
 
       return NextResponse.json({ lines });
