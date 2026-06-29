@@ -13,9 +13,9 @@ export default async function CustomerSignupPage() {
   const orgId = process.env.BUPOS_ORG_ID;
   if (orgId) {
     try {
-      const { readStore } = await import('@/lib/persistence/store');
-      const store = await readStore(orgId);
-      storeName = store.organization.name;
+      const { readCustomerDisplayBranding } = await import('@/lib/persistence/store');
+      const branding = await readCustomerDisplayBranding(orgId);
+      storeName = branding.storeName;
     } catch {
       // Keep the public signup page available even if store branding is temporarily unavailable.
     }

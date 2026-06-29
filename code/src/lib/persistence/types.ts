@@ -114,6 +114,15 @@ export interface LocalStoreData {
   recountSchedules?: RecountSchedule[];
 }
 
+export interface CustomerDisplayBrandingData {
+  storeName: string;
+  locationName: string;
+  displayName: string;
+  welcomeText: string;
+  idleMessage: string;
+  accentColor: string;
+}
+
 export interface AdminSessionContext {
   session: SessionRecord;
   employee: Employee;
