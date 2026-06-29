@@ -580,7 +580,7 @@ export const emailReceiptSchema = z.object({
 // ---------------------------------------------------------------------------
 
 export const offlineSyncSchema = z.object({
-  id: requiredString,
+  id: uuid,
   cart: z.unknown(),
   tenders: z.unknown(),
   timestamp: optionalString,

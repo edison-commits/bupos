@@ -3,6 +3,8 @@ import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   checkRateLimit: vi.fn(),
+  checkKvRateLimit: vi.fn(),
+  checkDbRateLimit: vi.fn(),
   orgTx: vi.fn(),
   invalidateStoreCache: vi.fn(),
   randomUUID: vi.fn(),
@@ -10,6 +12,14 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/auth/rate-limit", () => ({
   checkRateLimit: (...args: unknown[]) => mocks.checkRateLimit(...args),
+}));
+
+vi.mock("@/lib/auth/kv-rate-limit", () => ({
+  checkKvRateLimit: (...args: unknown[]) => mocks.checkKvRateLimit(...args),
+}));
+
+vi.mock("@/lib/auth/db-rate-limit", () => ({
+  checkDbRateLimit: (...args: unknown[]) => mocks.checkDbRateLimit(...args),
 }));
 
 vi.mock("@/lib/supabase-rest", () => ({
@@ -32,6 +42,7 @@ function makeRequest(body: object, ip = "203.0.113.10") {
     headers: {
       "content-type": "application/json",
       "cf-connecting-ip": ip,
+      origin: "http://localhost",
     },
     body: JSON.stringify(body),
   });
@@ -61,6 +72,8 @@ describe("POST /api/customer-self-signup", () => {
     process.env.BUPOS_ORG_ID = "org-1";
     delete process.env.TRUST_FORWARDED_FOR;
     mocks.checkRateLimit.mockReturnValue({ allowed: true });
+    mocks.checkKvRateLimit.mockResolvedValue({ allowed: true, attempts: 1, retryAfterMs: 0 });
+    mocks.checkDbRateLimit.mockResolvedValue({ allowed: true, attempts: 1, retryAfterMs: 0 });
     mocks.randomUUID
       .mockReturnValueOnce("customer-1")
       .mockReturnValueOnce("audit-1");
@@ -99,6 +112,7 @@ describe("POST /api/customer-self-signup", () => {
       headers: {
         "content-type": "application/json",
         "x-forwarded-for": "198.51.100.99",
+        origin: "http://localhost",
       },
       body: JSON.stringify(validBody),
     }));
@@ -117,6 +131,7 @@ describe("POST /api/customer-self-signup", () => {
       headers: {
         "content-type": "application/json",
         "cf-connecting-ip": "203.0.113.10",
+        origin: "http://localhost",
       },
       body: "{not json",
     }));
@@ -179,7 +194,7 @@ describe("POST /api/customer-self-signup", () => {
     const response = await POST(makeRequest(validBody));
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ ok: true, customerId: "customer-1" });
+    expect(await response.json()).toEqual({ ok: true });
     expect(mocks.orgTx).toHaveBeenCalledWith("org-1");
     expect(query.mock.calls[0][0]).toContain("SELECT id FROM customers");
     expect(query.mock.calls[1][0]).toContain("INSERT INTO customers");
@@ -208,19 +223,17 @@ describe("POST /api/customer-self-signup", () => {
       "audit-1",
       "org-1",
       "customer-1",
-      JSON.stringify({ preferenceCount: 1, marketingOptIn: true }),
+      JSON.stringify({ preferenceCount: 1, marketingOptIn: true, existingCustomer: false }),
     ]);
     expect(query.mock.calls[4][0]).toBe("COMMIT");
     expect(mocks.invalidateStoreCache).toHaveBeenCalledWith("org-1");
     expect(release).toHaveBeenCalledTimes(1);
   });
 
-  it("updates an existing matched customer instead of inserting a duplicate public signup", async () => {
+  it("does not overwrite an existing matched customer from unauthenticated public signup", async () => {
     mocks.randomUUID.mockReset().mockReturnValueOnce("audit-existing");
     const query = vi.fn()
       .mockResolvedValueOnce({ rows: [{ id: "customer-existing" }] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
     const release = vi.fn();
@@ -229,26 +242,17 @@ describe("POST /api/customer-self-signup", () => {
     const response = await POST(makeRequest(validBody));
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ ok: true, customerId: "customer-existing" });
-    expect(query.mock.calls[1][0]).toContain("UPDATE customers");
-    expect(query.mock.calls[1][0]).not.toContain("INSERT INTO customers");
+    expect(await response.json()).toEqual({ ok: true });
+    expect(query.mock.calls[1][0]).toContain("customer_self_signup");
+    expect(query.mock.calls[1][0]).not.toContain("UPDATE customers");
+    expect(query.mock.calls[1][0]).not.toContain("INSERT INTO customer_preferences");
     expect(query.mock.calls[1][1]).toEqual([
-      "customer-existing",
-      "org-1",
-      "Ada",
-      "Lovelace",
-      "ada@example.com",
-      null,
-      "Customer opted into marketing from self-signup.",
-    ]);
-    expect(query.mock.calls[2][1][1]).toBe("customer-existing");
-    expect(query.mock.calls[3][1]).toEqual([
       "audit-existing",
       "org-1",
       "customer-existing",
-      JSON.stringify({ preferenceCount: 1, marketingOptIn: true }),
+      JSON.stringify({ preferenceCount: 1, marketingOptIn: true, existingCustomer: true }),
     ]);
-    expect(query.mock.calls[4][0]).toBe("COMMIT");
+    expect(query.mock.calls[2][0]).toBe("COMMIT");
     expect(mocks.invalidateStoreCache).toHaveBeenCalledWith("org-1");
     expect(release).toHaveBeenCalledTimes(1);
   });
