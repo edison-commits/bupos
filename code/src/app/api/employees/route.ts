@@ -4,7 +4,7 @@
  */
 import { NextResponse } from 'next/server';
 import { orgQuery, getPool } from '@/lib/supabase-rest';
-import { hashSecret, hashPin, verifySecret } from '@/lib/auth/crypto';
+import { hashPin, verifySecret } from '@/lib/auth/crypto';
 import { randomUUID } from '@/lib/uuid';
 import { canManageEmployeeRole } from '@/lib/authz';
 import { checkRateLimit } from '@/lib/auth/rate-limit';

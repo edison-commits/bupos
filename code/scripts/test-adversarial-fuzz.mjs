@@ -36,12 +36,6 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 const exec = promisify(execFile);
 
-const results = [];
-function record(name, passed, detail = "") {
-  results.push({ name, passed, detail });
-  console.log(`${passed ? "\u2713" : "\u2717"} ${name}${detail ? `  (${detail})` : ""}`);
-}
-
 // Build a TS test harness that imports the real schemas and validates
 // each adversarial input.
 const harness = `

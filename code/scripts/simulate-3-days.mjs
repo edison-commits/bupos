@@ -37,7 +37,7 @@ const BUNDLE_ID = "b0b1b2b3-aaaa-bbbb-cccc-dddddddddddd";
 const BUNDLE_PRICE = 70.0;
 const FREE_PROMO_ID = "c0c1c2c3-eeee-ffff-aaaa-bbbbbbbbbbbb";
 const FREE_PROMO_VARIANT_ID = "021e7e4d-88c3-42bd-8b47-d8e8d97f84b7";
-const FREE_PROMO_MIN_PURCHASE = 50;
+const _FREE_PROMO_MIN_PURCHASE = 50;
 
 const VARIANTS = [
   { id: "3fcfb7b8-856c-4ed7-8cd2-cbb1666f2e18", sku: "DEN-HR-28-BLU", price: 54, name: "High Rise Straight Jean", variant: "28 / Blue" },

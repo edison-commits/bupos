@@ -234,8 +234,7 @@ function objectHasRawErrorField(argText) {
     `[{,]\\s*(?:${CATCH_IDENT_NAMES_ALT}|[a-zA-Z][a-zA-Z0-9_$]*(?:Err|Error))\\s*[,}]`,
     "g",
   );
-  let s;
-  while ((s = rxShort.exec(argText)) !== null) {
+  while (rxShort.exec(argText) !== null) {
     return true;
   }
   return false;

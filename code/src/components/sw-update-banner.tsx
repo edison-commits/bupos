@@ -33,13 +33,11 @@ export function SwUpdateBanner() {
     };
     navigator.serviceWorker.addEventListener("controllerchange", onControllerChange);
 
-    let registration: ServiceWorkerRegistration | null = null;
     let unsubUpdatefound: (() => void) | null = null;
     let unsubStatechange: (() => void) | null = null;
 
     navigator.serviceWorker.getRegistration().then((reg) => {
       if (!reg) return;
-      registration = reg;
 
       // If a worker is ALREADY waiting when we mount, surface
       // immediately — common on subsequent page loads after a new SW

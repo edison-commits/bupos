@@ -139,7 +139,7 @@ async function testStoreCreditIssuance() {
       );
       affected = r.rowCount ?? 0;
     });
-  } catch (e) {
+  } catch {
     // RLS may throw outright; that's also a pass.
   }
   const after = await snapshotCustomer(VICTIM_CUSTOMER_ID);
@@ -229,7 +229,7 @@ async function testAdjustInventory() {
   record(
     "R6-C-1  adjustInventory: cross-tenant rejected",
     caughtErr && sameJson(before, after),
-    `caughtErr=${caughtErr}, on_hand before=${before?.on_hand}, after=${after?.on_hand}`,
+    `caughtErr=${caughtErr}, affected=${affected}, on_hand before=${before?.on_hand}, after=${after?.on_hand}`,
   );
 }
 

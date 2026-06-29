@@ -37,21 +37,6 @@ const STATUS_TABS = [
   { key: "closed", label: "Closed" },
 ];
 
-// Local-time today as YYYY-MM-DD (NOT UTC). The prior shape used
-// `new Date().toISOString().slice(0, 10)` which returns a UTC date.
-// In Pacific TZ at evening, the UTC date is already TOMORROW — so
-// the page defaulted to a future date, surfaced "Failed to load
-// shifts" in tomorrow's empty range, and a manager looking for
-// today's shifts had to manually pick a date. Compute in local TZ
-// so the default actually matches "today" as the cashier sees it.
-function getLocalToday(): string {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-
 export default function ShiftsPage() {
   const [shifts, setShifts] = useState<ShiftSummary[]>([]);
   const [loading, setLoading] = useState(true);

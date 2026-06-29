@@ -103,7 +103,7 @@ function makeJar() {
 const errors = [];
 const stats = new Map(); // key: "METHOD path" → { count, ok, fail, codes: Map<status, n> }
 
-function record(method, path, res, elapsedMs, scenario, day) {
+function record(method, path, res, elapsedMs, _scenario, _day) {
   const key = `${method} ${path}`;
   let s = stats.get(key);
   if (!s) {
@@ -177,7 +177,7 @@ async function ownerLogin(jar, day) {
   }, 'owner-login', day);
 }
 
-async function ownerLogout(jar, day) {
+async function _ownerLogout(jar, _day) {
   // Logout goes through a server action via /admin form; not a
   // direct API. We just clear the jar for the simulation.
   jar.clear();
@@ -213,7 +213,7 @@ async function readCommonAdmin(jar, day) {
   await req(jar, 'GET', '/api/audit?page=1&pageSize=10', {}, 'audit', day);
 }
 
-async function getDefaultLocation(jar, day) {
+async function getDefaultLocation(jar, _day) {
   // Use the same `req()` helper so cookies + Origin are applied.
   const r = await fetch(`${BUPOS_URL}/api/clock-in-data`, {
     headers: { cookie: jar.cookieHeader(), origin: BUPOS_URL, referer: `${BUPOS_URL}/admin` },
@@ -232,7 +232,7 @@ async function getDefaultLocation(jar, day) {
   }
 }
 
-async function getSomeEmployeeId(jar, day) {
+async function getSomeEmployeeId(jar, _day) {
   const r = await fetch(`${BUPOS_URL}/api/employees`, {
     headers: { cookie: jar.cookieHeader(), origin: BUPOS_URL, referer: `${BUPOS_URL}/admin` },
     redirect: 'manual',
