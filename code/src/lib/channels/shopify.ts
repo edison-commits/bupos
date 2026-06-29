@@ -139,6 +139,24 @@ export const shopifyProvider: ChannelProvider = {
     };
   },
 
+  async getInventoryQuantity(creds, inventoryItemId, shopifyLocationId) {
+    const q = `query($inventoryItemId: ID!, $locationId: ID!) {
+      inventoryItem(id: $inventoryItemId) {
+        inventoryLevel(locationId: $locationId) {
+          quantities(names: ["available"]) { name quantity }
+        }
+      }
+    }`;
+    const r = await gql<{ inventoryItem: { inventoryLevel: { quantities: { name: string; quantity: number }[] } | null } | null }>(creds, q, {
+      inventoryItemId,
+      locationId: shopifyLocationId,
+    });
+    if (r.errors) return { ok: false, error: typeof r.errors === "string" ? r.errors : "graphql error" };
+    const qty = r.data?.inventoryItem?.inventoryLevel?.quantities?.find((entry) => entry.name === "available")?.quantity;
+    if (typeof qty !== "number") return { ok: false, error: "inventory level not found" };
+    return { ok: true, quantity: qty };
+  },
+
   async setInventory(creds, inventoryItemId, shopifyLocationId, onHand): Promise<OpResult> {
     const m = `mutation($input: InventorySetQuantitiesInput!) {
       inventorySetQuantities(input: $input) { userErrors { field message } }

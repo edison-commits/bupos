@@ -103,6 +103,12 @@ export interface ChannelProvider {
   validate(creds: ChannelCredentials): Promise<{ shop: ShopInfo; locations: ChannelLocation[] }>;
   /** Resolve a SKU to its Shopify variant + inventory item (for the push map). */
   findVariantBySku(creds: ChannelCredentials, sku: string): Promise<VariantLookup>;
+  /** Read current available quantity from the channel for reconciliation. */
+  getInventoryQuantity(
+    creds: ChannelCredentials,
+    inventoryItemId: string,
+    shopifyLocationId: string,
+  ): Promise<{ ok: boolean; quantity?: number; error?: string }>;
   /** Set the ABSOLUTE on_hand for an inventory item at a location (POS authoritative). */
   setInventory(
     creds: ChannelCredentials,
