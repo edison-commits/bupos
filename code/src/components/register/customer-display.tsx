@@ -11,6 +11,7 @@ interface CustomerDisplayProps {
   customerName?: string;
   appliedPromo?: string | null;
   exchangeCredit?: number | null;
+  paymentStatus?: "pending" | "processing";
 }
 
 type DisplayMode = "idle" | "active" | "payment" | "receipt";
@@ -27,18 +28,21 @@ export function CustomerDisplay({
   customerName,
   appliedPromo,
   exchangeCredit,
+  paymentStatus = "pending",
 }: CustomerDisplayProps) {
   const [displayMode, setDisplayMode] = useState<DisplayMode>("idle");
   const [transactionComplete, setTransactionComplete] = useState(false);
 
-  // Auto-rotate between idle and active modes
+  // Auto-rotate between idle, active, and payment modes
   useEffect(() => {
-    if (totals.itemCount > 0 && displayMode === "idle") {
+    if (paymentStatus === "processing" && totals.itemCount > 0) {
+      setDisplayMode("payment");
+    } else if (totals.itemCount > 0) {
       setDisplayMode("active");
-    } else if (totals.itemCount === 0 && displayMode === "active") {
+    } else {
       setDisplayMode("idle");
     }
-  }, [totals.itemCount, displayMode]);
+  }, [totals.itemCount, paymentStatus]);
 
   // Reset transaction complete flag after a few seconds
   useEffect(() => {
@@ -64,6 +68,10 @@ export function CustomerDisplay({
           appliedPromo={appliedPromo}
           exchangeCredit={exchangeCredit}
         />
+      )}
+
+      {displayMode === "payment" && (
+        <PaymentScreen totals={totals} />
       )}
 
       {displayMode === "receipt" && (
@@ -232,6 +240,25 @@ function ActiveCartScreen({
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+interface PaymentScreenProps {
+  totals: CartTotals;
+}
+
+function PaymentScreen({ totals }: PaymentScreenProps) {
+  const formatCurr = (amount: number) => formatCurrency(amount);
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center bg-gradient-to-b from-slate-900 to-slate-950 px-8 text-center">
+      <p className="mb-6 text-2xl font-semibold uppercase tracking-[0.3em] text-teal-300">Payment in progress</p>
+      <h2 className="mb-10 text-6xl font-bold text-white">Almost done</h2>
+      <div className="w-full max-w-xl rounded-3xl border border-teal-500/40 bg-slate-800 p-12 shadow-2xl shadow-teal-950/40">
+        <p className="text-2xl text-gray-300">Amount due</p>
+        <p className="mt-4 text-7xl font-black text-teal-400">{formatCurr(totals.grandTotal)}</p>
+      </div>
+      <p className="mt-10 text-2xl text-gray-400">Please follow the cashier’s instructions.</p>
     </div>
   );
 }
