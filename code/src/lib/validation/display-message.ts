@@ -97,7 +97,12 @@ export const displayMessageSchema = z.discriminatedUnion("type", [
     appliedPromo: z.string().nullable().optional(),
     exchangeCredit: z.number().finite().nullable().optional(),
   }),
-  z.object({ type: z.literal("payment_started") }),
+  z.object({
+    type: z.literal("payment_started"),
+    cart: cartSchema,
+    appliedPromo: z.string().nullable().optional(),
+    exchangeCredit: z.number().finite().nullable().optional(),
+  }),
   z.object({
     type: z.literal("receipt"),
     totals: cartTotalsSchema.optional(),

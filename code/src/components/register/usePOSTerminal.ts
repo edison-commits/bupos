@@ -939,11 +939,17 @@ export function usePOSTerminal({
       return;
     }
     logEvent("payment_started", cart.id, { grand_total: totals.grandTotal.toFixed(2) });
-    // Broadcast payment_started to customer display
-    broadcastCustomerDisplay({ type: "payment_started" });
+    // Broadcast payment_started to customer display with the full cart so the
+    // display can recompute totals locally instead of trusting scalar totals.
+    broadcastCustomerDisplay({
+      type: "payment_started",
+      cart,
+      appliedPromo: appliedPromo?.code ?? null,
+      exchangeCredit: exchangeCredit?.creditAmount ?? null,
+    });
     setScreen("tender");
     setError(null);
-  }, [cart, totals, registerConfig.approvalThresholds, approvedExceptions, employee, location, logEvent]);
+  }, [cart, totals, registerConfig.approvalThresholds, approvedExceptions, employee, location, logEvent, appliedPromo, exchangeCredit]);
 
   const handleApprovalResult = useCallback((result: ApprovalResult) => {
     if (result.approved && result.exceptionId) {
@@ -951,10 +957,16 @@ export function usePOSTerminal({
     }
     setApprovalRequest(null);
     logEvent("payment_started", cart.id, { grand_total: totals.grandTotal.toFixed(2) });
-    // Broadcast payment_started to customer display
-    broadcastCustomerDisplay({ type: "payment_started" });
+    // Broadcast payment_started to customer display with the full cart so the
+    // display can recompute totals locally instead of trusting scalar totals.
+    broadcastCustomerDisplay({
+      type: "payment_started",
+      cart,
+      appliedPromo: appliedPromo?.code ?? null,
+      exchangeCredit: exchangeCredit?.creditAmount ?? null,
+    });
     setScreen("tender");
-  }, [approvalRequest, cart.id, totals.grandTotal, logEvent]);
+  }, [approvalRequest, cart, totals.grandTotal, logEvent, appliedPromo, exchangeCredit]);
 
   const handleApprovalDenied = useCallback(() => {
     setApprovalRequest(null);

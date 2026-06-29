@@ -11,6 +11,7 @@ export default function CustomerDisplayPage() {
   const [totals, setTotals] = useState<CartTotals | null>(null);
   const [appliedPromo, setAppliedPromo] = useState<string | null>(null);
   const [exchangeCredit, setExchangeCredit] = useState<number | null>(null);
+  const [paymentStatus, setPaymentStatus] = useState<"pending" | "processing">("pending");
 
   useEffect(() => {
     const channel = new BroadcastChannel("basicuniformpos_customer_display");
@@ -36,11 +37,16 @@ export default function CustomerDisplayPage() {
             setTotals(newTotals);
             setAppliedPromo(message.appliedPromo ?? null);
             setExchangeCredit(message.exchangeCredit ?? null);
+            setPaymentStatus("pending");
           }
           break;
 
         case "payment_started":
-          // Payment started on POS — nothing to update on the display
+          setCart(message.cart as Cart);
+          setTotals(computeTotals(message.cart as Cart));
+          setAppliedPromo(message.appliedPromo ?? null);
+          setExchangeCredit(message.exchangeCredit ?? null);
+          setPaymentStatus("processing");
           break;
 
         case "receipt":
@@ -60,6 +66,7 @@ export default function CustomerDisplayPage() {
           setTotals(null);
           setAppliedPromo(null);
           setExchangeCredit(null);
+          setPaymentStatus("pending");
           break;
       }
     };
@@ -92,6 +99,7 @@ export default function CustomerDisplayPage() {
       customerName={cart.customerName}
       appliedPromo={appliedPromo}
       exchangeCredit={exchangeCredit}
+      paymentStatus={paymentStatus}
     />
   );
 }

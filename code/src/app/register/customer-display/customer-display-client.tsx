@@ -27,6 +27,7 @@ export function CustomerDisplayClient({ storeName, locationName }: CustomerDispl
   const [customerName, setCustomerName] = useState<string | undefined>(undefined);
   const [appliedPromo, setAppliedPromo] = useState<string | null>(null);
   const [exchangeCredit, setExchangeCredit] = useState<number | null>(null);
+  const [paymentStatus, setPaymentStatus] = useState<"pending" | "processing">("pending");
 
   useEffect(() => {
     // Listen for cart updates from the POS terminal via BroadcastChannel
@@ -50,13 +51,23 @@ export function CustomerDisplayClient({ storeName, locationName }: CustomerDispl
           setCustomerName(cartData.customerName);
           setAppliedPromo(data.appliedPromo ?? null);
           setExchangeCredit(data.exchangeCredit ?? null);
+          setPaymentStatus("pending");
         }
+      } else if (data.type === "payment_started") {
+        const cartData = data.cart as Cart;
+        setCart(cartData);
+        setTotals(computeTotals(cartData));
+        setCustomerName(cartData.customerName);
+        setAppliedPromo(data.appliedPromo ?? null);
+        setExchangeCredit(data.exchangeCredit ?? null);
+        setPaymentStatus("processing");
       } else if (data.type === "cart_clear") {
         setCart(createCart("", "", ""));
         setTotals({ subtotal: 0, modifiersTotal: 0, discountTotal: 0, taxTotal: 0, grandTotal: 0, itemCount: 0 });
         setCustomerName(undefined);
         setAppliedPromo(null);
         setExchangeCredit(null);
+        setPaymentStatus("pending");
       }
     };
 
@@ -71,6 +82,7 @@ export function CustomerDisplayClient({ storeName, locationName }: CustomerDispl
       customerName={customerName}
       appliedPromo={appliedPromo}
       exchangeCredit={exchangeCredit}
+      paymentStatus={paymentStatus}
     />
   );
 }
