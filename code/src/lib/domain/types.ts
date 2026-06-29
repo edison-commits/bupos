@@ -323,6 +323,7 @@ export interface StocktakeLine {
   expectedQty: number;
   countedQty?: number;
   variance?: number;
+  varianceReason?: string;
   countedBy?: EntityId;
   countedAt?: string;
   createdAt: string;

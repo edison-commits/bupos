@@ -2,7 +2,7 @@ import 'server-only';
 import { defaultApprovalThresholds } from '@/lib/config/thresholds';
 import { roleDefinitions } from '@/lib/domain/permissions';
 import type { LocalStoreData } from '@/lib/persistence/types';
-import type { Organization, Location, ModifierGroup, Modifier, TenderType, Employee, Category, Product, ProductVariant, InventoryLevel, Customer, PromoCode, PromoCodeStatus, TransactionTenderPlaceholder, TransactionEventPlaceholder, AuditEventKind, ProductBundle, BundleItem } from '@/lib/domain/types';
+import type { Organization, Location, ModifierGroup, Modifier, TenderType, Employee, Category, Product, ProductVariant, InventoryLevel, Customer, PromoCode, PromoCodeStatus, TransactionTenderPlaceholder, TransactionEventPlaceholder, AuditEventKind, ProductBundle, BundleItem, Stocktake, StocktakeLine } from '@/lib/domain/types';
 
 // In-memory cache with stale-while-revalidate to prevent cache stampedes.
 // On expiry, one request refreshes while others continue serving stale data.
@@ -157,6 +157,8 @@ async function _doFetchStore(orgId: string): Promise<LocalStoreData> {
   let rows: Array<{ result?: Record<string, unknown> | null }>;
   let bundleRowsRes: { rows: Record<string, unknown>[] };
   let bundleItemRowsRes: { rows: Record<string, unknown>[] };
+  let stocktakeRowsRes: { rows: Record<string, unknown>[] };
+  let stocktakeLineRowsRes: { rows: Record<string, unknown>[] };
   try {
     const storeRes = await client.query<{ result: Record<string, unknown> | null }>(
       `SELECT get_full_store($1::uuid) AS result`,
@@ -184,6 +186,25 @@ async function _doFetchStore(orgId: string): Promise<LocalStoreData> {
          JOIN product_bundles pb ON pb.id = bi.bundle_id
         WHERE pb.organization_id = $1
         ORDER BY bi.created_at ASC`,
+      [orgId],
+    );
+    stocktakeRowsRes = await client.query<Record<string, unknown>>(
+      `SELECT id, organization_id, location_id, initiated_by, status, count_type,
+              category_filter, notes, accepted_by, accepted_at, created_at, updated_at
+       FROM stocktakes
+       WHERE organization_id = $1
+       ORDER BY created_at DESC
+       LIMIT 100`,
+      [orgId],
+    );
+    stocktakeLineRowsRes = await client.query<Record<string, unknown>>(
+      `SELECT sl.id, sl.stocktake_id, sl.product_variant_id, sl.expected_qty,
+              sl.counted_qty, sl.variance, sl.variance_reason, sl.counted_by,
+              sl.counted_at, sl.created_at
+       FROM stocktake_lines sl
+       JOIN stocktakes st ON st.id = sl.stocktake_id
+       WHERE st.organization_id = $1
+       ORDER BY sl.created_at ASC`,
       [orgId],
     );
     await client.query("COMMIT");
@@ -310,6 +331,33 @@ async function _doFetchStore(orgId: string): Promise<LocalStoreData> {
     updatedAt: String(r.updated_at),
   }));
 
+  const stocktakes: Stocktake[] = stocktakeRowsRes.rows.map((r) => ({
+    id: r.id as string,
+    organizationId: r.organization_id as string,
+    locationId: r.location_id as string,
+    initiatedBy: r.initiated_by as string,
+    status: r.status as Stocktake['status'],
+    countType: r.count_type as Stocktake['countType'],
+    categoryFilter: (r.category_filter as string) ?? undefined,
+    notes: (r.notes as string) ?? undefined,
+    acceptedBy: (r.accepted_by as string) ?? undefined,
+    acceptedAt: r.accepted_at ? String(r.accepted_at) : undefined,
+    createdAt: String(r.created_at),
+    updatedAt: String(r.updated_at),
+  }));
+  const stocktakeLines: StocktakeLine[] = stocktakeLineRowsRes.rows.map((r) => ({
+    id: r.id as string,
+    stocktakeId: r.stocktake_id as string,
+    productVariantId: r.product_variant_id as string,
+    expectedQty: Number(r.expected_qty),
+    countedQty: r.counted_qty != null ? Number(r.counted_qty) : undefined,
+    variance: r.variance != null ? Number(r.variance) : undefined,
+    varianceReason: (r.variance_reason as string) ?? undefined,
+    countedBy: (r.counted_by as string) ?? undefined,
+    countedAt: r.counted_at ? String(r.counted_at) : undefined,
+    createdAt: String(r.created_at),
+  }));
+
   const result: LocalStoreData = {
     organization: org, locations, employees, roles: roleDefinitions,
     categories, modifierGroups, modifiers, products, variants, inventory, customers,
@@ -325,7 +373,7 @@ async function _doFetchStore(orgId: string): Promise<LocalStoreData> {
     transactionTenderPlaceholders, transactionEventPlaceholders, transactionExceptionPlaceholders: [],
     authCredentials, sessions, promoCodes,
     giftCards: [], giftCardTransactions: [], storeCreditLedger: [], behaviorFlags: [],
-    layaways: [], layawayPayments: [], stocktakes: [], stocktakeLines: [],
+    layaways: [], layawayPayments: [], stocktakes, stocktakeLines,
     transfers: [], transferLines: [], timeClockEntries: [],
     promoRedemptions: [], bundles, suppliers: [],
     purchaseOrders: [], registers: [], recountSchedules: [],

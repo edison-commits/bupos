@@ -150,9 +150,14 @@ export default function InventoryAdjustmentReviewPage() {
             <h1 className="mt-2 text-4xl font-bold text-slate-900">Inventory Adjustment Review</h1>
             <p className="mt-2 text-slate-600">Audit manual stock changes, receiving deltas, transfer movements, and suspicious inventory variance.</p>
           </div>
-          <Link href="/admin/inventory" className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">
-            Back to Inventory
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link href="/admin/stocktakes" className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700">
+              Start Cycle Count
+            </Link>
+            <Link href="/admin/inventory" className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">
+              Back to Inventory
+            </Link>
+          </div>
         </div>
 
         <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-6">
