@@ -47,6 +47,25 @@ jobs:
       - name: Install
         run: npm ci
 
+      # Customer signup/display org scoping is runtime Worker configuration,
+      # not a client-exposed NEXT_PUBLIC value. Sync from GitHub Actions
+      # secrets before asserting the deployed Worker has everything it needs.
+      - name: Sync BUPOS Worker config secrets
+        if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          BUPOS_ORG_ID: ${{ secrets.BUPOS_ORG_ID }}
+          BUPOS_LOCATION_ID: ${{ secrets.BUPOS_LOCATION_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BUPOS_ORG_ID:-}" ] || [ -z "${BUPOS_LOCATION_ID:-}" ]; then
+            echo "::error::BUPOS_ORG_ID and BUPOS_LOCATION_ID GitHub secrets must be set"
+            exit 1
+          fi
+          printf '%s' "$BUPOS_ORG_ID" | npx wrangler secret put BUPOS_ORG_ID
+          printf '%s' "$BUPOS_LOCATION_ID" | npx wrangler secret put BUPOS_LOCATION_ID
+
       # R25-ops-M-2: assert every secret the Worker needs at runtime is
       # actually configured. Without this, a missing CUSTOMER_DISPLAY_
       # SECRET / RESEND_API_KEY / RESEND_FROM silently breaks the
@@ -75,7 +94,7 @@ jobs:
           #     banners) mixed into stdout breaks the later grep.
           # jq exits 2 on invalid JSON, so a wrangler auth failure fails
           # the step instead of being swallowed by `|| echo '[]'`.
-          REQUIRED=(CUSTOMER_DISPLAY_SECRET RESEND_API_KEY RESEND_FROM_EMAIL DATABASE_URL)
+          REQUIRED=(CUSTOMER_DISPLAY_SECRET RESEND_API_KEY RESEND_FROM_EMAIL DATABASE_URL BUPOS_ORG_ID BUPOS_LOCATION_ID)
           echo "→ Listing Worker secrets..."
           # Split stderr (warnings) from stdout (JSON payload). Some
           # wrangler versions emit a deprecation notice on stderr that
