@@ -291,10 +291,12 @@ export const GET = withAdminAuth("audit.view", async (req, ctx) => {
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
-    // R25-perf-7: previously `(SELECT COUNT(*) FROM transaction_tenders
-    // WHERE ...) AS tender_count` was a correlated subquery — one
-    // per-row scan per page of 50. Replace with a LEFT JOIN against a
-    // grouped subquery so the planner runs a single hash aggregate.
+    // R25-perf-7 originally replaced a per-row correlated tender-count
+    // subquery with a grouped aggregate, but that grouped aggregate still
+    // scanned *all* transaction_tenders before pagination. Page the
+    // transactions first, then count tenders only for the returned page via
+    // an indexed per-row lateral lookup. This keeps the work bounded to
+    // limit+1 rows instead of growing with all historical tender rows.
     // Fetch limit + 1 to determine if there's a next page.
     // R27-C8: employee/customer JOINs also org-gated for defense in
     // depth, so a cross-tenant employee_id/customer_id (shouldn't
@@ -302,23 +304,28 @@ export const GET = withAdminAuth("audit.view", async (req, ctx) => {
     // insurance) can't splice foreign names.
     const rows = await orgQuery(
       orgId,
-      `SELECT t.id, t.status, t.tender_type, t.subtotal, t.discount_total, t.tax_total,
-              t.grand_total, t.amount_tendered, t.change_due, t.created_at,
-              t.customer_id,
-              e.display_name AS employee_name,
-              c.first_name || ' ' || c.last_name AS customer_name,
+      `WITH page AS (
+         SELECT t.id, t.status, t.tender_type, t.subtotal, t.discount_total, t.tax_total,
+                t.grand_total, t.amount_tendered, t.change_due, t.created_at,
+                t.customer_id,
+                e.display_name AS employee_name,
+                c.first_name || ' ' || c.last_name AS customer_name
+           FROM transactions t
+           LEFT JOIN employees e ON e.id = t.employee_id AND e.organization_id = $1
+           LEFT JOIN customers c ON c.id = t.customer_id AND c.organization_id = $1
+           ${whereClause}
+           ORDER BY t.created_at DESC, t.id DESC
+           LIMIT $${idx + 1}
+       )
+       SELECT page.*,
               COALESCE(tt.tender_count, 0)::int AS tender_count
-       FROM transactions t
-       LEFT JOIN employees e ON e.id = t.employee_id AND e.organization_id = $1
-       LEFT JOIN customers c ON c.id = t.customer_id AND c.organization_id = $1
-       LEFT JOIN (
-         SELECT transaction_id, COUNT(*)::int AS tender_count
-           FROM transaction_tenders
-          GROUP BY transaction_id
-       ) tt ON tt.transaction_id = t.id
-       ${whereClause}
-       ORDER BY t.created_at DESC, t.id DESC
-       LIMIT $${idx + 1}`,
+         FROM page
+         LEFT JOIN LATERAL (
+           SELECT COUNT(*)::int AS tender_count
+             FROM transaction_tenders
+            WHERE transaction_id = page.id
+         ) tt ON TRUE
+        ORDER BY page.created_at DESC, page.id DESC`,
       [...values, limit + 1],
     );
 

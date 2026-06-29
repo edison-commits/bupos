@@ -99,6 +99,12 @@ describe("GET /api/transactions", () => {
     expect(body.transactions).toHaveLength(1);
     expect(body.transactions[0].id).toBe("txn-1");
     expect(body.hasMore).toBe(false);
+
+    const [, sql] = mockOrgQuery.mock.calls[0];
+    expect(sql).toContain("WITH page AS");
+    expect(sql).toContain("LEFT JOIN LATERAL");
+    expect(sql).toContain("WHERE transaction_id = page.id");
+    expect(sql).not.toContain("GROUP BY transaction_id");
   });
 
   it("returns single transaction detail when ?id= is provided", async () => {
