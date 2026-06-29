@@ -326,6 +326,12 @@ export default function InventoryPage() {
               >
                 Adjustment Review
               </Link>
+              <Link
+                href="/admin/inventory/ledger"
+                className="px-4 py-2 bg-slate-800 text-white rounded-lg hover:bg-slate-900 transition font-medium text-sm"
+              >
+                Inventory Ledger
+              </Link>
             </div>
           </div>
         </div>
