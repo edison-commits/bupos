@@ -2,6 +2,7 @@
 
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { authFetch } from '@/lib/api/client';
 import { formatCurrency } from '@/lib/format';
 import { safeErr } from "@/lib/logging/safe-err";
@@ -621,17 +622,29 @@ export default function PurchaseOrdersPage() {
                 )}
 
                 {(selectedOrder.status === 'submitted' || selectedOrder.status === 'partial') && (
-                  <button
-                    onClick={() => handleUpdateStatus(selectedOrder.id, 'cancelled')}
-                    disabled={updating}
-                    style={{
-                      backgroundColor: updating ? '#d1d5db' : '#ef4444',
-                      color: 'white',
-                    }}
-                    className="w-full rounded px-4 py-2 font-medium transition disabled:cursor-not-allowed"
-                  >
-                    Cancel PO
-                  </button>
+                  <div className="space-y-2">
+                    <Link
+                      href={`/admin/receiving?mode=po&po_id=${selectedOrder.id}`}
+                      style={{
+                        backgroundColor: '#14b8a6',
+                        color: 'white',
+                      }}
+                      className="block w-full rounded px-4 py-2 text-center font-medium transition hover:opacity-90"
+                    >
+                      Receive PO
+                    </Link>
+                    <button
+                      onClick={() => handleUpdateStatus(selectedOrder.id, 'cancelled')}
+                      disabled={updating}
+                      style={{
+                        backgroundColor: updating ? '#d1d5db' : '#ef4444',
+                        color: 'white',
+                      }}
+                      className="w-full rounded px-4 py-2 font-medium transition disabled:cursor-not-allowed"
+                    >
+                      Cancel PO
+                    </button>
+                  </div>
                 )}
               </div>
             ) : (

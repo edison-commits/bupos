@@ -57,6 +57,7 @@ export default function ReceivingPage() {
   const [selectedPO, setSelectedPO] = useState<PurchaseOrder | null>(null);
   const [poDetails, setPoDetails] = useState<PurchaseOrderLine[]>([]);
   const [poReceiveQuantities, setPoReceiveQuantities] = useState<Record<string, string>>({});
+  const [initialPoId, setInitialPoId] = useState<string | null>(null);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [posLoading, setPosLoading] = useState(false);
 
@@ -129,10 +130,31 @@ export default function ReceivingPage() {
   }, [searchQuery, mode, searchProducts]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('mode') !== 'po') return;
+    const linkedPoId = params.get('po_id');
+    setMode('po');
+    setInitialPoId(linkedPoId);
+  }, []);
+
+  useEffect(() => {
     if (mode === 'po') {
       fetchPurchaseOrders();
     }
   }, [mode, fetchPurchaseOrders]);
+
+  useEffect(() => {
+    if (mode !== 'po' || !initialPoId || selectedPO?.id === initialPoId) return;
+    const matchedPO = purchaseOrders.find((po) => po.id === initialPoId);
+    if (!matchedPO) return;
+
+    setSelectedPO(matchedPO);
+    setPoReceiveQuantities({});
+    setReceivingItems([]);
+    fetchPODetails(matchedPO.id);
+    setInitialPoId(null);
+  }, [fetchPODetails, initialPoId, mode, purchaseOrders, selectedPO?.id]);
 
   // Add item to receiving batch
   const handleAddItem = () => {

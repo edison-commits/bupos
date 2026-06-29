@@ -43,4 +43,19 @@ describe("purchase order receiving contract", () => {
     expect(src).toContain("poReceiveQuantities[line.id]");
     expect(src).toContain("handleAddPOItem(line, poReceiveQuantities[line.id]");
   });
+
+  it("purchase-order details link submitted orders into receiving", () => {
+    const src = read("src/app/admin/purchase-orders/page.tsx");
+    expect(src).toContain("import Link from 'next/link'");
+    expect(src).toContain("href={`/admin/receiving?mode=po&po_id=${selectedOrder.id}`}");
+    expect(src).toContain("Receive PO");
+  });
+
+  it("receiving page opens directly to a linked purchase order", () => {
+    const src = read("src/app/admin/receiving/page.tsx");
+    expect(src).toContain("new URLSearchParams(window.location.search)");
+    expect(src).toContain("setInitialPoId(linkedPoId)");
+    expect(src).toContain("purchaseOrders.find((po) => po.id === initialPoId)");
+    expect(src).toContain("fetchPODetails(matchedPO.id)");
+  });
 });
