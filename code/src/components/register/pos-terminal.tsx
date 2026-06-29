@@ -137,19 +137,57 @@ export function POSTerminal(props: POSTerminalProps) {
   // document-level keydown listener on every render.
   // Flat variantId → human label map so the ReturnModal can render a
   // bundle's component breakdown without having to re-fetch the catalog.
+  const productsById = useMemo(() => {
+    const map = new Map(products.map((product) => [product.id, product]));
+    return map;
+  }, [products]);
+
+  const variantsById = useMemo(() => {
+    const map = new Map(variants.map((variant) => [variant.id, variant]));
+    return map;
+  }, [variants]);
+
+  const customersById = useMemo(() => {
+    const map = new Map(customers.map((customer) => [customer.id, customer]));
+    return map;
+  }, [customers]);
+
   const variantDirectory = useMemo(() => {
     const map: Record<string, { name: string; productName?: string }> = {};
     for (const v of variants) {
-      const p = products.find((pp) => pp.id === v.productId);
+      const p = productsById.get(v.productId);
       map[v.id] = { name: v.name, productName: p?.name };
     }
     return map;
-  }, [variants, products]);
+  }, [variants, productsById]);
 
   const selectedCustomerForRecommendations = useMemo(
-    () => customers.find((customer) => customer.id === cart.customerId),
-    [customers, cart.customerId],
+    () => (cart.customerId ? customersById.get(cart.customerId) : undefined),
+    [customersById, cart.customerId],
   );
+
+  const currentCartItemsForRecommendations = useMemo(
+    () => cart.items.map((item) => {
+      const variant = variantsById.get(item.productVariantId);
+      return { productVariantId: item.productVariantId, productId: variant?.productId ?? "", productName: item.productName };
+    }),
+    [cart.items, variantsById],
+  );
+
+  const recommendationVariants = useMemo(
+    () => variants.map((variant) => ({
+      ...variant,
+      sizeLabel: variant.sizeLabel,
+      colorLabel: variant.colorLabel,
+    })),
+    [variants],
+  );
+
+  const handleRecommendationAdd = useCallback((productId: string, variantId: string) => {
+    const variant = variantsById.get(variantId);
+    const product = productsById.get(productId);
+    if (variant && product) handleAddItem(variant, product);
+  }, [handleAddItem, productsById, variantsById]);
 
   const openHeldCarts = useCallback(() => setShowHeldCarts(true), [setShowHeldCarts]);
 
@@ -250,25 +288,14 @@ export function POSTerminal(props: POSTerminalProps) {
         </div>
         {screen === "selling" && (cart.items.length > 0 || selectedCustomerForRecommendations?.preferences?.length) && (
           <ProductRecommendations
-            currentCartItems={cart.items.map((i) => {
-              const v = variants.find((vv) => vv.id === i.productVariantId);
-              return { productVariantId: i.productVariantId, productId: v?.productId ?? "", productName: i.productName };
-            })}
+            currentCartItems={currentCartItemsForRecommendations}
             customer={selectedCustomerForRecommendations}
             transactionEvents={transactionEvents}
             categories={categories}
             products={products}
-            variants={variants.map((variant) => ({
-              ...variant,
-              sizeLabel: variant.sizeLabel,
-              colorLabel: variant.colorLabel,
-            }))}
+            variants={recommendationVariants}
             inventory={inventory}
-            onAddItem={(productId, variantId) => {
-              const v = variants.find((vv) => vv.id === variantId);
-              const p = products.find((pp) => pp.id === productId);
-              if (v && p) handleAddItem(v, p);
-            }}
+            onAddItem={handleRecommendationAdd}
           />
         )}
       </div>
@@ -287,7 +314,7 @@ export function POSTerminal(props: POSTerminalProps) {
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
             <span className="max-w-32 truncate">{cart.customerName ?? "Customer"}</span>
-            {cart.customerId && customers.find((c) => c.id === cart.customerId)?.taxExempt && (
+            {cart.customerId && customersById.get(cart.customerId)?.taxExempt && (
               <span className="rounded-full bg-amber-200 px-2 py-0.5 text-xs font-bold text-amber-800">TAX EX</span>
             )}
           </button>
