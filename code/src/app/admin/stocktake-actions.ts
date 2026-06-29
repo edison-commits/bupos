@@ -200,6 +200,7 @@ export async function createStocktakeAction(formData: FormData) {
 export async function recordCountAction(formData: FormData) {
   const lineId = formData.get("lineId") as string;
   const countedQty = Number(formData.get("countedQty"));
+  const varianceReason = ((formData.get("varianceReason") as string) || "").trim();
 
   if (!lineId || !Number.isFinite(countedQty) || countedQty < 0) {
     throw new Error("Line ID and non-negative count required");
@@ -251,12 +252,26 @@ export async function recordCountAction(formData: FormData) {
       }
       const expected = Number(lineRow[0].expected_qty) || 0;
       const variance = Math.trunc(countedQty) - expected;
+      if (variance !== 0 && !varianceReason) {
+        await client.query("ROLLBACK");
+        throw new Error("Variance reason is required when counted quantity differs from expected.");
+      }
       // check-pool-org-filter: scoped-by-parent-stocktake-org-verified-line-154
       await client.query(
         `UPDATE stocktake_lines
-           SET counted_qty = $1, variance = $2, counted_by = $3, counted_at = NOW()
-         WHERE id = $4`,
-        [Math.trunc(countedQty), variance, ctx.employee.id, lineId],
+           SET counted_qty = $1, variance = $2, counted_by = $3, counted_at = NOW(), variance_reason = $4
+         WHERE id = $5`,
+        [Math.trunc(countedQty), variance, ctx.employee.id, variance !== 0 ? varianceReason : null, lineId],
+      );
+      await client.query(
+        `UPDATE stocktakes s
+            SET status = 'pending_review', updated_at = NOW()
+          WHERE s.id = $1 AND s.organization_id = $2 AND s.status = 'in_progress'
+            AND NOT EXISTS (
+              SELECT 1 FROM stocktake_lines sl
+              WHERE sl.stocktake_id = s.id AND sl.counted_qty IS NULL
+            )`,
+        [lineRow[0].stocktake_id, orgId],
       );
       await client.query("COMMIT");
     } catch (e) {
@@ -271,8 +286,20 @@ export async function recordCountAction(formData: FormData) {
       if (!line) throw new Error("Line not found");
       line.countedQty = countedQty;
       line.variance = countedQty - line.expectedQty;
+      if (line.variance !== 0 && !varianceReason) {
+        throw new Error("Variance reason is required when counted quantity differs from expected.");
+      }
+      line.varianceReason = line.variance !== 0 ? varianceReason : undefined;
       line.countedBy = ctx.employee.id;
       line.countedAt = new Date().toISOString();
+      const stocktake = store.stocktakes.find((s) => s.id === line.stocktakeId);
+      if (stocktake && stocktake.status === "in_progress") {
+        const allLines = store.stocktakeLines.filter((l) => l.stocktakeId === stocktake.id);
+        if (allLines.length > 0 && allLines.every((l) => l.countedQty != null)) {
+          stocktake.status = "pending_review";
+          stocktake.updatedAt = new Date().toISOString();
+        }
+      }
     });
   }
 
