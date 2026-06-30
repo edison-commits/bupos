@@ -2,6 +2,7 @@
 
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { Plus, Search, Edit2, Lock, Eye, EyeOff } from 'lucide-react';
 import { authFetch } from '@/lib/api/client';
 import { FETCH_TIMEOUT_MS } from '@/lib/config/timing';
@@ -447,13 +448,21 @@ export default function EmployeeManagement() {
         {/* Header */}
         <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <h1 className="text-3xl font-bold text-slate-900">Employee Management</h1>
-          <button
-            onClick={openCreateModal}
-            className="flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-4 text-white hover:bg-emerald-700"
-          >
-            <Plus className="h-5 w-5" />
-            Add Employee
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <Link
+              href="/admin/roles"
+              className="rounded-lg border border-slate-300 bg-white px-5 py-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Permission Review
+            </Link>
+            <button
+              onClick={openCreateModal}
+              className="flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-4 text-white hover:bg-emerald-700"
+            >
+              <Plus className="h-5 w-5" />
+              Add Employee
+            </button>
+          </div>
         </div>
 
         {/* Search Bar */}
