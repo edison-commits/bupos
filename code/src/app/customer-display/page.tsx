@@ -11,7 +11,7 @@ export default function CustomerDisplayPage() {
   const [totals, setTotals] = useState<CartTotals | null>(null);
   const [appliedPromo, setAppliedPromo] = useState<string | null>(null);
   const [exchangeCredit, setExchangeCredit] = useState<number | null>(null);
-  const [paymentStatus, setPaymentStatus] = useState<"pending" | "processing">("pending");
+  const [paymentStatus, setPaymentStatus] = useState<"pending" | "processing" | "complete">("pending");
 
   useEffect(() => {
     const channel = new BroadcastChannel("basicuniformpos_customer_display");
@@ -50,15 +50,13 @@ export default function CustomerDisplayPage() {
           break;
 
         case "receipt":
-          // R28-C7: intentional no-op. Prior version set `totals`
-          // directly from `message.totals` WITHOUT recomputation —
-          // any same-origin XSS could post a `receipt` message with
-          // `grandTotal: 0.01` and spoof the customer-facing display
-          // while the cashier's real transaction rang $100. The POS
-          // now re-sends the full `cart_update` when transitioning
-          // into the receipt view, and `cart_update`'s totals are
-          // recomputed server-side via `computeTotals(cart)` which
-          // can't be spoofed through scalar payload values.
+          // R28-C7 / customer-display polish: receipt screens are driven by
+          // the full cart and recomputed totals, never scalar totals.
+          setCart(message.cart as Cart);
+          setTotals(computeTotals(message.cart as Cart));
+          setAppliedPromo(message.appliedPromo ?? null);
+          setExchangeCredit(message.exchangeCredit ?? null);
+          setPaymentStatus("complete");
           break;
 
         case "cart_clear":

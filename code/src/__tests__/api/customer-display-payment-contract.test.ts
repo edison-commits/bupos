@@ -39,6 +39,28 @@ describe("customer display payment status integration", () => {
     expect(paymentWindow).not.toContain("message.totals");
   });
 
+  it("receipt broadcasts use the full cart and render a thank-you signup CTA", () => {
+    const schema = read("src/lib/validation/display-message.ts");
+    const terminal = read("src/components/register/usePOSTerminal.ts");
+    const client = read("src/app/register/customer-display/customer-display-client.tsx");
+    const page = read("src/app/customer-display/page.tsx");
+    const component = read("src/components/register/customer-display.tsx");
+
+    const receiptSchema = schema.slice(schema.indexOf('type: z.literal("receipt")'), schema.indexOf('type: z.literal("cart_clear")'));
+    expect(receiptSchema).toContain("cart: cartSchema");
+    expect(receiptSchema).not.toContain("totals: cartTotalsSchema");
+    expect(terminal).toContain('type: "receipt"');
+    expect(terminal).toContain("cart");
+    expect(client).toContain('data.type === "receipt"');
+    expect(client).toContain('setPaymentStatus("complete")');
+    expect(page).toContain('case "receipt"');
+    expect(page).toContain('setPaymentStatus("complete")');
+    expect(component).toContain('paymentStatus?: "pending" | "processing" | "complete"');
+    expect(component).toContain("Receipt sent");
+    expect(component).toContain("Save your sizes for next time");
+    expect(component).toContain("CustomerSignupQr");
+  });
+
   it("customer display renders a customer-facing payment screen", () => {
     const component = read("src/components/register/customer-display.tsx");
     expect(component).toContain("paymentStatus?:");

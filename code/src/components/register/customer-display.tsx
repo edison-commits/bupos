@@ -19,7 +19,7 @@ interface CustomerDisplayProps {
   customerName?: string;
   appliedPromo?: string | null;
   exchangeCredit?: number | null;
-  paymentStatus?: "pending" | "processing";
+  paymentStatus?: "pending" | "processing" | "complete";
   branding?: CustomerDisplayBranding;
   customerSignupUrl?: string;
 }
@@ -43,11 +43,12 @@ export function CustomerDisplay({
   customerSignupUrl,
 }: CustomerDisplayProps) {
   const [displayMode, setDisplayMode] = useState<DisplayMode>("idle");
-  const [transactionComplete, setTransactionComplete] = useState(false);
 
   // Auto-rotate between idle, active, and payment modes
   useEffect(() => {
-    if (paymentStatus === "processing" && totals.itemCount > 0) {
+    if (paymentStatus === "complete" && totals.itemCount > 0) {
+      setDisplayMode("receipt");
+    } else if (paymentStatus === "processing" && totals.itemCount > 0) {
       setDisplayMode("payment");
     } else if (totals.itemCount > 0) {
       setDisplayMode("active");
@@ -55,16 +56,6 @@ export function CustomerDisplay({
       setDisplayMode("idle");
     }
   }, [totals.itemCount, paymentStatus]);
-
-  // Reset transaction complete flag after a few seconds
-  useEffect(() => {
-    if (transactionComplete) {
-      const timer = setTimeout(() => {
-        setTransactionComplete(false);
-      }, 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [transactionComplete]);
 
   return (
     <div className="flex flex-col h-screen w-full bg-slate-950 text-white overflow-hidden">
@@ -87,7 +78,12 @@ export function CustomerDisplay({
       )}
 
       {displayMode === "receipt" && (
-        <ReceiptScreen storeName={storeName} totals={totals} />
+        <ReceiptScreen
+          storeName={storeName}
+          totals={totals}
+          customerName={customerName}
+          customerSignupUrl={customerSignupUrl}
+        />
       )}
     </div>
   );
@@ -288,37 +284,47 @@ function PaymentScreen({ totals }: PaymentScreenProps) {
 interface ReceiptScreenProps {
   storeName: string;
   totals: CartTotals;
+  customerName?: string;
+  customerSignupUrl?: string;
 }
 
-function ReceiptScreen({ storeName, totals }: ReceiptScreenProps) {
+function ReceiptScreen({ storeName, totals, customerName, customerSignupUrl }: ReceiptScreenProps) {
   const formatCurr = (amount: number) => formatCurrency(amount);
 
   return (
     <div className="flex-1 flex flex-col items-center justify-center bg-gradient-to-b from-teal-900/30 to-slate-950 px-8 text-center">
-      <div className="mb-12">
+      <div className="mb-10">
         <div className="text-8xl mb-8 animate-bounce">
           ✓
         </div>
         <h1 className="text-6xl font-bold text-white mb-4">
-          Thank You!
+          {customerName ? `Thank you, ${customerName}!` : "Thank You!"}
         </h1>
         <p className="text-3xl text-teal-400 font-semibold">
           Transaction Complete
         </p>
       </div>
 
-      <div className="bg-slate-800 rounded-lg p-12 mb-12 max-w-lg w-full">
-        <div className="text-4xl font-bold text-teal-400 mb-8">
-          {formatCurr(totals.grandTotal)}
+      <div className="grid w-full max-w-5xl gap-6 md:grid-cols-[1fr_auto] md:items-center">
+        <div className="rounded-3xl bg-slate-800 p-10 shadow-2xl shadow-teal-950/30">
+          <div className="text-4xl font-bold text-teal-400 mb-6">
+            {formatCurr(totals.grandTotal)}
+          </div>
+          <p className="text-2xl text-gray-300">
+            Thank you for shopping at {storeName}
+          </p>
+          <p className="mt-5 rounded-2xl bg-emerald-500/15 px-4 py-3 text-xl font-semibold text-emerald-200">
+            Receipt sent — please take your receipt.
+          </p>
         </div>
-        <p className="text-2xl text-gray-300">
-          Thank you for shopping at {storeName}
-        </p>
-      </div>
 
-      <p className="text-2xl text-gray-400">
-        Please take your receipt
-      </p>
+        {customerSignupUrl && (
+          <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
+            <p className="mb-3 text-lg font-bold text-white">Save your sizes for next time</p>
+            <CustomerSignupQr url={customerSignupUrl} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }

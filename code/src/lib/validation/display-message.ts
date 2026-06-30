@@ -81,31 +81,25 @@ const cartSchema = z.object({
   updatedAt: z.string(),
 }).strict();
 
-const cartTotalsSchema = z.object({
-  subtotal: money,
-  modifiersTotal: money,
-  discountTotal: money,
-  taxTotal: money,
-  grandTotal: money,
-  itemCount: z.number().int().nonnegative(),
-}).strict();
-
 export const displayMessageSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("cart_update"),
     cart: cartSchema.optional(),
     appliedPromo: z.string().nullable().optional(),
     exchangeCredit: z.number().finite().nullable().optional(),
-  }),
+  }).strict(),
   z.object({
     type: z.literal("payment_started"),
     cart: cartSchema,
     appliedPromo: z.string().nullable().optional(),
     exchangeCredit: z.number().finite().nullable().optional(),
-  }),
+  }).strict(),
   z.object({
     type: z.literal("receipt"),
-    totals: cartTotalsSchema.optional(),
-  }),
-  z.object({ type: z.literal("cart_clear") }),
+    cart: cartSchema,
+    appliedPromo: z.string().nullable().optional(),
+    exchangeCredit: z.number().finite().nullable().optional(),
+    receiptSent: z.boolean().optional(),
+  }).strict(),
+  z.object({ type: z.literal("cart_clear") }).strict(),
 ]);
