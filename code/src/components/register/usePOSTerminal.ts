@@ -1011,8 +1011,15 @@ export function usePOSTerminal({
 
       clearCurrentDraft();
 
-      // Broadcast receipt to customer display
-      broadcastCustomerDisplay({ type: "receipt", totals });
+      // Broadcast receipt to customer display with the full cart so display totals
+      // are recomputed locally and the thank-you screen can show customer context.
+      broadcastCustomerDisplay({
+        type: "receipt",
+        cart,
+        appliedPromo: appliedPromo?.code ?? null,
+        exchangeCredit: exchangeCredit?.creditAmount ?? null,
+        receiptSent: true,
+      });
       setScreen("receipt");
 
       // Audio feedback: chime + spoken total
@@ -1043,8 +1050,15 @@ export function usePOSTerminal({
           const tenderLines: TenderLine[] = tenders.map((t) => ({ type: t.type, amount: t.amount, ...(t.metadata ? { metadata: t.metadata } : {}) }));
           const offlineReceipt = await queueOfflineAndBuildReceipt(cart, tenderLines, approvedExceptions, totals, tenders, employee.displayName);
           setReceipt(offlineReceipt);
-          // Broadcast receipt to customer display
-          broadcastCustomerDisplay({ type: "receipt", totals });
+          // Broadcast receipt to customer display with the full cart so display totals
+          // are recomputed locally and the thank-you screen can show customer context.
+          broadcastCustomerDisplay({
+            type: "receipt",
+            cart,
+            appliedPromo: appliedPromo?.code ?? null,
+            exchangeCredit: exchangeCredit?.creditAmount ?? null,
+            receiptSent: true,
+          });
           clearCurrentDraft();
           setScreen("receipt");
           setApprovedExceptions([]);
@@ -1066,7 +1080,7 @@ export function usePOSTerminal({
       checkoutInFlightRef.current = false;
       setProcessing(false);
     }
-  }, [cart, totals, approvedExceptions, isOnline, employee.displayName, clearCurrentDraft]);
+  }, [cart, totals, approvedExceptions, isOnline, employee.displayName, clearCurrentDraft, appliedPromo, exchangeCredit]);
 
   const handleNewSale = useCallback(() => {
     // Broadcast cart_clear to customer display
