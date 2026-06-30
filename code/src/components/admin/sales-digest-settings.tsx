@@ -36,6 +36,7 @@ interface SalesMetrics {
   returnsAmount: number;
   lowStockCount: number;
   cashVariance: number;
+  largeDiscountCount: number;
   shiftCount: number;
 }
 
@@ -85,15 +86,19 @@ export function SalesDigestSettings({ store }: { store: LocalStoreData }) {
     const itemSalesMap = new Map<string, { quantity: number; sales: number }>();
     let returnsCount = 0;
     let returnsAmount = 0;
+    let largeDiscountCount = 0;
 
     // Filter to sale transactions (eventKind === "transaction_placeholder" with grand_total)
     transactions.forEach((tx) => {
       if (tx.eventKind !== "transaction_placeholder" || !tx.payload?.grand_total) return;
       const grandTotal = Number(tx.payload.grand_total ?? 0);
+      const discountTotal = Number(tx.payload.discount_total ?? tx.payload.discountTotal ?? 0);
+      const subtotal = Number(tx.payload.subtotal ?? 0);
       if (tx.payload?.is_return === "true") {
         returnsCount += 1;
         returnsAmount += Math.abs(grandTotal);
       } else {
+        if (discountTotal >= 25 || (subtotal > 0 && discountTotal / subtotal >= 0.2)) largeDiscountCount += 1;
         totalSales += grandTotal;
         transactionCount += 1;
         // Track items from payload if available
@@ -150,6 +155,7 @@ export function SalesDigestSettings({ store }: { store: LocalStoreData }) {
       returnsAmount,
       lowStockCount,
       cashVariance,
+      largeDiscountCount,
       shiftCount: shifts.length,
     };
   }, [store]);
@@ -234,6 +240,7 @@ export function SalesDigestSettings({ store }: { store: LocalStoreData }) {
     .split(',')
     .map((email) => email.trim())
     .filter((email) => email.length > 0);
+  const previewInventory = store.inventory || [];
 
   return (
     <div className="space-y-8">
@@ -367,6 +374,15 @@ export function SalesDigestSettings({ store }: { store: LocalStoreData }) {
           )}
 
           {/* Action Buttons */}
+          <div className="rounded-xl border border-zinc-200 bg-white p-4">
+            <p className="text-sm font-semibold text-zinc-900">Test-send readiness</p>
+            <p className="mt-1 text-sm text-zinc-600">
+              {recipientList.length > 0 && isConfigured
+                ? 'Ready to save and send a test digest to the configured recipients.'
+                : 'Enable a digest and add at least one recipient before sending a test email.'}
+            </p>
+          </div>
+
           <div className="flex gap-3 pt-4">
             <button
               onClick={handleSendTestEmail}
@@ -434,6 +450,27 @@ export function SalesDigestSettings({ store }: { store: LocalStoreData }) {
             <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-xl p-4 border border-orange-200">
               <p className="text-sm font-medium text-orange-900 mb-1">Shifts</p>
               <p className="text-2xl font-bold text-orange-700">{metrics.shiftCount}</p>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+            <h4 className="mb-3 flex items-center gap-2 font-semibold text-amber-950">
+              <AlertCircle className="h-4 w-4" />
+              Manager Alert Preview
+            </h4>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div className="rounded-lg bg-white p-3 border border-amber-100">
+                <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Stockouts</p>
+                <p className="mt-1 text-2xl font-bold text-amber-950">{previewInventory.filter((item) => item.onHand <= 0).length}</p>
+              </div>
+              <div className="rounded-lg bg-white p-3 border border-amber-100">
+                <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Large discounts</p>
+                <p className="mt-1 text-2xl font-bold text-amber-950">{metrics.largeDiscountCount}</p>
+              </div>
+              <div className="rounded-lg bg-white p-3 border border-amber-100">
+                <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Cash variance</p>
+                <p className="mt-1 text-2xl font-bold text-amber-950">{formatCurrency(metrics.cashVariance)}</p>
+              </div>
             </div>
           </div>
 
