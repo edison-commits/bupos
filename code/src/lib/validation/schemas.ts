@@ -349,6 +349,35 @@ export const purchaseOrderReceiveSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// Special Orders / Backorders
+// ---------------------------------------------------------------------------
+
+const specialOrderLineSchema = z.object({
+  product_variant_id: uuid,
+  quantity: z.number().int().positive().max(10_000),
+  unit_price: nonnegativeNumber.optional(),
+  notes: optionalString,
+});
+
+export const specialOrderCreateSchema = z.object({
+  customer_id: uuid,
+  supplier_id: uuid.optional(),
+  request_notes: optionalString,
+  deposit_due: nonnegativeNumber.optional(),
+  deposit_paid: nonnegativeNumber.optional(),
+  needed_by: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  lines: z.array(specialOrderLineSchema).min(1).max(100),
+});
+
+export const specialOrderUpdateSchema = z.object({
+  id: uuid,
+  action: z.enum(["update_status", "generate_po"]),
+  status: z.enum(["requested", "ordered", "received", "ready", "fulfilled", "cancelled"]).optional(),
+  supplier_id: uuid.optional(),
+  expected_at: isoDateTime.optional(),
+});
+
+// ---------------------------------------------------------------------------
 // Expenses
 // ---------------------------------------------------------------------------
 
