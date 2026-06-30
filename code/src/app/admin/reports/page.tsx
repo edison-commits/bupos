@@ -301,6 +301,21 @@ export default function ReportsPage() {
             )}
           </div>
 
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-emerald-950">Accounting Export</p>
+                <p className="mt-1 text-sm text-emerald-700">QuickBooks-ready daily sales journal with tender debits, sales income, tax liability, discounts, gift card liability, and store credit liability.</p>
+              </div>
+              <a
+                href={`/api/export?type=accounting-journal&from=${from}&to=${to}`}
+                className="inline-flex items-center justify-center rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800"
+              >
+                Download Accounting CSV
+              </a>
+            </div>
+          </div>
+
           {/* Report Type Tabs */}
           <div className="border-b border-zinc-200">
             <div className="flex gap-1 overflow-x-auto">
