@@ -2,6 +2,7 @@
 
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { Plus, Search, Edit2, Eye, AlertCircle, Loader2, Users } from 'lucide-react';
 import { authFetch } from '@/lib/api/client';
 import { formatCurrency } from '@/lib/format';
@@ -384,16 +385,24 @@ export default function CustomerManagement() {
             <h1 className="text-3xl font-bold text-gray-900">Customers</h1>
             <p className="mt-2 text-gray-600">Manage customer profiles, loyalty points, and purchase history</p>
           </div>
-          <button
-            onClick={() => {
-              resetForm();
-              setModalMode('create');
-            }}
-            className="flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-4 text-white hover:bg-emerald-700 transition-colors font-medium"
-          >
-            <Plus className="h-5 w-5" />
-            Add Customer
-          </button>
+          <div className="flex gap-3">
+            <Link
+              href="/admin/special-orders"
+              className="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-5 py-4 font-medium text-blue-700 transition-colors hover:bg-blue-100"
+            >
+              Special Orders
+            </Link>
+            <button
+              onClick={() => {
+                resetForm();
+                setModalMode('create');
+              }}
+              className="flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-4 text-white hover:bg-emerald-700 transition-colors font-medium"
+            >
+              <Plus className="h-5 w-5" />
+              Add Customer
+            </button>
+          </div>
         </div>
 
         {/* Summary Cards */}
