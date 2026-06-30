@@ -102,6 +102,11 @@ export const ProductGrid = memo(function ProductGrid({ items, categories, onAddI
   const searchRef = useRef<HTMLInputElement>(null);
   const scanTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const showAddFeedback = useCallback((product: Product, variant: ProductVariant) => {
+    setScanFeedback(`Added: ${product.name} — ${variant.name}`);
+    setTimeout(() => setScanFeedback(null), 2000);
+  }, []);
+
   // Build a flat lookup of SKU/barcode → variant+product for instant scan matching.
   // Keep stock in a one-pass map so scanner setup stays O(products + variants + inventory),
   // not O(products × variants × inventory-per-product).
@@ -147,12 +152,11 @@ export const ProductGrid = memo(function ProductGrid({ items, categories, onAddI
         playScanSuccess();
         onAddItem(match.variant, match.product);
         setSearchQuery("");
-        setScanFeedback(`Added: ${match.product.name} — ${match.variant.name}`);
-        setTimeout(() => setScanFeedback(null), 2000);
+        showAddFeedback(match.product, match.variant);
         searchRef.current?.focus();
       }, 100);
     }
-  }, [scanLookup, onAddItem]);
+  }, [scanLookup, onAddItem, showAddFeedback]);
 
   // Handle Enter key for manual SKU/barcode entry
   const handleSearchKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -169,10 +173,9 @@ export const ProductGrid = memo(function ProductGrid({ items, categories, onAddI
       playScanSuccess();
       onAddItem(match.variant, match.product);
       setSearchQuery("");
-      setScanFeedback(`Added: ${match.product.name} — ${match.variant.name}`);
-      setTimeout(() => setScanFeedback(null), 2000);
+      showAddFeedback(match.product, match.variant);
     }
-  }, [searchQuery, scanLookup, onAddItem]);
+  }, [searchQuery, scanLookup, onAddItem, showAddFeedback]);
 
   // Cleanup timeout on unmount
   useEffect(() => {
@@ -203,7 +206,9 @@ export const ProductGrid = memo(function ProductGrid({ items, categories, onAddI
 
   function handleProductTap(item: ProductGridItem) {
     if (item.variants.length === 1) {
-      onAddItem(item.variants[0], item.product);
+      const variant = item.variants[0];
+      onAddItem(variant, item.product);
+      showAddFeedback(item.product, variant);
     } else {
       setVariantPickerProduct(item);
     }
@@ -211,6 +216,7 @@ export const ProductGrid = memo(function ProductGrid({ items, categories, onAddI
 
   function handleVariantSelect(variant: ProductVariant, product: Product) {
     onAddItem(variant, product);
+    showAddFeedback(product, variant);
     setVariantPickerProduct(null);
   }
 
@@ -414,7 +420,7 @@ export const ProductGrid = memo(function ProductGrid({ items, categories, onAddI
                   {outOfStock ? (
                     <span className="inline-block rounded-full bg-red-500 px-3 py-1 text-sm font-bold text-white shadow">Out</span>
                   ) : totalStock <= 5 ? (
-                    <span className="inline-block rounded-full bg-amber-500 px-3 py-1 text-sm font-bold text-white shadow">{totalStock}</span>
+                    <span className="worker-low-stock-warning inline-block rounded-full bg-amber-500 px-3 py-1 text-sm font-bold text-white shadow">Only {totalStock} left</span>
                   ) : (
                     <span className="inline-block rounded-full bg-black/50 px-3 py-1 text-sm font-bold text-white backdrop-blur-sm">{totalStock}</span>
                   )}
@@ -502,16 +508,17 @@ export const ProductGrid = memo(function ProductGrid({ items, categories, onAddI
             {/* Variant list with better spacing */}
             <div className="grid gap-3">
               {variantPickerProduct.variants.map((v) => {
-                const inv = variantPickerProduct.inventory.find((i) => i.productVariantId === v.id);
-                const stock = inv?.onHand ?? 0;
+                const variantStock = variantPickerProduct.inventory
+                  .filter((i) => i.productVariantId === v.id)
+                  .reduce((sum, inv) => sum + inv.onHand, 0);
                 return (
                   <button
                     key={v.id}
                     type="button"
-                    disabled={stock <= 0}
+                    disabled={variantStock <= 0}
                     onClick={() => handleVariantSelect(v, variantPickerProduct.product)}
                     className={`touch-button flex items-center justify-between rounded-xl border-2 px-5 py-4 transition-all ${
-                      stock <= 0
+                      variantStock <= 0
                         ? "cursor-not-allowed border-zinc-200 bg-zinc-50 opacity-50"
                         : "border-zinc-200 bg-white hover:border-teal-300 hover:bg-teal-50 active:border-teal-400"
                     }`}
@@ -526,7 +533,11 @@ export const ProductGrid = memo(function ProductGrid({ items, categories, onAddI
                     </div>
                     <div className="flex items-center gap-4 ml-3 shrink-0">
                       <div className="text-right">
-                        <span className="text-base text-zinc-700">{stock > 0 ? `${stock} in stock` : "Out"}</span>
+                        {variantStock > 0 && variantStock <= 5 ? (
+                          <span className="worker-low-stock-warning text-base font-bold text-amber-700">Only {variantStock} left</span>
+                        ) : (
+                          <span className="text-base text-zinc-700">{variantStock > 0 ? `${variantStock} in stock` : "Out"}</span>
+                        )}
                       </div>
                       <span className="text-2xl font-bold text-teal-600">{formatCurrency(v.price)}</span>
                     </div>

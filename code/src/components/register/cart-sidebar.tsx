@@ -169,55 +169,86 @@ export const CartSidebar = memo(function CartSidebar({
                       background: isExpanded ? undefined : hasOverride ? undefined : 'var(--surface-panel)',
                     }}
                   >
-                    {/* Clickable row */}
-                    <button
-                      type="button"
-                      onClick={() => setExpandedItemId(isExpanded ? null : item.id)}
-                      className="w-full px-4 py-3.5 text-left"
-                    >
-                      <div className="flex items-center gap-3">
-                        {/* Item number badge */}
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-base font-bold" style={S.panelMutedWithSecondary}>
-                          {index + 1}
-                        </div>
-
-                        {/* Quantity + Product info */}
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="shrink-0 rounded-md bg-teal-100 px-2 py-0.5 text-base font-bold text-teal-700">
-                              ×{item.quantity}
-                            </span>
-                            {item.bundleId && (
-                              <span className="shrink-0 rounded-md bg-indigo-100 px-2 py-0.5 text-xs font-bold text-indigo-700 uppercase tracking-wide">
-                                Bundle
-                              </span>
-                            )}
-                            <p className="truncate text-base font-semibold" style={S.textPrimary}>{item.productName}</p>
+                    {/* Main row: product details open advanced actions, quantity is always visible. */}
+                    <div className="flex items-center gap-2 px-3 py-3.5">
+                      <button
+                        type="button"
+                        onClick={() => setExpandedItemId(isExpanded ? null : item.id)}
+                        className="min-w-0 flex-1 text-left"
+                      >
+                        <div className="flex items-center gap-3">
+                          {/* Item number badge */}
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-base font-bold" style={S.panelMutedWithSecondary}>
+                            {index + 1}
                           </div>
-                          <p className="mt-1 truncate text-base" style={S.textSecondary}>
-                            {item.variantName}
-                            {hasOverride && (
-                              <span className="ml-1.5 text-amber-600">
-                                <span className="line-through">{formatCurrency(item.unitPrice)}</span> → {formatCurrency(item.overridePrice!)}
-                              </span>
-                            )}
-                            {item.lineDiscount && (
-                              <span className="ml-1.5 text-red-500">
-                                {item.lineDiscount.mode === "percent" ? `−${item.lineDiscount.value}%` : `−${formatCurrency(item.lineDiscount.value)}`}
-                              </span>
-                            )}
-                          </p>
-                          {item.bundleId && item.bundleComponents && item.bundleComponents.length > 0 && (
-                            <p className="mt-0.5 truncate text-xs" style={{ color: 'var(--text-secondary)', opacity: 0.8 }}>
-                              {item.bundleComponents.length} items included
-                            </p>
-                          )}
-                        </div>
 
-                        {/* Line total */}
-                        <span className="shrink-0 text-lg font-bold text-teal-700">{formatCurrency(lineTotal)}</span>
+                          {/* Product info */}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              {item.bundleId && (
+                                <span className="shrink-0 rounded-md bg-indigo-100 px-2 py-0.5 text-xs font-bold text-indigo-700 uppercase tracking-wide">
+                                  Bundle
+                                </span>
+                              )}
+                              <p className="truncate text-base font-semibold" style={S.textPrimary}>{item.productName}</p>
+                            </div>
+                            <p className="mt-1 truncate text-base" style={S.textSecondary}>
+                              {item.variantName}
+                              {hasOverride && (
+                                <span className="ml-1.5 text-amber-600">
+                                  <span className="line-through">{formatCurrency(item.unitPrice)}</span> → {formatCurrency(item.overridePrice!)}
+                                </span>
+                              )}
+                              {item.lineDiscount && (
+                                <span className="ml-1.5 text-red-500">
+                                  {item.lineDiscount.mode === "percent" ? `−${item.lineDiscount.value}%` : `−${formatCurrency(item.lineDiscount.value)}`}
+                                </span>
+                              )}
+                            </p>
+                            {item.bundleId && item.bundleComponents && item.bundleComponents.length > 0 && (
+                              <p className="mt-0.5 truncate text-xs" style={{ color: 'var(--text-secondary)', opacity: 0.8 }}>
+                                {item.bundleComponents.length} items included
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </button>
+
+                      <div className="worker-qty-stepper flex shrink-0 items-center gap-1 rounded-xl p-1" style={S.surfacePanelMuted}>
+                        <button
+                          type="button"
+                          aria-label={`Decrease quantity for ${item.productName}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (item.quantity <= 1) {
+                              onRemoveItem(item.id);
+                            } else {
+                              onUpdateQuantity(item.id, item.quantity - 1);
+                            }
+                          }}
+                          className="flex h-10 w-10 items-center justify-center rounded-lg bg-white text-xl font-bold shadow-sm transition-colors hover:bg-zinc-50 active:bg-zinc-100"
+                          style={S.textPrimary}
+                        >
+                          −
+                        </button>
+                        <span aria-label={`Quantity for ${item.productName}: ${item.quantity}`} className="min-w-8 text-center text-lg font-black" style={S.textPrimary}>{item.quantity}</span>
+                        <button
+                          type="button"
+                          aria-label={`Increase quantity for ${item.productName}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onUpdateQuantity(item.id, item.quantity + 1);
+                          }}
+                          className="flex h-10 w-10 items-center justify-center rounded-lg bg-white text-xl font-bold shadow-sm transition-colors hover:bg-zinc-50 active:bg-zinc-100"
+                          style={S.textPrimary}
+                        >
+                          +
+                        </button>
                       </div>
-                    </button>
+
+                      {/* Line total */}
+                      <span className="w-20 shrink-0 text-right text-lg font-bold text-teal-700">{formatCurrency(lineTotal)}</span>
+                    </div>
 
                     {/* Expanded section */}
                     {isExpanded && (
