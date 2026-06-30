@@ -392,6 +392,12 @@ export default function CustomerManagement() {
             >
               Special Orders
             </Link>
+            <Link
+              href="/admin/customers/segments"
+              className="flex items-center gap-2 rounded-lg border border-purple-200 bg-purple-50 px-5 py-4 font-medium text-purple-700 transition-colors hover:bg-purple-100"
+            >
+              Marketing Segments
+            </Link>
             <button
               onClick={() => {
                 resetForm();
