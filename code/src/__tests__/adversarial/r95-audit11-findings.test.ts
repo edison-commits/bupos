@@ -12,19 +12,21 @@ const read = (rel: string) => fs.readFileSync(path.join(REPO, rel), "utf8");
 
 describe("AUDIT11-1: offline-sync rejects unbacked value tenders", () => {
   const src = read("src/app/api/offline-sync/route.ts");
+  const payload = read("src/app/api/offline-sync/payload.ts");
 
   it("loyalty and store-credit tenders require a customer before tender sufficiency", () => {
-    expect(src).toMatch(/value-backed tenders must carry the server-verified/);
-    expect(src).toMatch(/tt\.type === 'loyalty' \|\| tt\.type === 'store_credit'/);
-    expect(src).toMatch(/typeof cart\.customerId !== 'string'/);
-    expect(src).toMatch(/tender requires a customer/);
+    expect(src).toMatch(/validateOfflineSyncPayload\(cart, tenders\)/);
+    expect(payload).toMatch(/value-backed tenders must carry the server-verified/);
+    expect(payload).toMatch(/tt\.type === "loyalty" \|\| tt\.type === "store_credit"/);
+    expect(payload).toMatch(/typeof cart\.customerId !== "string"/);
+    expect(payload).toMatch(/tender requires a customer/);
   });
 
   it("gift-card tenders require UUID gift_card_id metadata", () => {
-    expect(src).toMatch(/tt\.type === 'gift_card'/);
-    expect(src).toMatch(/metadata\?\.gift_card_id !== 'string'/);
-    expect(src).toMatch(/!UUID_RE\.test\(metadata\.gift_card_id\)/);
-    expect(src).toMatch(/Gift card tender requires gift_card_id metadata/);
+    expect(payload).toMatch(/tt\.type === "gift_card"/);
+    expect(payload).toMatch(/metadata\?\.gift_card_id !== "string"/);
+    expect(payload).toMatch(/!UUID_RE\.test\(metadata\.gift_card_id\)/);
+    expect(payload).toMatch(/Gift card tender requires gift_card_id metadata/);
   });
 
   it("transaction_tenders preserves tender metadata instead of dropping gift_card_id", () => {

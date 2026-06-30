@@ -15,6 +15,8 @@ import { invalidateStoreCache } from "@/lib/persistence/postgres-read-store";
 
 import { safeErr } from "@/lib/logging/safe-err";
 import { waitUntilOrAwait } from "@/lib/runtime/wait-until";
+import type { CartLineItem, CartPayload, OfflineTender } from "./payload";
+import { validateOfflineSyncPayload } from "./payload";
 /**
  * Distinguishes a "cart is no longer valid" condition from a generic
  * server error. Offline-sync retries indefinitely on 5xx; it needs a 4xx
@@ -28,46 +30,6 @@ class PromoRevalidationError extends Error {
     this.name = "PromoRevalidationError";
   }
 }
-
-interface CartPayload {
-  employeeId?: string;
-  registerSessionId?: string;
-  customerId?: string;
-  loyaltyPointsEarned?: number;
-  discountMode?: 'percent' | 'fixed';
-  discountAmount?: number;
-  items?: CartLineItem[];
-  [key: string]: unknown;
-}
-
-interface CartLineItem {
-  productVariantId: string;
-  quantity: number;
-  overridePrice?: number;
-  unitPrice?: number;
-  modifierTotal?: number;
-  lineDiscount?: {
-    mode: 'percent' | 'fixed';
-    value: number;
-  };
-  /** Present iff this line is a bundle. See src/lib/cart/types.ts. */
-  bundleId?: string;
-  bundleComponents?: { productVariantId: string; quantity: number }[];
-  /** Present iff this line is a free-with-purchase promo redemption. */
-  promoCodeId?: string;
-  [key: string]: unknown;
-}
-
-interface OfflineTender {
-  type: 'cash' | 'card' | 'store_credit' | 'loyalty' | 'gift_card';
-  amount: number;
-  metadata?: {
-    gift_card_id?: string;
-    [key: string]: unknown;
-  };
-}
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /**
  * POST /api/offline-sync
@@ -130,48 +92,9 @@ export const POST = withDualAuth("register.open", async (request, ctx) => {
       }
     }
 
-    // cart is an object { items, employeeId, registerSessionId, discountMode, discountAmount, ... }
-    // tenders is an array [{ tenderType, amount }, ...]
-    if (!cart || typeof cart !== 'object' || Array.isArray(cart)) {
-      return NextResponse.json({ error: 'Invalid sync payload: cart must be an object' }, { status: 400 });
-    }
-    if (!Array.isArray(tenders)) {
-      return NextResponse.json({ error: 'Invalid sync payload: tenders must be an array' }, { status: 400 });
-    }
-    if (tenders.length === 0) {
-      return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
-    }
-    // Structural validation — offlineSyncSchema uses z.unknown() for tenders,
-    // so we validate shape + sign + finiteness here before any arithmetic.
-    const ALLOWED_TENDER_TYPES = new Set(['cash', 'card', 'store_credit', 'loyalty', 'gift_card']);
-    for (const t of tenders) {
-      if (!t || typeof t !== 'object' || Array.isArray(t)) {
-        return NextResponse.json({ error: 'Invalid tender entry' }, { status: 400 });
-      }
-      const tt = t as { type?: unknown; amount?: unknown; metadata?: unknown };
-      if (typeof tt.type !== 'string' || !ALLOWED_TENDER_TYPES.has(tt.type)) {
-        return NextResponse.json({ error: 'Invalid tender type' }, { status: 400 });
-      }
-      if (typeof tt.amount !== 'number' || !Number.isFinite(tt.amount) || tt.amount <= 0 || tt.amount > 10_000_000) {
-        return NextResponse.json({ error: 'Invalid tender amount' }, { status: 400 });
-      }
-      if (tt.metadata !== undefined && (tt.metadata === null || typeof tt.metadata !== 'object' || Array.isArray(tt.metadata))) {
-        return NextResponse.json({ error: 'Invalid tender metadata' }, { status: 400 });
-      }
-      // CRIT-AUDIT11: value-backed tenders must carry the server-verified
-      // backing identifier/customer before the payload can satisfy tender
-      // sufficiency. Prior shape accepted loyalty/store_credit without a
-      // customer and gift_card without gift_card_id; the sale was recorded as
-      // paid while no balance/points were deducted.
-      if ((tt.type === 'loyalty' || tt.type === 'store_credit') && typeof cart.customerId !== 'string') {
-        return NextResponse.json({ error: `${tt.type} tender requires a customer` }, { status: 400 });
-      }
-      if (tt.type === 'gift_card') {
-        const metadata = tt.metadata as { gift_card_id?: unknown } | undefined;
-        if (typeof metadata?.gift_card_id !== 'string' || !UUID_RE.test(metadata.gift_card_id)) {
-          return NextResponse.json({ error: 'Gift card tender requires gift_card_id metadata' }, { status: 400 });
-        }
-      }
+    const payloadValidation = validateOfflineSyncPayload(cart, tenders);
+    if (!payloadValidation.ok) {
+      return NextResponse.json({ error: payloadValidation.error }, { status: 400 });
     }
 
     // ── Auth: validate registerSessionId against cookie-backed session ──────────
