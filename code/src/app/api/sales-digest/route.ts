@@ -57,9 +57,23 @@ export const PUT = withAdminAuth("reports.export", async (req, ctx) => {
   return NextResponse.json({ ok: true, config });
 });
 
-/** POST: send a test digest (today's numbers) to the saved recipients now. */
-export const POST = withAdminAuth("reports.export", async (_req, ctx) => {
+/** POST: preview or send a test digest (today's numbers) to the saved recipients now. */
+export const POST = withAdminAuth("reports.export", async (req, ctx) => {
   const { orgId, employee } = ctx;
+  const body = await req.json().catch(() => ({}));
+  const action = typeof body.action === "string" ? body.action : "send_test";
+  const locationId = ctx.locationId ?? employee.locationIds?.[0];
+
+  if (action === "preview") {
+    try {
+      const report = await generateReportData(orgId, locationId);
+      return NextResponse.json({ preview: report });
+    } catch (err) {
+      console.error("[sales-digest] preview:", safeErr(err));
+      return NextResponse.json({ error: "Preview failed" }, { status: 502 });
+    }
+  }
+
   const rl = checkRateLimit(`digest-test:${orgId}:${employee.id}`, { maxAttempts: 5, windowMs: 60_000 });
   if (!rl.allowed) return NextResponse.json({ error: "Too many requests" }, { status: 429 });
 
@@ -71,7 +85,6 @@ export const POST = withAdminAuth("reports.export", async (_req, ctx) => {
     return NextResponse.json({ error: "Email isn't configured on this server (missing RESEND_API_KEY)" }, { status: 503 });
   }
 
-  const locationId = ctx.locationId ?? employee.locationIds?.[0];
   try {
     const report = await generateReportData(orgId, locationId);
     await sendEodEmail(report, {

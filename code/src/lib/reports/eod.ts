@@ -30,6 +30,7 @@ export interface PaymentMethod { payment_method: string; total_amount: number; t
 export interface TopProduct { name: string; sku: string; total_quantity: number; total_revenue: number }
 export interface EmployeePerf { employee_name: string; transaction_count: number; total_sales: number }
 export interface LowStockItem { name: string; sku: string; on_hand: number; reorder_point: number }
+export interface DigestAlert { kind: "cash_variance" | "stockout" | "large_discount"; label: string; count: number; severity: "info" | "warn" | "critical"; detail: string }
 export interface ReportData {
   date: string;
   /** Inclusive end of the window — equals `date` for a single-day report. */
@@ -42,6 +43,7 @@ export interface ReportData {
   employee_performance: EmployeePerf[];
   shifts: { id: string; started_at: string; closed_at: string | null; duration_seconds: number }[];
   low_stock_items: LowStockItem[];
+  exception_alerts: DigestAlert[];
 }
 
 export async function generateReportData(
@@ -133,6 +135,49 @@ export async function generateReportData(
          AND il.location_id = $3
          AND il.on_hand < il.reorder_point
        LIMIT 10
+     ),
+     exception_alerts AS (
+       SELECT * FROM (
+         SELECT
+           'cash_variance'::text AS kind,
+           'Cash variance'::text AS label,
+           COUNT(*)::int AS count,
+           'warn'::text AS severity,
+           'Closed shifts with absolute cash variance of $5 or more.'::text AS detail
+         FROM shifts s
+         WHERE s.organization_id = $2
+           AND s.location_id = $3
+           AND s.opened_at >= (SELECT window_start FROM window_bounds)
+           AND s.opened_at < (SELECT window_end FROM window_bounds)
+           AND ABS(closing_variance) >= 5
+         UNION ALL
+         SELECT
+           'stockout'::text AS kind,
+           'Stockouts'::text AS label,
+           COUNT(*)::int AS count,
+           'critical'::text AS severity,
+           'Items at or below zero on hand.'::text AS detail
+         FROM inventory_levels il
+         WHERE il.organization_id = $2
+           AND il.location_id = $3
+           AND il.on_hand <= 0
+         UNION ALL
+         SELECT
+           'large_discount'::text AS kind,
+           'Large discounts'::text AS label,
+           COUNT(*)::int AS count,
+           'warn'::text AS severity,
+           'Completed sales with discount_total >= 25 or 20% of subtotal.'::text AS detail
+         FROM transactions t
+         WHERE t.organization_id = $2
+           AND t.location_id = $3
+           AND t.created_at >= (SELECT window_start FROM window_bounds)
+           AND t.created_at < (SELECT window_end FROM window_bounds)
+           AND t.status = 'completed'
+           AND t.grand_total >= 0
+           AND (discount_total >= 25 OR discount_total / NULLIF(subtotal, 0) >= 0.2)
+       ) alerts
+       WHERE count > 0
      )
      SELECT
        (SELECT row_to_json(daily_sales.*) FROM daily_sales) AS sales_summary,
@@ -144,7 +189,9 @@ export async function generateReportData(
        (SELECT coalesce(json_agg(row_to_json(shift_info.*)), '[]'::json)
         FROM shift_info) AS shifts,
        (SELECT coalesce(json_agg(row_to_json(low_stock.*)), '[]'::json)
-        FROM low_stock) AS low_stock_items`,
+        FROM low_stock) AS low_stock_items,
+       (SELECT coalesce(json_agg(row_to_json(exception_alerts.*)), '[]'::json)
+        FROM exception_alerts) AS exception_alerts`,
     [
       fromDay,     // $1 — window start day (org TZ)
       orgId,       // $2 — tenancy anchor (organization_id filter on every CTE)
@@ -170,6 +217,7 @@ export async function generateReportData(
       employee_performance: [],
       shifts: [],
       low_stock_items: [],
+      exception_alerts: [],
     };
   }
 
@@ -197,6 +245,7 @@ export async function generateReportData(
     employee_performance: data.employee_performance || [],
     shifts: data.shifts || [],
     low_stock_items: data.low_stock_items || [],
+    exception_alerts: data.exception_alerts || [],
   };
 }
 
@@ -258,6 +307,7 @@ function generateEmailHTML(data: ReportData, heading: string): string {
     employee_performance,
     shifts: _shifts,
     low_stock_items,
+    exception_alerts,
   } = data;
 
   const formatCount = (val: number) => (val || 0).toString();
@@ -316,6 +366,29 @@ function generateEmailHTML(data: ReportData, heading: string): string {
           <div class="stat-value">${formatCurrency(avg_transaction_value)}</div>
         </div>
       </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Manager Alerts</div>
+      ${
+        exception_alerts.length > 0
+          ? `<table>
+        <thead>
+          <tr><th>Alert</th><th>Count</th><th>Severity</th><th>Detail</th></tr>
+        </thead>
+        <tbody>
+          ${exception_alerts.map((alert: DigestAlert) => `
+            <tr>
+              <td>${esc(alert.label)}</td>
+              <td>${alert.count}</td>
+              <td>${esc(alert.severity)}</td>
+              <td>${esc(alert.detail)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>`
+          : `<p style="margin: 10px 0 0 0; color: #666;">No exceptions triggered for this window.</p>`
+      }
     </div>
 
     ${
