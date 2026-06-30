@@ -249,6 +249,91 @@ export const GET = withAdminAuth("reports.export", async (req, ctx) => {
         break;
       }
 
+      case "accounting-journal": {
+        const from = sp.get("from") || new Date().toISOString().slice(0, 10);
+        const to = sp.get("to") || from;
+        if (!DATE_RE.test(from) || !DATE_RE.test(to)) {
+          return NextResponse.json({ error: "from/to must be YYYY-MM-DD" }, { status: 400 });
+        }
+        const { buildOrgDayRange } = await import("@/lib/reports/day-range");
+        const { fromTs, toTs } = await buildOrgDayRange(orgId, from, to);
+        const rows = await orgQuery(
+          orgId,
+          `WITH tx AS (
+             SELECT t.id, t.created_at, t.subtotal, t.discount_total, t.tax_total, t.grand_total
+               FROM transactions t
+              WHERE t.organization_id = $1
+                AND t.status = 'completed'
+                AND t.created_at >= $2
+                AND t.created_at < $3
+           ), tender_totals AS (
+             SELECT COALESCE(tt.tender_type, 'unknown') AS tender_type,
+                    COALESCE(SUM(tt.amount), 0)::numeric AS amount
+               FROM transaction_tenders tt
+               JOIN tx ON tx.id = tt.transaction_id
+              WHERE tt.amount > 0
+              GROUP BY COALESCE(tt.tender_type, 'unknown')
+           ), sales AS (
+             SELECT COALESCE(SUM(subtotal), 0)::numeric AS gross_sales,
+                    COALESCE(SUM(discount_total), 0)::numeric AS discounts,
+                    COALESCE(SUM(tax_total), 0)::numeric AS tax_collected,
+                    COALESCE(SUM(grand_total), 0)::numeric AS net_total,
+                    COUNT(*)::int AS transaction_count
+               FROM tx
+           )
+           SELECT * FROM sales`,
+          [orgId, fromTs, toTs],
+        );
+        const tenderRows = await orgQuery(
+          orgId,
+          `WITH tx AS (
+             SELECT id FROM transactions t
+              WHERE t.organization_id = $1
+                AND t.status = 'completed'
+                AND t.created_at >= $2
+                AND t.created_at < $3
+           )
+           SELECT COALESCE(tt.tender_type, 'unknown') AS tender_type,
+                  COALESCE(SUM(tt.amount), 0)::numeric AS amount
+             FROM transaction_tenders tt
+             JOIN tx ON tx.id = tt.transaction_id
+            WHERE tt.amount > 0
+            GROUP BY COALESCE(tt.tender_type, 'unknown')
+            ORDER BY tender_type`,
+          [orgId, fromTs, toTs],
+        );
+        const summary = rows.rows[0] ?? { gross_sales: 0, discounts: 0, tax_collected: 0, net_total: 0, transaction_count: 0 };
+        const entryNo = `BUPOS-${from}-to-${to}`;
+        const journalRows: Record<string, unknown>[] = [];
+        const pushLine = (account: string, debit: number, credit: number, memo: string) => {
+          if (debit === 0 && credit === 0) return;
+          journalRows.push({
+            Date: to,
+            "Entry No": entryNo,
+            "QuickBooks Account": account,
+            Debit: debit ? debit.toFixed(2) : "",
+            Credit: credit ? credit.toFixed(2) : "",
+            Memo: memo,
+          });
+        };
+        const accountForTender = (type: string) => {
+          if (type === 'cash') return 'Undeposited Cash';
+          if (type === 'card') return 'Undeposited Card Payments';
+          if (type === 'gift_card') return 'Gift Card Liability';
+          if (type === 'store_credit') return 'Store Credit Liability';
+          return `Undeposited ${type}`;
+        };
+        for (const tender of tenderRows.rows as Array<{ tender_type: string; amount: string | number }>) {
+          pushLine(accountForTender(tender.tender_type), Number(tender.amount), 0, `Tender total: ${tender.tender_type}`);
+        }
+        pushLine('Discounts Given', Number(summary.discounts ?? 0), 0, 'Discounts and promotions');
+        pushLine('Sales Income', 0, Number(summary.gross_sales ?? 0), 'Gross sales before discounts and tax');
+        pushLine('Sales Tax Payable', 0, Number(summary.tax_collected ?? 0), 'Sales tax collected');
+        csv = toCsv(journalRows, ["Date", "Entry No", "QuickBooks Account", "Debit", "Credit", "Memo"]);
+        filename = `accounting_journal_${from}_to_${to}.csv`;
+        break;
+      }
+
       default:
         return NextResponse.json({ error: `Unknown export type: ${type}` }, { status: 400 });
     }
