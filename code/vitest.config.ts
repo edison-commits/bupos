@@ -8,7 +8,13 @@ export default defineConfig({
     // `e2e/` holds Playwright specs; those are driven by `npm run test:e2e`
     // and import from `@playwright/test` which doesn't play well with
     // vitest. Exclude them from the vitest glob.
-    exclude: ["node_modules", "e2e/**", ".open-next*/**", "dist/**"],
+    exclude: [
+      "node_modules",
+      "e2e/**",
+      "src/__tests__/integration/**",
+      ".open-next*/**",
+      "dist/**",
+    ],
   },
   resolve: {
     alias: {

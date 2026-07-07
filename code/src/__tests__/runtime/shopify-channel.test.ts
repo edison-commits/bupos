@@ -24,7 +24,9 @@ describe("channels/crypto: AES-256-GCM secret storage", () => {
   });
   it("returns null on tampered / malformed / missing input", async () => {
     const enc = await encryptSecret("x");
-    expect(await decryptSecret(enc.slice(0, -2) + "zz")).toBeNull(); // tampered tag
+    const payloadStart = "gcm1.".length;
+    const tampered = `${enc.slice(0, payloadStart)}${enc[payloadStart] === "A" ? "B" : "A"}${enc.slice(payloadStart + 1)}`;
+    expect(await decryptSecret(tampered)).toBeNull(); // tampered iv/ciphertext payload
     expect(await decryptSecret("gcm1.notbase64!!")).toBeNull();
     expect(await decryptSecret("plain:text")).toBeNull(); // wrong format
     expect(await decryptSecret(null)).toBeNull();
