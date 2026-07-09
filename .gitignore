@@ -32,3 +32,6 @@ code/.wrangler*
 * 3.json
 pre-commit 2
 pre-commit 3
+
+# Local Hermes workflow-state artifacts
+.workflow/

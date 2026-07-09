@@ -61,11 +61,8 @@ export function ReceiptView({
       <style>{`
         @keyframes checkmark-bounce {
           0% {
-            transform: scale(0);
+            transform: scale(0.94);
             opacity: 0;
-          }
-          50% {
-            transform: scale(1.15);
           }
           100% {
             transform: scale(1);
@@ -83,13 +80,21 @@ export function ReceiptView({
         }
 
         .checkmark-container {
-          animation: checkmark-bounce 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+          animation: checkmark-bounce 180ms var(--motion-ease-out, cubic-bezier(0.23, 1, 0.32, 1));
         }
 
         .checkmark-path {
-          animation: checkmark-draw 0.4s ease-in-out 0.2s forwards;
+          animation: checkmark-draw 260ms var(--motion-ease-in-out, cubic-bezier(0.77, 0, 0.175, 1)) 80ms forwards;
           stroke-dasharray: 50;
           stroke-dashoffset: 50;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .checkmark-container,
+          .checkmark-path {
+            animation-duration: 1ms !important;
+            animation-delay: 0ms !important;
+          }
         }
       `}</style>
       
