@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { LocalStoreData } from "@/lib/persistence/types";
 import { formatCurrency } from "@/lib/format";
@@ -98,8 +99,35 @@ export function DashboardKPIs({ store, locationId }: DashboardKPIsProps) {
     };
   }, [store, locationId, todayStr, yesterdayStr]);
 
+  const attentionItems = buildAttentionItems(kpis);
+  const primaryAction = attentionItems[0] ?? {
+    title: "Store is ready",
+    detail: "No urgent inventory or exception queues are surfaced for this location.",
+    href: "/admin/reports",
+    action: "Review reports",
+    tone: "good" as const,
+  };
+  const supportItems = attentionItems.length > 1
+    ? attentionItems.slice(1, 4)
+    : [
+        {
+          title: "Keep selling",
+          detail: "The dashboard will keep refreshing without hiding the current numbers.",
+          href: "/register",
+          action: "Open register",
+          tone: "good" as const,
+        },
+        {
+          title: "Review the day",
+          detail: "Use reports when you want more detail than the at-a-glance cards.",
+          href: "/admin/reports",
+          action: "View reports",
+          tone: "neutral" as const,
+        },
+      ];
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <div>
         <h3 className="text-lg font-bold">Today at a glance</h3>
         <p className="text-sm text-zinc-500" suppressHydrationWarning>
@@ -114,6 +142,28 @@ export function DashboardKPIs({ store, locationId }: DashboardKPIsProps) {
             : "\u00a0"/* nbsp reserves line height on SSR */}
         </p>
       </div>
+
+      <section className="rounded-3xl border border-zinc-200 bg-white p-4 shadow-sm sm:p-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-700">Manager attention</p>
+            <h4 className="mt-2 text-xl font-bold text-zinc-950">{primaryAction.title}</h4>
+            <p className="mt-1 max-w-2xl text-sm leading-6 text-zinc-600">{primaryAction.detail}</p>
+          </div>
+          <Link
+            href={primaryAction.href}
+            className="touch-button inline-flex shrink-0 items-center justify-center rounded-2xl bg-teal-700 px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-teal-800"
+          >
+            {primaryAction.action}
+          </Link>
+        </div>
+
+        {supportItems.length > 0 ? (
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            {supportItems.map((item) => <AttentionCard key={item.title} item={item} />)}
+          </div>
+        ) : null}
+      </section>
 
       {/* Primary sales KPIs */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -187,6 +237,71 @@ export function DashboardKPIs({ store, locationId }: DashboardKPIsProps) {
           value={String(kpis.totalCustomers)}
         />
       </div>
+    </div>
+  );
+}
+
+type AttentionItem = {
+  title: string;
+  detail: string;
+  href: string;
+  action: string;
+  tone: "good" | "warn" | "danger" | "neutral";
+};
+
+function buildAttentionItems(kpis: {
+  openShifts: number;
+  totalVariance: number;
+  unreviewedFlags: number;
+  todayFlags: number;
+  lowStockCount: number;
+  outOfStockCount: number;
+  todayReturnTotal: number;
+  todayNet: number;
+  todayTxnCount: number;
+}): AttentionItem[] {
+  const items: AttentionItem[] = [];
+
+  if (kpis.outOfStockCount > 0 || kpis.lowStockCount > 0) {
+    items.push({
+      title: kpis.outOfStockCount > 0 ? `${kpis.outOfStockCount} items are out of stock` : `${kpis.lowStockCount} low-stock items`,
+      detail: kpis.outOfStockCount > 0
+        ? "Restock or hide sold-out variants before they slow down checkout."
+        : "Review reorder points before the next busy period.",
+      href: "/admin/inventory",
+      action: "Review inventory",
+      tone: kpis.outOfStockCount > 0 ? "danger" : "warn",
+    });
+  }
+
+  if (kpis.unreviewedFlags > 0) {
+    items.push({
+      title: `${kpis.unreviewedFlags} behavior flags need review`,
+      detail: "Clear exceptions before end-of-day close so managers are not surprised later.",
+      href: "/admin/audit",
+      action: "Open audit log",
+      tone: "warn",
+    });
+  }
+
+  return items;
+}
+
+function AttentionCard({ item }: { item: AttentionItem }) {
+  const toneClass = {
+    good: "border-emerald-200 bg-emerald-50/70 text-emerald-900",
+    warn: "border-amber-200 bg-amber-50/80 text-amber-950",
+    danger: "border-red-200 bg-red-50/80 text-red-950",
+    neutral: "border-zinc-200 bg-zinc-50 text-zinc-900",
+  }[item.tone];
+
+  return (
+    <div className={`rounded-2xl border p-3 ${toneClass}`}>
+      <p className="text-sm font-semibold">{item.title}</p>
+      <p className="mt-1 text-xs leading-5 opacity-80">{item.detail}</p>
+      <Link href={item.href} className="mt-3 inline-flex text-xs font-semibold underline underline-offset-4">
+        {item.action}
+      </Link>
     </div>
   );
 }
