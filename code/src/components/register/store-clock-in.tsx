@@ -92,9 +92,12 @@ export function StoreClockIn({ stores, storeToken }: { stores: Store[]; storeTok
   if (!store) {
     return (
       <div className="grid gap-4">
+        <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          <span className="font-semibold">Step 1 of 2 already done:</span> this terminal is connected. Pick the store and you&apos;ll be ready to sell.
+        </div>
         <div>
           <h2 className="text-2xl font-semibold">Choose your store</h2>
-          <p className="mt-1 text-sm text-zinc-500">Pick where you&apos;re working today.</p>
+          <p className="mt-1 text-sm text-zinc-500">Pick where you&apos;re working today. Most registers only need this once.</p>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           {stores.map((s) => (
@@ -204,6 +207,9 @@ export function StoreClockIn({ stores, storeToken }: { stores: Store[]; storeTok
   // ── Step 2: tap your name ──
   return (
     <div className="grid gap-4">
+      <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+        <span className="font-semibold">Step 2 of 2:</span> choose your name and this register is ready to sell.
+      </div>
       <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="text-2xl font-semibold">Who&apos;s working?</h2>
@@ -267,6 +273,9 @@ export function StoreClockIn({ stores, storeToken }: { stores: Store[]; storeTok
                 >
                   <span className="block text-lg font-semibold">{e.name}</span>
                   <span className="mt-0.5 block text-sm text-zinc-500">{ROLE_LABEL[e.role] ?? e.role}</span>
+                  <span className="mt-2 inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-[0.7rem] font-medium uppercase tracking-wide text-emerald-700">
+                    No PIN needed
+                  </span>
                 </button>
               </form>
             ),
