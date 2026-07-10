@@ -18,8 +18,22 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "BasicUniformPOS",
+  metadataBase: new URL("https://basicuniformpos.com"),
+  title: {
+    default: "BasicUniformPOS",
+    template: "%s | BasicUniformPOS",
+  },
   description: "Web-first retail POS for casualwear and uniform stores.",
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    title: "BasicUniformPOS",
+    description: "Web-first retail POS for casualwear and uniform stores.",
+    url: "/",
+    siteName: "BasicUniformPOS",
+    type: "website",
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
