@@ -1,13 +1,16 @@
 # Round 8 — Follow-up Work
 
-These items were flagged during the round 8 audit but require design
-decisions or infrastructure changes that exceeded the scope of the code
-cleanup. Each is tracked with the originating finding id so the audit trail
-stays linked.
+These items were flagged during the round 8 audit but required design
+decisions or infrastructure changes that exceeded that round's code cleanup.
+This file now acts as a historical handoff: resolved items point to the
+current implementation evidence, while the one still-open infrastructure
+decision remains clearly marked.
 
 ## R8-H-4 — Customer-display device auth
 
-**Status:** noted in-code (`src/app/api/customer-display/route.ts`).
+**Status:** resolved. Current implementation lives in
+`src/lib/auth/display-token.ts` and is exercised through the
+customer-display API contract tests.
 
 **Problem:** the display polling path requires the register session cookie,
 which is tied to the cashier's POS. Retail deployments that run the
@@ -21,13 +24,17 @@ The `POST /api/customer-display` call returns a token derived from
 validates the signature + expiry instead of demanding the register cookie.
 Rotate the secret per org; embed in the display URL QR code.
 
-**Why deferred:** needs a UX decision on how the display device is
-provisioned (pair with POS vs. admin-provisioned), plus a KV-backed
-signing-secret store.
+**Resolution evidence:** `mintDisplayToken()` issues a short-lived
+HMAC-signed token and `verifyDisplayToken()` validates it for
+`GET /api/customer-display?registerSessionId=…&displayToken=…` without the
+cashier cookie. Production/Workers require `CUSTOMER_DISPLAY_SECRET`; dev
+fallbacks are explicitly non-production.
 
 ## R8-M-11 — Distributed rate limit
 
-**Status:** noted in `src/lib/auth/rate-limit.ts` (existing TODO comment).
+**Status:** still open as an infrastructure decision. The current limiter is
+still in-memory; `src/lib/auth/rate-limit.ts` keeps the TODO for a distributed
+Cloudflare KV/D1/Durable Object layer.
 
 **Problem:** the in-memory `Map<string, Window>` rate limiter lives in
 isolate memory. Cloudflare spreads requests across ~32 isolates per colo,
@@ -47,7 +54,8 @@ gate; PIN and signup paths also have DB-enforced brute-force protections
 
 ## R8-M-12 + R8-L-5 — Signup email verification
 
-**Status:** noted in `src/app/actions/auth.ts`.
+**Status:** resolved. Implemented with pending signups, verification email,
+and a verification route/RPC path.
 
 **Problem:** signup creates `organization + location + employee +
 auth_credentials` immediately and signs the user in. No email verification
@@ -64,14 +72,16 @@ unauthenticated callers (account enumeration).
 4. On duplicate email, return the generic "If that email isn't already
    registered, we've sent a verification email" response — enumeration-proof.
 
-**Why deferred:** requires Resend template work, a new route
-`/api/auth/verify`, and UI on the signup page for the "check your email"
-state. The existing IP + email rate-limits (3/hour, 5/5min) slow the
-exploit meaningfully in the interim.
+**Resolution evidence:** `supabase/migrations/049_pending_signups.sql`
+adds the pending-signup table/cleanup function; signup paths call
+`sendVerificationEmail()`; `/api/auth/verify` is covered by the auth/session
+helper path. Later rounds also added case-insensitive uniqueness,
+expired-row cleanup before INSERT, generic responses, timing equalization,
+and production Resend fail-closed behavior.
 
 ## R8-L-11 — Idempotency key TTL cleanup
 
-**Status:** not fixed in code.
+**Status:** resolved.
 
 **Problem:** `idempotency_key` columns on `returns` and `shifts`
 accumulate forever. After a year of daily use that's ~365k rows per
@@ -87,12 +97,15 @@ DELETE FROM shifts WHERE idempotency_key IS NOT NULL
   AND closed_at IS NOT NULL AND closed_at < now() - interval '90 days';
 ```
 
-**Why deferred:** needs a deploy decision (cron vs. Worker + wrangler
-trigger). Index sizes are still fine for the current user base.
+**Resolution evidence:** `supabase/migrations/048_idempotency_key_cleanup.sql`
+adds `cleanup_stale_idempotency_keys(interval)` and
+`supabase/migrations/053_idempotency_cleanup_atomic.sql` hardens per-table
+cleanup to fail visibly with per-table context. Deployment runbook examples
+include `SELECT public.cleanup_stale_idempotency_keys('90 days'::interval);`.
 
 ## R8-L-12 — PG-backed test harness
 
-**Status:** tracked here.
+**Status:** resolved for the first PG-backed integration harness.
 
 **Problem:** `src/__tests__/*` runs under the JSON store (no `USE_POSTGRES`).
 Every round of audit findings in rounds 1–8 has concerned the PG path —
@@ -104,6 +117,7 @@ parallel `npm run test:integration` target that sets `USE_POSTGRES=1`.
 At minimum add integration coverage for the six cross-tenant UPDATE
 paths audited in R8.
 
-**Why deferred:** non-trivial CI infrastructure; outside the scope of a
-code-only audit round. Priority if/when the codebase gains contributors
-beyond the current owner.
+**Resolution evidence:** `vitest.integration.config.ts` scopes
+`src/__tests__/integration/**/*.test.ts`, `package.json` exposes
+`npm run test:integration`, and Docker helper scripts (`docker:up`,
+`docker:migrate`, `docker:down`) document the required local Postgres setup.
