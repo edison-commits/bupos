@@ -32,25 +32,36 @@ fallbacks are explicitly non-production.
 
 ## R8-M-11 — Distributed rate limit
 
-**Status:** still open as an infrastructure decision. The current limiter is
-still in-memory; `src/lib/auth/rate-limit.ts` keeps the TODO for a distributed
-Cloudflare KV/D1/Durable Object layer.
+**Status:** resolved for the currently deployed auth paths. The historical
+in-memory-only note is stale: the app now layers per-isolate memory,
+Cloudflare KV, and Postgres-backed rate-limit buckets for high-risk auth
+surfaces.
 
 **Problem:** the in-memory `Map<string, Window>` rate limiter lives in
 isolate memory. Cloudflare spreads requests across ~32 isolates per colo,
 so an attacker spraying PIN guesses effectively gets a 32× multiplier on
 the rate budget.
 
-**Proposed fix:** back the limiter with Cloudflare Durable Objects (one DO
-per org) or KV (increment-with-TTL). For PIN brute-force specifically,
-keep a DB-backed `pin_failed_attempts` table keyed on
-`(location_id, pin_fingerprint)` with `DELETE ... WHERE attempted_at <
-now() - interval '1 hour'` on a scheduled Worker.
+**Resolution evidence:**
 
-**Why deferred:** needs a wrangler.toml change to bind a KV namespace or
-DO, plus a pricing/latency decision. The in-memory limiter is a first
-gate; PIN and signup paths also have DB-enforced brute-force protections
-(PIN: `auth_credentials.failed_attempts` lockout; signup: per-email + per-IP).
+- `wrangler.jsonc` binds `RATE_LIMIT_KV` for cross-isolate buckets.
+- `src/lib/auth/kv-rate-limit.ts` implements the KV layer and documents its
+  fail-open behavior.
+- `supabase/migrations/050_rate_limit_buckets.sql` adds the Postgres bucket
+  table/RPC used by `src/lib/auth/db-rate-limit.ts`.
+- `src/lib/auth/register-pin-rate-limit.ts` runs the shared six-layer PIN
+  gate for both the HTTP route and Server Action: in-memory per-PIN,
+  in-memory per-location, in-memory per-IP/location, KV per-PIN, DB
+  per-PIN, and DB per-IP/location.
+- Customer self-signup routes also assert the memory/KV/DB layers in
+  contract and route tests.
+
+**Remaining ops note:** KV is eventually consistent and both KV/DB helpers
+fail open on binding or database errors, so production monitoring should
+keep watching `/api/health` `rateLimitKv.bindingAvailable` and structured
+`rate_limited` logs. If a future non-auth high-throughput endpoint needs
+strict distributed throttling, revisit Durable Objects separately rather
+than treating this R8 auth finding as open.
 
 ## R8-M-12 + R8-L-5 — Signup email verification
 
