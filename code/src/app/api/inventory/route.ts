@@ -14,8 +14,8 @@ interface ProductRow {
   name: string;
   product_slug: string;
   category_id: string | null;
-  product_brand: string | null;
-  product_type: string | null;
+  product_brand: null;
+  product_type: null;
   variant_id: string | null;
   sku: string | null;
   size_label: string | null;
@@ -59,8 +59,12 @@ export const GET = withAdminAuth("inventory.adjust", async (request, ctx) => {
     const searchParams = request.nextUrl.searchParams;
     const search = searchParams.get('search')?.toLowerCase() || '';
     const category = searchParams.get('category') || '';
-    const productType = searchParams.get('type') || '';
-    const brand = searchParams.get('brand') || '';
+    // Historical design docs referenced products.product_brand/product_type,
+    // but the canonical Supabase migrations never added those columns. Keep
+    // the public response shape stable while avoiding reads against docs-only
+    // columns; brand/type filters are no-ops until a real migration exists.
+    const productType: string = '';
+    const brand: string = '';
     const stockFilter = searchParams.get('stock') || 'all';
     // Opt-in pagination + sorting, applied AFTER the JS-side stock filter
     // below (so they compose). Absent `page`, the legacy full list returns.
@@ -119,8 +123,8 @@ export const GET = withAdminAuth("inventory.adjust", async (request, ctx) => {
           p.name,
           p.slug as product_slug,
           p.category_id,
-          p.product_brand,
-          p.product_type,
+          NULL::text as product_brand,
+          NULL::text as product_type,
           pv.id as variant_id,
           pv.sku,
           pv.size_label,
@@ -152,22 +156,16 @@ export const GET = withAdminAuth("inventory.adjust", async (request, ctx) => {
 
       typesResult = await sharedClient.query(
         `
-        SELECT DISTINCT LOWER(product_type) as value
-        FROM products
-        WHERE organization_id = $1 AND product_type IS NOT NULL AND product_type != ''
-        ORDER BY LOWER(product_type)
-        `,
-        [orgId]
+        SELECT NULL::text as value
+        WHERE false
+        `
       );
 
       brandsResult = await sharedClient.query(
         `
-        SELECT DISTINCT LOWER(product_brand) as value
-        FROM products
-        WHERE organization_id = $1 AND product_brand IS NOT NULL AND product_brand != ''
-        ORDER BY LOWER(product_brand)
-        `,
-        [orgId]
+        SELECT NULL::text as value
+        WHERE false
+        `
       );
 
       summaryResult = await sharedClient.query(
