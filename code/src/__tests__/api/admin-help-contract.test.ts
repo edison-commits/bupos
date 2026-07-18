@@ -1,0 +1,212 @@
+import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+const root = process.cwd();
+const read = (path: string) => readFileSync(join(root, path), "utf8");
+
+describe("admin Help diagnostics contract", () => {
+  it("adds Help to the System admin navigation", () => {
+    const nav = read("src/components/layout/admin-nav.ts");
+
+    expect(nav).toContain('label: "System"');
+    expect(nav).toContain('href: "/admin/help"');
+    expect(nav).toContain('label: "Help"');
+    expect(nav).toContain("HelpCircle");
+  });
+
+  it("keeps the admin Help page read-only and packet-oriented", () => {
+    const page = read("src/app/admin/help/page.tsx");
+
+    expect(page).toContain("BUPOS Help");
+    expect(page).toContain("Run read-only store health checks");
+    expect(page).toContain('authFetch("/api/admin/diagnostics")');
+    expect(page).toContain('authFetch("/api/admin/diagnostics?format=packet")');
+    expect(page).toContain('authFetch("/api/audit?event_kind=help_action_approval_requested&pageSize=5")');
+    expect(page).toContain('authFetch("/api/audit?event_kind=help_action_approval_reviewed&pageSize=5")');
+    expect(page).toContain("Generate support packet");
+    expect(page).toContain("Store recovery cheat sheet");
+    expect(page).toContain("Keep this near the register or manager workstation");
+    expect(page).toContain("BUPOS Help diagnoses first");
+    expect(page).toContain("It will not close shifts, change inventory, retry payments, send customer messages, run migrations, or change credentials.");
+    expect(page).toContain("Read full cheat sheet");
+    expect(page).toContain("/docs/bupos-help-cheat-sheet.md");
+    expect(page).toContain("Shift evidence cards");
+    expect(page).toContain("shiftConflictCards");
+    expect(page).toContain("duplicate_open_shift");
+    expect(page).toContain("stale_open_shift");
+    expect(page).toContain("Request manager review — no shift changes");
+    expect(page).toContain("Manager review trail");
+    expect(page).toContain("Open requests");
+    expect(page).toContain("Reviewed outcomes");
+    expect(page).toContain("Repairs still do not run from this trail");
+    expect(page).toContain("HelpAuditEventCard");
+    expect(page).toContain("Refresh review trail");
+    expect(page).toContain("formatAuditEventTime");
+    expect(page).toContain("Full receipt fingerprint");
+    expect(page).toContain("Compact receipt");
+    expect(page).toContain("dateTime={event.created_at}");
+    expect(page).toContain("helpTrailStatusBadge");
+    expect(page).toContain("Pending review");
+    expect(page).toContain("Acknowledged");
+    expect(page).toContain("Denied");
+    expect(page).toContain("Manual review required");
+    expect(page).toContain("statusBadge.label");
+    expect(page).toContain("helpTrailStatusRank");
+    expect(page).toContain("sortHelpTrailEvents");
+    expect(page).toContain("sortedApprovalRequests");
+    expect(page).toContain("sortedReviewOutcomes");
+    expect(page).toContain("helpTrailEventTime");
+    expect(page).toContain("helpTrailStatusRank(a.payload?.status) - helpTrailStatusRank(b.payload?.status)");
+    expect(page).toContain("helpTrailEventTime(b) - helpTrailEventTime(a)");
+    expect(page).toContain("helpTrailCorrelationDetails");
+    expect(page).toContain("helpTrailLifecycleBadge");
+    expect(page).toContain("helpTrailReviewNoteDetails");
+    expect(page).toContain("Lifecycle");
+    expect(page).toContain("Manager review requested");
+    expect(page).toContain("Manager reviewed: acknowledged");
+    expect(page).toContain("Manager reviewed: denied");
+    expect(page).toContain("Manual review required");
+    expect(page).toContain("Reviewed does not mean repaired");
+    expect(page).toContain("Manager note");
+    expect(page).toContain("No manager note recorded");
+    expect(page).toContain("System manual-review note");
+    expect(page).toContain("payload.note");
+    expect(page).toContain("aria-label={`Help ${isReview ? \"review outcome\" : \"approval request\"}");
+    expect(page).toContain("aria-label={`Help status: ${statusBadge.label}`}");
+    expect(page).toContain("aria-label={`Help lifecycle: ${lifecycleBadge.label}`}");
+    expect(page).toContain("aria-label={`Help review note: ${noteDetails.label}`}");
+    expect(page).toContain("aria-label=\"Help receipt full fingerprint\"");
+    expect(page).toContain("Original request ID");
+    expect(page).toContain("Diagnostics request");
+    expect(page).toContain("Receipt correlation");
+    expect(page).toContain("payload.approvalRequestId");
+    expect(page).toContain("payload.reqId");
+    expect(page).toContain("approvalRequestsError");
+    expect(page).toContain("reviewOutcomesError");
+    expect(page).toContain("Could not load manager requests");
+    expect(page).toContain("Could not load review outcomes");
+    expect(page).toContain("Use Audit if this keeps failing");
+    expect(page).toContain("Try Refresh review trail first. If this keeps failing, open the full Audit view below.");
+    expect(page).toContain("Open manager requests in Audit");
+    expect(page).toContain("Open review outcomes in Audit");
+    expect(page).toContain("No requests are waiting for manager review.");
+    expect(page).toContain("When a Help action needs approval, it will appear here.");
+    expect(page).toContain("No reviewed Help outcomes yet.");
+    expect(page).toContain("Reviewed requests will show here after a manager acknowledges, denies, or marks them for manual review.");
+    expect(page).toContain("refreshReviewTrail");
+    expect(page).toContain("Promise.all([loadApprovalRequests(), loadReviewOutcomes()])");
+    expect(page).toContain("Promise.all([runChecks(), refreshReviewTrail()])");
+    expect(page).toContain("Pending manager review requests");
+    expect(page).toContain("Recent manager review outcomes");
+    expect(page).toContain("Review outcomes record manager decisions only; they do not close shifts or perform repairs.");
+    expect(page).toContain("Open requests are waiting for a manager decision; no fix has run yet.");
+    expect(page).toContain("View all review outcomes in Audit");
+    expect(page).toContain('/admin/audit?event_kind=help_action_approval_reviewed');
+    expect(page).toContain("help_action_approval_reviewed");
+    expect(page).toContain("View all manager requests in Audit");
+    expect(page).toContain('/admin/audit?event_kind=help_action_approval_requested');
+    expect(page).toContain("help_action_approval_requested");
+    expect(page).toContain('actionId: "review-open-shift-conflicts"');
+    expect(page).toContain("Request manager review — no shift changes");
+    expect(page).toContain("Creates an audit request only. It will not close or edit this shift.");
+    expect(page).toContain("Manager review request created. Open Audit to review it.");
+    expect(page).toContain("/admin/audit?event_kind=help_action_approval_requested");
+    expect(page).toContain("sourceCheckId: check.id");
+    expect(page).toContain("evidence: {");
+    expect(page).toContain("It does not close shifts, change inventory, retry payments, update Shopify, send email, run migrations,");
+    expect(page).toContain("or modify customer data");
+  });
+
+  it("keeps diagnostics behind admin audit permission with no-store responses", () => {
+    const route = read("src/app/api/admin/diagnostics/route.ts");
+
+    expect(route).toContain('withAdminAuth("audit.view"');
+    expect(route).toContain("Cache-Control");
+    expect(route).toContain("no-store, private, max-age=0");
+  });
+
+  it("routes safe Help fix actions through the action kernel and persistent audit events", () => {
+    const route = read("src/app/api/admin/diagnostics/fix/route.ts");
+
+    expect(route).toContain('withAdminAuth("audit.view"');
+    expect(route).toContain("evaluateHelpAction");
+    expect(route).toContain("createActionReceipt");
+    expect(route).toContain("orgTx(receipt.request.orgId)");
+    expect(route).toContain("INSERT INTO audit_events");
+    expect(route).toContain('"help_action_decided"');
+    expect(route).toContain('"help_action_approval_requested"');
+    expect(route).toContain('"help_action_approval_reviewed"');
+    expect(route).toContain("buildApprovalRequest");
+    expect(route).toContain("approvalRequest");
+    expect(route).toContain("approvalReview");
+    expect(route).toContain("approvalRequestId: approvalRequest.id");
+    expect(route).toContain("approvalRequestId: review.approvalRequestId");
+    expect(route).toContain("auditPersisted");
+  });
+
+  it("links Help receipts to the Audit page help-action filter", () => {
+    const page = read("src/app/admin/help/page.tsx");
+
+    expect(page).toContain('/admin/audit?event_kind=help_action_decided');
+    expect(page).toContain("View in audit trail");
+  });
+
+  it("lets Audit page open directly to help_action_decided and renders decision summaries", () => {
+    const page = read("src/app/admin/audit/page.tsx");
+
+    expect(page).toContain("useSearchParams");
+    expect(page).toContain("help_action_decided");
+    expect(page).toContain("help_action_approval_requested");
+    expect(page).toContain("help_action_approval_reviewed");
+    expect(page).toContain("Help Action");
+    expect(page).toContain("Manager Approval Request");
+    expect(page).toContain("Manager Review Outcome");
+    expect(page).toContain("Acknowledge");
+    expect(page).toContain("Deny");
+    expect(page).toContain("Manual review required");
+    expect(page).toContain('method: "PATCH"');
+    expect(page).toContain("approvalRequest");
+    expect(page).toContain("receiptFingerprint");
+    expect(page).toContain("helpApprovalCorrelationDetails");
+    expect(page).toContain("helpApprovalLifecycleDetails");
+    expect(page).toContain("helpApprovalReviewNoteDetails");
+    expect(page).toContain("Help lifecycle");
+    expect(page).toContain("Detected");
+    expect(page).toContain("Evidence shown");
+    expect(page).toContain("Manager review requested");
+    expect(page).toContain("Manager reviewed: acknowledged");
+    expect(page).toContain("Reviewed/acknowledged does not mean repaired.");
+    expect(page).toContain("Manager note");
+    expect(page).toContain("No manager note recorded");
+    expect(page).toContain("System manual-review note");
+    expect(page).toContain("payload.note");
+    expect(page).toContain("aria-label=\"Help action audit details\"");
+    expect(page).toContain("aria-label=\"Help lifecycle audit details\"");
+    expect(page).toContain("aria-label=\"Help review note audit details\"");
+    expect(page).toContain("aria-label=\"Acknowledge Help manager review request\"");
+    expect(page).toContain("aria-label=\"Deny Help manager review request\"");
+    expect(page).toContain("aria-label=\"Mark Help request for manual review\"");
+    expect(page).toContain("Records that the manager saw the evidence. No repair runs.");
+    expect(page).toContain("Records that this request should not proceed. No data changes.");
+    expect(page).toContain("Flags this for off-screen/manual follow-up. No repair runs.");
+    expect(page).toContain("These buttons record the manager review outcome only; they never run the repair.");
+    expect(page).toContain("Approval request ID");
+    expect(page).toContain("Diagnostics request ID");
+    expect(page).toContain("Receipt fingerprint");
+    expect(page).toContain("payload.approvalRequestId ?? event.id");
+    expect(page).toContain("approvalRequestId: typeof payload.approvalRequestId === 'string' ? payload.approvalRequestId : event.id");
+    expect(page).toContain("Shift evidence");
+    expect(page).toContain("sourceCheckId");
+    expect(page).toContain("shiftId");
+    expect(page).toContain("employeeId");
+    expect(page).toContain("registerSessionId");
+    expect(page).toContain("ageHours");
+    expect(page).toContain("reviewedBy");
+    expect(page).toContain("reviewedAt");
+    expect(page).toContain("decision");
+    expect(page).toContain("manual_review_required");
+    expect(page).toContain("verdict");
+    expect(page).toContain("band");
+  });
+});

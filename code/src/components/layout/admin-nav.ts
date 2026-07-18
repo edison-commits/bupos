@@ -12,6 +12,7 @@ import {
   Clock,
   Gift,
   Globe,
+  HelpCircle,
   LayoutDashboard,
   LayoutGrid,
   Package,
@@ -97,6 +98,7 @@ export const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
     label: "System",
     items: [
       { href: "/admin", label: "More Tools", icon: LayoutGrid, exact: true },
+      { href: "/admin/help", label: "Help", icon: HelpCircle },
       { href: "/admin/settings", label: "Settings", icon: Settings },
     ],
   },
