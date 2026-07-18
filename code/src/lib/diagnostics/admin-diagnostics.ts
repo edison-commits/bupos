@@ -48,10 +48,14 @@ export interface SupportPacketOperatorSummary {
 type QueryResult = { rows: Array<Record<string, unknown>> };
 export type DiagnosticsQuery = (sql: string, values?: unknown[]) => Promise<QueryResult>;
 
-const LOCATION_SCOPED_ROLES = new Set(["cashier", "inventory_clerk", "support"]);
+const LOCATION_SCOPED_ROLES = ["cashier", "inventory_clerk", "support"] as const;
+
+function roleListIncludes(roles: readonly string[], roleKey: string): boolean {
+  return roles.includes(roleKey);
+}
 
 function locationFilter(ctx: DiagnosticsContext): { sql: string; values: unknown[] } {
-  const scoped = ctx.allowedLocations ?? (LOCATION_SCOPED_ROLES.has(ctx.employee.roleKey) ? ctx.employee.locationIds ?? [] : null);
+  const scoped = ctx.allowedLocations ?? (roleListIncludes(LOCATION_SCOPED_ROLES, ctx.employee.roleKey) ? ctx.employee.locationIds ?? [] : null);
   if (scoped !== null) {
     return { sql: "AND location_id = ANY($2::uuid[])", values: [ctx.orgId, scoped] };
   }

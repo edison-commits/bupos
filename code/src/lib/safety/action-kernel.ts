@@ -33,10 +33,10 @@ export interface HelpActionReceipt {
   fingerprint: string;
 }
 
-const READ_ONLY_ACTIONS = new Set(["generate-support-packet", "run-diagnostics"]);
-const SAFE_LOCAL_ACTIONS = new Set(["refresh-diagnostics-cache"]);
-const MANAGER_APPROVAL_ACTIONS = new Set(["review-open-shift-conflicts"]);
-const HIGH_RISK_ACTIONS = new Set([
+const READ_ONLY_ACTIONS = ["generate-support-packet", "run-diagnostics"] as const;
+const SAFE_LOCAL_ACTIONS = ["refresh-diagnostics-cache"] as const;
+const MANAGER_APPROVAL_ACTIONS = ["review-open-shift-conflicts"] as const;
+const HIGH_RISK_ACTIONS = [
   "change-inventory-quantity",
   "retry-payment-capture",
   "retry-refund",
@@ -44,7 +44,11 @@ const HIGH_RISK_ACTIONS = new Set([
   "run-database-migration",
   "change-credentials",
   "delete-customer-data",
-]);
+] as const;
+
+function actionListIncludes(actions: readonly string[], actionId: string): boolean {
+  return actions.includes(actionId);
+}
 
 function cleanText(value: string | undefined): string | undefined {
   if (!value) return undefined;
@@ -66,7 +70,7 @@ export function evaluateHelpAction(
     };
   }
 
-  if (READ_ONLY_ACTIONS.has(request.actionId)) {
+  if (actionListIncludes(READ_ONLY_ACTIONS, request.actionId)) {
     return {
       verdict: "allow",
       band: "L0",
@@ -75,7 +79,7 @@ export function evaluateHelpAction(
     };
   }
 
-  if (SAFE_LOCAL_ACTIONS.has(request.actionId)) {
+  if (actionListIncludes(SAFE_LOCAL_ACTIONS, request.actionId)) {
     return {
       verdict: "allow",
       band: "L1",
@@ -84,7 +88,7 @@ export function evaluateHelpAction(
     };
   }
 
-  if (MANAGER_APPROVAL_ACTIONS.has(request.actionId)) {
+  if (actionListIncludes(MANAGER_APPROVAL_ACTIONS, request.actionId)) {
     return {
       verdict: "require_approval",
       band: "L2",
@@ -93,7 +97,7 @@ export function evaluateHelpAction(
     };
   }
 
-  if (HIGH_RISK_ACTIONS.has(request.actionId)) {
+  if (actionListIncludes(HIGH_RISK_ACTIONS, request.actionId)) {
     return {
       verdict: "deny",
       band: "L3",

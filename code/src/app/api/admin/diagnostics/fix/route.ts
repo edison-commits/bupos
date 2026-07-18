@@ -44,11 +44,15 @@ type HelpActionApprovalReview = {
   note?: string;
 };
 
-const HELP_APPROVAL_REVIEW_DECISIONS = new Set<HelpApprovalReviewDecision>([
+const HELP_APPROVAL_REVIEW_DECISIONS = [
   "acknowledged",
   "denied",
   "manual_review_required",
-]);
+] as const satisfies readonly HelpApprovalReviewDecision[];
+
+function isHelpApprovalReviewDecision(value: unknown): value is HelpApprovalReviewDecision {
+  return typeof value === "string" && HELP_APPROVAL_REVIEW_DECISIONS.includes(value as HelpApprovalReviewDecision);
+}
 
 function helpActionKillSwitch() {
   return {
@@ -296,7 +300,7 @@ export const PATCH = withAdminAuth("audit.view", async (req, ctx) => {
   if (!approvalRequestId.startsWith("approval:")) {
     return NextResponse.json({ error: "Invalid approvalRequestId" }, { status: 400, headers: NO_STORE_HEADERS });
   }
-  if (!HELP_APPROVAL_REVIEW_DECISIONS.has(decisionRaw as HelpApprovalReviewDecision)) {
+  if (!isHelpApprovalReviewDecision(decisionRaw)) {
     return NextResponse.json({ error: "Invalid decision" }, { status: 400, headers: NO_STORE_HEADERS });
   }
   if (!/^[a-f0-9]{64}$/i.test(receiptFingerprint)) {
