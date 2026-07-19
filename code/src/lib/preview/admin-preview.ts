@@ -1,5 +1,6 @@
 import { hashSecret } from "@/lib/auth/crypto";
 import { getPool, orgTx } from "@/lib/supabase-rest";
+import { pgFindCredentialByEmail } from "@/lib/persistence/postgres-store";
 
 export const PREVIEW_EMAIL_ENV = "BUPOS_PREVIEW_EMAIL";
 export const PREVIEW_PASSWORD_ENV = "BUPOS_PREVIEW_PASSWORD";
@@ -53,14 +54,22 @@ export async function previewSecretMatches(candidate: string, expected: string):
 export async function ensurePreviewAdmin(config: PreviewConfig): Promise<void> {
   let stage = "lookup";
   try {
-    const pool = await getPool();
-    const { rows } = await pool.query(`SELECT * FROM admin_login_lookup($1::text) AS result`, [config.email]);
-    const lookup = (rows[0]?.result ?? rows[0] ?? null) as Record<string, unknown> | null;
-    if (lookup) {
+    const credential = await pgFindCredentialByEmail(config.email);
+    if (credential) {
+      const pool = await getPool();
+      const { rows } = await pool.query(
+        `SELECT organization_id, role_key, is_active
+           FROM employees
+          WHERE id = $1
+          LIMIT 1`,
+        [credential.employeeId],
+      );
+      const employee = rows[0] as Record<string, unknown> | undefined;
       if (
-        lookup.organization_id !== config.organizationId ||
-        lookup.role_key !== "manager" ||
-        lookup.is_active !== true
+        !employee ||
+        employee.organization_id !== config.organizationId ||
+        employee.role_key !== "manager" ||
+        employee.is_active !== true
       ) {
         throw new Error("Preview identity exists with an unexpected scope or role");
       }
