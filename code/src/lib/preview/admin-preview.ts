@@ -1,6 +1,5 @@
 import { hashSecret } from "@/lib/auth/crypto";
 import { getPool, orgTx } from "@/lib/supabase-rest";
-import { pgFindCredentialByEmail } from "@/lib/persistence/postgres-store";
 
 export const PREVIEW_EMAIL_ENV = "BUPOS_PREVIEW_EMAIL";
 export const PREVIEW_PASSWORD_ENV = "BUPOS_PREVIEW_PASSWORD";
@@ -54,15 +53,24 @@ export async function previewSecretMatches(candidate: string, expected: string):
 export async function ensurePreviewAdmin(config: PreviewConfig): Promise<void> {
   let stage = "lookup";
   try {
-    const credential = await pgFindCredentialByEmail(config.email);
-    if (credential) {
-      const pool = await getPool();
+    const pool = await getPool();
+    const { rows: credentialRows } = await pool.query(
+      `SELECT ac.employee_id
+         FROM auth_credentials ac
+         JOIN employees e ON ac.employee_id = e.id
+        WHERE lower(ac.email) = lower($1)
+          AND e.is_active = true
+        LIMIT 1`,
+      [config.email],
+    );
+    const credential = credentialRows[0] as { employee_id?: string } | undefined;
+    if (credential?.employee_id) {
       const { rows } = await pool.query(
         `SELECT organization_id, role_key, is_active
            FROM employees
           WHERE id = $1
           LIMIT 1`,
-        [credential.employeeId],
+        [credential.employee_id],
       );
       const employee = rows[0] as Record<string, unknown> | undefined;
       if (
