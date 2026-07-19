@@ -53,7 +53,7 @@ jobs:
       # not a client-exposed NEXT_PUBLIC value. Sync from GitHub Actions
       # secrets before asserting the deployed Worker has everything it needs.
       - name: Sync BUPOS Worker config secrets
-        if: github.ref == 'refs/heads/master' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: github.ref == 'refs/heads/master' && github.event_name == 'push' || (github.ref == 'refs/heads/master' && github.event_name == 'workflow_dispatch')
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -87,7 +87,7 @@ jobs:
       # and shouldn't gate on secret presence. `wrangler secret list`
       # prints NAMES only, never values.
       - name: Assert required Worker secrets are configured
-        if: github.ref == 'refs/heads/master' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: github.ref == 'refs/heads/master' && github.event_name == 'push' || (github.ref == 'refs/heads/master' && github.event_name == 'workflow_dispatch')
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -166,7 +166,7 @@ jobs:
       # Guardrails run blocks the deploy — fix (or re-run Guardrails),
       # then re-run this workflow.
       - name: Wait for Guardrails (incl. e2e) on this commit
-        if: github.ref == 'refs/heads/master' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: github.ref == 'refs/heads/master' && github.event_name == 'push' || (github.ref == 'refs/heads/master' && github.event_name == 'workflow_dispatch')
         working-directory: .
         env:
           GH_TOKEN: ${{ github.token }}
@@ -207,7 +207,7 @@ jobs:
           done
 
       - name: Run DB migrations
-        if: github.ref == 'refs/heads/master' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: github.ref == 'refs/heads/master' && github.event_name == 'push' || (github.ref == 'refs/heads/master' && github.event_name == 'workflow_dispatch')
         working-directory: .
         run: |
           set -euo pipefail
@@ -278,7 +278,7 @@ jobs:
       # protection bypass) would previously skip it and could ship a TS
       # error that slipped past the per-PR gate.
       - name: Typecheck
-        if: github.ref == 'refs/heads/master' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: github.ref == 'refs/heads/master' && github.event_name == 'push' || (github.ref == 'refs/heads/master' && github.event_name == 'workflow_dispatch')
         run: npx tsc --noEmit
 
       - name: Build & Deploy
@@ -290,10 +290,10 @@ jobs:
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        if: github.ref == 'refs/heads/master' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: github.ref == 'refs/heads/master' && github.event_name == 'push' || (github.ref == 'refs/heads/master' && github.event_name == 'workflow_dispatch')
 
       - name: Smoke test
-        if: github.ref == 'refs/heads/master' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: github.ref == 'refs/heads/master' && github.event_name == 'push' || (github.ref == 'refs/heads/master' && github.event_name == 'workflow_dispatch')
         # R36-deploy: GitHub Actions does NOT inject repo secrets into
         # `process.env` automatically — each secret a `run:` step needs
         # must be named in the step's `env:` block. Without these, the
@@ -315,7 +315,7 @@ jobs:
       # env-var form, GitHub redacts the value from logs AND shell-level
       # parameter expansion prevents the substitution trick.
       - name: Notify on success
-        if: success() && github.ref == 'refs/heads/master' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: success() && github.ref == 'refs/heads/master' && github.event_name == 'push' || (github.ref == 'refs/heads/master' && github.event_name == 'workflow_dispatch')
         working-directory: .
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -326,7 +326,7 @@ jobs:
             -d disable_notification=true
 
       - name: Notify on failure
-        if: failure() && github.ref == 'refs/heads/master' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: failure() && github.ref == 'refs/heads/master' && github.event_name == 'push' || (github.ref == 'refs/heads/master' && github.event_name == 'workflow_dispatch')
         working-directory: .
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -347,7 +347,7 @@ jobs:
   drift-check:
     name: Prod schema-drift
     needs: deploy
-    if: github.ref == 'refs/heads/master' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push' || (github.ref == 'refs/heads/master' && github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     services:
       postgres:
