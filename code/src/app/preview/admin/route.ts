@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { safeErr } from "@/lib/logging/safe-err";
 import { signInAdmin, getAdminSession } from "@/lib/auth/session";
 import {
   ensurePreviewAdmin,
@@ -45,12 +46,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return accessPage(true);
   }
 
+  let stage = "provision";
   try {
     await ensurePreviewAdmin(config);
+    stage = "sign-in";
     await signInAdmin(config.email, config.password);
-  } catch {
+  } catch (error) {
+    console.error(JSON.stringify({ event: "private_preview_bootstrap_failed", stage, error: safeErr(error) }));
     // Do not reveal whether provisioning, auth, or configuration failed.
-    return unavailable();
+    const response = unavailable();
+    response.headers.set("x-preview-failure-stage", stage);
+    return response;
   }
 
   return NextResponse.redirect(new URL("/admin", request.url), 303);
