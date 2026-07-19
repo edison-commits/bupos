@@ -1,5 +1,5 @@
 import { hashSecret } from "@/lib/auth/crypto";
-import { orgTx } from "@/lib/supabase-rest";
+import { getPool, orgTx } from "@/lib/supabase-rest";
 
 export const PREVIEW_EMAIL_ENV = "BUPOS_PREVIEW_EMAIL";
 export const PREVIEW_PASSWORD_ENV = "BUPOS_PREVIEW_PASSWORD";
@@ -51,56 +51,55 @@ export async function previewSecretMatches(candidate: string, expected: string):
  * configured BUPOS org/location secrets. Existing accounts are never modified.
  */
 export async function ensurePreviewAdmin(config: PreviewConfig): Promise<void> {
-  const client = await orgTx(config.organizationId);
   let stage = "lookup";
   try {
-    const existing = await client.query(
-      `SELECT e.id, e.organization_id, e.role_key, e.is_active
-         FROM employees e
-        WHERE lower(e.email) = lower($1)`,
-      [config.email],
-    );
-    const row = existing.rows[0] as Record<string, unknown> | undefined;
-    if (row) {
+    const pool = await getPool();
+    const { rows } = await pool.query(`SELECT * FROM admin_login_lookup($1::text) AS result`, [config.email]);
+    const lookup = (rows[0]?.result ?? rows[0] ?? null) as Record<string, unknown> | null;
+    if (lookup) {
       if (
-        row.organization_id !== config.organizationId ||
-        row.role_key !== "manager" ||
-        row.is_active !== true
+        lookup.organization_id !== config.organizationId ||
+        lookup.role_key !== "manager" ||
+        lookup.is_active !== true
       ) {
         throw new Error("Preview identity exists with an unexpected scope or role");
       }
-      await client.query("COMMIT");
       return;
     }
 
-    const employeeId = crypto.randomUUID();
-    const now = new Date().toISOString();
-    const passwordHash = await hashSecret(config.password);
-    stage = "employee-insert";
-    await client.query(
-      `INSERT INTO employees
-        (id, organization_id, role_key, first_name, last_name, display_name,
-         email, pin_hint, is_active, location_ids, created_at, updated_at)
-       VALUES ($1, $2::uuid, 'manager', 'Private', 'Preview', 'Private Preview',
-               $3, 'Preview access only', true, ARRAY[$4::uuid], $5, $5)`,
-      [employeeId, config.organizationId, config.email, config.locationId, now],
-    );
-    stage = "credential-insert";
-    await client.query(
-      `INSERT INTO auth_credentials
-        (employee_id, email, password_hash, pin_hash, created_at, updated_at)
-       VALUES ($1, $2, $3, NULL, $4, $4)`,
-      [employeeId, config.email, passwordHash, now],
-    );
-    await client.query("COMMIT");
-  } catch (error) {
+    const client = await orgTx(config.organizationId);
     try {
-      await client.query("ROLLBACK");
-    } catch {
-      // Preserve the original error; rollback failure is not user-facing.
+      const employeeId = crypto.randomUUID();
+      const now = new Date().toISOString();
+      const passwordHash = await hashSecret(config.password);
+      stage = "employee-insert";
+      await client.query(
+        `INSERT INTO employees
+          (id, organization_id, role_key, first_name, last_name, display_name,
+           email, pin_hint, is_active, location_ids, created_at, updated_at)
+         VALUES ($1, $2::uuid, 'manager', 'Private', 'Preview', 'Private Preview',
+                 $3, 'Preview access only', true, ARRAY[$4::uuid], $5, $5)`,
+        [employeeId, config.organizationId, config.email, config.locationId, now],
+      );
+      stage = "credential-insert";
+      await client.query(
+        `INSERT INTO auth_credentials
+          (employee_id, email, password_hash, pin_hash, created_at, updated_at)
+         VALUES ($1, $2, $3, NULL, $4, $4)`,
+        [employeeId, config.email, passwordHash, now],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // Preserve the original error; rollback failure is not user-facing.
+      }
+      throw error;
+    } finally {
+      client.release();
     }
+  } catch (error) {
     throw new PreviewProvisionError(stage, error);
-  } finally {
-    client.release();
   }
 }
