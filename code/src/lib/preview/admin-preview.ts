@@ -1,5 +1,5 @@
 import { hashSecret } from "@/lib/auth/crypto";
-import { getPool } from "@/lib/supabase-rest";
+import { orgTx } from "@/lib/supabase-rest";
 
 export const PREVIEW_EMAIL_ENV = "BUPOS_PREVIEW_EMAIL";
 export const PREVIEW_PASSWORD_ENV = "BUPOS_PREVIEW_PASSWORD";
@@ -43,10 +43,8 @@ export async function previewSecretMatches(candidate: string, expected: string):
  * configured BUPOS org/location secrets. Existing accounts are never modified.
  */
 export async function ensurePreviewAdmin(config: PreviewConfig): Promise<void> {
-  const pool = await getPool();
-  const client = await pool.connect();
+  const client = await orgTx(config.organizationId);
   try {
-    await client.query("BEGIN");
     const existing = await client.query(
       `SELECT e.id, e.organization_id, e.role_key, e.is_active
          FROM employees e
