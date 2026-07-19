@@ -58,8 +58,7 @@ export async function ensurePreviewAdmin(config: PreviewConfig): Promise<void> {
       `SELECT e.id, e.organization_id, e.role_key, e.is_active
          FROM employees e
          JOIN auth_credentials ac ON ac.employee_id = e.id
-        WHERE lower(ac.email) = lower($1)
-        FOR UPDATE`,
+        WHERE lower(ac.email) = lower($1)`,
       [config.email],
     );
     const row = existing.rows[0] as Record<string, unknown> | undefined;
