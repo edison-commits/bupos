@@ -5,6 +5,7 @@ on:
     branches: [master, main]
   pull_request:
     branches: [master, main]
+  workflow_dispatch:
 
 # R42-H: least-privilege token. Default permissions in GitHub Actions
 # include write on contents + pull-requests; this workflow only needs
@@ -32,6 +33,7 @@ jobs:
     # install-and-typecheck path; push-to-master runs the full deploy).
     if: |
       github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
@@ -51,7 +53,7 @@ jobs:
       # not a client-exposed NEXT_PUBLIC value. Sync from GitHub Actions
       # secrets before asserting the deployed Worker has everything it needs.
       - name: Sync BUPOS Worker config secrets
-        if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+        if: github.ref == 'refs/heads/master' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
