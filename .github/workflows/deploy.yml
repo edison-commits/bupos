@@ -57,6 +57,9 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           BUPOS_ORG_ID: ${{ secrets.BUPOS_ORG_ID }}
           BUPOS_LOCATION_ID: ${{ secrets.BUPOS_LOCATION_ID }}
+          BUPOS_PREVIEW_EMAIL: ${{ secrets.BUPOS_PREVIEW_EMAIL }}
+          BUPOS_PREVIEW_PASSWORD: ${{ secrets.BUPOS_PREVIEW_PASSWORD }}
+          BUPOS_PREVIEW_SECRET: ${{ secrets.BUPOS_PREVIEW_SECRET }}
         run: |
           set -euo pipefail
           if [ -z "${BUPOS_ORG_ID:-}" ] || [ -z "${BUPOS_LOCATION_ID:-}" ]; then
@@ -65,6 +68,13 @@ jobs:
           fi
           printf '%s' "$BUPOS_ORG_ID" | npx wrangler secret put BUPOS_ORG_ID
           printf '%s' "$BUPOS_LOCATION_ID" | npx wrangler secret put BUPOS_LOCATION_ID
+          if [ -z "${BUPOS_PREVIEW_EMAIL:-}" ] || [ -z "${BUPOS_PREVIEW_PASSWORD:-}" ] || [ -z "${BUPOS_PREVIEW_SECRET:-}" ]; then
+            echo "::error::BUPOS_PREVIEW_EMAIL, BUPOS_PREVIEW_PASSWORD, and BUPOS_PREVIEW_SECRET GitHub secrets must be set"
+            exit 1
+          fi
+          printf '%s' "$BUPOS_PREVIEW_EMAIL" | npx wrangler secret put BUPOS_PREVIEW_EMAIL
+          printf '%s' "$BUPOS_PREVIEW_PASSWORD" | npx wrangler secret put BUPOS_PREVIEW_PASSWORD
+          printf '%s' "$BUPOS_PREVIEW_SECRET" | npx wrangler secret put BUPOS_PREVIEW_SECRET
 
       # R25-ops-M-2: assert every secret the Worker needs at runtime is
       # actually configured. Without this, a missing CUSTOMER_DISPLAY_
@@ -94,7 +104,7 @@ jobs:
           #     banners) mixed into stdout breaks the later grep.
           # jq exits 2 on invalid JSON, so a wrangler auth failure fails
           # the step instead of being swallowed by `|| echo '[]'`.
-          REQUIRED=(CUSTOMER_DISPLAY_SECRET RESEND_API_KEY RESEND_FROM_EMAIL DATABASE_URL BUPOS_ORG_ID BUPOS_LOCATION_ID)
+          REQUIRED=(CUSTOMER_DISPLAY_SECRET RESEND_API_KEY RESEND_FROM_EMAIL DATABASE_URL BUPOS_ORG_ID BUPOS_LOCATION_ID BUPOS_PREVIEW_EMAIL BUPOS_PREVIEW_PASSWORD BUPOS_PREVIEW_SECRET)
           echo "→ Listing Worker secrets..."
           # Split stderr (warnings) from stdout (JSON payload). Some
           # wrangler versions emit a deprecation notice on stderr that
