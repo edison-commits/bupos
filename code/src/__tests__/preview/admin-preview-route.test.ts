@@ -20,8 +20,8 @@ describe("private admin preview contract", () => {
   });
 
   it("provisions only a scoped manager identity and never changes an existing account", () => {
-    expect(helper).toContain("row.role_key !== \"manager\"");
-    expect(helper).toContain("row.organization_id !== config.organizationId");
+    expect(helper).toContain('lookup.role_key !== "manager"');
+    expect(helper).toContain("lookup.organization_id !== config.organizationId");
     expect(helper).toContain("VALUES ($1, $2::uuid, 'manager'");
     expect(helper).toContain("Existing accounts are never modified");
   });
