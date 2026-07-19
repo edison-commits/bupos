@@ -5,6 +5,7 @@ import {
   ensurePreviewAdmin,
   getPreviewConfig,
   previewSecretMatches,
+  PreviewProvisionError,
 } from "@/lib/preview/admin-preview";
 
 function noStore(response: NextResponse): NextResponse {
@@ -52,6 +53,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     stage = "sign-in";
     await signInAdmin(config.email, config.password);
   } catch (error) {
+    if (error instanceof PreviewProvisionError) stage = error.stage;
     console.error(JSON.stringify({ event: "private_preview_bootstrap_failed", stage, error: safeErr(error) }));
     // Do not reveal whether provisioning, auth, or configuration failed.
     const response = unavailable();
