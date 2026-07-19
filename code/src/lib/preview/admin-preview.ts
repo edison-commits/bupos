@@ -15,6 +15,14 @@ export type PreviewConfig = {
   locationId: string;
 };
 
+export class PreviewProvisionError extends Error {
+  constructor(public readonly stage: string, cause: unknown) {
+    super(`Preview provisioning failed at ${stage}`);
+    this.name = "PreviewProvisionError";
+    this.cause = cause;
+  }
+}
+
 export function getPreviewConfig(): PreviewConfig | null {
   const email = process.env[PREVIEW_EMAIL_ENV]?.trim().toLowerCase();
   const password = process.env[PREVIEW_PASSWORD_ENV];
@@ -44,6 +52,7 @@ export async function previewSecretMatches(candidate: string, expected: string):
  */
 export async function ensurePreviewAdmin(config: PreviewConfig): Promise<void> {
   const client = await orgTx(config.organizationId);
+  let stage = "lookup";
   try {
     const existing = await client.query(
       `SELECT e.id, e.organization_id, e.role_key, e.is_active
@@ -69,6 +78,7 @@ export async function ensurePreviewAdmin(config: PreviewConfig): Promise<void> {
     const employeeId = crypto.randomUUID();
     const now = new Date().toISOString();
     const passwordHash = await hashSecret(config.password);
+    stage = "employee-insert";
     await client.query(
       `INSERT INTO employees
         (id, organization_id, role_key, first_name, last_name, display_name,
@@ -77,6 +87,7 @@ export async function ensurePreviewAdmin(config: PreviewConfig): Promise<void> {
                $3, 'Preview access only', true, ARRAY[$4::uuid], $5, $5)`,
       [employeeId, config.organizationId, config.email, config.locationId, now],
     );
+    stage = "credential-insert";
     await client.query(
       `INSERT INTO auth_credentials
         (employee_id, email, password_hash, pin_hash, created_at, updated_at)
@@ -90,7 +101,7 @@ export async function ensurePreviewAdmin(config: PreviewConfig): Promise<void> {
     } catch {
       // Preserve the original error; rollback failure is not user-facing.
     }
-    throw error;
+    throw new PreviewProvisionError(stage, error);
   } finally {
     client.release();
   }
