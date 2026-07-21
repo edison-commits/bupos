@@ -10,7 +10,7 @@ export const metadata: Metadata = {
 const workflows = [
   { number: "01", title: "Sell without losing the thread", text: "A clear cart, product lookup, customer display, tender, receipt, return, and shift flow keep the counter moving.", detail: "Register · POS · Customer display · Returns · Gift cards", image: "/demo/register-products.png", alt: "BUPOS product tiles in the register" },
   { number: "02", title: "Know what is on the shelf", text: "Product records, inventory history, stocktakes, adjustments, reorder suggestions, and transfers give stock a visible trail.", detail: "Products · Inventory ledger · Stocktakes · Reordering · Transfers", image: "/demo/register-view.png", alt: "BUPOS register with product and stock context" },
-  { number: "03", title: "Give managers a next move", text: "Purchasing, receiving, cash, shifts, reports, employees, roles, customers, and online selling live in one operating picture.", detail: "Purchase orders · Reports · Cash drawer · Customers · Online selling", image: "/demo/register-sale.png", alt: "BUPOS sale panel showing the current transaction" },
+  { number: "03", title: "Give managers a next move", text: "Purchasing, receiving, cash, shifts, reports, employees, roles, customers, and online selling live in one operating picture.", detail: "Purchase orders · Reports · Cash drawer · Customers · Online selling", image: "/demo/register-manager.png", alt: "BUPOS sale panel showing the current transaction" },
 ];
 
 const capabilities = [
