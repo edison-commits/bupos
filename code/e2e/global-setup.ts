@@ -80,6 +80,7 @@ export default async function globalSetup(): Promise<void> {
   assertSafeTargetDb();
   const pool = new Pool({ connectionString: DATABASE_URL, max: 2 });
   const pwHash = await hashPbkdf2(SEED.password);
+  const fixtureTransactionIds = Array.from({ length: 4 }, () => crypto.randomUUID());
 
   try {
     // Idempotent seed: INSERT ... ON CONFLICT DO NOTHING for each row
@@ -196,21 +197,21 @@ export default async function globalSetup(): Promise<void> {
     await pool.query(`
       INSERT INTO transactions (id, organization_id, location_id, register_session_id, employee_id, customer_id, cart_snapshot, subtotal, discount_total, tax_total, grand_total, tender_type, amount_tendered, change_due, status, created_at)
       VALUES
-        ('e2eccccc-cccc-4ccc-8ccc-ccccccccccc1', $1, $2, 'e2e66666-6666-4666-8666-666666666661', $3, 'e2e77777-7777-4777-8777-777777777771', '{"items":[{"name":"Classic Polo","quantity":2,"price":34}],"fixture":true}', 68, 0, 6.46, 74.46, 'card', 74.46, 0, 'completed', now() - interval '2 hours'),
-        ('e2eccccc-cccc-4ccc-8ccc-ccccccccccc2', $1, $2, 'e2e66666-6666-4666-8666-666666666661', $3, 'e2e77777-7777-4777-8777-777777777772', '{"items":[{"name":"Performance Chino","quantity":1,"price":58},{"name":"Canvas Tote","quantity":1,"price":18}],"fixture":true}', 76, 8, 6.46, 74.46, 'cash', 74.46, 0, 'completed', now() - interval '4 hours'),
-        ('e2eccccc-cccc-4ccc-8ccc-ccccccccccc3', $1, $2, 'e2e66666-6666-4666-8666-666666666661', $3, 'e2e77777-7777-4777-8777-777777777773', '{"items":[{"name":"Merino Cardigan","quantity":1,"price":86}],"fixture":true}', 86, 0, 8.17, 94.17, 'card', 94.17, 0, 'completed', now() - interval '6 hours'),
-        ('e2eccccc-cccc-4ccc-8ccc-ccccccccccc4', $1, $2, 'e2e66666-6666-4666-8666-666666666661', $3, 'e2e77777-7777-4777-8777-777777777774', '{"items":[{"name":"Classic Polo","quantity":1,"price":34},{"name":"Canvas Tote","quantity":1,"price":18}],"fixture":true}', 52, 0, 4.94, 56.94, 'card', 56.94, 0, 'completed', now() - interval '8 hours')
+        ('${fixtureTransactionIds[0]}', $1, $2, 'e2e66666-6666-4666-8666-666666666661', $3, 'e2e77777-7777-4777-8777-777777777771', '{"items":[{"name":"Classic Polo","quantity":2,"price":34}],"fixture":true}', 68, 0, 6.46, 74.46, 'card', 74.46, 0, 'completed', now() - interval '2 hours'),
+        ('${fixtureTransactionIds[1]}', $1, $2, 'e2e66666-6666-4666-8666-666666666661', $3, 'e2e77777-7777-4777-8777-777777777772', '{"items":[{"name":"Performance Chino","quantity":1,"price":58},{"name":"Canvas Tote","quantity":1,"price":18}],"fixture":true}', 76, 8, 6.46, 74.46, 'cash', 74.46, 0, 'completed', now() - interval '4 hours'),
+        ('${fixtureTransactionIds[2]}', $1, $2, 'e2e66666-6666-4666-8666-666666666661', $3, 'e2e77777-7777-4777-8777-777777777773', '{"items":[{"name":"Merino Cardigan","quantity":1,"price":86}],"fixture":true}', 86, 0, 8.17, 94.17, 'card', 94.17, 0, 'completed', now() - interval '6 hours'),
+        ('${fixtureTransactionIds[3]}', $1, $2, 'e2e66666-6666-4666-8666-666666666661', $3, 'e2e77777-7777-4777-8777-777777777774', '{"items":[{"name":"Classic Polo","quantity":1,"price":34},{"name":"Canvas Tote","quantity":1,"price":18}],"fixture":true}', 52, 0, 4.94, 56.94, 'card', 56.94, 0, 'completed', now() - interval '8 hours')
       ON CONFLICT (id) DO NOTHING`,
       [SEED.orgId, SEED.locationId, SEED.employeeId],
     );
     await pool.query(`
       UPDATE transactions SET amount_tendered = grand_total, change_due = 0
-      WHERE id IN ('e2eccccc-cccc-4ccc-8ccc-ccccccccccc1','e2eccccc-cccc-4ccc-8ccc-ccccccccccc2','e2eccccc-cccc-4ccc-8ccc-ccccccccccc3','e2eccccc-cccc-4ccc-8ccc-ccccccccccc4')
+      WHERE id IN ('${fixtureTransactionIds[0]}','${fixtureTransactionIds[1]}','${fixtureTransactionIds[2]}','${fixtureTransactionIds[3]}')
     `);
     await pool.query(`
       INSERT INTO transaction_tenders (transaction_id, tender_type, amount)
       SELECT id, tender_type, amount_tendered FROM transactions
-      WHERE id IN ('e2eccccc-cccc-4ccc-8ccc-ccccccccccc1','e2eccccc-cccc-4ccc-8ccc-ccccccccccc2','e2eccccc-cccc-4ccc-8ccc-ccccccccccc3','e2eccccc-cccc-4ccc-8ccc-ccccccccccc4')
+      WHERE id IN ('${fixtureTransactionIds[0]}','${fixtureTransactionIds[1]}','${fixtureTransactionIds[2]}','${fixtureTransactionIds[3]}')
       ON CONFLICT DO NOTHING`,
     );
   } finally {

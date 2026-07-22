@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { clockAction } from "@/app/register/time-clock-action";
 import type { TimeClockEntry, TimeClockEventType } from "@/lib/domain/types";
 
@@ -35,6 +35,15 @@ export function TimeClockWidget({
     else if (lastEvent.eventType === "clock_out") status = "clocked_out";
   }
 
+  // Ticking clock for live "worked" time while clocked in (kept in state so render stays pure)
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (status === "clocked_in" || status === "on_break") {
+      const id = setInterval(() => setNow(Date.now()), 30_000);
+      return () => clearInterval(id);
+    }
+  }, [status]);
+
   // Compute worked time
   const clockInEntry = myEntries.find((e) => e.eventType === "clock_in");
   const clockOutEntry = myEntries.findLast((e) => e.eventType === "clock_out");
@@ -57,7 +66,7 @@ export function TimeClockWidget({
   }, 0);
 
   const clockInTime = clockInEntry ? new Date(clockInEntry.createdAt).getTime() : 0;
-  const endTime = clockOutEntry ? new Date(clockOutEntry.createdAt).getTime() : Date.now();
+  const endTime = clockOutEntry ? new Date(clockOutEntry.createdAt).getTime() : now;
   const totalWorkedMs = clockInTime > 0 && status !== "not_clocked_in" ? Math.max(0, endTime - clockInTime - totalBreakMs) : 0;
 
   const formatDuration = (ms: number) => {

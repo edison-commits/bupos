@@ -37,6 +37,12 @@ interface PayInOut {
 export default function CashDrawerPage() {
   const router = useRouter();
   const [currentShift, setCurrentShift] = useState<Shift | null>(null);
+  // Ticking clock for live "Time Open" display (kept in state so render stays pure)
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
   const [shiftHistory, setShiftHistory] = useState<Shift[]>([]);
   const [_payInOuts, _setPayInOuts] = useState<PayInOut[]>([]);
   const [loading, setLoading] = useState(true);
@@ -63,10 +69,6 @@ export default function CashDrawerPage() {
   const [isClosing, setIsClosing] = useState(false);
   const [promptPassword, passwordGate] = usePasswordGate();
 
-  useEffect(() => {
-    fetchData();
-  }, []);
-
   const fetchData = async () => {
     try {
       setLoading(true);
@@ -92,6 +94,10 @@ export default function CashDrawerPage() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
 
   const handleOpenShift = async () => {
     if (!openingFloat) {
@@ -294,7 +300,7 @@ export default function CashDrawerPage() {
                   <div>
                     <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Time Open</p>
                     <p className="text-2xl font-bold text-gray-900 mt-1">
-                      {Math.round((Date.now() - new Date(currentShift.openedAt).getTime()) / (1000 * 60))} min
+                      {Math.round((now - new Date(currentShift.openedAt).getTime()) / (1000 * 60))} min
                     </p>
                   </div>
                   <div>
