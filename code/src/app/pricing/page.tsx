@@ -1,0 +1,8 @@
+import type { Metadata } from "next";
+import { PublicShell } from "@/components/public/public-page";
+
+export const metadata: Metadata = { title: "Pricing", description: "Talk with the BUPOS team about the right plan for your store." };
+
+export default function PricingPage() {
+  return <PublicShell><section className="mx-auto max-w-4xl px-5 py-16 sm:px-8 sm:py-24"><p className="text-xs font-bold uppercase tracking-[0.24em] text-[#0b8279]">A fit-first conversation</p><h1 className="mt-4 text-5xl font-semibold tracking-[-0.06em]">Pricing that starts with your store</h1><p className="mt-6 max-w-2xl text-lg leading-8 text-[#30413d]">BUPOS pricing depends on the store workflow, locations, and support needs. We do not publish a one-size-fits-all number before understanding what you need.</p><div className="mt-12 rounded-[1.5rem] bg-[#d7ebe7] p-7 sm:p-10"><h2 className="text-2xl font-semibold">What we can cover</h2><ul className="mt-5 grid gap-3 text-lg leading-8 text-[#405552] sm:grid-cols-2"><li>• Register and store setup</li><li>• Catalog and size-run migration</li><li>• Inventory and purchasing workflow</li><li>• Reporting and accounting exports</li><li>• Staff roles and locations</li><li>• Onboarding and support</li></ul><a href="mailto:hello@basicuniformpos.com?subject=BUPOS%20pricing%20conversation" className="mt-8 inline-flex rounded-full bg-[#15201f] px-5 py-3 font-semibold text-white hover:bg-[#0b8279]">Ask about your store</a></div><p className="mt-10 text-sm text-[#52605d]">The public demo is free to explore and uses simulated store data. It does not start a paid plan or process a real transaction.</p></section></PublicShell>;
+}
