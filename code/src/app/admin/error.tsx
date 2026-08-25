@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { safeErr } from '@/lib/logging/safe-err';
 
 export default function AdminError({
@@ -10,6 +11,7 @@ export default function AdminError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  const router = useRouter();
   // R42-G: log via safeErr so PG DETAIL / stack frames can't leak into
   // Worker logs; NEVER render error.message to the user.
   useEffect(() => {
@@ -101,7 +103,7 @@ export default function AdminError({
                 Reload page
               </button>
               <button
-                onClick={() => { window.location.href = '/admin'; }}
+                onClick={() => { router.push('/admin'); }}
                 style={{
                   padding: '0.625rem 1.25rem',
                   borderRadius: '0.5rem',
