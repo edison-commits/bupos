@@ -14,7 +14,7 @@ export async function authFetch(
 
   if (response.status === 401) {
     // Session expired — redirect to admin login
-    window.location.href = '/admin';
+    window.location.href = new URL('/admin', window.location.origin).toString();
     throw new Error('Session expired');
   }
 

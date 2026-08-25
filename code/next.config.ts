@@ -28,6 +28,13 @@ if (process.env.NODE_ENV === "development") {
 }
 
 const nextConfig: NextConfig = {
+  serverExternalPackages: ["pg-cloudflare"],
+  outputFileTracingIncludes: {
+    "/*": [
+      "./node_modules/pg-cloudflare/dist/**/*",
+      "./node_modules/pg-cloudflare/esm/**/*",
+    ],
+  },
   turbopack: {
     // This app lives under ~/Projects/bupos/code while ~/package-lock.json also
     // exists. Pinning the Turbopack root prevents Next from treating the home

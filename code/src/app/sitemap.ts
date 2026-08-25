@@ -7,6 +7,10 @@ const publicRoutes: Array<{ path: string; priority: number }> = [
   { path: "/login", priority: 0.4 },
   { path: "/signup", priority: 0.5 },
   { path: "/customer-signup", priority: 0.5 },
+  { path: "/demo/features", priority: 0.8 },
+  { path: "/privacy", priority: 0.3 },
+  { path: "/terms", priority: 0.3 },
+  { path: "/support", priority: 0.4 },
 ];
 
 export default function sitemap(): MetadataRoute.Sitemap {
