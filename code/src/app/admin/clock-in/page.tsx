@@ -51,7 +51,7 @@ function ClockInContent() {
       setIsLoading(true);
       try {
         const res = await authFetch('/api/clock-in-data');
-        if (res.status === 401) { window.location.href = '/?error=Please+sign+in'; return; }
+        if (res.status === 401) { router.replace('/?error=Please+sign+in'); return; }
         const data = res.ok ? await res.json() : { locations: [], employees: [] };
         setLocations(data.locations ?? []);
         setEmployees(data.employees ?? []);
@@ -63,7 +63,7 @@ function ClockInContent() {
       }
     }
     load();
-  }, []);
+  }, [router]);
 
   const handleClockIn = async () => {
     if (!locationId || !employeeId) {

@@ -39,6 +39,15 @@ export default async function HomePage({
           <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>Web-first retail POS for your store</p>
         </div>
 
+        <div className="mb-5 rounded-2xl border border-teal-200 bg-teal-50 p-5 text-center">
+          <p className="text-xs font-bold uppercase tracking-[0.18em] text-teal-800">New to BUPOS?</p>
+          <h2 className="mt-2 text-lg font-semibold text-slate-900">See how BUPOS works</h2>
+          <p className="mt-1 text-sm leading-6 text-slate-700">Explore with sample store data before you create an account.</p>
+          <Link href="/demo/features" className="mt-4 inline-flex rounded-full bg-teal-700 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-800">
+            Review the product and demo
+          </Link>
+        </div>
+
         {/* Login card */}
         <div className="rounded-2xl border p-6 shadow-sm" style={{ background: "var(--surface-panel)", borderColor: "var(--border-subtle)" }}>
           <h2 className="text-lg font-semibold" style={{ color: "var(--text-primary)" }}>Sign in</h2>
@@ -61,6 +70,11 @@ export default async function HomePage({
             Create your store
           </Link>
         </p>
+        <nav aria-label="Trust and support" className="mt-5 flex flex-wrap justify-center gap-x-5 gap-y-2 text-xs text-slate-600">
+          <Link href="/privacy" className="hover:text-teal-700">Privacy</Link>
+          <Link href="/terms" className="hover:text-teal-700">Terms</Link>
+          <Link href="/support" className="hover:text-teal-700">Support</Link>
+        </nav>
       </div>
     </div>
   );

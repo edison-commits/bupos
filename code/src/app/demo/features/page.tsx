@@ -6,6 +6,7 @@ export const metadata: Metadata = {
   title: "BUPOS — POS for uniform & workwear stores",
   description:
     "Web-first POS for uniform and workwear stores — size runs, an offline-capable register, and full back office in one system.",
+  alternates: { canonical: "/demo/features" },
   openGraph: {
     title: "BUPOS — POS for uniform & workwear stores",
     description:
@@ -110,7 +111,7 @@ export default function DemoFeaturesPage() {
           <nav className="flex items-center gap-5 text-sm">
             <Link href="#screens" className="hidden text-[#30413d] hover:text-[#0b8279] sm:inline">See BUPOS</Link>
             <Link href="#features" className="hidden text-[#30413d] hover:text-[#0b8279] sm:inline">The full list</Link>
-            <a href="mailto:hello@basicuniformpos.com?subject=BUPOS%20walkthrough" className="hidden text-[#30413d] hover:text-[#0b8279] sm:inline">Book a walkthrough</a>
+            <Link href="/support" className="hidden text-[#30413d] hover:text-[#0b8279] sm:inline">Evaluation &amp; support</Link>
             <Link href="/demo" className="rounded-full bg-[#15201f] px-4 py-2 font-semibold text-white hover:bg-[#0b8279]">Try the demo</Link>
           </nav>
         </div>
@@ -124,7 +125,7 @@ export default function DemoFeaturesPage() {
             <p className="mt-7 max-w-xl text-xl leading-8 text-[#30413d]">BUPOS runs the register, the stockroom, purchasing, and customer accounts in one system — built around how uniform and workwear stores actually sell.</p>
             <div className="mt-8 flex flex-wrap items-center gap-4">
               <Link href="/demo" className="rounded-full bg-[#0b8279] px-5 py-3 font-semibold text-white shadow-sm hover:bg-[#086b64]">Try the live demo</Link>
-              <a href="mailto:hello@basicuniformpos.com?subject=BUPOS%20walkthrough" className="rounded-full border border-[#15201f]/20 px-5 py-3 font-semibold text-[#15201f] hover:border-[#0b8279] hover:text-[#0b8279]">Book a walkthrough</a>
+              <Link href="/support" className="rounded-full border border-[#15201f]/20 px-5 py-3 font-semibold text-[#15201f] hover:border-[#0b8279] hover:text-[#0b8279]">Evaluation &amp; support</Link>
             </div>
             <p className="mt-5 text-sm text-[#52605d]">No signup. Nothing to install. Sample store data.</p>
           </div>
@@ -167,16 +168,16 @@ export default function DemoFeaturesPage() {
 
       <section className="mx-auto max-w-6xl px-5 py-16 sm:px-8 sm:py-24">
         <div className="grid items-center gap-10 rounded-[1.5rem] border border-[#15201f]/15 bg-white p-7 sm:p-12 lg:grid-cols-[1fr_0.9fr]">
-          <div><p className="text-xs font-bold uppercase tracking-[0.24em] text-[#0b8279]">Switching?</p><h2 className="mt-4 text-4xl font-semibold tracking-[-0.05em] sm:text-5xl">Still on QuickBooks POS?</h2><p className="mt-5 text-lg leading-8 text-[#30413d]">Intuit discontinued QuickBooks Desktop POS. BUPOS includes a QuickBooks-ready daily sales journal export, and migration assistance is available so you can review your current workflow before switching.</p></div>
-          <div className="rounded-2xl bg-[#f4f1eb] p-6"><p className="font-semibold">A useful first conversation</p><ul className="mt-4 space-y-3 text-[#30413d]"><li>• Map your register, catalog, and reporting workflow.</li><li>• Review what should move and what should be reconciled.</li><li>• See the checkout and manager flows with your questions in mind.</li></ul><a href="mailto:hello@basicuniformpos.com?subject=BUPOS%20migration%20walkthrough" className="mt-6 inline-flex rounded-full bg-[#15201f] px-5 py-3 font-semibold text-white hover:bg-[#0b8279]">Talk to us about migrating</a></div>
+          <div><p className="text-xs font-bold uppercase tracking-[0.24em] text-[#0b8279]">Switching?</p><h2 className="mt-4 text-4xl font-semibold tracking-[-0.05em] sm:text-5xl">Still on QuickBooks POS?</h2><p className="mt-5 text-lg leading-8 text-[#30413d]">BUPOS includes a QuickBooks-ready daily sales journal export. Review your current catalog, register, and reporting workflow before deciding what a future migration would need.</p></div>
+          <div className="rounded-2xl bg-[#f4f1eb] p-6"><p className="font-semibold">A useful evaluation checklist</p><ul className="mt-4 space-y-3 text-[#30413d]"><li>• Map your register, catalog, and reporting workflow.</li><li>• Review what should move and what should be reconciled.</li><li>• Test the sample checkout and manager views with your questions in mind.</li></ul><Link href="/support" className="mt-6 inline-flex rounded-full bg-[#15201f] px-5 py-3 font-semibold text-white hover:bg-[#0b8279]">Review evaluation notes</Link></div>
         </div>
       </section>
 
       <section id="features" className="bg-white"><div className="mx-auto max-w-6xl px-5 py-16 sm:px-8 sm:py-24"><div className="max-w-2xl"><p className="text-xs font-bold uppercase tracking-[0.24em] text-[#0b8279]">The full list</p><h2 className="mt-4 text-4xl font-semibold tracking-[-0.05em] sm:text-5xl">Everything else it does.</h2><p className="mt-5 text-lg leading-8 text-[#30413d]">The complete BUPOS feature set, grouped by the jobs a store has to get done.</p></div><div className="mt-10 divide-y divide-[#15201f]/12 border-y border-[#15201f]/15">{featureGroups.map(([title, text]) => <details key={title} className="group py-5"><summary className="flex cursor-pointer list-none items-center justify-between gap-5 font-semibold text-[#0b8279]"><span>{title}</span><span className="text-2xl font-normal text-[#52605d] transition-transform group-open:rotate-45">+</span></summary><p className="max-w-3xl pt-4 leading-7 text-[#30413d]">{text}</p></details>)}</div></div></section>
 
-      <section className="mx-auto max-w-6xl px-5 py-16 sm:px-8 sm:py-24"><div className="grid items-center gap-10 rounded-[1.5rem] bg-[#d7ebe7] p-7 sm:p-12 lg:grid-cols-[1fr_auto]"><div><p className="text-xs font-bold uppercase tracking-[0.24em] text-[#0b8279]">See it for yourself.</p><h2 className="mt-4 max-w-2xl text-4xl font-semibold tracking-[-0.05em] sm:text-5xl">See it for yourself.</h2><p className="mt-5 max-w-2xl text-lg leading-8 text-[#405552]">The demo runs in your browser with a sample store. No account, no card, no install.</p></div><div className="flex flex-wrap gap-3"><Link href="/demo" className="rounded-full bg-[#15201f] px-6 py-3.5 text-center font-semibold text-white hover:bg-[#0b8279]">Open the demo</Link><a href="mailto:hello@basicuniformpos.com?subject=BUPOS%20walkthrough" className="rounded-full border border-[#15201f]/20 px-6 py-3.5 text-center font-semibold hover:border-[#0b8279] hover:text-[#0b8279]">Book a walkthrough</a></div></div></section>
+      <section className="mx-auto max-w-6xl px-5 py-16 sm:px-8 sm:py-24"><div className="grid items-center gap-10 rounded-[1.5rem] bg-[#d7ebe7] p-7 sm:p-12 lg:grid-cols-[1fr_auto]"><div><p className="text-xs font-bold uppercase tracking-[0.24em] text-[#0b8279]">Safe product evaluation</p><h2 className="mt-4 max-w-2xl text-4xl font-semibold tracking-[-0.05em] sm:text-5xl">See it for yourself.</h2><p className="mt-5 max-w-2xl text-lg leading-8 text-[#405552]">The demo runs in your browser with sample store data. No account, no install, and no production writes. No real payment is processed.</p></div><div className="flex flex-wrap gap-3"><Link href="/demo" className="rounded-full bg-[#15201f] px-6 py-3.5 text-center font-semibold text-white hover:bg-[#0b8279]">Open the demo</Link><Link href="/support" className="rounded-full border border-[#15201f]/20 px-6 py-3.5 text-center font-semibold hover:border-[#0b8279] hover:text-[#0b8279]">Evaluation &amp; support</Link></div></div></section>
 
-      <footer className="border-t border-[#15201f]/15 px-5 py-8 sm:px-8"><div className="mx-auto flex max-w-6xl flex-col gap-3 text-sm text-[#52605d] sm:flex-row sm:items-center sm:justify-between"><span>BasicUniformPOS · Web-first POS for uniform &amp; workwear retail · © 2026 BasicUniformPOS</span><div className="flex flex-wrap gap-5"><Link href="/demo" className="hover:text-[#0b8279]">Demo</Link><Link href="#features" className="hover:text-[#0b8279]">Features</Link><a href="mailto:hello@basicuniformpos.com" className="hover:text-[#0b8279]">Contact — hello@basicuniformpos.com</a></div></div></footer>
+      <footer className="border-t border-[#15201f]/15 px-5 py-8 sm:px-8"><div className="mx-auto flex max-w-6xl flex-col gap-3 text-sm text-[#52605d] sm:flex-row sm:items-center sm:justify-between"><span>BasicUniformPOS · Web-first POS for uniform &amp; workwear retail · © 2026 BasicUniformPOS</span><div className="flex flex-wrap gap-5"><Link href="/demo" className="hover:text-[#0b8279]">Demo</Link><Link href="#features" className="hover:text-[#0b8279]">Features</Link><Link href="/privacy" className="hover:text-[#0b8279]">Privacy</Link><Link href="/terms" className="hover:text-[#0b8279]">Terms</Link><Link href="/support" className="hover:text-[#0b8279]">Support</Link></div></div></footer>
     </main>
   );
 }
