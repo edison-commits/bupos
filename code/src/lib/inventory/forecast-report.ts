@@ -1,5 +1,5 @@
 import { orgQuery } from "@/lib/supabase-rest";
-import { calculateStockoutForecast, type StockoutRisk } from "@/lib/inventory/forecast";
+import { calculateStockoutForecast, type ForecastResult, type StockoutRisk } from "@/lib/inventory/forecast";
 
 export interface InventoryForecastParams {
   orgId: string;
@@ -8,7 +8,7 @@ export interface InventoryForecastParams {
   limit?: number;
 }
 
-export interface InventoryForecastRow {
+export interface InventoryForecastRow extends ForecastResult {
   locationId: string;
   locationName: string;
   productId: string;
@@ -26,11 +26,6 @@ export interface InventoryForecastRow {
   unitsSold30: number;
   unitsSold90: number;
   unitsSold365: number;
-  predictedDailyDemand: number;
-  daysUntilStockout: number | null;
-  risk: StockoutRisk;
-  suggestedReorderQty: number;
-  confidence: "high" | "medium" | "low";
 }
 
 function parseInteger(value: unknown): number {
