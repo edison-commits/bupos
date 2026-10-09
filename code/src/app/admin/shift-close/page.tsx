@@ -41,11 +41,13 @@ export default function ShiftClosePage() {
   const [notes, setNotes] = useState<string>('');
   const [isClosing, setIsClosing] = useState(false);
   const [closeSuccess, setCloseSuccess] = useState(false);
-  const [promptPassword, passwordGate] = usePasswordGate();
-
+  // Ticking clock for live "Duration" display (kept in state so render stays pure)
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    fetchShiftData();
+    const id = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(id);
   }, []);
+  const [promptPassword, passwordGate] = usePasswordGate();
 
   const fetchShiftData = async () => {
     try {
@@ -63,6 +65,10 @@ export default function ShiftClosePage() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    fetchShiftData();
+  }, []);
 
   const handleCloseShift = async () => {
     if (!data || !declaredCash) {
@@ -209,7 +215,7 @@ export default function ShiftClosePage() {
                   <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Duration</p>
                   <p className="text-2xl font-bold text-gray-900">
                     {Math.round(
-                      (Date.now() - new Date(data.shift.openedAt).getTime()) / (1000 * 60)
+                      (now - new Date(data.shift.openedAt).getTime()) / (1000 * 60)
                     )}{' '}
                     min
                   </p>

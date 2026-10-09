@@ -6,6 +6,7 @@ code/.next/
 code/.turbo/
 code/.open-next*
 code/.wrangler*
+code/test-results/
 
 # macOS iCloud Drive / Finder duplicate-filename artifacts.
 # These look like `route 2.ts`, `pre-commit 2`, etc. — created when

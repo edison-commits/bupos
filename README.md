@@ -1,95 +1,92 @@
-# BUPOS / BasicUniformPOS
+# BasicUniformPOS (BUPOS)
 
-Retail POS for uniform/apparel stores. The active app lives in `code/` and is a Next.js 16 + Cloudflare Workers project backed by Postgres-compatible databases.
+BasicUniformPOS is a multi-tenant retail point-of-sale system. The active application is the Next.js project in [`code/`](code/); the repository also contains a public landing Worker and a Windows Electron shell.
 
-## Current status
+## Start here
 
-- Active branch: `autonomy/bupos-current-readiness-20260711`
-- Upstream: `https://github.com/edison-commits/bupos.git`
-- Latest known production fix on this branch: `1903657 fix: keep inventory API compatible with current schema`
-- Deployment target: Cloudflare/OpenNext from `code/`
-- Local generated artifacts should stay untracked: `.DS_Store`, `*.zip`, `.next/`, `.open-next/`, `.wrangler/`, `node_modules/`, `test-results/`
+- [Application setup, checks, and contribution notes](code/README.md)
+- [Current architecture](code/docs/architecture.md)
+- [Environment and configuration ownership](code/docs/configuration.md)
+- [Documentation index](docs/README.md)
 
-## Work in the right directory
+Historical plans, product specifications, and audits remain in the repository as evidence. They do not override the current guidance linked above.
 
-Most commands should run from:
+## Local setup
 
-```bash
-cd code
-```
+Prerequisites:
 
-Read `code/AGENTS.md` before editing app code. This repo uses Next.js 16; do not assume older Next.js APIs or file conventions.
-
-## Quick local setup
+- Node.js 22 (the CI version) and npm
+- Docker with Compose
+- a local `psql` client for the migration script
 
 ```bash
 cd code
 npm ci
 npm run docker:up
 npm run docker:migrate
-DATABASE_URL="postgresql://postgres:***@localhost:54329/bupos_test" USE_POSTGRES=true npm run dev
+
+# Set DATABASE_URL to the local Docker database described in docker-compose.yml.
+USE_POSTGRES=true npm run dev
 ```
 
-Local app surfaces:
+The app defaults to `http://localhost:3000`. The main entry points are:
 
-- Register: `http://localhost:3000/register`
-- Admin: `http://localhost:3000/admin`
-- API: `http://localhost:3000/api`
+- `/register` — worker register
+- `/admin/dashboard` — canonical admin dashboard
+- `/admin/*` — canonical dedicated admin tools
+- `/api/health` — health endpoint
 
-## Verification gates
+The all-in-one `/admin` page is a retained legacy surface. Do not add new admin features there when a dedicated `/admin/*` route exists.
 
-Use a proportional gate for the change size. For release/readiness claims, prefer the full guardrail path.
+For environment-variable ownership and secret handling, see [`code/docs/configuration.md`](code/docs/configuration.md). No production credentials are required for the local Docker path.
+
+## Verification
+
+Run from the repository root:
 
 ```bash
-cd code
-npm run typecheck
-npm run lint
-npm run build
+npm --prefix code test
+npm --prefix code run check:all
+npm --prefix code run build
 ```
 
-Broader BUPOS gate:
+Docker-backed integration and browser checks require the local database first:
 
 ```bash
-cd code
-npm run check:all
-npm test -- --run
-npx opennextjs-cloudflare build
+npm --prefix code run docker:up
+npm --prefix code run docker:migrate
+npm --prefix code run test:integration
+npm --prefix code run test:e2e
 ```
 
-Docker/Postgres suites:
+See [`code/README.md`](code/README.md) for the test-suite boundaries and [`code/docs/runbook-deploy.md`](code/docs/runbook-deploy.md) for the production deployment boundary. Do not run deployment commands as part of local setup.
 
-```bash
-cd code
-npm run docker:up
-npm run docker:migrate
-npm run test:integration
-npm run test:e2e
+## Repository map
+
+```text
+.
+├── .github/workflows/        # CI, deployment, scheduled operations, desktop build
+├── code/                     # Active Next.js application and Cloudflare Worker config
+│   ├── src/app/              # App Router pages, API routes, and server actions
+│   ├── src/components/       # Register and admin UI
+│   ├── src/lib/              # Auth, domain, persistence, integrations, reports
+│   ├── supabase/migrations/  # Canonical ordered PostgreSQL migrations
+│   ├── scripts/              # Guardrails, local DB tooling, audits, and operations
+│   ├── landing/              # Separate public landing Cloudflare Worker
+│   └── docs/                 # Current architecture and operational runbooks
+├── desktop/                  # Electron shell around the deployed web application
+├── docs/                     # Repository-level documentation index
+├── support-pack/             # Historical/reference QA and workflow material
+└── SwiftPOS_*, AUDIT_*       # Historical plans, specs, progress, and audit evidence
 ```
 
-## Repository organization
+## Deployment boundary
 
-Primary app:
+Pushes to `master` are handled by [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml). That workflow waits for guardrails, applies migrations, builds and deploys through OpenNext/Wrangler, and runs a production smoke test. Manual deployment, migration, secret, and rollback actions require an authorized operator; follow the [deploy](code/docs/runbook-deploy.md) and [rollback](code/docs/runbook-rollback.md) runbooks.
 
-- `code/src/app/` — Next.js app routes and API routes
-- `code/src/lib/` — auth, database, runtime, domain helpers
-- `code/src/__tests__/` — unit, route, adversarial, integration fixtures
-- `code/supabase/migrations/` — canonical DB migrations
-- `code/scripts/check-*.mjs` — CI guardrails
-- `code/docs/` — operational runbooks, architecture, known issues, historical follow-ups
+## Escalation boundaries
 
-Support/reference material:
-
-- `support-pack/` — QA matrices and retail workflow checklists
-- `desktop/` — desktop packaging experiment; keep secondary to the web/Cloudflare path
-- top-level `SwiftPOS_*.md` and `AUDIT_*.md` — historical planning/audit inputs, not the current source of truth for runtime behavior
-
-Current source-of-truth docs:
-
-- `code/README.md` — app-specific setup, guardrails, testing, architecture notes
-- `code/docs/KNOWN_ISSUES.md` — central issue/audit tracker
-- `code/docs/ROUND8_FOLLOWUPS.md` — historical Round 8 follow-up closure evidence
-- `code/docs/runbook-deploy.md` / `runbook-rollback.md` / `runbook-alerting.md` — ops runbooks
-- `code/docs/bupos-help-cheat-sheet.md` and `code/public/docs/bupos-help-cheat-sheet.md` — operator-facing Help cheat sheet; keep copies byte-identical
+Routine local implementation, tests, cleanup, and PR preparation are pre-approved. Escalate before credentials/env changes, database migrations/backfills, production deploys, payment/refund behavior changes, deleting/replacing live data, customer messaging, paid services, or high-uncertainty live-store impact.
 
 ## Safe backlog buckets
 

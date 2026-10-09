@@ -1,112 +1,92 @@
-# BasicUniformPOS
+# BasicUniformPOS application
 
-Next.js 16 + Cloudflare Workers multi-tenant POS. JSON-backed store for dev
-simplicity, Postgres (Supabase/Neon in prod, plain pg in local dev) for real data.
+This directory contains the active BUPOS web application: a Next.js 16 App Router project deployed to Cloudflare Workers through OpenNext. PostgreSQL is the production persistence layer; local Docker Postgres is the supported full-data development path. A JSON store remains as a limited compatibility/development fallback when `USE_POSTGRES` is not enabled.
 
-## Quick start
+- [Architecture](docs/architecture.md)
+- [Environment and configuration ownership](docs/configuration.md)
+- [Repository documentation index](../docs/README.md)
+- [Deploy runbook](docs/runbook-deploy.md)
+- [Rollback runbook](docs/runbook-rollback.md)
+
+## Prerequisites
+
+- Node.js 22 and npm (matches GitHub Actions)
+- Docker with Compose
+- `psql` available to `scripts/docker-migrate.sh`
+
+## Local development
 
 ```bash
-# Install deps
 npm ci
-
-# Start local Postgres (Docker compose — Supabase-compat schema + roles)
 npm run docker:up
 npm run docker:migrate
 
-# Run the app against Docker Postgres
-DATABASE_URL="postgresql://postgres:postgres@localhost:54329/bupos_test" \
+# Set DATABASE_URL to the local database described by docker-compose.yml.
 USE_POSTGRES=true npm run dev
 ```
 
-Test credentials for local dev live in `docs/reference_bupos_credentials.md`.
+Run those commands from `code/`. Next.js listens on port 3000 by default. To avoid an occupied port, choose a free one explicitly, for example `PORT=3101 USE_POSTGRES=true npm run dev`; do not start a second process on an existing port.
 
----
+The local Docker database binds host port 54329. Check that the port is free before `npm run docker:up`, or stop the conflicting service; do not silently point migration or test commands at a different or production database.
 
-## Test suites
+## Application surfaces
 
-| Command | What it runs | Needs Docker? | Needs Chromium? |
-|---|---|---|---|
-| `npm test` | Unit + adversarial fixture corpus (vitest) | no | no |
-| `npm run test:runtime` | Workers-runtime smoke (mocked `@opennextjs/cloudflare`) | no | no |
-| `npm run test:adversarial` | Permanent regression fixtures for closed findings | no | no |
-| `npm run test:integration` | PG integration (cross-tenant, race-fuzz, admin flows) | **yes** | no |
-| `npm run test:e2e` | Playwright end-to-end via `next dev` | **yes** | **yes** |
+- `/register` — cashier/register workflow
+- `/register/customer-display` and `/customer-display` — customer-facing displays
+- `/admin/dashboard` — canonical admin dashboard
+- `/admin/*` — canonical dedicated admin tools
+- `/admin` — retained legacy all-in-one console; do not extend it when a dedicated route exists
+- `/api/*` — authenticated application and operational endpoints
 
-For the Docker-dependent suites, run `npm run docker:up && npm run docker:migrate`
-once per repo clone. For Playwright install Chromium: `npx playwright install chromium`.
+Top-level aliases/placeholders such as `/dashboard`, `/pos`, `/products`, `/sales`, and `/settings` are compatibility or incomplete surfaces, not the canonical admin implementation.
 
----
+## Test and verification commands
 
-## Guardrails & CI
+| Command | Scope | External prerequisite |
+|---|---|---|
+| `npm test` | Unit and adversarial Vitest suites | none |
+| `npm run test:runtime` | Workers-runtime smoke tests | none |
+| `npm run test:adversarial` | Permanent closed-finding regressions | none |
+| `npm run lint` | ESLint and local Worker-safety rules | none |
+| `npm run typecheck` | TypeScript | none |
+| `npm run check:all` | Lint, typecheck, and every repository guardrail | none; production drift runs its self-test without DB URLs |
+| `npm run test:integration` | PostgreSQL integration tests | migrated local Docker DB |
+| `npm run test:e2e` | Playwright against Next.js and PostgreSQL | migrated local Docker DB and Chromium |
+| `npm run build` | Next.js production build | application build configuration |
 
-All guardrails are scripts in `scripts/check-*.mjs`. Exit codes:
-
-- **0** = clean
-- **1** = real offenders found (fix the offenders)
-- **2** = the guardrail itself is broken (fix the guardrail before shipping)
-
-Exit code 2 is emitted by the self-test block every guardrail runs BEFORE its
-real scan — if the detector regresses to a no-op, you get a loud
-"guardrail is broken" failure instead of a silent pass.
-
-```bash
-npm run check:all    # lint + typecheck + all guardrails
-npm run check:schema # individual guardrails also available
-```
-
-Adding a new guardrail — **hard requirements**:
-
-1. Self-test: an inline `selfTest()` block OR a sibling
-   `scripts/check-<name>-selftest.mjs` that feeds known-good/bad fixtures
-   and asserts the detector behaves. Required by `check:selftest-coverage`.
-2. CI wiring: add `npm run check:<name>` as a step in
-   `.github/workflows/guardrails.yml`. Required by `check:ci-wiring`.
-3. Extension: `.mjs` (CI invokes via `node scripts/*.mjs`).
-
-## Pre-merge adversarial audit
+For Docker-backed suites:
 
 ```bash
-# Dump the prompt (manual review)
-npm run audit:prompt
+npm run docker:up
+npm run docker:migrate
+npm run test:integration
 
-# Call the Anthropic API (CI — requires ANTHROPIC_API_KEY secret)
-npm run audit:pre-merge
+npx playwright install chromium
+npm run test:e2e
 ```
 
-Runs on every PR via `.github/workflows/pre-merge-audit.yml`. Skips cleanly
-if the secret isn't configured.
+Guardrails live in `scripts/check-*.mjs`. Exit code `1` means an offender was found; exit code `2` means the guardrail's own self-test or wiring failed. New guardrails need a self-test and must be wired into [the root Guardrails workflow](../.github/workflows/guardrails.yml).
 
-## Adding a regression test
+## Where changes belong
 
-When an audit round closes a CRITICAL or HIGH finding:
-
-1. Add a permanent fixture to `src/__tests__/adversarial/<round>-<id>-<slug>.test.ts`
-   that reproduces the attack/scenario.
-2. Assert the fix holds (attack fails, guard fires, or invariant holds).
-3. Name the describe block with the finding ID so future debuggers can trace back.
-
-The fixture becomes a permanent CI check — if anyone reverts the fix, this
-test fails. See existing files for the convention.
-
----
-
-## Architecture notes
-
-- **DB driver selection** is dynamic: `src/lib/db/index.ts` detects a
-  localhost connection string and imports `pg`; else imports
-  `@neondatabase/serverless`. One module per isolate.
-- **RLS**: every tenanted table has `ENABLE ROW LEVEL SECURITY` +
-  `FORCE ROW LEVEL SECURITY`. `orgTx` / `orgQuery` set
-  `app.current_org_id` so policies fire.
-- **Workers post-response work** uses `waitUntilOrAwait` (see
-  `src/lib/runtime/wait-until.ts`). Fire-and-forget `.catch(...)` is
-  cancelled by the `no_handle_cross_request_promise_resolution` compat
-  flag.
-- **Audit rounds**: findings history + closure notes in
-  `docs/KNOWN_ISSUES.md`. Review before a new round.
-
-## Deploy
-
-```bash
-npm run deploy  # builds via opennext + deploys with wrangler
+```text
+src/app/                  Routes, pages, API handlers, and thin server-action adapters
+src/components/           Register/admin UI components
+src/lib/auth/             Sessions, display tokens, device cookies, and rate limiting
+src/lib/domain/           Shared domain types and permissions
+src/lib/db/               PostgreSQL driver and org-scoped query/transaction helpers
+src/lib/persistence/      JSON compatibility store and PostgreSQL repositories
+src/lib/offline/          Browser queue and replay support
+src/lib/channels/         Commerce-channel adapters and reconciliation
+src/lib/reports/          Shared report generation
+src/lib/validation/       Request and message schemas
+supabase/migrations/      Ordered database schema changes
+scripts/                  Guardrails, local DB operations, audit and simulation tools
+e2e/                      Playwright tests
 ```
+
+Tenant and location isolation, payment/tender behavior, audit events, offline replay, session/auth behavior, and migrations are security-sensitive. Keep mutations explicit and auditable, use org-scoped DB helpers, and run the focused suites plus `check:all` after changes.
+
+## Deployment
+
+`npm run deploy` builds through OpenNext and publishes with Wrangler. It is not a local verification command. Production deployment is owned by [the root deployment workflow](../.github/workflows/deploy.yml); authorized manual operations must follow the [deploy runbook](docs/runbook-deploy.md). Secret names and owners are documented without values in [`docs/configuration.md`](docs/configuration.md).

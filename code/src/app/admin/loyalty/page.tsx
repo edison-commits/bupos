@@ -96,10 +96,6 @@ export default function LoyaltyDashboard() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [promptPassword, passwordGate] = usePasswordGate();
 
-  useEffect(() => {
-    loadLoyaltyData();
-  }, []);
-
   const loadLoyaltyData = async () => {
     setLoading(true);
     setError(null);
@@ -130,6 +126,10 @@ export default function LoyaltyDashboard() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    loadLoyaltyData();
+  }, []);
 
   const openAdjustModal = () => {
     setModalMode('adjust');

@@ -51,11 +51,6 @@ export default function ShiftsPage() {
   const [total, setTotal] = useState(0);
   const pageSize = 20;
 
-  useEffect(() => {
-    loadShifts();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusFilter, dateFilter, page]);
-
   async function loadShifts() {
     setLoading(true);
     setError(null);
@@ -78,6 +73,11 @@ export default function ShiftsPage() {
       setLoading(false);
     }
   }
+
+  useEffect(() => {
+    loadShifts();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter, dateFilter, page]);
 
   function handleStatusChange(status: string) {
     setStatusFilter(status);
